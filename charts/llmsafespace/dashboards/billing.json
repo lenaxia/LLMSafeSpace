@@ -817,14 +817,14 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(llmsafespace_user_llm_calls_total{job=~\"$controller_job\"}[$__rate_interval])) by (user_id)",
-          "legendFormat": "{{user_id}}",
+          "expr": "sum(rate(llmsafespace_inference_requests_total{job=~\"$job\"}[$__rate_interval]))",
+          "legendFormat": "fleet total",
           "refId": "A"
         }
       ],
-      "title": "LLM Call Rate by User",
+      "title": "LLM Call Rate (Fleet)",
       "type": "timeseries",
-      "description": "Inference request rate broken down by user_id. Each line is one user. This panel gives a rough picture of relative user activity but does not replace per-workspace cost attribution."
+      "description": "Inference request rate across all workspaces. Per-user breakdown requires DB query via GET /api/v1/usage (US-12.7). The phantom metric llmsafespace_user_llm_calls_total was removed — fleet data exists in llmsafespace_inference_requests_total."
     },
     {
       "collapsed": false,
@@ -1079,14 +1079,14 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(llmsafespace_user_llm_calls_total{job=~\"$controller_job\"}[$__rate_interval])) by (user_id, credential_source)",
-          "legendFormat": "{{user_id}} ({{credential_source}})",
+          "expr": "sum(rate(llmsafespace_inference_requests_total{job=~\"$job\"}[$__rate_interval]))",
+          "legendFormat": "fleet total",
           "refId": "A"
         }
       ],
-      "title": "User LLM Calls by Credential Source",
+      "title": "LLM Calls (Fleet Total)",
       "type": "timeseries",
-      "description": "Inference call rate split by credential source (e.g. user-supplied key vs relay vs platform key). Helps identify which credential type is being used for billing attribution."
+      "description": "Inference call rate at fleet level. Per-user/per-credential-source breakdown requires DB query via GET /api/v1/usage (US-12.7). The phantom metric llmsafespace_user_llm_calls_total was removed."
     },
     {
       "collapsed": false,
@@ -1770,6 +1770,103 @@
       "title": "Legacy Plaintext API Keys (Security Debt)",
       "type": "stat",
       "description": "Count of API keys still using pre-migration plaintext storage (migration 000017). Target value is 0. Any non-zero value means affected keys have not been rotated since the DEK encryption migration."
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 66},
+      "id": 27,
+      "panels": [],
+      "title": "Metering Pipeline Health",
+      "type": "row",
+      "description": "US-12.1 metering service internals. Events recorded/failed/dropped, batch write latency, DLQ depth, reconciliation catch-up, export lag."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisBorderShow": false, "axisLabel": "", "drawAsColumns": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 67},
+      "id": 28,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(llmsafespace_metering_events_recorded_total[$__rate_interval])) by (event_type, source)", "legendFormat": "{{event_type}} / {{source}}", "refId": "A"}],
+      "title": "Metering Events Recorded Rate",
+      "type": "timeseries",
+      "description": "Rate of usage events successfully written to the usage_events table by event_type and source."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisBorderShow": false, "axisLabel": "", "drawAsColumns": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 67},
+      "id": 29,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(llmsafespace_metering_events_failed_total[$__rate_interval])) by (error_type)", "legendFormat": "{{error_type}}", "refId": "A"}],
+      "title": "Metering Events Failed Rate",
+      "type": "timeseries",
+      "description": "Rate of usage events that failed batch write and went to DLQ."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"color": {"fixedColor": "red", "mode": "fixed"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 67},
+      "id": 30,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(llmsafespace_metering_events_dropped_total[$__rate_interval]))", "legendFormat": "dropped", "refId": "A"}],
+      "title": "Metering Events Dropped Rate",
+      "type": "timeseries",
+      "description": "Rate of usage events dropped entirely (buffer full or DLQ write also failed). Non-zero indicates Postgres is unreachable."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisBorderShow": false, "axisLabel": "", "drawAsColumns": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "unit": "s"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 75},
+      "id": 31,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "histogram_quantile(0.95, sum(rate(llmsafespace_metering_batch_write_duration_seconds_bucket[$__rate_interval])) by (le))", "legendFormat": "p95 batch write", "refId": "A"}],
+      "title": "Batch Write Latency (p95)",
+      "type": "timeseries",
+      "description": "95th percentile DB batch flush latency for metering events."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"color": {"fixedColor": "orange", "mode": "fixed"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 10}]}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 75},
+      "id": 32,
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showThresholdLabels": false, "showThresholdMarkers": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(llmsafespace_metering_dlq_size)", "legendFormat": "unresolved DLQ", "refId": "A"}],
+      "title": "DLQ Unresolved Entries",
+      "type": "gauge",
+      "description": "Current number of unresolved dead-letter queue entries. Non-zero means the DLQ reaper is failing to reprocess events."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"color": {"fixedColor": "red", "mode": "fixed"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 75},
+      "id": 33,
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showThresholdLabels": false, "showThresholdMarkers": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(increase(llmsafespace_metering_dlq_dead_total[$__range]))", "legendFormat": "dead entries", "refId": "A"}],
+      "title": "DLQ Dead Entries (Exhausted Retries)",
+      "type": "stat",
+      "description": "DLQ entries that exhausted all 5 retries. Non-zero requires manual intervention via admin API."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisBorderShow": false, "axisLabel": "", "drawAsColumns": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 83},
+      "id": 34,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(increase(llmsafespace_metering_reconciliation_catchup_total[$__range]))", "legendFormat": "compute catch-up events", "refId": "A"}],
+      "title": "Compute Reconciliation Catch-up Events",
+      "type": "timeseries",
+      "description": "Compute_seconds events emitted by the reconciliation cron to fill gaps from process restarts or queue saturation."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisBorderShow": false, "axisLabel": "", "drawAsColumns": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "unit": "s"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 83},
+      "id": 35,
+      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(llmsafespace_metering_export_lag_seconds)", "legendFormat": "export lag", "refId": "A"}],
+      "title": "Billing Export Lag",
+      "type": "timeseries",
+      "description": "Seconds since last successful billing export. Rising lag indicates export goroutine failures."
     }
   ],
   "refresh": "30s",
