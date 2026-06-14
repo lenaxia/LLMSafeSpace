@@ -50,6 +50,7 @@ vi.mock("../../api/workspaces", () => ({
 }));
 
 import { workspacesApi } from "../../api/workspaces";
+import { ApiClientError } from "../../api/client";
 
 function renderSidebar() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -176,8 +177,7 @@ describe("Sidebar — session delete", () => {
   it("treats 404 as success on delete", async () => {
     const { qc } = renderSidebar();
 
-    const err404: any = new Error("not found");
-    err404.status = 404;
+    const err404 = new ApiClientError(404, { error: "not found" });
     (workspacesApi.deleteSession as ReturnType<typeof vi.fn>).mockRejectedValueOnce(err404);
 
     qc.setQueryData(["sessions", "ws-1"], [
@@ -187,6 +187,28 @@ describe("Sidebar — session delete", () => {
     await screen.findByText("Will 404");
 
     vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const kebabButtons = await screen.findAllByLabelText("Actions");
+    const sessionKebab = kebabButtons[kebabButtons.length - 1]!;
+    sessionKebab.click();
+
+    const deleteBtn = await screen.findByText("Delete");
+    deleteBtn.click();
+
+    expect(workspacesApi.deleteSession).toHaveBeenCalledWith("ws-1", "sess-1");
+  });
+
+  it("proceeds with deletion when window.confirm throws (sandboxed iframe)", async () => {
+    const { qc } = renderSidebar();
+
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-1", title: "Keep me", messageCount: 1, status: "idle" },
+    ]);
+
+    await screen.findByText("Keep me");
+
+    // Simulate window.confirm being blocked in a sandboxed iframe
+    vi.spyOn(window, "confirm").mockImplementation(() => { throw new Error("Blocked"); });
 
     const kebabButtons = await screen.findAllByLabelText("Actions");
     const sessionKebab = kebabButtons[kebabButtons.length - 1]!;
