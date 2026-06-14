@@ -881,6 +881,8 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, 
 func registerProxyRoutes(rg *gin.RouterGroup, proxyHandler *handlers.ProxyHandler) {
 	rg.POST("/:id/sessions/:sessionId/message", proxyHandler.SendMessage)
 	rg.POST("/:id/sessions/:sessionId/prompt", proxyHandler.SendPromptAsync)
+	rg.POST("/:id/sessions/:sessionId/queue", proxyHandler.EnqueueMessage)
+	rg.GET("/:id/sessions/:sessionId/queue", proxyHandler.ListQueue)
 	rg.GET("/:id/sessions/:sessionId/message", proxyHandler.GetHistory)
 	rg.GET("/:id/sessions/:sessionId", proxyHandler.GetSession)
 	rg.POST("/:id/sessions/:sessionId/abort", proxyHandler.AbortSession)

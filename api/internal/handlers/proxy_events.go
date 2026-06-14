@@ -4,13 +4,17 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
+	"github.com/lenaxia/llmsafespace/api/internal/services/msgqueue"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
@@ -62,6 +66,11 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 		h.invalidateCaches(workspace.Name)
 		if h.sseTracker != nil {
 			h.sseTracker.StopWatching(workspace.Name)
+		}
+		if h.queueSvc != nil && (phase == phaseTerminated || phase == phaseTerminating) {
+			if err := h.queueSvc.ClearWorkspace(context.Background(), workspace.Name); err != nil {
+				h.logger.Error("Failed to clear message queue on terminate", err, "workspaceID", workspace.Name)
+			}
 		}
 		if phase == phaseTerminated || phase == phaseTerminating {
 			h.priorPhaseMu.Lock()
@@ -130,6 +139,9 @@ func (h *ProxyHandler) onSessionIdle(workspaceID, sessionID string) {
 	if h.sessionIndex != nil {
 		h.sessionIndex.RecordMessage(workspaceID, sessionID, "", time.Now())
 		go h.fetchAndPersistTitle(workspaceID, sessionID)
+	}
+	if h.queueSvc != nil {
+		go h.drainQueuedMessage(workspaceID, sessionID)
 	}
 }
 
@@ -334,4 +346,106 @@ func (h *ProxyHandler) getPodIPForSSE(workspaceID string) string {
 		return ""
 	}
 	return workspace.Status.PodIP
+}
+
+const maxQueueRetries = 5
+
+func (h *ProxyHandler) drainQueuedMessage(workspaceID, sessionID string) {
+	if h.queueSvc == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	msg, err := h.queueSvc.Dequeue(ctx, workspaceID, sessionID)
+	if err != nil {
+		h.logger.Error("Failed to dequeue message", err, "workspaceID", workspaceID, "sessionID", sessionID)
+		return
+	}
+	if msg == nil {
+		return
+	}
+
+	if err := h.sendQueuedToOpencode(ctx, workspaceID, sessionID, msg); err != nil {
+		h.logger.Error("Failed to send queued message to opencode", err,
+			"workspaceID", workspaceID, "sessionID", sessionID, "messageID", msg.ID)
+		if msg.RetryCount >= maxQueueRetries {
+			h.publishQueueEvent(workspaceID, sessionID, "error", msg.ID, "max retries exceeded")
+			return
+		}
+		msg.RetryCount++
+		if requeueErr := h.queueSvc.Requeue(ctx, workspaceID, sessionID, *msg); requeueErr != nil {
+			h.logger.Error("Failed to requeue message", requeueErr, "workspaceID", workspaceID, "sessionID", sessionID)
+		}
+		return
+	}
+
+	h.publishQueueEvent(workspaceID, sessionID, "sent", msg.ID, "")
+}
+
+func (h *ProxyHandler) sendQueuedToOpencode(ctx context.Context, workspaceID, sessionID string, msg *msgqueue.QueuedMessage) error {
+	v1Client, v1Err := h.k8sClient.LlmsafespaceV1()
+	if v1Err != nil {
+		return fmt.Errorf("getting v1 client: %w", v1Err)
+	}
+	workspace, err := v1Client.Workspaces(h.namespace).Get(ctx, workspaceID, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("getting workspace: %w", err)
+	}
+	if workspace.Status.Phase != phaseActive || workspace.Status.PodIP == "" {
+		return fmt.Errorf("workspace not active")
+	}
+	password, err := h.getPassword(ctx, workspaceID)
+	if err != nil {
+		return fmt.Errorf("getting password: %w", err)
+	}
+
+	body := map[string]interface{}{
+		"parts":     []map[string]string{{"type": "text", "text": msg.Text}},
+		"messageID": msg.ID,
+	}
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("marshaling body: %w", err)
+	}
+
+	targetURL := fmt.Sprintf("http://%s:%d/session/%s/prompt_async", workspace.Status.PodIP, opencodePort, sessionID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+	req.SetBasicAuth("opencode", password)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("sending request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	if resp.StatusCode == http.StatusConflict {
+		return fmt.Errorf("session busy")
+	}
+	return fmt.Errorf("unexpected status: %d", resp.StatusCode)
+}
+
+func (h *ProxyHandler) publishQueueEvent(workspaceID, sessionID, event, messageID, errMsg string) {
+	if h.broker == nil {
+		return
+	}
+	data := map[string]interface{}{
+		"event":     event,
+		"messageID": messageID,
+	}
+	if errMsg != "" {
+		data["error"] = errMsg
+	}
+	h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
+		Type:      "queue.update",
+		SessionID: sessionID,
+		Data:      data,
+	})
 }
