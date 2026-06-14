@@ -282,6 +282,18 @@ func TestPortal_ReturnsURL(t *testing.T) {
 	}
 }
 
+func TestCheckout_NoBillingConfigured_503(t *testing.T) {
+	store := newMockOrgStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1", Status: types.OrgStatusActive}
+	store.billingAccounts["org-1"] = "cus_1"
+	router := setupOrgTestRouterWithBilling(t, store, nil, false)
+
+	w := doRequest(router, "POST", "/api/v1/orgs/org-1/billing/checkout", `{"planId":"team"}`)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503 when billing not configured, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestPortal_NoCustomerLinked_Conflict(t *testing.T) {
 	store := newMockOrgStore()
 	store.orgs["org-1"] = &types.Organization{ID: "org-1"}

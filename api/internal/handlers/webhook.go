@@ -128,25 +128,20 @@ func (h *StripeWebhookHandler) dispatch(ctx context.Context, event stripe.Event)
 // reports a trial).
 func (h *StripeWebhookHandler) onCheckoutCompleted(ctx context.Context, event stripe.Event) error {
 	var obj struct {
-		Customer      string `json:"customer"`
-		CustomerEmail string `json:"customer_email"`
-		Subscription  string `json:"subscription"`
-		Mode          string `json:"mode"`
+		Customer     string `json:"customer"`
+		Subscription string `json:"subscription"`
+		Mode         string `json:"mode"`
 	}
 	if err := json.Unmarshal(event.Data.Raw, &obj); err != nil {
 		return fmt.Errorf("unmarshal checkout.session.completed: %w", err)
 	}
 
-	customerID := obj.Customer
-	if customerID == "" {
-		customerID = obj.CustomerEmail
-	}
-	orgID, err := h.store.GetOrgIDByStripeCustomer(ctx, customerID)
+	orgID, err := h.store.GetOrgIDByStripeCustomer(ctx, obj.Customer)
 	if err != nil {
-		return fmt.Errorf("resolve org for customer %s: %w", customerID, err)
+		return fmt.Errorf("resolve org for customer %s: %w", obj.Customer, err)
 	}
 	if orgID == "" {
-		h.logger.Warn("stripe webhook: checkout.completed for unknown customer", "customerID", customerID, "eventID", event.ID)
+		h.logger.Warn("stripe webhook: checkout.completed for unknown customer", "customerID", obj.Customer, "eventID", event.ID)
 		return nil
 	}
 

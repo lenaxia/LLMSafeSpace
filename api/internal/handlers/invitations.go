@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"html"
 	"net/http"
 	"strings"
 	"time"
@@ -179,11 +180,6 @@ func (h *InvitationsHandler) Resend(c *gin.Context) {
 		return
 	}
 
-	if err := h.store.DeleteInvitation(ctx, invID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to invalidate old invitation"})
-		return
-	}
-
 	token, hash, err := generateInvitationToken()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate token"})
@@ -202,6 +198,9 @@ func (h *InvitationsHandler) Resend(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create invitation"})
 		return
 	}
+	// Invalidate the old invitation AFTER the new one is persisted so a
+	// failure between create and delete doesn't lose the invitation.
+	_ = h.store.DeleteInvitation(ctx, invID)
 	h.sendInvitationEmail(ctx, existing.Email, token, "", orgID, existing.Role)
 
 	c.JSON(http.StatusOK, inv)
@@ -339,8 +338,9 @@ func (h *InvitationsHandler) sendInvitationEmail(ctx context.Context, addr, toke
 	}
 	link := fmt.Sprintf("%s/invitations/%s", strings.TrimRight(h.baseURL, "/"), token)
 	subject := fmt.Sprintf("[%s] Invitation to join on LLMSafeSpace", orgName)
+	escapedOrgName := html.EscapeString(orgName)
 	textBody := fmt.Sprintf("You've been invited to join %s as a %s.\n\nClick here to accept: %s\n\nThis invitation expires in 7 days.", orgName, role, link)
-	htmlBody := fmt.Sprintf("<p>You've been invited to join <strong>%s</strong> as a <strong>%s</strong>.</p><p><a href=\"%s\">Click here to accept</a></p><p>This invitation expires in 7 days.</p>", orgName, role, link)
+	htmlBody := fmt.Sprintf("<p>You've been invited to join <strong>%s</strong> as a <strong>%s</strong>.</p><p><a href=\"%s\">Click here to accept</a></p><p>This invitation expires in 7 days.</p>", escapedOrgName, role, link)
 
 	if err := h.email.Send(ctx, email.Message{
 		To:       addr,

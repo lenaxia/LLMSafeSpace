@@ -308,6 +308,31 @@ func TestWebhook_SubscriptionUpdated_Unpaid_SuspendsOrg(t *testing.T) {
 	}
 }
 
+func TestWebhook_SubscriptionUpdated_Active_RecoversOrg(t *testing.T) {
+	const secret = "whsec_test"
+	store := newFakeStripeEventStore()
+	store.customerToOrg["cus_org1"] = "org-uuid-1"
+	r, _ := newWebhookTestRouter(t, secret, store)
+
+	payload := buildStripeEvent(t, "customer.subscription.updated", "evt_sub_active", map[string]any{
+		"customer": "cus_org1",
+		"status":   "active",
+	})
+	sig := signEvent(t, payload, secret)
+	w := postWebhook(t, r, payload, sig)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	upd := store.statusUpdates[0]
+	if upd.status == nil || *upd.status != types.OrgStatusActive {
+		t.Errorf("expected operational status active, got %+v", upd.status)
+	}
+	if upd.subscription == nil || *upd.subscription != types.SubscriptionActive {
+		t.Errorf("expected subscription active, got %+v", upd.subscription)
+	}
+}
+
 func TestWebhook_SubscriptionUpdated_Canceled_SuspendsOrg(t *testing.T) {
 	const secret = "whsec_test"
 	store := newFakeStripeEventStore()

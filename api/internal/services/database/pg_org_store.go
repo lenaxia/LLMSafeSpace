@@ -508,7 +508,7 @@ func (s *PgOrgStore) IsOrgMember(ctx context.Context, orgID, userID string) (boo
 		   SELECT 1 FROM org_memberships m
 		   JOIN organizations o ON o.id = m.org_id
 		   WHERE m.org_id = $1 AND m.user_id = $2 AND o.deleted_at IS NULL
-		     AND o.status = 'active'
+		     AND o.status != 'suspended'
 		 )`,
 		orgID, userID,
 	).Scan(&exists)
@@ -527,7 +527,7 @@ func (s *PgOrgStore) IsOrgAdmin(ctx context.Context, orgID, userID string) (bool
 		   WHERE m.org_id = $1 AND m.user_id = $2
 		     AND m.role = 'admin' AND m.pending_key_wrap = false
 		     AND o.deleted_at IS NULL
-		     AND o.status = 'active'
+		     AND o.status != 'suspended'
 		 )`,
 		orgID, userID,
 	).Scan(&exists)
