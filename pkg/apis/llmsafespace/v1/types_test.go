@@ -31,6 +31,8 @@ func TestSchemeRegistration(t *testing.T) {
 		{"RuntimeEnvironmentList", &RuntimeEnvironmentList{}, "RuntimeEnvironmentList"},
 		{"Workspace", &Workspace{}, "Workspace"},
 		{"WorkspaceList", &WorkspaceList{}, "WorkspaceList"},
+		{"InferenceRelay", &InferenceRelay{}, "InferenceRelay"},
+		{"InferenceRelayList", &InferenceRelayList{}, "InferenceRelayList"},
 	}
 
 	for _, tt := range tests {
