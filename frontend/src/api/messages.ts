@@ -87,4 +87,14 @@ export const messagesApi = {
   },
   sendAsync: (workspaceId: string, sessionId: string, req: SendMessageRequest) =>
     api.post<void>(`/workspaces/${workspaceId}/sessions/${sessionId}/prompt`, req),
+  queueMessage: (workspaceId: string, sessionId: string, text: string) =>
+    api.post<{ messageID: string }>(`/workspaces/${workspaceId}/sessions/${sessionId}/queue`, { text }),
+  getQueue: async (workspaceId: string, sessionId: string) => {
+    const res = await api.get<{ messages: Array<{
+      id: string; text: string; session_id: string; workspace_id: string; enqueued_at: string; retry_count: number;
+    }> }>(`/workspaces/${workspaceId}/sessions/${sessionId}/queue`);
+    return res;
+  },
+  deleteQueueMessage: (workspaceId: string, sessionId: string, messageId: string) =>
+    api.delete<void>(`/workspaces/${workspaceId}/sessions/${sessionId}/queue/${messageId}`),
 };

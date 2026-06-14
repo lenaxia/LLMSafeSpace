@@ -3,10 +3,7 @@
     "list": [
       {
         "builtIn": 1,
-        "datasource": {
-          "type": "grafana",
-          "uid": "-- Grafana --"
-        },
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
         "enable": true,
         "hide": true,
         "iconColor": "rgba(0, 211, 255, 1)",
@@ -15,7 +12,7 @@
       }
     ]
   },
-  "description": "LLMSafeSpace operational metrics: API, controller, agentd, reconciliation, recovery",
+  "description": "LLMSafeSpace operational health: availability, lifecycle, saturation, noisy neighbors, controller, security, metering integrity. Every panel has a critical threshold and drives a specific operator action.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -26,9 +23,7 @@
       "icon": "external link",
       "includeVars": false,
       "keepTime": true,
-      "tags": [
-        "llmsafespace"
-      ],
+      "tags": ["llmsafespace"],
       "targetBlank": true,
       "title": "LLMSafeSpace Dashboards",
       "tooltip": "",
@@ -39,927 +34,246 @@
   "panels": [
     {
       "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 0
-      },
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
       "id": 1,
       "panels": [],
-      "title": "Request Overview",
+      "title": "Platform Availability",
       "type": "row",
-      "description": "API-level HTTP traffic health. Use these panels to verify the API is serving requests at expected rates with acceptable latency and error rates."
+      "description": "The single most important question: is the platform serving users? Availability = 1 - 5xx/(total - 4xx). 4xx are excluded because they are client errors, not server failures. Critical threshold: 99%."
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
+          "color": {"mode": "thresholds"},
+          "decimals": 3,
           "mappings": [],
-          "unit": "reqps"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 1
-      },
-      "id": 2,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(rate(http_requests_total{job=~\"$job\"}[$__rate_interval])) by (status)",
-          "legendFormat": "{{status}}",
-          "refId": "A"
-        }
-      ],
-      "title": "HTTP Request Rate by Status",
-      "type": "timeseries",
-      "description": "HTTP requests per second grouped by response status code. 2xx = success, 4xx = client errors (auth failures, bad input), 5xx = server errors. A rising 5xx rate is the primary signal that the API is degraded."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 1
-      },
-      "id": 3,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval])) by (le, method))",
-          "legendFormat": "p50",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval])) by (le, method))",
-          "legendFormat": "p95",
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval])) by (le, method))",
-          "legendFormat": "p99",
-          "refId": "C"
-        }
-      ],
-      "title": "HTTP Request Latency",
-      "type": "timeseries",
-      "description": "p50, p95, and p99 API response latency. p50 is the typical user experience; p99 is the worst-case for roughly 1-in-100 requests. Latency above 2s at p95 indicates backend pressure. Latency above 10s likely reflects workspace proxy calls to slow agentd endpoints."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "reqps"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 1
-      },
-      "id": 4,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(rate(api_errors_total{job=~\"$job\"}[$__rate_interval])) by (type)",
-          "legendFormat": "{{type}}",
-          "refId": "A"
-        }
-      ],
-      "title": "API Error Rate by Type",
-      "type": "timeseries",
-      "description": "Rate of application-level errors grouped by error type. Distinct from HTTP 5xx status codes \u2014 this captures errors that may be returned as structured error responses with 4xx codes (e.g. workspace_not_found, auth_failed)."
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 9
-      },
-      "id": 5,
-      "panels": [],
-      "title": "Connections & WebSocket",
-      "type": "row",
-      "description": "Active connection state. Use these panels to check for connection saturation and to correlate authentication failure spikes with specific failure reasons."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 10
-      },
-      "id": 6,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(api_active_connections{job=~\"$job\"}) by (type)",
-          "legendFormat": "{{type}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Active API Connections",
-      "type": "timeseries",
-      "description": "Current open connections by type. REST connections should be short-lived; persistently high counts indicate clients are not closing connections."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 10
-      },
-      "id": 7,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(ws_connections_active{job=~\"$job\"}) by (type)",
-          "legendFormat": "active {{type}}",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(rate(ws_connections_total{job=~\"$job\"}[$__rate_interval])) by (type)",
-          "legendFormat": "new {{type}}/s",
-          "refId": "B"
-        }
-      ],
-      "title": "WebSocket Connections",
-      "type": "timeseries",
-      "description": "Active and new WebSocket connections (e.g. terminal sessions). Active line = current open sessions. New line = connection rate (new sessions/s)."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 10
-      },
-      "id": 8,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(rate(llmsafespace_auth_failures_total{job=~\"$job\"}[$__rate_interval])) by (reason)",
-          "legendFormat": "{{reason}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Authentication Failures",
-      "type": "timeseries",
-      "description": "Rate of auth failures by reason. missing_token: request had no Authorization header. invalid_token / expired_token: bearer token was invalid or expired. wrong_password / user_not_found: failed username/password login. A sustained spike in invalid_token may indicate a misconfigured client or a brute-force attempt."
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 18
-      },
-      "id": 9,
-      "panels": [],
-      "title": "Workspace Lifecycle & Controller",
-      "type": "row",
-      "description": "Workspace creation, resume, and failure state as observed by the controller. The stat panels are instantaneous \u2014 check them first when a user reports a broken workspace."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "bars",
-            "fillOpacity": 50,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "normal"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 19
-      },
-      "id": 10,
-      "options": {
-        "legend": {
-          "calcs": [
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(increase(llmsafespace_workspace_phase_transitions_total{job=~\"$controller_job\"}[$__rate_interval])) by (to_phase)",
-          "legendFormat": "{{to_phase}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Workspace Phase Transitions (destination)",
-      "type": "timeseries",
-      "description": "Rate of workspace phase changes, grouped by the destination phase. Each series represents arrivals into that phase (e.g. Active means workspaces becoming ready). A steady Creating\u2192Active flow is normal during workspace boot. Repeated transitions back to Creating from Active or Failed indicate restart loops."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "fixedColor": "green",
-            "mode": "fixed"
-          },
-          "mappings": [],
+          "max": 1,
+          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 50
-              },
-              {
-                "color": "red",
-                "value": 100
-              }
+              {"color": "red", "value": null},
+              {"color": "green", "value": 0.99}
             ]
           },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 1},
+      "id": 2,
+      "options": {"colorMode": "background", "graphMode": "area", "justifyMode": "auto", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "expr": "1 - sum(rate(http_requests_total{job=~\"$job\",status=~\"5..\"}[$__rate_interval])) / clamp_min(sum(rate(http_requests_total{job=~\"$job\"}[$__rate_interval])) - sum(rate(http_requests_total{job=~\"$job\",status=~\"4..\"}[$__rate_interval])), 0.001)",
+          "legendFormat": "availability",
+          "refId": "A"
+        }
+      ],
+      "title": "Availability (5xx-free of server-handled requests)",
+      "type": "stat",
+      "description": "Availability = 1 - (5xx errors / (total - 4xx)). 4xx are excluded from the denominator because they are client-side failures (bad auth, not found, quota). Below 99% = CRITICAL. Alert fires at <99% for 3 of 5 data points. Action: page on-call, check dependency status, consider rollback."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"fixedColor": "green", "mode": "fixed"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]},
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 8,
-        "y": 19
-      },
-      "id": 11,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
+      "gridPos": {"h": 5, "w": 4, "x": 6, "y": 1},
+      "id": 3,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
           "expr": "sum(llmsafespace_workspaces_running{job=~\"$controller_job\"})",
           "refId": "A"
         }
       ],
       "title": "Active Workspaces",
       "type": "stat",
-      "description": "Current count of workspaces in the Active phase. This gauge is seeded from cluster state at controller startup and updated on phase transitions."
+      "description": "Current count of workspaces in the Active phase. Use this to gauge platform load and correlate with resource panels below. A sudden drop indicates mass workspace failures — check Phase Transitions."
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "fixedColor": "super-light-orange",
-            "mode": "fixed"
-          },
+          "color": {"fixedColor": "yellow", "mode": "fixed"},
           "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
-            ]
-          },
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]},
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 12,
-        "y": 19
-      },
-      "id": 12,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
+      "gridPos": {"h": 5, "w": 5, "x": 10, "y": 1},
+      "id": 4,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "expr": "sum(llmsafespace_workspaces_suspended_total{job=~\"$job\"})",
+          "legendFormat": "suspended",
+          "refId": "A"
+        }
+      ],
+      "title": "Suspended Workspaces (PVC retained)",
+      "type": "stat",
+      "description": "Workspaces in Suspended phase. Each retains a PVC consuming storage. High count = storage waste. Action: evict long-idle suspended workspaces or implement idle-eviction policy."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 5, "w": 5, "x": 15, "y": 1},
+      "id": 5,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
           "expr": "llmsafespace_workspace_safe_mode_active{job=~\"$controller_job\"}",
           "refId": "A"
         }
       ],
-      "title": "Safe Mode Active",
+      "title": "Safe Mode Workspaces",
       "type": "stat",
-      "description": "Number of workspaces currently in Safe Mode (repeated failure, awaiting user intervention). Any non-zero value requires operator attention \u2014 affected workspaces will not auto-recover."
+      "description": "Workspaces in Safe Mode (repeated failure, awaiting manual intervention). Any non-zero value requires operator action — affected workspaces will NOT auto-recover. Action: investigate the failing workspace, fix root cause, manually clear safe mode."
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "fixedColor": "super-light-red",
-            "mode": "fixed"
-          },
+          "color": {"mode": "thresholds"},
           "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 2
-              },
-              {
-                "color": "red",
-                "value": 5
-              }
-            ]
-          },
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]},
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 16,
-        "y": 19
-      },
-      "id": 13,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
+      "gridPos": {"h": 5, "w": 4, "x": 20, "y": 1},
+      "id": 6,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "llmsafespace_workspace_consecutive_failures_max{job=~\"$controller_job\"}",
-          "refId": "A"
-        }
-      ],
-      "title": "Max Consecutive Failures",
-      "type": "stat",
-      "description": "Highest consecutive failure count across all workspaces at this instant. Values above 3 indicate a workspace approaching or in Safe Mode. Check the Workspace Phase Transitions graph to identify which workspace is failing."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "fixedColor": "purple",
-            "mode": "fixed"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 20,
-        "y": 19
-      },
-      "id": 14,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
           "expr": "llmsafespace_api_key_legacy_total{job=~\"$controller_job\"}",
           "refId": "A"
         }
       ],
-      "title": "Legacy API Keys (plaintext)",
+      "title": "Legacy Plaintext API Keys",
       "type": "stat",
-      "description": "Count of API keys using pre-DEK plaintext storage. Target is 0."
+      "description": "API keys still using pre-DEK plaintext storage. Target is 0. Any non-zero value is a security risk — action: force key rotation for affected users."
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 30,
+            "gradientMode": "opacity",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {"type": "linear"},
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {"group": "A", "mode": "normal"},
+            "thresholdsStyle": {"mode": "off"}
           },
+          "mappings": [],
+          "unit": "reqps"
+        },
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "2xx"}, "properties": [{"id": "color", "value": {"fixedColor": "green", "mode": "fixed"}}]},
+          {"matcher": {"id": "byName", "options": "4xx"}, "properties": [{"id": "color", "value": {"fixedColor": "yellow", "mode": "fixed"}}]},
+          {"matcher": {"id": "byName", "options": "5xx"}, "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]}
+        ]
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 6},
+      "id": 7,
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(http_requests_total{job=~\"$job\",status=~\"2..\"}[$__rate_interval]))", "legendFormat": "2xx", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(http_requests_total{job=~\"$job\",status=~\"4..\"}[$__rate_interval]))", "legendFormat": "4xx", "refId": "B"},
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(http_requests_total{job=~\"$job\",status=~\"5..\"}[$__rate_interval]))", "legendFormat": "5xx", "refId": "C"}
+      ],
+      "title": "Request Composition (2xx / 4xx / 5xx)",
+      "type": "timeseries",
+      "description": "Stacked request rate by response class. Green (2xx) = successful traffic. Yellow (4xx) = client errors (auth failures, bad input, quota). Red (5xx) = server faults. A growing red wedge is the primary signal of platform degradation. Use the Error Status Breakdown panel to see specific 4xx/5xx codes."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {"type": "linear"},
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "line"}
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]},
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 6},
+      "id": 8,
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "expr": "sum(rate(http_requests_total{job=~\"$job\",status=~\"[45]..\"}[$__rate_interval])) by (status)",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Error Status Breakdown (by HTTP code)",
+      "type": "timeseries",
+      "description": "Non-2xx request rate broken down by specific status code. Stories: 401 spike = expired JWT wave or brute-force. 403 = authorization misconfiguration. 404 = routing bug or stale client. 429 = quota enforcement active (expected under load). 500/502/503 = server faults requiring investigation. Red line = 1 req/s (any non-2xx at this rate is notable)."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
           "custom": {
             "axisBorderShow": false,
             "axisCenteredZero": false,
@@ -970,1397 +284,700 @@
             "drawStyle": "line",
             "fillOpacity": 10,
             "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
             "lineInterpolation": "linear",
-            "lineWidth": 1,
+            "lineWidth": 2,
             "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
+            "scaleDistribution": {"type": "linear"},
             "showPoints": "never",
             "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "line"}
           },
           "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 2}]},
           "unit": "s"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 23
-      },
-      "id": 15,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 6},
+      "id": 9,
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "histogram_quantile(0.50, sum(rate(llmsafespace_workspace_create_duration_seconds_bucket{job=~\"$controller_job\"}[$__rate_interval])) by (le))",
-          "legendFormat": "p50",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "histogram_quantile(0.95, sum(rate(llmsafespace_workspace_create_duration_seconds_bucket{job=~\"$controller_job\"}[$__rate_interval])) by (le))",
-          "legendFormat": "p95",
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "histogram_quantile(0.99, sum(rate(llmsafespace_workspace_create_duration_seconds_bucket{job=~\"$controller_job\"}[$__rate_interval])) by (le))",
-          "legendFormat": "p99",
-          "refId": "C"
-        }
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval])) by (le))", "legendFormat": "p95", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval])) by (le))", "legendFormat": "p99", "refId": "B"}
       ],
-      "title": "Workspace Create Duration",
+      "title": "API Latency p95 / p99",
       "type": "timeseries",
-      "description": "Time from workspace creation request to the pod reaching the Active phase. Measured at p50, p95, and p99. p50 is typically 30\u201390 seconds (image pull + init container). p99 significantly higher than p95 suggests occasional infrastructure delays (node pressure, slow image pull)."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 23
-      },
-      "id": 16,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "histogram_quantile(0.50, sum(rate(llmsafespace_workspace_resume_duration_seconds_bucket{job=~\"$controller_job\"}[$__rate_interval])) by (le, resume_type))",
-          "legendFormat": "p50 {{resume_type}}",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "histogram_quantile(0.99, sum(rate(llmsafespace_workspace_resume_duration_seconds_bucket{job=~\"$controller_job\"}[$__rate_interval])) by (le, resume_type))",
-          "legendFormat": "p99 {{resume_type}}",
-          "refId": "B"
-        }
-      ],
-      "title": "Workspace Resume Duration",
-      "type": "timeseries",
-      "description": "Time from resume request to Active phase, split by resume type. first_resume: workspace was suspended and resumed for the first time (image already on node). subsequent_resume: later resumes are typically faster since the image is cached locally."
+      "description": "p95 and p99 response latency (p50 dropped — only the tail is actionable). Red line at 2s: above this, users experience noticeable delays. Sustained p99 above 5s likely reflects slow workspace proxy calls to agentd. Action: scale API replicas, check DB/Redis latency, investigate slow agentd endpoints."
     },
     {
       "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 31
-      },
-      "id": 17,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 14},
+      "id": 10,
       "panels": [],
-      "title": "Reconciliation & Recovery",
+      "title": "Workspace Lifecycle",
       "type": "row",
-      "description": "Controller loop health. A healthy controller should show near-zero errors and recovery attempts. Use these panels to diagnose controller instability."
+      "description": "How fast do workspaces launch, and are any stuck in failure loops? Create duration is the primary user-facing UX metric. Resume duration should be ~3s per design. Restart loops indicate systemic problems."
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
+          "color": {"mode": "palette-classic"},
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "line"}
           },
           "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 120}]},
           "unit": "s"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 32
-      },
-      "id": 18,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 15},
+      "id": 11,
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "histogram_quantile(0.99, sum(rate(llmsafespace_reconciliation_duration_seconds_bucket{job=~\"$controller_job\"}[$__rate_interval])) by (le, resource))",
-          "legendFormat": "p99 {{resource}}",
-          "refId": "A"
-        }
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "histogram_quantile(0.95, sum(rate(llmsafespace_workspace_create_duration_seconds_bucket{job=~\"$controller_job\"}[$__rate_interval])) by (le))", "legendFormat": "p95", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "histogram_quantile(0.99, sum(rate(llmsafespace_workspace_create_duration_seconds_bucket{job=~\"$controller_job\"}[$__rate_interval])) by (le))", "legendFormat": "p99", "refId": "B"}
       ],
-      "title": "Reconciliation Duration (p99) by Resource",
+      "title": "Workspace Create Duration p95 / p99",
       "type": "timeseries",
-      "description": "p99 duration of the controller reconcile loop per resource type. Values below 500ms are healthy. A sustained rise usually indicates slow Kubernetes API calls or a large workspace backlog. This is the per-iteration cost, not the end-to-end creation time."
+      "description": "Wall-clock time from creation request to Active phase. p50 is typically 30-90s (image pull + init container). Red line at 120s: users waiting >2min for a workspace will perceive the platform as broken. Action: pre-pull runtime images onto nodes, add nodes, investigate slow init containers (check Agentd Startup Gate)."
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
+          "color": {"mode": "palette-classic"},
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "line"}
           },
           "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 10}]},
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 15},
+      "id": 12,
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "histogram_quantile(0.95, sum(rate(llmsafespace_workspace_resume_duration_seconds_bucket{job=~\"$controller_job\"}[$__rate_interval])) by (le))", "legendFormat": "p95", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "histogram_quantile(0.99, sum(rate(llmsafespace_workspace_resume_duration_seconds_bucket{job=~\"$controller_job\"}[$__rate_interval])) by (le))", "legendFormat": "p99", "refId": "B"}
+      ],
+      "title": "Workspace Resume Duration p95 / p99",
+      "type": "timeseries",
+      "description": "Time from resume request to Active (pod deleted, PVC retained, re-created). Design target is ~3s. Red line at 10s: a resume taking >10s indicates slow PVC attach, node pressure, or image pull miss. Action: check node health, ensure runtime images are cached on resume-target nodes."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "bars", "fillOpacity": 50, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "line"}
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]},
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 32
-      },
-      "id": 19,
-      "options": {
-        "legend": {
-          "calcs": [
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 15},
+      "id": 13,
+      "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(increase(llmsafespace_workspace_phase_transitions_total{job=~\"$controller_job\",to_phase=~\"Failed|Creating\"}[$__rate_interval])) by (to_phase)", "legendFormat": "{{to_phase}}", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(increase(llmsafespace_workspaces_failed_total{job=~\"$controller_job\"}[$__rate_interval])) by (reason)", "legendFormat": "failed: {{reason}}", "refId": "B"}
+      ],
+      "title": "Workspace Failure & Restart Rate",
+      "type": "timeseries",
+      "description": "Rate of workspaces entering Failed or re-entering Creating (restart loops). Non-zero is CRITICAL. Action: investigate why workspaces are failing — check Recovery Attempts vs Success panel, examine controller logs for phase handler errors. reason label on failed_total identifies OOM, crash, eviction, etc."
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 23},
+      "id": 14,
+      "panels": [],
+      "title": "Resource Saturation & Dependencies",
+      "type": "row",
+      "description": "Is the platform running out of capacity? DB pool exhaustion, slow queries, Redis latency, SSE reliability, and dependency up/down. Relay and OIDC health are reflected in traffic metrics (inference errors, auth failures)."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 20, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "line"}
           },
-          "expr": "sum(rate(llmsafespace_reconciliation_errors_total{job=~\"$controller_job\"}[$__rate_interval])) by (resource, error_type)",
-          "legendFormat": "{{resource}} {{error_type}}",
-          "refId": "A"
-        }
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 80}]},
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 24},
+      "id": 15,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(llmsafespace_db_pool_active_connections{job=~\"$job\"}) / clamp_min(sum(llmsafespace_db_pool_max_connections{job=~\"$job\"}), 1) * 100", "legendFormat": "active / max %", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(llmsafespace_db_pool_idle_connections{job=~\"$job\"})", "legendFormat": "idle conns", "refId": "B"}
+      ],
+      "title": "DB Connection Pool Utilization",
+      "type": "timeseries",
+      "description": "Active DB connections as % of pool max. Red line at 80%: above this, the API is approaching pool exhaustion — new requests will queue or fail. Action: increase maxOpenConns, scale PostgreSQL, or investigate long-running queries holding connections."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "line"}
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0.05}]},
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 24},
+      "id": 16,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "histogram_quantile(0.95, sum(rate(llmsafespace_db_query_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval])) by (le, operation))", "legendFormat": "{{operation}} p95", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(llmsafespace_db_errors_total{job=~\"$job\"}[$__rate_interval])) by (operation)", "legendFormat": "{{operation}} errors", "refId": "B"}
+      ],
+      "title": "DB Query Latency p95 + Errors",
+      "type": "timeseries",
+      "description": "p95 query latency by operation (select/insert/update/delete) and error rate. Red line at 50ms: slow queries indicate missing indexes, lock contention, or Postgres CPU pressure. Error lines >0 require investigation (timeout, deadlock, connection). Action: EXPLAIN ANALYZE slow queries, check pg_stat_activity for locks."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "line"}
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0.005}]},
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 24},
+      "id": 17,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "histogram_quantile(0.95, sum(rate(llmsafespace_redis_command_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval])) by (le, command))", "legendFormat": "{{command}} p95", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(llmsafespace_redis_errors_total{job=~\"$job\"}[$__rate_interval])) by (command)", "legendFormat": "{{command}} errors", "refId": "B"}
+      ],
+      "title": "Redis Latency p95 + Errors",
+      "type": "timeseries",
+      "description": "p95 Redis command latency by command type and error rate. Red line at 5ms: Redis should be sub-millisecond. Elevated latency indicates Redis CPU saturation, network issues, or large value serialization. Action: check Redis INFO, scale Redis, investigate large cached values."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "line"}
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32},
+      "id": 18,
+      "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(llmsafespace_sse_broker_dropped_events_total{job=~\"$job\"}[$__rate_interval])) by (event_type)", "legendFormat": "{{event_type}}", "refId": "A"}
+      ],
+      "title": "SSE Dropped Events (real-time update reliability)",
+      "type": "timeseries",
+      "description": "Rate of SSE events dropped because subscriber channel buffer was full. Red line at 1/s: any dropped events mean users are missing real-time updates (phase changes, session status, chat streaming). They must wait for next poll to catch up. Action: increase SSE broker buffer size, investigate slow browser clients, check if burst events (bulk phase changes) exceed buffer."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]},
+          "unit": "short"
+        },
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "postgres"}, "properties": [{"id": "color", "value": {"fixedColor": "blue", "mode": "fixed"}}]},
+          {"matcher": {"id": "byName", "options": "redis"}, "properties": [{"id": "color", "value": {"fixedColor": "super-light-green", "mode": "fixed"}}]}
+        ]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32},
+      "id": 19,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "name"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "llmsafespace_dependency_up{job=~\"$job\"}", "legendFormat": "{{dependency}}", "refId": "A"}
+      ],
+      "title": "Dependency Status (postgres, redis)",
+      "type": "stat",
+      "description": "Health status of PostgreSQL and Redis (1=up, 0=down). Updated on each /readyz call. Relay health is reflected in Inference metrics on the Billing dashboard; OIDC/auth health is reflected in the Auth Failure Ratio panel. Any dependency showing 0 = the platform is degraded or down. Action: restart the failed dependency, check network connectivity."
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 40},
+      "id": 20,
+      "panels": [],
+      "title": "Noisy Neighbor Detection",
+      "type": "row",
+      "description": "Top resource consumers by workspace and user. These panels enable the primary multitenant action: identify and throttle/terminate workspaces or users consuming disproportionate resources. Each bar gauge shows the top-10 consumers at the current instant."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 4}]},
+          "unit": "cpucores"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 41},
+      "id": 21,
+      "options": {"displayMode": "lcd", "minVizHeight": 10, "minVizWidth": 0, "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": true}, "showUnfilled": true, "text": {}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "topk(10, sum(rate(llmsafespace_workspace_cpu_milliseconds_total{job=~\"$controller_job\"}[5m])) by (workspace_id) / 1000)", "legendFormat": "{{workspace_id}}", "refId": "A"}
+      ],
+      "title": "Top-10 Workspaces by CPU",
+      "type": "bargauge",
+      "description": "Top-10 workspace pods by CPU consumption (cores). Red threshold at 4 cores (default burst limit = 4x 500m request). Workspaces above this are CPU-bound and may need resource limit increases or investigation for runaway processes. Action: terminate or throttle the workspace, contact the user."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 2147483648}]},
+          "unit": "decbytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 41},
+      "id": 22,
+      "options": {"displayMode": "lcd", "minVizHeight": 10, "minVizWidth": 0, "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": true}, "showUnfilled": true, "text": {}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "topk(10, llmsafespace_workspace_memory_used_bytes{job=~\"$controller_job\"})", "legendFormat": "{{workspace_id}}", "refId": "A"}
+      ],
+      "title": "Top-10 Workspaces by Memory",
+      "type": "bargauge",
+      "description": "Top-10 workspace pods by cgroup memory usage. Red threshold at 2Gi (default burst limit = 4x 512Mi request). Workspaces approaching their memory limit risk OOM kills. Action: increase memory limit for legitimate use, terminate workspaces with memory leaks."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 95}]},
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 41},
+      "id": 23,
+      "options": {"displayMode": "lcd", "minVizHeight": 10, "minVizWidth": 0, "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": true}, "showUnfilled": true, "text": {}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "topk(10, llmsafespace_workspace_disk_used_bytes{job=~\"$controller_job\"} / clamp_min(llmsafespace_workspace_storage_bytes{job=~\"$controller_job\"}, 1) * 100)", "legendFormat": "{{workspace_id}}", "refId": "A"}
+      ],
+      "title": "Top-10 Workspaces by Disk % of PVC",
+      "type": "bargauge",
+      "description": "Top-10 workspaces by disk usage as % of allocated PVC. Red threshold at 95%: workspaces near their PVC limit risk filling up and crashing the agent (no space for opencode.db, auth.json, etc.). Action: alert user, resize PVC, or clean up large files."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 10}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 41},
+      "id": 24,
+      "options": {"displayMode": "lcd", "minVizHeight": 10, "minVizWidth": 0, "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": true}, "showUnfilled": true, "text": {}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "topk(10, sum(rate(llmsafespace_user_active_seconds_total{job=~\"$controller_job\"}[5m])) by (user_id))", "legendFormat": "{{user_id}}", "refId": "A"}
+      ],
+      "title": "Top-10 Users by Active Compute (parallel workspaces)",
+      "type": "bargauge",
+      "description": "Top-10 users by active compute rate. A value of 1.0 = one workspace continuously active. Values above 1.0 = user has multiple concurrent workspaces. Red threshold at 10: a single user with 10+ active workspaces may be abusing the platform. Action: enforce per-user workspace quota, contact user."
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 49},
+      "id": 25,
+      "panels": [],
+      "title": "Controller & Recovery",
+      "type": "row",
+      "description": "Controller reconcile loop health and workspace recovery effectiveness. A healthy controller shows near-zero errors and high recovery success rates."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "line"}
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 2}]},
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 50},
+      "id": 26,
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "histogram_quantile(0.99, sum(rate(llmsafespace_reconciliation_duration_seconds_bucket{job=~\"$controller_job\"}[$__rate_interval])) by (le, resource))", "legendFormat": "p99 {{resource}}", "refId": "A"}
+      ],
+      "title": "Reconciliation Duration p99",
+      "type": "timeseries",
+      "description": "p99 duration of the controller reconcile loop per resource type. Red line at 2s: this is the per-iteration cost, not end-to-end creation time. Sustained high values indicate slow K8s API calls, large workspace backlog, or controller CPU starvation. Action: check controller CPU/memory limits, check K8s API server latency."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"fixedColor": "red", "mode": "fixed"},
+          "custom": {
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "line"}
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0.01}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 50},
+      "id": 27,
+      "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(llmsafespace_reconciliation_errors_total{job=~\"$controller_job\"}[$__rate_interval])) by (resource, error_type)", "legendFormat": "{{resource}} {{error_type}}", "refId": "A"}
       ],
       "title": "Reconciliation Errors",
       "type": "timeseries",
-      "description": "Rate of errors in the controller reconcile loop by error type. get_failed: the controller could not fetch the workspace object from the API server. phase_handler: an error in the phase-specific handler (creating, active, terminating, etc.). Non-zero values warrant investigation \u2014 the controller relies on successful reconciles to progress workspace state."
+      "description": "Error rate in the controller reconcile loop by resource and error type. Any non-zero rate is critical — the controller relies on successful reconciles to progress workspace state. get_failed = cannot fetch workspace from API server. phase_handler = error in creating/active/terminating handler. Action: check controller logs, check K8s API server health."
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
+          "color": {"mode": "palette-classic"},
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "line"}
           },
           "mappings": [],
-          "unit": "short"
+          "max": 1,
+          "min": 0,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 0.75}]},
+          "unit": "percentunit"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 32
-      },
-      "id": 20,
-      "options": {
-        "legend": {
-          "calcs": [
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(rate(llmsafespace_workspace_recovery_attempts_total{job=~\"$controller_job\"}[$__rate_interval])) by (failure_class)",
-          "legendFormat": "attempt {{failure_class}}",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(rate(llmsafespace_workspace_recovery_success_total{job=~\"$controller_job\"}[$__rate_interval])) by (failure_class)",
-          "legendFormat": "success {{failure_class}}",
-          "refId": "B"
-        }
-      ],
-      "title": "Recovery Attempts vs Success",
-      "type": "timeseries",
-      "description": "Recovery attempt rate vs success rate, per failure class. The gap between attempts and successes indicates workspaces that entered recovery but did not stabilize. Failure classes: infrastructure (node/pod eviction), resource (OOM/CPU limit), process (app crash), configuration (bad user spec). A widening gap signals a systemic issue for that failure class."
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 40
-      },
-      "id": 21,
-      "panels": [],
-      "title": "Agent Operations",
-      "type": "row",
-      "description": "Agent reload and startup activity. Agent reloads happen when user credentials are rotated. Startup gate duration measures how long agentd waits for opencode to be ready."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 41
-      },
-      "id": 22,
-      "options": {
-        "legend": {
-          "calcs": [
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(rate(llmsafespace_agent_reload_total{job=~\"$job\"}[$__rate_interval])) by (result)",
-          "legendFormat": "{{result}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Agent Reload Results",
-      "type": "timeseries",
-      "description": "Rate of agent reload operations by result (success or error). Agent reloads are triggered when user API credentials are rotated. A high error rate means credential rotations are failing \u2014 users will not receive updated credentials in their running workspaces."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "ms"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 41
-      },
-      "id": 23,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "histogram_quantile(0.50, sum(rate(llmsafespace_agent_reload_duration_ms_bucket{job=~\"$job\"}[$__rate_interval])) by (le))",
-          "legendFormat": "p50",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "histogram_quantile(0.99, sum(rate(llmsafespace_agent_reload_duration_ms_bucket{job=~\"$job\"}[$__rate_interval])) by (le))",
-          "legendFormat": "p99",
-          "refId": "B"
-        }
-      ],
-      "title": "Agent Reload Duration",
-      "type": "timeseries",
-      "description": "p50 and p99 time taken to complete an agent reload in milliseconds. A reload involves draining active sessions and calling the agentd dispose endpoint. Values above 30 seconds at p99 indicate session drain is timing out (check SSE Broker Dropped Events)."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 41
-      },
-      "id": 24,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "histogram_quantile(0.99, sum(rate(llmsafespace_agentd_gate_duration_seconds_bucket{job=~\"$agentd_job\"}[$__rate_interval])) by (le, gate))",
-          "legendFormat": "p99 {{gate}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Agentd Startup Gate Duration (p99)",
-      "type": "timeseries",
-      "description": "Time the agentd process spends waiting for opencode to become ready after pod start, per gate stage. Empty until agentd gate metrics are instrumented. High values here contribute directly to Workspace Create Duration."
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 49
-      },
-      "id": 25,
-      "panels": [],
-      "title": "SSE & Relay",
-      "type": "row",
-      "description": "Server-Sent Event reliability and relay injection outcomes. Dropped events and failed relay injections directly impact user experience."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 50
-      },
-      "id": 26,
-      "options": {
-        "legend": {
-          "calcs": [
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(rate(llmsafespace_sse_broker_dropped_events_total{job=~\"$job\"}[$__rate_interval])) by (event_type)",
-          "legendFormat": "{{event_type}}",
-          "refId": "A"
-        }
-      ],
-      "title": "SSE Broker Dropped Events",
-      "type": "timeseries",
-      "description": "Rate of SSE events dropped because a subscriber's channel buffer was full. Events are dropped per-subscriber \u2014 a slow browser client or a large burst of events can cause this. Dropped events mean the browser misses real-time updates (phase changes, session status) and must wait for the next poll cycle to catch up. Non-zero is a signal to investigate client-side SSE handling."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 50
-      },
-      "id": 27,
-      "options": {
-        "legend": {
-          "calcs": [
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(increase(llmsafespace_relay_injector_total{job=~\"$job\"}[$__rate_interval])) by (outcome)",
-          "legendFormat": "{{outcome}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Relay Injector Outcomes",
-      "type": "timeseries",
-      "description": "Counts of relay config injection results per workspace boot (same data as on the Billing dashboard). success = relay configured; skipped_personal_key = user has own credentials; no_free_models = no relay-eligible models for this workspace."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 50
-      },
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 50},
       "id": 28,
-      "options": {
-        "legend": {
-          "calcs": [
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
+      "options": {"legend": {"calcs": ["mean", "min"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(rate(llmsafespace_agent_reload_bulk_total{job=~\"$job\"}[$__rate_interval])) by (outcome)",
-          "legendFormat": "{{outcome}}",
-          "refId": "A"
-        }
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(llmsafespace_workspace_recovery_success_total{job=~\"$controller_job\"}[$__rate_interval])) by (failure_class) / clamp_min(sum(rate(llmsafespace_workspace_recovery_attempts_total{job=~\"$controller_job\"}[$__rate_interval])) by (failure_class), 0.001)", "legendFormat": "{{failure_class}}", "refId": "A"}
       ],
-      "title": "Bulk Reload Outcomes",
+      "title": "Recovery Success Ratio (by failure class)",
       "type": "timeseries",
-      "description": "Results of bulk agent reload operations (triggered when platform-level credentials are rotated). Each outcome (success, error) represents one workspace in the bulk operation. A high error count after a bulk reload means many workspaces failed to pick up the new credentials."
+      "description": "Fraction of recovery attempts that successfully returned to Active, per failure class. Red line at 75%: below this, the system cannot reliably self-heal. Classes: infrastructure (node/pod eviction), resource (OOM/CPU limit), process (app crash), configuration (bad user spec). A low ratio for a class indicates a systemic issue. Action: investigate why that failure class is not recovering — may need image fixes, resource limit changes, or configuration validation."
     },
     {
       "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 58
-      },
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 58},
       "id": 29,
       "panels": [],
-      "title": "Billing at a Glance (on ops dashboard)",
+      "title": "Security & Auth",
       "type": "row",
-      "description": "Abbreviated billing view embedded in the ops dashboard for quick cross-referencing. For full billing detail, use the Billing & Metering dashboard."
+      "description": "Authentication health and credential rotation reliability. Auth failure ratio and 4xx error types reveal brute-force attempts, expired credential waves, and quota enforcement activity."
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
+          "color": {"mode": "palette-classic"},
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "line"}
+          },
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 15}]},
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 59},
+      "id": 30,
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(llmsafespace_auth_attempts_total{job=~\"$job\",result!=\"success\"}[$__rate_interval])) / clamp_min(sum(rate(llmsafespace_auth_attempts_total{job=~\"$job\"}[$__rate_interval])), 0.001) * 100", "legendFormat": "failure ratio %", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(llmsafespace_auth_failures_total{job=~\"$job\"}[$__rate_interval])) by (reason)", "legendFormat": "{{reason}}", "refId": "B"}
+      ],
+      "title": "Auth Failure Ratio + Reasons",
+      "type": "timeseries",
+      "description": "Top line: auth failure ratio (% of all auth attempts that failed). Red threshold at 15%: sustained high failure rates indicate brute-force attack or widespread credential expiry. Bottom lines: raw failure rate by reason (invalid_token, expired_token, wrong_password, revoked_token, missing_token). Action: check for brute-force patterns, verify JWT expiry config, investigate revoked_token spikes (key rotation issues)."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "off"}
           },
           "mappings": [],
           "unit": "reqps"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 59
-      },
-      "id": 30,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 59},
+      "id": 31,
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(rate(llmsafespace_inference_requests_total{job=~\"$job\"}[$__rate_interval])) by (tier)",
-          "legendFormat": "{{tier}}",
-          "refId": "A"
-        }
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(http_requests_total{job=~\"$job\",status=~\"401|403|404|429\"}[$__rate_interval])) by (status)", "legendFormat": "{{status}}", "refId": "A"}
       ],
-      "title": "Inference Request Rate by Tier",
+      "title": "Client Error Types (401 / 403 / 404 / 429)",
       "type": "timeseries",
-      "description": "Rate of inference calls split by tier (free vs paid). Free-tier calls route through the opencode relay (shared IP). Paid-tier calls use direct provider credentials. Use this to monitor relay load and understand the mix of credential types in use."
+      "description": "Actionable breakdown of 4xx error codes. 401 Unauthorized = auth failures (expired JWT, invalid API key). 403 Forbidden = authorization failures (wrong scope, locked account). 404 Not Found = routing bugs or stale client references. 429 Too Many Requests = quota enforcement active (expected under load, confirms limits work). Action: 401 spike = check JWT config or brute-force. 403 spike = RBAC misconfiguration. 404 spike = routing bug. 429 = quota working as designed."
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
+          "color": {"fixedColor": "red", "mode": "fixed"},
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "line"}
           },
           "mappings": [],
-          "unit": "$/s"
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0.1}]},
+          "unit": "percentunit"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 59
-      },
-      "id": 31,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 59},
+      "id": 32,
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(rate(llmsafespace_inference_cost_dollars_total{job=~\"$job\"}[$__rate_interval]))",
-          "legendFormat": "cost rate",
-          "refId": "A"
-        }
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(llmsafespace_agent_reload_total{job=~\"$job\",result=\"error\"}[$__rate_interval])) / clamp_min(sum(rate(llmsafespace_agent_reload_total{job=~\"$job\"}[$__rate_interval])), 0.001)", "legendFormat": "reload failure ratio", "refId": "A"}
       ],
-      "title": "Inference Cost Rate ($/s)",
+      "title": "Agent Reload Failure Ratio (credential rotation health)",
       "type": "timeseries",
-      "description": "Current inference spend rate across the fleet in USD per second. Zero for providers that do not report cost. Useful for quick cost-rate checks without navigating to the full billing dashboard."
+      "description": "Fraction of agent reload operations that failed. Reloads happen when user credentials are rotated. Red threshold at 10%: a high failure rate means credential rotations are failing — users will NOT receive updated credentials in their running workspaces. Action: check agentd logs for reload errors, verify opencode dispose/restart mechanism."
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 67},
+      "id": 33,
+      "panels": [],
+      "title": "Metering Pipeline Integrity",
+      "type": "row",
+      "description": "Is billing data trustworthy? These panels verify the metering pipeline is recording, batching, and exporting usage events correctly. Non-zero dropped events or growing DLQ means billing data is incomplete — costs shown on the Billing dashboard may be understated."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
+          "color": {"mode": "palette-classic"},
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 20, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "line"}
           },
           "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]},
+          "unit": "short"
+        },
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "recorded"}, "properties": [{"id": "color", "value": {"fixedColor": "green", "mode": "fixed"}}]},
+          {"matcher": {"id": "byName", "options": "failed"}, "properties": [{"id": "color", "value": {"fixedColor": "yellow", "mode": "fixed"}}]},
+          {"matcher": {"id": "byName", "options": "dropped"}, "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]}
+        ]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 68},
+      "id": 34,
+      "options": {"legend": {"calcs": ["mean", "sum"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(llmsafespace_metering_events_recorded_total{job=~\"$job\"}[$__rate_interval]))", "legendFormat": "recorded", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(llmsafespace_metering_events_failed_total{job=~\"$job\"}[$__rate_interval]))", "legendFormat": "failed", "refId": "B"},
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(llmsafespace_metering_events_dropped_total{job=~\"$job\"}[$__rate_interval]))", "legendFormat": "dropped", "refId": "C"}
+      ],
+      "title": "Metering Events: Recorded vs Failed vs Dropped",
+      "type": "timeseries",
+      "description": "Pipeline throughput by outcome. Recorded (green) = events successfully written to usage_events table. Failed (yellow) = batch write failed, event went to DLQ. Dropped (red) = buffer full or DLQ write also failed — data is LOST. Any dropped events are critical: billing data is incomplete. Action: check PostgreSQL connectivity, check DLQ depth, verify batch write latency."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]},
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 59
-      },
-      "id": 32,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "histogram_quantile(0.50, sum(rate(llmsafespace_session_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval])) by (le))",
-          "legendFormat": "p50",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "histogram_quantile(0.95, sum(rate(llmsafespace_session_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval])) by (le))",
-          "legendFormat": "p95",
-          "refId": "B"
-        }
-      ],
-      "title": "Session Duration Distribution",
-      "type": "timeseries",
-      "description": "p50 and p95 of opencode session lengths (first message to idle). A session starts when the first message is sent and ends when the session status returns to idle. p50 ~ typical working session; p95 ~ long-running or background agent sessions. Note: unit is seconds."
-    },
-    {
-      "collapsed": false,
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 80},
-      "id": 33,
-      "panels": [],
-      "title": "Dependency Health (US-12.12)",
-      "type": "row",
-      "description": "PostgreSQL, Redis, and auth subsystem health. DB pool saturation, Redis command latency, auth success/failure rates, and dependency up/down status."
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisBorderShow": false, "drawAsColumns": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "unit": "s"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 81},
-      "id": 34,
-      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "histogram_quantile(0.95, sum(rate(llmsafespace_db_query_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval])) by (le, operation))", "legendFormat": "{{operation}} p95", "refId": "A"}],
-      "title": "DB Query Latency (p95)",
-      "type": "timeseries",
-      "description": "95th percentile database query latency by operation type (select, insert, update, delete)."
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "fieldConfig": {"defaults": {"color": {"fixedColor": "red", "mode": "fixed"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}, "unit": "short"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 81},
+      "gridPos": {"h": 8, "w": 4, "x": 12, "y": 68},
       "id": 35,
-      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(llmsafespace_db_errors_total{job=~\"$job\"}[$__rate_interval])) by (operation, error_type)", "legendFormat": "{{operation}} / {{error_type}}", "refId": "A"}],
-      "title": "DB Errors Rate",
-      "type": "timeseries",
-      "description": "Database errors by operation and error type (timeout, connection, deadlock, other)."
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisBorderShow": false, "drawAsColumns": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "unit": "short"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 81},
-      "id": 36,
-      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(llmsafespace_db_pool_active_connections{job=~\"$job\"})", "legendFormat": "active", "refId": "A"}, {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(llmsafespace_db_pool_idle_connections{job=~\"$job\"})", "legendFormat": "idle", "refId": "B"}, {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(llmsafespace_db_pool_max_connections{job=~\"$job\"})", "legendFormat": "max", "refId": "C"}],
-      "title": "DB Connection Pool",
-      "type": "timeseries",
-      "description": "Active, idle, and max database pool connections. Active approaching max indicates pool exhaustion."
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisBorderShow": false, "drawAsColumns": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "unit": "s"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 89},
-      "id": 37,
-      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "histogram_quantile(0.95, sum(rate(llmsafespace_redis_command_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval])) by (le, command))", "legendFormat": "{{command}} p95", "refId": "A"}],
-      "title": "Redis Command Latency (p95)",
-      "type": "timeseries",
-      "description": "95th percentile Redis command latency by command type."
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "fieldConfig": {"defaults": {"color": {"fixedColor": "red", "mode": "fixed"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}, "unit": "short"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 89},
-      "id": 38,
-      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(llmsafespace_redis_errors_total{job=~\"$job\"}[$__rate_interval])) by (command)", "legendFormat": "{{command}}", "refId": "A"}],
-      "title": "Redis Errors Rate",
-      "type": "timeseries",
-      "description": "Redis command errors by command type."
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisBorderShow": false, "drawAsColumns": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "unit": "short"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 97},
-      "id": 39,
-      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(llmsafespace_auth_attempts_total{job=~\"$job\"}[$__rate_interval])) by (method, result)", "legendFormat": "{{method}} / {{result}}", "refId": "A"}],
-      "title": "Auth Attempts Rate",
-      "type": "timeseries",
-      "description": "Authentication attempts by method (jwt, apikey) and result (success, invalid, expired, revoked, locked)."
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "fieldConfig": {"defaults": {"color": {"fixedColor": "red", "mode": "fixed"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}, "unit": "short"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 97},
-      "id": 40,
       "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showThresholdLabels": false, "showThresholdMarkers": true},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(increase(llmsafespace_auth_lockouts_total{job=~\"$job\"}[$__range]))", "legendFormat": "lockouts", "refId": "A"}],
-      "title": "Account Lockouts",
-      "type": "stat",
-      "description": "Brute-force lockout triggers in the selected time range."
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}, "unit": "short"}, "overrides": [{"matcher": {"id": "byName", "options": "postgres"}, "properties": [{"id": "color", "value": {"fixedColor": "blue", "mode": "fixed"}}]}, {"matcher": {"id": "byName", "options": "redis"}, "properties": [{"id": "color", "value": {"fixedColor": "green", "mode": "fixed"}}]}]},
-      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 97},
-      "id": 41,
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showThresholdLabels": false, "showThresholdMarkers": true},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "llmsafespace_dependency_up{job=~\"$job\"}", "legendFormat": "{{dependency}}", "refId": "A"}],
-      "title": "Dependency Status",
-      "type": "stat",
-      "description": "Health status of PostgreSQL and Redis (1=up, 0=down). Updated on each /readyz call."
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisBorderShow": false, "drawAsColumns": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "unit": "s"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 105},
-      "id": 42,
-      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "histogram_quantile(0.95, sum(rate(llmsafespace_service_startup_duration_seconds_bucket{job=~\"$job\"}[$__rate_interval])) by (le, service))", "legendFormat": "{{service}} p95", "refId": "A"}],
-      "title": "Service Startup Duration (p95)",
-      "type": "timeseries",
-      "description": "95th percentile startup duration for each named service in the initialization order."
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "fieldConfig": {"defaults": {"color": {"fixedColor": "orange", "mode": "fixed"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}, "unit": "short"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 105},
-      "id": 43,
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showThresholdLabels": false, "showThresholdMarkers": true},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(llmsafespace_workspaces_suspended_total{job=~\"$job\"})", "legendFormat": "suspended", "refId": "A"}],
-      "title": "Suspended Workspaces",
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(llmsafespace_metering_dlq_size{job=~\"$job\"})", "legendFormat": "unresolved DLQ", "refId": "A"}
+      ],
+      "title": "DLQ Depth (unresolved entries)",
       "type": "gauge",
-      "description": "Current count of workspaces in Suspended phase."
+      "description": "Current dead-letter queue size. Non-zero entries are events that failed batch write and are awaiting reprocessing by the DLQ reaper. Red threshold at 1: any unresolved DLQ entries mean the reaper is failing. Action: check DLQ reaper logs, verify Postgres is reachable, manually reprocess via admin API."
     },
     {
       "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "fieldConfig": {"defaults": {"color": {"fixedColor": "red", "mode": "fixed"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}, "unit": "short"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 105},
-      "id": 44,
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showThresholdLabels": false, "showThresholdMarkers": true},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(increase(llmsafespace_metering_quota_exceeded_total{job=~\"$job\"}[$__range])) by (event_type)", "legendFormat": "{{event_type}}", "refId": "A"}],
-      "title": "Quota Exceeded Events",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"fixedColor": "red", "mode": "fixed"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 4, "x": 16, "y": 68},
+      "id": 36,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(increase(llmsafespace_metering_dlq_dead_total{job=~\"$job\"}[$__range]))", "legendFormat": "dead entries", "refId": "A"}
+      ],
+      "title": "DLQ Dead Entries (exhausted retries)",
       "type": "stat",
-      "description": "Count of quota enforcement triggers (429 responses) in the selected time range."
+      "description": "DLQ entries that exhausted all 5 retry attempts. These events are permanently lost from billing data. Non-zero requires manual intervention via admin API to reprocess or discard. Action: investigate why events repeatedly failed, fix root cause, manually reprocess if possible."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"fixedColor": "orange", "mode": "fixed"},
+          "custom": {
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "line"}
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 900}]},
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 4, "x": 20, "y": 68},
+      "id": 37,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(llmsafespace_metering_export_lag_seconds{job=~\"$job\"})", "legendFormat": "export lag", "refId": "A"}
+      ],
+      "title": "Billing Export Lag",
+      "type": "timeseries",
+      "description": "Seconds since last successful billing export. Red threshold at 900s (15min): rising lag indicates the export goroutine is failing. Billing data forwarded to external billing providers is stale. Action: check export goroutine logs, verify external billing provider connectivity."
     }
   ],
   "refresh": "30s",
   "schemaVersion": 39,
-  "tags": [
-    "llmsafespace",
-    "operational"
-  ],
+  "tags": ["llmsafespace", "operational"],
   "templating": {
     "list": [
       {
-        "current": {
-          "selected": true,
-          "text": "Prometheus",
-          "value": "default"
-        },
+        "current": {"selected": true, "text": "Prometheus", "value": "default"},
         "hide": 0,
         "includeAll": false,
         "label": "Datasource",
@@ -2375,19 +992,8 @@
         "type": "datasource"
       },
       {
-        "current": {
-          "selected": true,
-          "text": [
-            "llmsafespace-api"
-          ],
-          "value": [
-            "llmsafespace-api"
-          ]
-        },
-        "datasource": {
-          "type": "prometheus",
-          "uid": "${datasource}"
-        },
+        "current": {"selected": true, "text": ["llmsafespace-api"], "value": ["llmsafespace-api"]},
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
         "definition": "label_values(http_requests_total, job)",
         "hide": 0,
         "includeAll": false,
@@ -2395,11 +1001,7 @@
         "multi": true,
         "name": "job",
         "options": [],
-        "query": {
-          "qryType": 1,
-          "query": "label_values(http_requests_total, job)",
-          "refId": "VariableQuery"
-        },
+        "query": {"qryType": 1, "query": "label_values(http_requests_total, job)", "refId": "VariableQuery"},
         "refresh": 2,
         "regex": "",
         "skipUrlSync": false,
@@ -2407,19 +1009,8 @@
         "type": "query"
       },
       {
-        "current": {
-          "selected": true,
-          "text": [
-            "llmsafespace-controller"
-          ],
-          "value": [
-            "llmsafespace-controller"
-          ]
-        },
-        "datasource": {
-          "type": "prometheus",
-          "uid": "${datasource}"
-        },
+        "current": {"selected": true, "text": ["llmsafespace-controller"], "value": ["llmsafespace-controller"]},
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
         "definition": "label_values(llmsafespace_reconciliation_duration_seconds_bucket, job)",
         "hide": 0,
         "includeAll": false,
@@ -2427,43 +1018,7 @@
         "multi": true,
         "name": "controller_job",
         "options": [],
-        "query": {
-          "qryType": 1,
-          "query": "label_values(llmsafespace_reconciliation_duration_seconds_bucket, job)",
-          "refId": "VariableQuery"
-        },
-        "refresh": 2,
-        "regex": "",
-        "skipUrlSync": false,
-        "sort": 1,
-        "type": "query"
-      },
-      {
-        "current": {
-          "selected": true,
-          "text": [
-            "llmsafespace-agentd"
-          ],
-          "value": [
-            "llmsafespace-agentd"
-          ]
-        },
-        "datasource": {
-          "type": "prometheus",
-          "uid": "${datasource}"
-        },
-        "definition": "label_values(llmsafespace_agentd_gate_duration_seconds_bucket, job)",
-        "hide": 0,
-        "includeAll": false,
-        "label": "Agentd Job",
-        "multi": true,
-        "name": "agentd_job",
-        "options": [],
-        "query": {
-          "qryType": 1,
-          "query": "label_values(llmsafespace_agentd_gate_duration_seconds_bucket, job)",
-          "refId": "VariableQuery"
-        },
+        "query": {"qryType": 1, "query": "label_values(llmsafespace_reconciliation_duration_seconds_bucket, job)", "refId": "VariableQuery"},
         "refresh": 2,
         "regex": "",
         "skipUrlSync": false,
@@ -2472,13 +1027,10 @@
       }
     ]
   },
-  "time": {
-    "from": "now-1h",
-    "to": "now"
-  },
+  "time": {"from": "now-1h", "to": "now"},
   "timepicker": {},
   "timezone": "utc",
   "title": "LLMSafeSpace - Operational",
   "uid": "llmsafespace-operational",
-  "version": 1
+  "version": 2
 }

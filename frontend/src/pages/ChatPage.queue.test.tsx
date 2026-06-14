@@ -1,11 +1,9 @@
 /**
- * Integration tests for ChatPage message queue (v3).
+ * Integration tests for ChatPage message queue (backend-backed).
  *
- * v3 design (matching TUI behavior): messages are held locally and sent one
- * at a time. enqueue() does NOT fire promptAsync. The message is sent when
- * session.status=idle arrives via SSE (notifyIdle). The pill is removed as
- * soon as promptAsync returns 204. The next item is sent on the subsequent
- * idle event.
+ * Messages are enqueued via POST /queue (Redis-backed). The backend drains
+ * the queue on session idle and publishes queue.update SSE events (sent/error).
+ * The frontend manages display state (pills) locally, synced via SSE.
  */
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { screen, waitFor, act } from "@testing-library/react";
@@ -33,6 +31,10 @@ vi.mock("../providers/SessionActivityProvider", () => ({
   useIsSessionBusy: () => false,
   useIsSessionUnread: () => false,
   useWorkspaceBusyCount: () => 0,
+  useIsSessionPendingAction: () => false,
+  useSessionPendingActions: () => new Set<string>(),
+  useAddPendingAction: () => () => {},
+  useRemovePendingAction: () => () => {},
   SessionActivityProvider: ({ children }: { children: any }) => <>{children}</>,
 }));
 vi.mock("../api/messages", () => ({
@@ -40,6 +42,9 @@ vi.mock("../api/messages", () => ({
     getHistory: vi.fn().mockResolvedValue([]),
     getHistoryPage: vi.fn().mockResolvedValue({ messages: [], nextCursor: undefined }),
     sendAsync: vi.fn(),
+    queueMessage: vi.fn().mockResolvedValue({ messageID: "msg_q_test" }),
+    getQueue: vi.fn().mockResolvedValue({ messages: [] }),
+    deleteQueueMessage: vi.fn().mockResolvedValue(undefined),
   },
 }));
 vi.mock("../api/sessions", () => ({ sessionsApi: { create: vi.fn() } }));
@@ -81,7 +86,7 @@ function sendSSE(event: Record<string, unknown>) {
   act(() => { capturedSSEHandler?.(event); });
 }
 
-describe("ChatPage message queue (v3 — TUI-matching serialized)", () => {
+describe("ChatPage message queue (backend-backed)", () => {
   beforeEach(() => {
     capturedSSEHandler = null;
     vi.clearAllMocks();
@@ -116,7 +121,7 @@ describe("ChatPage message queue (v3 — TUI-matching serialized)", () => {
     expect(document.querySelector("textarea")).not.toBeDisabled();
   });
 
-  it("holds message locally when busy — does NOT fire promptAsync until idle", async () => {
+  it("holds message in queue when busy — calls queueMessage not sendAsync", async () => {
     const user = userEvent.setup();
     renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
     await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
@@ -126,13 +131,15 @@ describe("ChatPage message queue (v3 — TUI-matching serialized)", () => {
     await user.type(document.querySelector("textarea")!, "queued msg");
     await user.keyboard("{Enter}");
 
-    // Pill shown, but promptAsync NOT yet called
+    await waitFor(() => {
+      expect(messagesApi.queueMessage).toHaveBeenCalledWith("ws-1", "ses_1", "queued msg");
+    });
     expect(screen.getByText("queued msg")).toBeInTheDocument();
     expect(screen.getByText("1 message queued")).toBeInTheDocument();
     expect(messagesApi.sendAsync).not.toHaveBeenCalled();
   });
 
-  it("fires promptAsync for first item when idle arrives", async () => {
+  it("queue pill is removed when backend sends (queue.update sent event)", async () => {
     const user = userEvent.setup();
     renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
     await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
@@ -142,75 +149,32 @@ describe("ChatPage message queue (v3 — TUI-matching serialized)", () => {
     await user.type(document.querySelector("textarea")!, "queued msg");
     await user.keyboard("{Enter}");
 
-    expect(messagesApi.sendAsync).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByText("1 message queued")).toBeInTheDocument());
 
-    // Session goes idle
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
+    sendSSE({ type: "queue.update", session_id: "ses_1", data: { event: "sent", messageID: "msg_q_test" } });
 
     await waitFor(() => {
-      expect(messagesApi.sendAsync).toHaveBeenCalledOnce();
-      expect(messagesApi.sendAsync).toHaveBeenCalledWith("ws-1", "ses_1", expect.objectContaining({
-        parts: [{ type: "text", text: "queued msg" }],
-      }));
+      expect(screen.queryByText(/queued/)).not.toBeInTheDocument();
     });
   });
 
-  it("multiple queued messages are sent one per idle cycle", async () => {
+  it("queue pill shows error on queue.update error event", async () => {
     const user = userEvent.setup();
     renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
     await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
 
     sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
 
-    await user.type(document.querySelector("textarea")!, "first");
+    await user.type(document.querySelector("textarea")!, "will fail");
     await user.keyboard("{Enter}");
-    await user.type(document.querySelector("textarea")!, "second");
-    await user.keyboard("{Enter}");
-    await user.type(document.querySelector("textarea")!, "third");
-    await user.keyboard("{Enter}");
-
-    expect(screen.getByText("3 messages queued")).toBeInTheDocument();
-    expect(messagesApi.sendAsync).not.toHaveBeenCalled();
-
-    // First idle: sends "first" only
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
-    await waitFor(() => expect(messagesApi.sendAsync).toHaveBeenCalledOnce());
-
-    expect((messagesApi.sendAsync as ReturnType<typeof vi.fn>).mock.calls[0]![2]).toMatchObject({
-      parts: [{ type: "text", text: "first" }],
-    });
-
-    // Still two items remaining (pill for "first" gone after 204, "second" and "third" remain)
-    await waitFor(() => expect(screen.getByText("2 messages queued")).toBeInTheDocument());
-
-    // Second idle: sends "second"
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
-    await waitFor(() => expect(messagesApi.sendAsync).toHaveBeenCalledTimes(2));
 
     await waitFor(() => expect(screen.getByText("1 message queued")).toBeInTheDocument());
 
-    // Third idle: sends "third"
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
-    await waitFor(() => expect(messagesApi.sendAsync).toHaveBeenCalledTimes(3));
+    sendSSE({ type: "queue.update", session_id: "ses_1", data: { event: "error", messageID: "msg_q_test", error: "send failed" } });
 
-    await waitFor(() => expect(screen.queryByText(/queued/)).not.toBeInTheDocument());
-  });
-
-  it("pill is removed after promptAsync returns 204 (not waiting for history)", async () => {
-    const user = userEvent.setup();
-    renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
-    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
-
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
-
-    await user.type(document.querySelector("textarea")!, "first");
-    await user.keyboard("{Enter}");
-
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
-
-    // Pill gone after 204, before any history change
     await waitFor(() => {
-      expect(screen.queryByText("1 message queued")).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Retry")).toBeInTheDocument();
+      expect(screen.getByLabelText("Dismiss")).toBeInTheDocument();
     });
   });
 
@@ -233,11 +197,6 @@ describe("ChatPage message queue (v3 — TUI-matching serialized)", () => {
     await user.click(screen.getByLabelText("Stop generating"));
 
     expect(workspacesApi.abortSession).toHaveBeenCalledWith("ws-1", "ses_1");
-    await waitFor(() => {
-      expect(screen.queryByText(/queued/)).not.toBeInTheDocument();
-    });
-    // No messages were ever sent
-    expect(messagesApi.sendAsync).not.toHaveBeenCalled();
   });
 
   it("stop button is shown during streaming", async () => {
@@ -249,30 +208,8 @@ describe("ChatPage message queue (v3 — TUI-matching serialized)", () => {
     expect(screen.getByLabelText("Stop generating")).toBeInTheDocument();
   });
 
-  it("failed send shows error pill with retry/dismiss", async () => {
-    const user = userEvent.setup();
-    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("network fail"));
-
-    renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
-    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
-
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
-
-    await user.type(document.querySelector("textarea")!, "failing msg");
-    await user.keyboard("{Enter}");
-
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
-
-    await waitFor(() => {
-      expect(screen.getByLabelText("Retry")).toBeInTheDocument();
-      expect(screen.getByLabelText("Dismiss")).toBeInTheDocument();
-    });
-  });
-
   it("dismiss removes error pill", async () => {
     const user = userEvent.setup();
-    (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("fail"));
-
     renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
     await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
 
@@ -281,7 +218,9 @@ describe("ChatPage message queue (v3 — TUI-matching serialized)", () => {
     await user.type(document.querySelector("textarea")!, "msg");
     await user.keyboard("{Enter}");
 
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
+    await waitFor(() => expect(screen.getByText("1 message queued")).toBeInTheDocument());
+
+    sendSSE({ type: "queue.update", session_id: "ses_1", data: { event: "error", messageID: "msg_q_test", error: "fail" } });
 
     await waitFor(() => expect(screen.getByLabelText("Dismiss")).toBeInTheDocument());
     await user.click(screen.getByLabelText("Dismiss"));
@@ -291,83 +230,45 @@ describe("ChatPage message queue (v3 — TUI-matching serialized)", () => {
     });
   });
 
-  it("does not clear sseStreamParts when reconcileOnIdle returns empty history", async () => {
-    const qc = makeQueryClient();
-    (messagesApi.getHistoryPage as ReturnType<typeof vi.fn>).mockResolvedValue({
-      messages: [],
-      nextCursor: undefined,
-    });
-    renderChat(qc, "/chat/ws-1/ses_1");
+  it("abort deletes queued messages from Redis via clearAll", async () => {
+    const user = userEvent.setup();
+    renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
     await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
 
     sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
 
-    const user = userEvent.setup();
-    await user.type(document.querySelector("textarea")!, "hello");
+    await user.type(document.querySelector("textarea")!, "queued msg");
     await user.keyboard("{Enter}");
 
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
+    await waitFor(() => expect(screen.getByText("1 message queued")).toBeInTheDocument());
+
+    await user.click(screen.getByLabelText("Stop generating"));
 
     await waitFor(() => {
-      expect(messagesApi.sendAsync).toHaveBeenCalled();
-    });
-
-    await waitFor(() => {
-      expect(messagesApi.getHistoryPage).toHaveBeenCalled();
+      expect(messagesApi.deleteQueueMessage).toHaveBeenCalledWith("ws-1", "ses_1", "msg_q_test");
     });
   });
 
-  it("clears sseStreamParts when reconcileOnIdle returns non-empty history", async () => {
-    const qc = makeQueryClient();
-    const historyMsg = { id: "msg_1", role: "assistant", parts: [{ type: "text", text: "response" }] };
-    (messagesApi.getHistoryPage as ReturnType<typeof vi.fn>).mockResolvedValue({
-      messages: [historyMsg],
-      nextCursor: undefined,
-    });
-    renderChat(qc, "/chat/ws-1/ses_1");
-    await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
-
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
-
-    await waitFor(() => {
-      expect(messagesApi.getHistoryPage).toHaveBeenCalled();
-    });
-  });
-
-  it("queued message is sent on idle and response appears in history after second idle", async () => {
-    const qc = makeQueryClient();
+  it("queue.update dismissed event removes error pill via removeById", async () => {
     const user = userEvent.setup();
-    let callCount = 0;
-    (messagesApi.getHistoryPage as ReturnType<typeof vi.fn>).mockImplementation(() => {
-      callCount++;
-      if (callCount === 1) {
-        return Promise.resolve({ messages: [], nextCursor: undefined });
-      }
-      return Promise.resolve({
-        messages: [{ id: "msg_resp", role: "assistant", parts: [{ type: "text", text: "final answer" }] }],
-        nextCursor: undefined,
-      });
-    });
-    renderChat(qc, "/chat/ws-1/ses_1");
+    renderChat(makeQueryClient(), "/chat/ws-1/ses_1");
     await waitFor(() => expect(document.querySelector("textarea")).not.toBeDisabled());
 
     sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
 
-    await user.type(document.querySelector("textarea")!, "question");
+    await user.type(document.querySelector("textarea")!, "will error");
     await user.keyboard("{Enter}");
 
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
+    await waitFor(() => expect(screen.getByText("1 message queued")).toBeInTheDocument());
+
+    sendSSE({ type: "queue.update", session_id: "ses_1", data: { event: "error", messageID: "msg_q_test", error: "failed" } });
+
+    await waitFor(() => expect(screen.getByLabelText("Dismiss")).toBeInTheDocument());
+
+    sendSSE({ type: "queue.update", session_id: "ses_1", data: { event: "dismissed", messageID: "msg_q_test" } });
 
     await waitFor(() => {
-      expect(messagesApi.sendAsync).toHaveBeenCalled();
-    });
-
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
-    sendSSE({ type: "session.status", session_id: "ses_1", status: "idle" });
-
-    await waitFor(() => {
-      expect(callCount).toBeGreaterThanOrEqual(2);
+      expect(screen.queryByLabelText("Dismiss")).not.toBeInTheDocument();
     });
   });
 });

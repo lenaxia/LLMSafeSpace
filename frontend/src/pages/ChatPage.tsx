@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { workspacesApi } from "../api/workspaces";
+import { ApiClientError } from "../api/client";
 import { useWorkspaceStatus } from "../hooks/useWorkspaces";
 import { useMessageHistory } from "../hooks/useMessageHistory";
 import { useActivateWorkspace } from "../hooks/useActivateWorkspace";
@@ -25,7 +26,7 @@ import { sessionsApi } from "../api/sessions";
 import type { Message, SessionListItem, WorkspaceStreamEvent, OpenCodeEvent, QuestionRequest, PermissionRequest } from "../api/types";
 import { QuestionPrompt } from "../components/chat/QuestionPrompt";
 import { PermissionPrompt } from "../components/chat/PermissionPrompt";
-import { useClearPendingUnread } from "../providers/SessionActivityProvider";
+import { useClearPendingUnread, useAddPendingAction, useRemovePendingAction } from "../providers/SessionActivityProvider";
 
 type StreamPart = { type: "text" | "thinking" | "tool"; text: string; toolState?: string; toolCallID?: string; toolInput?: unknown; toolOutput?: string };
 
@@ -78,6 +79,8 @@ export function ChatPage() {
 
   const isReady = status?.phase === "Active";
   const clearPendingUnread = useClearPendingUnread();
+  const addPendingAction = useAddPendingAction();
+  const removePendingAction = useRemovePendingAction();
 
   useEffect(() => {
     if (!workspaceId || !sessionId || !isReady) return;
@@ -321,7 +324,7 @@ export function ChatPage() {
       currentThinkingIdxRef.current = -1;
       currentTextIdxRef.current = -1;
       if (freshHistory) {
-        queue.reconcile(msgs);
+        void queue.refreshQueue();
       }
     } catch {
     }
@@ -544,9 +547,6 @@ export function ChatPage() {
 
     if (event.type === "session.status" && workspaceId) {
       queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
-      if (event.status === "idle") {
-        queue.notifyIdle(event.session_id);
-      }
       if (event.session_id === sessionId) {
         if (event.status === "idle") {
           sseHasDrivenBusy.current = true;
@@ -555,6 +555,7 @@ export function ChatPage() {
           setRetryStatus(null);
           clearStreamTimedOut();
           reconcileOnIdle();
+          queue.refreshQueue();
           // US-16.12: Clear stale prompts on session idle
           setPendingQuestions([]);
           setPendingPermissions([]);
@@ -563,10 +564,15 @@ export function ChatPage() {
           setServerBusy(true);
           setRetryStatus(null);
         }
-        // Note: session.status=retry is NOT handled here. The synthesized
-        // session.status event from the proxy only carries string "busy" for
-        // retry events. The full retry payload (attempt, message, next, action)
-        // travels inside an opencode.event wrapper and is handled below.
+      }
+    } else if (event.type === "queue.update" && workspaceId) {
+      const qe = (event.data ?? {}) as { event?: string; messageID?: string; error?: string };
+      if (qe.event === "sent" || qe.event === "enqueued") {
+        void queue.refreshQueue();
+      } else if (qe.event === "error" && qe.messageID) {
+        queue.markError(qe.messageID, qe.error ?? "Send failed");
+      } else if (qe.event === "dismissed" && qe.messageID) {
+        queue.removeById(qe.messageID);
       }
     } else if (event.type === "opencode.event" && workspaceId) {
       const oe = event as OpenCodeEvent;
@@ -665,29 +671,29 @@ export function ChatPage() {
         parseStreamEvent(oe, sessionId);
       }
     } else if (event.type === "agent.question") {
-      // US-16.11: Agent question event
-      // Match against root_session_id (subtask/subagent prompts bubble up to
-      // the parent session view) and fall back to session_id for top-level
-      // sessions and for backward compatibility with older API replicas.
       const req = event.data as QuestionRequest;
       const eventRoot = req.root_session_id ?? req.session_id;
       if (eventRoot === sessionId || req.session_id === sessionId) {
         setPendingQuestions((prev) => prev.some((q) => q.id === req.id) ? prev : [...prev, req]);
       }
+      addPendingAction(workspaceId ?? "", req.session_id, req.id);
     } else if (event.type === "agent.question.resolved") {
       const { request_id } = event.data as { request_id: string };
       setPendingQuestions((prev) => prev.filter((q) => q.id !== request_id));
+      removePendingAction(request_id);
     } else if (event.type === "agent.permission") {
       const req = event.data as PermissionRequest;
       const eventRoot = req.root_session_id ?? req.session_id;
       if (eventRoot === sessionId || req.session_id === sessionId) {
         setPendingPermissions((prev) => prev.some((p) => p.id === req.id) ? prev : [...prev, req]);
       }
+      addPendingAction(workspaceId ?? "", req.session_id, req.id);
     } else if (event.type === "agent.permission.resolved") {
       const { request_id } = event.data as { request_id: string };
       setPendingPermissions((prev) => prev.filter((p) => p.id !== request_id));
+      removePendingAction(request_id);
     }
-  }, [queryClient, workspaceId, sessionId, parseStreamEvent, notifySessionIdle, reconcileOnIdle, queue]);
+  }, [queryClient, workspaceId, sessionId, parseStreamEvent, notifySessionIdle, reconcileOnIdle, queue, addPendingAction, removePendingAction]);
 
   // US-15.2: On SSE reconnect, re-poll status to catch missed transitions
   const handleSSEReconnect = useCallback(() => {
@@ -695,7 +701,8 @@ export function ChatPage() {
       sseHasDrivenBusy.current = false;
       queryClient.invalidateQueries({ queryKey: ["workspace-status", workspaceId] });
     }
-  }, [queryClient, workspaceId]);
+    void queue.refreshQueue();
+  }, [queryClient, workspaceId, queue]);
 
   // Connect SSE unconditionally (even before workspace is Active) so we can
   // detect the Pending→Active phase transition and auto-create a session.
@@ -782,7 +789,8 @@ export function ChatPage() {
     {
       label: "Rename session",
       onClick: () => {
-        const name = window.prompt("Session name:", sessionDisplayName);
+        let name: string | null = null;
+        try { name = window.prompt("Session name:", sessionDisplayName); } catch { /* blocked */ }
         if (name && name.trim() && workspaceId && sessionId) {
           workspacesApi.renameSession(workspaceId, sessionId, name.trim()).then(() => {
             queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
@@ -794,19 +802,24 @@ export function ChatPage() {
     {
       label: "Delete session",
       onClick: () => {
-        if (window.confirm("Delete this session?") && workspaceId && sessionId) {
-          workspacesApi.deleteSession(workspaceId, sessionId)
-            .catch((err) => {
-              if (err?.status !== 404) throw err;
-            })
-            .then(() => {
-              queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
-              navigate(`/chat/${workspaceId}`);
-            })
-            .catch(() => {
-              window.alert("Failed to delete session.");
-            });
+        if (!workspaceId || !sessionId) return;
+        try {
+          if (!window.confirm("Delete this session?")) return;
+        } catch {
+          // confirm() blocked — proceed with deletion
         }
+        workspacesApi.deleteSession(workspaceId, sessionId)
+          .catch((err: unknown) => {
+            if (err instanceof ApiClientError && err.status === 404) return;
+            throw err;
+          })
+          .then(() => {
+            queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
+            navigate(`/chat/${workspaceId}`);
+          })
+          .catch(() => {
+            try { window.alert("Failed to delete session."); } catch { /* blocked */ }
+          });
       },
       destructive: true,
     },
@@ -939,7 +952,7 @@ export function ChatPage() {
                 workspacesApi.abortSession(workspaceId, sessionId);
               }
               abort();
-              queue.clear();
+              void queue.clearAll();
             }}
             onLoadEarlier={() => fetchNextPage()}
             hasOlderMessages={hasNextPage}

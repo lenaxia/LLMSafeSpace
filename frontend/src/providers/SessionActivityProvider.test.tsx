@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { SessionActivityProvider, useIsSessionBusy, useIsSessionUnread, useWorkspaceBusyCount, useClearPendingUnread } from "./SessionActivityProvider";
+import { SessionActivityProvider, useIsSessionBusy, useIsSessionUnread, useWorkspaceBusyCount, useClearPendingUnread, useIsSessionPendingAction, useAddPendingAction, useRemovePendingAction, useSessionPendingActions } from "./SessionActivityProvider";
 
 let capturedOnEvent: ((data: unknown) => void) | undefined;
 let capturedOnReconnect: (() => void) | undefined;
@@ -961,5 +961,153 @@ describe("SessionActivityProvider", () => {
       ]);
     });
     expect(screen.getByTestId("unread").textContent).toBe("yes");
+  });
+});
+
+describe("SessionActivityProvider — pending actions", () => {
+  it("addPendingAction marks session as pending", async () => {
+    function PendingDisplay() {
+      const add = useAddPendingAction();
+      const isPending = useIsSessionPendingAction("sess-1");
+      return (
+        <>
+          <span data-testid="pending">{isPending ? "yes" : "no"}</span>
+          <button data-testid="add" onClick={() => add("ws-1", "sess-1", "req-1")} />
+        </>
+      );
+    }
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <PendingDisplay />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("pending").textContent).toBe("no");
+
+    await act(async () => { screen.getByTestId("add").click(); });
+    expect(screen.getByTestId("pending").textContent).toBe("yes");
+  });
+
+  it("removePendingAction clears pending state", async () => {
+    function PendingDisplay() {
+      const add = useAddPendingAction();
+      const remove = useRemovePendingAction();
+      const isPending = useIsSessionPendingAction("sess-1");
+      return (
+        <>
+          <span data-testid="pending">{isPending ? "yes" : "no"}</span>
+          <button data-testid="add" onClick={() => add("ws-1", "sess-1", "req-1")} />
+          <button data-testid="remove" onClick={() => remove("req-1")} />
+        </>
+      );
+    }
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <PendingDisplay />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await act(async () => { screen.getByTestId("add").click(); });
+    expect(screen.getByTestId("pending").textContent).toBe("yes");
+
+    await act(async () => { screen.getByTestId("remove").click(); });
+    expect(screen.getByTestId("pending").textContent).toBe("no");
+  });
+
+  it("multiple pending requests — session stays pending until last removed", async () => {
+    function PendingDisplay() {
+      const add = useAddPendingAction();
+      const remove = useRemovePendingAction();
+      const isPending = useIsSessionPendingAction("sess-1");
+      return (
+        <>
+          <span data-testid="pending">{isPending ? "yes" : "no"}</span>
+          <button data-testid="add1" onClick={() => add("ws-1", "sess-1", "req-1")} />
+          <button data-testid="add2" onClick={() => add("ws-1", "sess-1", "req-2")} />
+          <button data-testid="rem1" onClick={() => remove("req-1")} />
+          <button data-testid="rem2" onClick={() => remove("req-2")} />
+        </>
+      );
+    }
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <PendingDisplay />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await act(async () => { screen.getByTestId("add1").click(); });
+    await act(async () => { screen.getByTestId("add2").click(); });
+    expect(screen.getByTestId("pending").textContent).toBe("yes");
+
+    await act(async () => { screen.getByTestId("rem1").click(); });
+    expect(screen.getByTestId("pending").textContent).toBe("yes");
+
+    await act(async () => { screen.getByTestId("rem2").click(); });
+    expect(screen.getByTestId("pending").textContent).toBe("no");
+  });
+
+  it("session idle clears pending actions", async () => {
+    function PendingDisplay() {
+      const add = useAddPendingAction();
+      const isPending = useIsSessionPendingAction("sess-1");
+      return (
+        <>
+          <span data-testid="pending">{isPending ? "yes" : "no"}</span>
+          <button data-testid="add" onClick={() => add("ws-1", "sess-1", "req-1")}>add</button>
+        </>
+      );
+    }
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <PendingDisplay />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await act(async () => { screen.getByTestId("add").click(); });
+    expect(screen.getByTestId("pending").textContent).toBe("yes");
+
+    act(() => {
+      capturedOnEvent!({ type: "session.status", workspace_id: "ws-1", session_id: "sess-1", status: "idle" });
+    });
+    expect(screen.getByTestId("pending").textContent).toBe("no");
+  });
+
+  it("useSessionPendingActions returns set of pending session IDs", () => {
+    function Display() {
+      const pending = useSessionPendingActions();
+      return <span data-testid="count">{pending.size}</span>;
+    }
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <Display />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("count").textContent).toBe("0");
   });
 });

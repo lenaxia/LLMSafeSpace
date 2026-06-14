@@ -4,12 +4,16 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/lenaxia/llmsafespace/api/internal/services/msgqueue"
 	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	"github.com/lenaxia/llmsafespace/pkg/types"
@@ -62,6 +66,11 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 		h.invalidateCaches(workspace.Name)
 		if h.sseTracker != nil {
 			h.sseTracker.StopWatching(workspace.Name)
+		}
+		if h.queueSvc != nil && (phase == phaseTerminated || phase == phaseTerminating) {
+			if err := h.queueSvc.ClearWorkspace(context.Background(), workspace.Name); err != nil {
+				h.logger.Error("Failed to clear message queue on terminate", err, "workspaceID", workspace.Name)
+			}
 		}
 		if phase == phaseTerminated || phase == phaseTerminating {
 			h.priorPhaseMu.Lock()
@@ -127,9 +136,12 @@ func (h *ProxyHandler) onSessionIdle(workspaceID, sessionID string) {
 	if h.activityTracker != nil {
 		h.activityTracker.Record(workspaceID)
 	}
-	if h.sessionIndex != nil {
+	if h.sessionIndex != nil && !h.isSessionDeleted(workspaceID, sessionID) {
 		h.sessionIndex.RecordMessage(workspaceID, sessionID, "", time.Now())
 		go h.fetchAndPersistTitle(workspaceID, sessionID)
+	}
+	if h.queueSvc != nil && !h.isSessionDeleted(workspaceID, sessionID) {
+		go h.drainQueuedMessage(workspaceID, sessionID)
 	}
 }
 
@@ -285,6 +297,9 @@ func (h *ProxyHandler) persistTitleFromEvent(workspaceID, rawData string) {
 	if id == "" {
 		return
 	}
+	if h.isSessionDeleted(workspaceID, id) {
+		return
+	}
 	if evt.Properties.Info.Title != "" {
 		_ = h.sessionIndex.UpsertTitle(context.Background(), workspaceID, id, evt.Properties.Info.Title)
 	}
@@ -315,6 +330,9 @@ func (h *ProxyHandler) persistContextFromEvent(workspaceID, rawData string) {
 	if evt.Properties.SessionID == "" || evt.Properties.Tokens == nil {
 		return
 	}
+	if h.isSessionDeleted(workspaceID, evt.Properties.SessionID) {
+		return
+	}
 	promptTokens := evt.Properties.Tokens.Input +
 		evt.Properties.Tokens.Cache.Read +
 		evt.Properties.Tokens.Cache.Write
@@ -334,4 +352,129 @@ func (h *ProxyHandler) getPodIPForSSE(workspaceID string) string {
 		return ""
 	}
 	return workspace.Status.PodIP
+}
+
+const maxQueueRetries = 5
+
+type queueUpdateData struct {
+	Event     string `json:"event"`
+	MessageID string `json:"messageID"`
+	Error     string `json:"error,omitempty"`
+}
+
+func (h *ProxyHandler) drainQueuedMessage(workspaceID, sessionID string) {
+	if h.queueSvc == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	for {
+		msg, err := h.queueSvc.Dequeue(ctx, workspaceID, sessionID)
+		if err != nil {
+			h.logger.Error("Failed to dequeue message", err, "workspaceID", workspaceID, "sessionID", sessionID)
+			return
+		}
+		if msg == nil {
+			return
+		}
+
+		if err := h.sendQueuedToOpencode(ctx, workspaceID, sessionID, msg); err != nil {
+			h.logger.Error("Failed to send queued message to opencode", err,
+				"workspaceID", workspaceID, "sessionID", sessionID, "messageID", msg.ID)
+			msg.RetryCount++
+			if msg.RetryCount > maxQueueRetries {
+				h.publishQueueEvent(workspaceID, sessionID, "error", msg.ID, "max retries exceeded")
+				continue
+			}
+			if requeueErr := h.queueSvc.Requeue(ctx, workspaceID, sessionID, *msg); requeueErr != nil {
+				h.logger.Error("Failed to requeue message", requeueErr, "workspaceID", workspaceID, "sessionID", sessionID)
+			}
+			select {
+			case <-time.After(time.Duration(msg.RetryCount) * time.Second):
+			case <-ctx.Done():
+				return
+			}
+			continue
+		}
+
+		h.publishQueueEvent(workspaceID, sessionID, "sent", msg.ID, "")
+	}
+}
+
+type promptRequestBody struct {
+	Parts     []promptPart `json:"parts"`
+	MessageID string       `json:"messageID"`
+}
+
+type promptPart struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+func (h *ProxyHandler) sendQueuedToOpencode(ctx context.Context, workspaceID, sessionID string, msg *msgqueue.QueuedMessage) error {
+	v1Client, v1Err := h.k8sClient.LlmsafespaceV1()
+	if v1Err != nil {
+		return fmt.Errorf("getting v1 client: %w", v1Err)
+	}
+	workspace, err := v1Client.Workspaces(h.namespace).Get(ctx, workspaceID, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("getting workspace: %w", err)
+	}
+	if workspace.Status.Phase != phaseActive || workspace.Status.PodIP == "" {
+		return fmt.Errorf("workspace not active")
+	}
+	password, err := h.getPassword(ctx, workspaceID)
+	if err != nil {
+		return fmt.Errorf("getting password: %w", err)
+	}
+
+	body := promptRequestBody{
+		Parts:     []promptPart{{Type: "text", Text: msg.Text}},
+		MessageID: msg.ID,
+	}
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("marshaling body: %w", err)
+	}
+
+	targetURL := fmt.Sprintf("http://%s:%d/session/%s/prompt_async", workspace.Status.PodIP, opencodePort, sessionID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+	req.SetBasicAuth("opencode", password)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("sending request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	if resp.StatusCode == http.StatusConflict {
+		return fmt.Errorf("session busy")
+	}
+	return fmt.Errorf("unexpected status: %d", resp.StatusCode)
+}
+
+func (h *ProxyHandler) publishQueueEvent(workspaceID, sessionID, event, messageID, errMsg string) {
+	if h.broker == nil {
+		return
+	}
+	data := queueUpdateData{
+		Event:     event,
+		MessageID: messageID,
+	}
+	if errMsg != "" {
+		data.Error = errMsg
+	}
+	h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
+		Type:      "queue.update",
+		SessionID: sessionID,
+		Data:      data,
+	})
 }

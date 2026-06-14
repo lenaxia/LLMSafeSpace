@@ -544,14 +544,19 @@ func (s *Service) MarkWorkspaceDeleted(ctx context.Context, workspaceID string) 
 	committed = true
 }
 
-// ListWorkspaces lists workspaces for a user with pagination.
+// ListWorkspaces lists workspaces owned by the user with pagination.
+//
+// Per Epic 43 decision D6, this returns only workspaces the user created
+// (w.user_id = $1). The prior LEFT JOIN org_memberships + OR clause that let any
+// org member see every other member's org workspace has been removed: members
+// now see only their own workspaces. Org admins who need to see all org
+// workspaces use the dedicated GET /orgs/:id/workspaces endpoint
+// (OrgStore.ListOrgWorkspaces).
 func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offset int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error) {
 	var total int
 	if err := s.DB.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM workspaces w
-		LEFT JOIN org_memberships om ON om.org_id = w.org_id AND om.user_id = $1
-		WHERE w.deleted_at IS NULL
-		  AND (w.user_id = $1 OR (w.org_id IS NOT NULL AND om.org_id IS NOT NULL))
+		WHERE w.deleted_at IS NULL AND w.user_id = $1
 	`, userID).Scan(&total); err != nil {
 		return nil, nil, fmt.Errorf("failed to count workspaces: %w", err)
 	}
@@ -576,9 +581,7 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
                w.org_id
         FROM workspaces w
         LEFT JOIN workspace_agent_state s ON s.workspace_id = w.id
-        LEFT JOIN org_memberships om ON om.org_id = w.org_id AND om.user_id = $1
-        WHERE w.deleted_at IS NULL
-          AND (w.user_id = $1 OR (w.org_id IS NOT NULL AND om.org_id IS NOT NULL))
+        WHERE w.deleted_at IS NULL AND w.user_id = $1
         ORDER BY w.created_at DESC
         LIMIT $2 OFFSET $3
     `, userID, limit, offset)

@@ -362,6 +362,7 @@ type workspaceOwnerVerifierAdapter struct {
 
 type OrgMembershipChecker interface {
 	IsOrgMember(ctx context.Context, orgID, userID string) (bool, error)
+	IsOrgAdmin(ctx context.Context, orgID, userID string) (bool, error)
 }
 
 func (a *workspaceOwnerVerifierAdapter) VerifyWorkspaceOwner(ctx context.Context, userID, workspaceID string) error {
@@ -383,15 +384,19 @@ func (a *workspaceOwnerVerifierAdapter) VerifyWorkspaceOwner(ctx context.Context
 		return nil
 	}
 	if meta.OrgID != nil && *meta.OrgID != "" && a.orgStore != nil {
-		isMember, err := a.orgStore.IsOrgMember(ctx, *meta.OrgID, userID)
+		// Per Epic 43 decision D6, cross-user access to an org workspace
+		// requires org admin (not mere membership). This mirrors
+		// workspace.Service.verifyOwner so the secrets surface and the
+		// workspace surface enforce the same access boundary.
+		isAdmin, err := a.orgStore.IsOrgAdmin(ctx, *meta.OrgID, userID)
 		if err != nil {
 			if a.logger != nil {
-				a.logger.Warn("workspaceOwnerVerifier: org membership check failed; downgrading to not-owned",
+				a.logger.Warn("workspaceOwnerVerifier: org admin check failed; downgrading to not-owned",
 					"workspaceID", workspaceID, "userID", userID, "orgID", *meta.OrgID, "error", err.Error())
 			}
 			return secrets.ErrWorkspaceNotOwned
 		}
-		if isMember {
+		if isAdmin {
 			return nil
 		}
 	}

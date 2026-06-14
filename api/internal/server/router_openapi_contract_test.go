@@ -313,6 +313,11 @@ var implOnlyAllowlist = map[route]bool{
 	// for already-saved credentials.
 	{method: "GET", path: "/api/v1/admin/provider-credentials/:id/models"}: true,
 	{method: "GET", path: "/api/v1/provider-credentials/:id/models"}:       true,
+
+	// Message queue — Redis-backed queue for messages typed while busy.
+	{method: "POST", path: "/api/v1/workspaces/:id/sessions/:sessionId/queue"}:              true,
+	{method: "GET", path: "/api/v1/workspaces/:id/sessions/:sessionId/queue"}:               true,
+	{method: "DELETE", path: "/api/v1/workspaces/:id/sessions/:sessionId/queue/:messageId"}: true,
 }
 
 // -----------------------------------------------------------------------------

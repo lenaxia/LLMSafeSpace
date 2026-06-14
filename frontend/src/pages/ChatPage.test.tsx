@@ -6,6 +6,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "../providers/ThemeProvider";
 import { ChatPage } from "./ChatPage";
+import { ApiClientError } from "../api/client";
 
 vi.mock("../api/workspaces", () => ({
   workspacesApi: {
@@ -27,11 +28,15 @@ vi.mock("../providers/SessionActivityProvider", () => ({
   useIsSessionBusy: () => false,
   useIsSessionUnread: () => false,
   useWorkspaceBusyCount: () => 0,
+  useIsSessionPendingAction: () => false,
+  useSessionPendingActions: () => new Set<string>(),
+  useAddPendingAction: () => () => {},
+  useRemovePendingAction: () => () => {},
   SessionActivityProvider: ({ children }: { children: any }) => <>{children}</>,
 }));
 vi.mock("../api/messages", () => {
   const gh = vi.fn().mockResolvedValue([]);
-  return { messagesApi: { getHistory: gh, getHistoryPage: vi.fn().mockImplementation(async () => { const msgs = await gh(); return { messages: msgs, nextCursor: undefined }; }), sendAsync: vi.fn() } };
+  return { messagesApi: { getHistory: gh, getHistoryPage: vi.fn().mockImplementation(async () => { const msgs = await gh(); return { messages: msgs, nextCursor: undefined }; }), sendAsync: vi.fn(), queueMessage: vi.fn().mockResolvedValue({ messageID: "msg_q_mock" }), getQueue: vi.fn().mockResolvedValue({ messages: [] }), deleteQueueMessage: vi.fn().mockResolvedValue(undefined) } };
 });
 vi.mock("../api/sessions", () => ({ sessionsApi: { create: vi.fn() } }));
 vi.mock("../hooks/useEventStream", () => ({ useEventStream: vi.fn() }));
@@ -371,14 +376,30 @@ describe("ChatPage — session delete", () => {
   });
 
   it("treats 404 as success on delete", async () => {
-    const err404: any = new Error("not found");
-    err404.status = 404;
+    const err404 = new ApiClientError(404, { error: "not found" });
     (workspacesApi.deleteSession as ReturnType<typeof vi.fn>).mockRejectedValueOnce(err404);
 
     renderChatPage("/chat/ws-1/sess-1");
     await waitFor(() => expect(screen.getByLabelText("Actions")).toBeInTheDocument());
 
     vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    const kebab = screen.getByLabelText("Actions");
+    await userEvent.click(kebab);
+
+    const deleteBtn = await screen.findByText("Delete session");
+    await userEvent.click(deleteBtn);
+
+    expect(workspacesApi.deleteSession).toHaveBeenCalledWith("ws-1", "sess-1");
+  });
+
+  it("proceeds with deletion when window.confirm throws (sandboxed iframe)", async () => {
+    (workspacesApi.deleteSession as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    renderChatPage("/chat/ws-1/sess-1");
+    await waitFor(() => expect(screen.getByLabelText("Actions")).toBeInTheDocument());
+
+    vi.spyOn(window, "confirm").mockImplementation(() => { throw new Error("Blocked"); });
 
     const kebab = screen.getByLabelText("Actions");
     await userEvent.click(kebab);

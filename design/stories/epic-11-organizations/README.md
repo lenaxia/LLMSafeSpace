@@ -1,9 +1,9 @@
 # Epic 11: Organizations
 
 **Status:** Ready to Implement
-**Depends On:** Epic 10 (user DEK infrastructure — confirmed in place), Epic 30 (unified credential model — schema scaffolding in place)
+**Depends On:** Epic 10 (user DEK infrastructure — confirmed in place), Epic 30 (Unified Credential Model — complete, PR #39)
 **Estimated Effort:** ~40 hours
-**Blocks:** Epic 12 org billing rollup (`resolveBillingOwner`), Epic 30 `decryptBinding` org branch
+**Blocks:** Epic 12 org billing rollup (`resolveBillingOwner`)
 
 ---
 

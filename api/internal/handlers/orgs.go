@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -39,6 +40,9 @@ type orgStore interface {
 	DeleteOrgKeyMember(ctx context.Context, orgID, userID string) error
 	ListOrgWorkspaces(ctx context.Context, orgID string, limit, offset int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error)
 	GetUserSalt(ctx context.Context, userID string) ([]byte, error)
+	CreateBillingAccount(ctx context.Context, ownerID, ownerType, provider, externalCustomerID string) (int64, error)
+	GetStripeCustomerID(ctx context.Context, orgID string) (string, error)
+	UpdateOrgStatus(ctx context.Context, orgID string, status *types.OrgStatus, subStatus *types.OrgSubscriptionStatus, planID *types.OrgPlan) error
 }
 
 // orgAuthService is the minimal auth interface used by OrgsHandler.
@@ -48,10 +52,14 @@ type orgAuthService interface {
 
 // OrgsHandler handles org CRUD endpoints.
 type OrgsHandler struct {
-	orgStore  orgStore
-	orgKeySvc *secrets.OrgKeyService
-	dekCache  secrets.DEKCache
-	authSvc   orgAuthService
+	orgStore   orgStore
+	orgKeySvc  *secrets.OrgKeyService
+	dekCache   secrets.DEKCache
+	authSvc    orgAuthService
+	billing    OrgBilling
+	successURL string
+	cancelURL  string
+	portalURL  string
 }
 
 // NewOrgsHandler creates a new OrgsHandler.
@@ -69,13 +77,31 @@ func NewOrgsHandler(
 	}
 }
 
+// SetBilling wires the Stripe checkout/portal provider and redirect URLs.
+// When not called (or passed a nil provider), org creation succeeds but produces
+// no checkout URL — development mode without Stripe configured.
+func (h *OrgsHandler) SetBilling(b OrgBilling, successURL, cancelURL, portalURL string) {
+	h.billing = b
+	h.successURL = successURL
+	h.cancelURL = cancelURL
+	h.portalURL = portalURL
+}
+
 // Create handles POST /api/v1/orgs.
+//
+// Self-service flow: the org is created with status='pending_activation' (the DB
+// default), a Stripe customer is created and linked via billing_accounts, and a
+// Checkout URL is returned. The Stripe webhook activates the org on payment.
+//
+// Platform-admin flow (users.role='admin'): the org is created and immediately
+// activated with plan='enterprise' — no Stripe checkout, manual billing.
 func (h *OrgsHandler) Create(c *gin.Context) {
 	var req types.CreateOrgRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
+	req.Slug = strings.ToLower(req.Slug)
 
 	ctx := c.Request.Context()
 
@@ -121,6 +147,8 @@ func (h *OrgsHandler) Create(c *gin.Context) {
 		return
 	}
 
+	platformAdmin := isPlatformAdmin(c)
+
 	newOrg := &types.Organization{
 		ID:        uuid.New().String(),
 		Name:      req.Name,
@@ -140,12 +168,59 @@ func (h *OrgsHandler) Create(c *gin.Context) {
 
 	_ = h.dekCache.CacheDEK(ctx, secrets.OrgCacheKey(created.ID), orgDEK, 24*time.Hour)
 
-	c.JSON(http.StatusCreated, types.OrgResponse{
-		Organization:       *created,
-		UserRole:           types.OrgRoleAdmin,
-		UserPendingKeyWrap: false,
-		MemberCount:        1,
-	})
+	resp := types.CreateOrgResponse{
+		OrgResponse: types.OrgResponse{
+			Organization:       *created,
+			UserRole:           types.OrgRoleAdmin,
+			UserPendingKeyWrap: false,
+			MemberCount:        1,
+		},
+	}
+
+	if platformAdmin {
+		active := types.OrgStatusActive
+		ent := types.PlanEnterprise
+		sub := types.SubscriptionActive
+		if err := h.orgStore.UpdateOrgStatus(ctx, created.ID, &active, &sub, &ent); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to activate organization"})
+			return
+		}
+		created.Status = active
+		created.PlanID = ent
+		created.SubscriptionStatus = sub
+		resp.Organization = *created
+		c.JSON(http.StatusCreated, resp)
+		return
+	}
+
+	checkoutURL := ""
+	if h.billing != nil {
+		checkoutURL, err = h.provisionStripe(ctx, created.ID, created.Name, req.PlanID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to provision billing"})
+			return
+		}
+		resp.CheckoutURL = checkoutURL
+	}
+
+	c.JSON(http.StatusCreated, resp)
+}
+
+// provisionStripe creates the Stripe customer, persists the billing-account
+// link, and builds the Checkout URL for plan checkout. On failure the org
+// remains pending_activation and the cleanup cron will reap it.
+func (h *OrgsHandler) provisionStripe(ctx context.Context, orgID, orgName string, planID types.OrgPlan) (string, error) {
+	customerID, err := h.billing.CreateCustomer(ctx, "", orgName)
+	if err != nil {
+		return "", err
+	}
+	if _, err := h.orgStore.CreateBillingAccount(ctx, orgID, string(types.OwnerTypeOrg), "stripe", customerID); err != nil {
+		return "", err
+	}
+	if planID == "" {
+		planID = types.PlanTeam
+	}
+	return h.billing.CreateCheckoutSession(ctx, customerID, string(planID), h.successURL, h.cancelURL)
 }
 
 // List handles GET /api/v1/orgs.

@@ -4,7 +4,7 @@ import { useChatStream } from "./useChatStream";
 
 vi.mock("../api/messages", () => ({
   messagesApi: {
-    sendAsync: vi.fn(),
+    sendAsync: vi.fn(), queueMessage: vi.fn().mockResolvedValue({ messageID: "msg_q_mock" }), getQueue: vi.fn().mockResolvedValue({ messages: [] }), deleteQueueMessage: vi.fn().mockResolvedValue(undefined),
     getHistory: vi.fn(),
   },
 }));

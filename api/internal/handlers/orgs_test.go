@@ -25,6 +25,7 @@ type mockOrgStore struct {
 	adminCounts           map[string]int
 	pendingKeyWrap        map[string]bool
 	salts                 map[string][]byte
+	billingAccounts       map[string]string
 	listOrgsForUserResult []*types.OrgResponse
 	listOrgsForUserErr    error
 	createErr             error
@@ -34,12 +35,13 @@ type mockOrgStore struct {
 
 func newMockOrgStore() *mockOrgStore {
 	return &mockOrgStore{
-		orgs:           make(map[string]*types.Organization),
-		members:        make(map[string][]*types.OrgMember),
-		keyMembers:     make(map[string]*secrets.OrgKeyMemberRecord),
-		adminCounts:    make(map[string]int),
-		pendingKeyWrap: make(map[string]bool),
-		salts:          make(map[string][]byte),
+		orgs:            make(map[string]*types.Organization),
+		members:         make(map[string][]*types.OrgMember),
+		keyMembers:      make(map[string]*secrets.OrgKeyMemberRecord),
+		adminCounts:     make(map[string]int),
+		pendingKeyWrap:  make(map[string]bool),
+		salts:           make(map[string][]byte),
+		billingAccounts: make(map[string]string),
 	}
 }
 
@@ -52,6 +54,15 @@ func (m *mockOrgStore) CreateOrgWithAdmin(_ context.Context, org *types.Organiza
 		return nil, m.createErr
 	}
 	cp := *org
+	if cp.Status == "" {
+		cp.Status = types.OrgStatusPendingActivation
+	}
+	if cp.PlanID == "" {
+		cp.PlanID = types.PlanFree
+	}
+	if cp.SubscriptionStatus == "" {
+		cp.SubscriptionStatus = types.SubscriptionInactive
+	}
 	m.orgs[org.ID] = &cp
 	m.members[org.ID] = []*types.OrgMember{
 		{OrgID: org.ID, UserID: adminUserID, Role: types.OrgRoleAdmin, PendingKeyWrap: false},
@@ -270,6 +281,39 @@ func (m *mockOrgStore) GetUserSalt(_ context.Context, userID string) ([]byte, er
 		return salt, nil
 	}
 	return nil, secrets.ErrUserKeysMissing
+}
+
+func (m *mockOrgStore) CreateBillingAccount(_ context.Context, ownerID, _, _, externalCustomerID string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.billingAccounts == nil {
+		m.billingAccounts = make(map[string]string)
+	}
+	m.billingAccounts[ownerID] = externalCustomerID
+	return int64(len(m.billingAccounts)), nil
+}
+
+func (m *mockOrgStore) GetStripeCustomerID(_ context.Context, orgID string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.billingAccounts[orgID], nil
+}
+
+func (m *mockOrgStore) UpdateOrgStatus(_ context.Context, orgID string, status *types.OrgStatus, sub *types.OrgSubscriptionStatus, plan *types.OrgPlan) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if org, ok := m.orgs[orgID]; ok {
+		if status != nil {
+			org.Status = *status
+		}
+		if sub != nil {
+			org.SubscriptionStatus = *sub
+		}
+		if plan != nil {
+			org.PlanID = *plan
+		}
+	}
+	return nil
 }
 
 type mockOrgAuthService struct{ userID string }

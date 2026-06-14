@@ -81,12 +81,21 @@ type ProxyHandler struct {
 	parentBackfilled   map[string]struct{}
 	parentBackfilledMu sync.Mutex
 
+	// deletedSessions tracks sessions that were explicitly deleted via the API.
+	// Late SSE events (session.updated, idle, step.ended) from opencode that
+	// arrive after deletion are suppressed to prevent re-inserting the session
+	// into session_index. Keyed by "workspaceID/sessionID".
+	deletedSessions   map[string]struct{}
+	deletedSessionsMu sync.RWMutex
+
 	meteringSvc interfaces.MeteringService
 
 	// versionSyncCb is the callback wired into the CRD watcher to persist
 	// runtime version info (imageTag) to the DB whenever a workspace becomes
 	// Active. Set via SetVersionSyncCallback before Start().
 	versionSyncCb workspace.VersionSyncCallback
+
+	queueSvc interfaces.MessageQueueService
 
 	startOnce sync.Once
 	stopOnce  sync.Once
@@ -129,6 +138,7 @@ func NewProxyHandler(
 		activeSess:       make(map[string]map[string]bool),
 		connCount:        make(map[string]int),
 		parentBackfilled: make(map[string]struct{}),
+		deletedSessions:  make(map[string]struct{}),
 	}, nil
 }
 

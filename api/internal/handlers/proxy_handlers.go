@@ -17,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/lenaxia/llmsafespace/api/internal/services/msgqueue"
 	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
@@ -111,6 +112,8 @@ func (h *ProxyHandler) DeleteSession(c *gin.Context) {
 		return
 	}
 
+	h.markSessionDeleted(workspaceID, sid)
+
 	if h.sessionIndex != nil {
 		if err := h.sessionIndex.DeleteSession(context.Background(), workspaceID, sid); err != nil {
 			h.logger.Error("failed to delete session from index", err, "workspaceID", workspaceID, "sessionID", sid)
@@ -130,6 +133,48 @@ func (h *ProxyHandler) DeleteSession(c *gin.Context) {
 			})
 		}
 	}()
+}
+
+// markSessionDeleted records that a session was explicitly deleted so that
+// late SSE events from opencode don't re-insert it into session_index.
+func (h *ProxyHandler) markSessionDeleted(workspaceID, sessionID string) {
+	h.deletedSessionsMu.Lock()
+	h.deletedSessions[workspaceID+"/"+sessionID] = struct{}{}
+	// Bounded: if the set grows beyond a reasonable size, evict a batch.
+	// In practice this never triggers — sessions are deleted rarely and the
+	// set is cleared on workspace suspend/delete.
+	if len(h.deletedSessions) > 500 {
+		count := 0
+		for k := range h.deletedSessions {
+			delete(h.deletedSessions, k)
+			count++
+			if count >= 250 {
+				break
+			}
+		}
+	}
+	h.deletedSessionsMu.Unlock()
+}
+
+// isSessionDeleted returns true if the session was recently deleted via the
+// API and late events should be suppressed.
+func (h *ProxyHandler) isSessionDeleted(workspaceID, sessionID string) bool {
+	h.deletedSessionsMu.RLock()
+	_, ok := h.deletedSessions[workspaceID+"/"+sessionID]
+	h.deletedSessionsMu.RUnlock()
+	return ok
+}
+
+// clearDeletedSessions removes all deleted-session markers for a workspace.
+func (h *ProxyHandler) clearDeletedSessions(workspaceID string) {
+	h.deletedSessionsMu.Lock()
+	prefix := workspaceID + "/"
+	for k := range h.deletedSessions {
+		if strings.HasPrefix(k, prefix) {
+			delete(h.deletedSessions, k)
+		}
+	}
+	h.deletedSessionsMu.Unlock()
 }
 
 func (h *ProxyHandler) GetWorkspaceCRD(workspaceID string) (*v1.Workspace, error) {
@@ -213,4 +258,117 @@ func validateSessionID(s string) error {
 		return errors.New("sessionId contains characters outside [a-zA-Z0-9._-]")
 	}
 	return nil
+}
+
+type enqueueRequest struct {
+	Text string `json:"text" binding:"required"`
+}
+
+func (h *ProxyHandler) EnqueueMessage(c *gin.Context) {
+	sid := c.Param("sessionId")
+	if err := validateSessionID(sid); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sessionId: " + err.Error()})
+		return
+	}
+	wid := c.Param("id")
+
+	var req enqueueRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	if len(req.Text) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "text must not be empty"})
+		return
+	}
+	if len(req.Text) > 100_000 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "text exceeds 100KB limit"})
+		return
+	}
+
+	if h.queueSvc == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "message queue not available"})
+		return
+	}
+
+	msgID, err := h.queueSvc.Enqueue(c.Request.Context(), wid, sid, req.Text)
+	if err != nil {
+		h.logger.Error("Failed to enqueue message", err, "workspaceID", wid, "sessionID", sid)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to enqueue message"})
+		return
+	}
+
+	if h.broker != nil {
+		h.broker.Publish(wid, apitypes.WorkspaceSSEEvent{
+			Type:      "queue.update",
+			SessionID: sid,
+			Data: queueUpdateData{
+				Event:     "enqueued",
+				MessageID: msgID,
+			},
+		})
+	}
+
+	c.JSON(http.StatusAccepted, gin.H{"messageID": msgID})
+}
+
+func (h *ProxyHandler) ListQueue(c *gin.Context) {
+	sid := c.Param("sessionId")
+	if err := validateSessionID(sid); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sessionId: " + err.Error()})
+		return
+	}
+	wid := c.Param("id")
+
+	if h.queueSvc == nil {
+		c.JSON(http.StatusOK, gin.H{"messages": []msgqueue.QueuedMessage{}})
+		return
+	}
+
+	msgs, err := h.queueSvc.PeekAll(c.Request.Context(), wid, sid)
+	if err != nil {
+		h.logger.Error("Failed to list queue", err, "workspaceID", wid, "sessionID", sid)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list queue"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"messages": msgs})
+}
+
+func (h *ProxyHandler) DeleteQueueMessage(c *gin.Context) {
+	sid := c.Param("sessionId")
+	if err := validateSessionID(sid); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sessionId: " + err.Error()})
+		return
+	}
+	wid := c.Param("id")
+	msgID := c.Param("messageId")
+	if msgID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "messageId required"})
+		return
+	}
+
+	if h.queueSvc == nil {
+		c.Status(http.StatusNoContent)
+		return
+	}
+
+	if err := h.queueSvc.Remove(c.Request.Context(), wid, sid, msgID); err != nil {
+		h.logger.Error("Failed to remove queue message", err, "workspaceID", wid, "sessionID", sid, "messageID", msgID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to remove message"})
+		return
+	}
+
+	if h.broker != nil {
+		h.broker.Publish(wid, apitypes.WorkspaceSSEEvent{
+			Type:      "queue.update",
+			SessionID: sid,
+			Data: queueUpdateData{
+				Event:     "dismissed",
+				MessageID: msgID,
+			},
+		})
+	}
+
+	c.Status(http.StatusNoContent)
 }
