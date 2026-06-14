@@ -227,7 +227,7 @@ func TestOrgCredentialStore_CRUD(t *testing.T) {
 	createTestOrg(t, pool, orgID, adminID)
 	t.Cleanup(func() { cleanupOrg(t, pool, orgID) })
 
-	credID, err := store.CreateOrgCredential(ctx, orgID, "shared-anthropic", "anthropic", []byte("encrypted-api-key"), nil)
+	credID, err := store.CreateOrgCredential(ctx, orgID, "shared-anthropic", "anthropic", []byte("encrypted-api-key"), nil, nil)
 	if err != nil {
 		t.Fatalf("CreateOrgCredential: %v", err)
 	}
@@ -260,7 +260,7 @@ func TestOrgCredentialStore_CRUD(t *testing.T) {
 		t.Error("Ciphertext mismatch")
 	}
 
-	err = store.UpdateOrgCredential(ctx, orgID, credID, nil, []byte("updated-key"), nil, 2)
+	err = store.UpdateOrgCredential(ctx, orgID, credID, nil, []byte("updated-key"), nil, nil, 2)
 	if err != nil {
 		t.Fatalf("UpdateOrgCredential: %v", err)
 	}
@@ -296,7 +296,7 @@ func TestOrgCredentialStore_AutoApply(t *testing.T) {
 	createTestOrg(t, pool, orgID, adminID)
 	t.Cleanup(func() { cleanupOrg(t, pool, orgID) })
 
-	credID, err := store.CreateOrgCredential(ctx, orgID, "shared-openai", "openai", []byte("cipher"), nil)
+	credID, err := store.CreateOrgCredential(ctx, orgID, "shared-openai", "openai", []byte("cipher"), nil, nil)
 	if err != nil {
 		t.Fatalf("CreateOrgCredential: %v", err)
 	}
@@ -360,7 +360,7 @@ func TestBindCredentialToAllOrgWorkspaces(t *testing.T) {
 	pool.Exec(ctx, "UPDATE workspaces SET org_id = $1 WHERE id = $2", orgID, wsID1)
 	pool.Exec(ctx, "UPDATE workspaces SET org_id = $1 WHERE id = $2", orgID, wsID2)
 
-	credID, err := store.CreateOrgCredential(ctx, orgID, "shared-anthropic", "anthropic", []byte("cipher"), nil)
+	credID, err := store.CreateOrgCredential(ctx, orgID, "shared-anthropic", "anthropic", []byte("cipher"), nil, nil)
 	if err != nil {
 		t.Fatalf("CreateOrgCredential: %v", err)
 	}
@@ -454,7 +454,7 @@ func TestOrgLifecycle_FullFlow(t *testing.T) {
 		t.Fatalf("EncryptSecret: %v", err)
 	}
 
-	credID, err := secretStore.CreateOrgCredential(ctx, orgID, "shared-anthropic", "anthropic", ciphertext, nil)
+	credID, err := secretStore.CreateOrgCredential(ctx, orgID, "shared-anthropic", "anthropic", ciphertext, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateOrgCredential: %v", err)
 	}
@@ -550,10 +550,10 @@ func TestSeedWorkspaceCredentials_OrgVsPersonal(t *testing.T) {
 		pool.Exec(ctx, "DELETE FROM users WHERE id = $1", adminID)
 	})
 
-	orgCredID, _ := store.CreateOrgCredential(ctx, orgID, "org-anthropic", "anthropic", []byte("org-cipher"), nil)
+	orgCredID, _ := store.CreateOrgCredential(ctx, orgID, "org-anthropic", "anthropic", []byte("org-cipher"), nil, nil)
 	store.CreateOrgAutoApply(ctx, orgID, orgCredID, 5)
 
-	otherOrgCredID, _ := store.CreateOrgCredential(ctx, otherOrgID, "other-org-anthropic", "anthropic", []byte("other-cipher"), nil)
+	otherOrgCredID, _ := store.CreateOrgCredential(ctx, otherOrgID, "other-org-anthropic", "anthropic", []byte("other-cipher"), nil, nil)
 	store.CreateOrgAutoApply(ctx, otherOrgID, otherOrgCredID, 5)
 
 	err := store.SeedWorkspaceCredentials(ctx, personalWS, adminID, nil)
@@ -612,11 +612,11 @@ func TestReEncryptOrgCredentials(t *testing.T) {
 	cipher1, _ := EncryptSecret(oldDEK, plain1)
 	cipher2, _ := EncryptSecret(oldDEK, plain2)
 
-	_, err := store.CreateOrgCredential(ctx, orgID, "cred-1", "anthropic", cipher1, nil)
+	_, err := store.CreateOrgCredential(ctx, orgID, "cred-1", "anthropic", cipher1, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateOrgCredential 1: %v", err)
 	}
-	_, err = store.CreateOrgCredential(ctx, orgID, "cred-2", "openai", cipher2, nil)
+	_, err = store.CreateOrgCredential(ctx, orgID, "cred-2", "openai", cipher2, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateOrgCredential 2: %v", err)
 	}
@@ -700,7 +700,7 @@ func TestRotateOrgDEK_DeletesOtherAdminKeys(t *testing.T) {
 
 	plainKey := []byte("sk-rotation-test-key")
 	cipher, _ := EncryptSecret(orgDEK, plainKey)
-	secretStore.CreateOrgCredential(ctx, orgID, "rot-cred", "anthropic", cipher, nil)
+	secretStore.CreateOrgCredential(ctx, orgID, "rot-cred", "anthropic", cipher, nil, nil)
 
 	reencrypted, err := svc.RotateOrgDEK(ctx, orgID, adminID, adminPass)
 	if err != nil {
