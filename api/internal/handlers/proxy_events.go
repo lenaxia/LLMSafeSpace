@@ -33,6 +33,14 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 	}
 
 	if h.meteringSvc != nil && workspace.Spec.Owner.UserID != "" {
+		// RecordLifecycleEvent is called unconditionally — including on seed calls
+		// (prior=="") that fire when the API restarts with already-Active workspaces.
+		// Seed calls produce a phantom lifecycle record with from_phase="" and
+		// to_phase="Active". This was a deliberate tradeoff: the alternative (guarding
+		// with prior!="") silently drops Creating→Active events for workspaces that
+		// transition while the API is restarting, which corrupts billing data worse than
+		// a phantom record. The metering service is expected to handle from_phase="" as
+		// a no-op or a restart-artifact marker.
 		if err := h.meteringSvc.RecordLifecycleEvent(
 			context.Background(),
 			workspace.Name,

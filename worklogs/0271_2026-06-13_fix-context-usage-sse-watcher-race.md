@@ -82,18 +82,18 @@ to:
 if prior == "" || prior != string(phaseActive) {  // true for seed calls AND real transitions
 ```
 
-`prior == ""` means the workspace had no prior known phase in the handler — which happens only
-for seed calls (API restart). In this case, `EnsureWatching` must be called to start the SSE
-subscription. For `prior == phaseActive` (Active→Active reconcile), the `else` branch still runs,
-preserving the existing behavior of not resetting an already-healthy subscription.
+`prior == ""` means the workspace had no prior known phase in the handler. This happens in two cases:
+(a) seed calls — API restarts with workspace already Active; (b) real Creating→Active transitions
+where the API missed the Creating event during restart. Both require `EnsureWatching`.
+For `prior == phaseActive` (Active→Active reconcile), the `else` branch runs, preserving the
+existing behaviour of not resetting an already-healthy subscription.
 
-**Side effects addressed:**
-- Metering guard: `RecordLifecycleEvent` is only called when `prior != ""` to prevent phantom
-  billing records on API restart (seed calls with `prior=""` are not real phase transitions).
-- Existing test `TestProxy_OnPhaseChange_RecordsLifecycleEvent` updated to set `prior="Creating"`
-  to simulate a real transition.
-- `TestProxy_PhaseChange_RunningNoInvalidation` updated to set `prior="Active"` to correctly
-  represent the Active→Active reconcile case (the test was inadvertently testing the seed case).
+**Metering (seed calls with `prior=""`):** `RecordLifecycleEvent` is called unconditionally —
+including on seed calls — producing a phantom lifecycle record with `from_phase=""`.
+This was a deliberate tradeoff: the alternative (guarding with `prior!=""`) silently drops
+Creating→Active events for workspaces that transition while the API is restarting, which corrupts
+billing data worse than a phantom record. The metering service handles `from_phase=""` as a
+restart-artifact marker. See `proxy_events.go:35-51` comment.
 
 ### Tests Added
 
@@ -106,10 +106,13 @@ preserving the existing behavior of not resetting an already-healthy subscriptio
 **`api/internal/handlers/proxy_test.go`:**
 - `TestProxy_OnPhaseChange_SeedCallActive_StartsSSETracker` — verifies that calling `onPhaseChange`
   with `prior=""` (seed call) starts a new SSE subscription (the regression test for this bug)
-- `TestProxy_OnPhaseChange_SeedCall_NoLifecycleEvent` — verifies no metering event is recorded
-  for seed calls
-- `TestProxy_OnPhaseChange_RecordsLifecycleEvent` — updated to use `prior="Creating"` for a real
-  Creating→Active transition
+- `TestProxy_OnPhaseChange_CreatingToActive_AfterRestart_RecordsLifecycleEvent` — verifies that a
+  Creating→Active transition with `prior=""` (first observation after restart) DOES record a
+  lifecycle event with `from_phase=""`, confirming the unconditional metering decision
+- `TestProxy_OnPhaseChange_RecordsLifecycleEvent` — updated to set `prior="Creating"` for a
+  standard Creating→Active transition
+- `TestProxy_PhaseChange_RunningNoInvalidation` — updated to set `prior="Active"` to correctly
+  represent the Active→Active reconcile case (the test was inadvertently testing the seed case)
 
 ---
 
@@ -119,18 +122,23 @@ preserving the existing behavior of not resetting an already-healthy subscriptio
    the correct hook — it also handles `invalidateCaches`, `userBroker.RecordWorkspaceOwner`, and
    `activityTracker`. Calling `EnsureWatching` directly would duplicate logic.
 
-2. **`prior==""` semantics.** The watcher never calls `onPhaseChange` when `existed==false`
-   (first observation of a workspace). So `prior==""` in the handler is exclusive to seed calls.
-   This is a valid discriminator; no additional sentinel value is needed.
+2. **`prior==""` semantics.** The code comment at `proxy_events.go:76-79` documents that `prior=""`
+   covers two cases: seed calls AND real first-observations after restart. The `prior==""` path is
+   therefore not exclusively "seed calls" — it is "first handler invocation for this workspace",
+   which may be either. Both cases correctly require `EnsureWatching`.
 
 3. **Broadcast on seed call is acceptable.** On API restart, connected clients receive a
    `workspace.phase` event with `phase=Active`. This is a harmless redundant notification —
    preferable to the complexity of an additional guard that breaks the existing test for terminal
    phases (where `prior` is `""` after the handler deletes it on `Terminating`).
 
-4. **`contextTotal=0` is not fixed.** The `thekao cloud` provider lacks `limit.context` in
-   `agent-config.json`. This is a configuration gap in LiteLLM, not a code bug. The "Unknown"
-   badge is correct. Fix is: add model context window sizes to `agent-config.json`.
+4. **Metering on seed call is intentionally unconditional.** See "Metering" section above.
+   The `prior!=""` guard was introduced in an early iteration of this fix and then intentionally
+   removed in commit `782d3bd2` after reviewer feedback. The guard was incorrect because it would
+   drop real Creating→Active billing events for workspaces that transitioned during an API restart.
+
+5. **`contextTotal=0` is addressed in a follow-on PR (#162).** Added `ContextLimit` to
+   `LLMModelConfig` and `FormatOpenCodeConfig` — see worklog 0263.
 
 ---
 
@@ -154,18 +162,10 @@ go build ./...  # clean
 
 ---
 
-## Next Steps
-
-1. Deploy fix to cluster — restart API pods to verify SSE tracker starts watching all Active workspaces.
-2. After one LLM step in any workspace, verify `session_index.context_used` is now set.
-3. Address `contextTotal=0`: configure model context window sizes in LiteLLM/`agent-config.json`.
-
----
-
 ## Files Modified
 
 - `api/internal/services/workspace/watcher.go` — `seedResourceVersion()`: call `onPhaseChange` for Active workspaces
-- `api/internal/handlers/proxy_events.go` — `onPhaseChange()`: fix `phaseActive` condition; add metering guard
+- `api/internal/handlers/proxy_events.go` — `onPhaseChange()`: fix `phaseActive` condition; unconditional metering with explanatory comment
 - `api/internal/services/workspace/watcher_test.go` — add two seed-call tests
 - `api/internal/handlers/proxy_test.go` — add two new tests; fix three existing tests that assumed wrong prior-phase semantics
-- `worklogs/0260_2026-06-13_fix-context-usage-sse-watcher-race.md` — this file
+- `worklogs/0271_2026-06-13_fix-context-usage-sse-watcher-race.md` — this file
