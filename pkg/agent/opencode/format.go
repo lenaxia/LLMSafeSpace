@@ -77,6 +77,9 @@ func FormatOpenCodeConfig(providers []secrets.LLMProviderData) ([]byte, error) {
 				if m.Label != "" {
 					om.Name = m.Label
 				}
+				if m.ContextLimit > 0 {
+					om.Limit = &opencodeModelLimit{Context: m.ContextLimit}
+				}
 				op.Models[m.ID] = om
 			}
 		}
@@ -124,5 +127,17 @@ type opencodeOptions struct {
 }
 
 type opencodeModel struct {
-	Name string `json:"name,omitempty"`
+	Name  string              `json:"name,omitempty"`
+	Limit *opencodeModelLimit `json:"limit,omitempty"`
+}
+
+// opencodeModelLimit mirrors the opencode config schema's model.limit object.
+// Only the context field is written here. The output field exists in opencode's
+// schema (see relay_injector.go buildRelayConfig which writes both) but is not
+// set by FormatOpenCodeConfig because LLMModelConfig does not carry an output
+// limit — that data is also unavailable from the /v1/models API endpoint.
+// The input field is intentionally absent: opencode returns ConfigInvalidError
+// when limit.input is present (confirmed in relay_injector.go buildRelayConfig comment).
+type opencodeModelLimit struct {
+	Context int `json:"context,omitempty"`
 }

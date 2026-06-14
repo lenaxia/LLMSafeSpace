@@ -33,6 +33,14 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 	}
 
 	if h.meteringSvc != nil && workspace.Spec.Owner.UserID != "" {
+		// RecordLifecycleEvent is called unconditionally — including on seed calls
+		// (prior=="") that fire when the API restarts with already-Active workspaces.
+		// Seed calls produce a phantom lifecycle record with from_phase="" and
+		// to_phase="Active". This was a deliberate tradeoff: the alternative (guarding
+		// with prior!="") silently drops Creating→Active events for workspaces that
+		// transition while the API is restarting, which corrupts billing data worse than
+		// a phantom record. The metering service is expected to handle from_phase="" as
+		// a no-op or a restart-artifact marker.
 		if err := h.meteringSvc.RecordLifecycleEvent(
 			context.Background(),
 			workspace.Name,
@@ -73,7 +81,14 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 	}
 
 	if phase == phaseActive {
-		if prior != "" && prior != string(phaseActive) {
+		// prior == "" means this is the first invocation for this workspace in the handler —
+		// either a seed call (workspace was already Active on API restart) or a real transition
+		// from a phase not yet seen by the handler (e.g. Creating→Active on a new workspace
+		// whose Creating event arrived before the handler was aware of it).
+		// prior != phaseActive means a real transition into Active (e.g. Creating → Active,
+		// Resuming → Active). Both prior=="" and prior!=Active require starting the SSE subscription.
+		// prior == phaseActive means a watch event with no phase change — only clear cached config.
+		if prior == "" || prior != string(phaseActive) {
 			h.invalidateCaches(workspace.Name)
 			if h.sseTracker != nil {
 				h.sseTracker.StopWatching(workspace.Name)

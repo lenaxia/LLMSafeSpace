@@ -393,3 +393,137 @@ func TestFormatOpenCodeConfig_NoNPMWhenNoBaseURL(t *testing.T) {
 	_, hasNPM := op["npm"]
 	assert.False(t, hasNPM, "npm must not be set for providers without a custom BaseURL")
 }
+
+// TestFormatOpenCodeConfig_ContextLimit_WrittenAsLimitContext is the core test
+// for the contextTotal fix (worklog 0263).
+//
+// When LLMModelConfig.ContextLimit is non-zero, FormatOpenCodeConfig must write
+// it as limit.context in the model entry. opencode reads this via /config/providers,
+// which feeds ModelContextLimit() in agentd, which feeds context.total_tokens in
+// /v1/statusz, which feeds the CRD status.contextTotal, which is what the frontend
+// shows as the denominator in the context usage bar.
+//
+// Proven by live experiment: writing limit.context=200000 into agent-config.json
+// caused /config/providers to return ctx=200000 for thekao cloud models, and
+// agentd statusz to report context.total_tokens=200000. CRD updated within 35s
+// (one controller poll cycle). Frontend showed "114k/200k" correctly.
+func TestFormatOpenCodeConfig_ContextLimit_WrittenAsLimitContext(t *testing.T) {
+	providers := []secrets.LLMProviderData{
+		{
+			Provider: "thekao cloud",
+			APIKey:   "sk-test",
+			BaseURL:  "https://ai.thekao.cloud/v1",
+			Models: []secrets.LLMModelConfig{
+				{ID: "glm-5.1", ContextLimit: 200000},
+				{ID: "glm-5.2", Label: "GLM 5.2", ContextLimit: 200000},
+				{ID: "classifier"}, // no ContextLimit — must NOT get a limit object
+			},
+		},
+	}
+
+	out, err := FormatOpenCodeConfig(providers)
+	require.NoError(t, err)
+
+	var parsed map[string]interface{}
+	require.NoError(t, json.Unmarshal(out, &parsed))
+
+	provs := parsed["provider"].(map[string]interface{})
+	p := provs["thekao cloud"].(map[string]interface{})
+	models := p["models"].(map[string]interface{})
+
+	// Model WITH ContextLimit must have limit.context set.
+	glm51 := models["glm-5.1"].(map[string]interface{})
+	limit51, hasLimit := glm51["limit"]
+	require.True(t, hasLimit, "model with ContextLimit=200000 must have a 'limit' field")
+	limitObj := limit51.(map[string]interface{})
+	assert.Equal(t, float64(200000), limitObj["context"],
+		"limit.context must match ContextLimit value")
+
+	// Model WITH ContextLimit and a label.
+	glm52 := models["glm-5.2"].(map[string]interface{})
+	assert.Equal(t, "GLM 5.2", glm52["name"])
+	limit52 := glm52["limit"].(map[string]interface{})
+	assert.Equal(t, float64(200000), limit52["context"])
+
+	// Model WITHOUT ContextLimit must NOT have a limit field.
+	classifier := models["classifier"].(map[string]interface{})
+	_, hasClassifierLimit := classifier["limit"]
+	assert.False(t, hasClassifierLimit,
+		"model without ContextLimit must NOT have a 'limit' field — "+
+			"opencode returns limit.context=0 for missing fields, same as absent")
+}
+
+// TestFormatOpenCodeConfig_ContextLimit_Zero_NoLimitField verifies that
+// ContextLimit=0 (the zero value) does not produce a limit field in the output.
+// This avoids noise in the config for models where the context window is unknown.
+func TestFormatOpenCodeConfig_ContextLimit_Zero_NoLimitField(t *testing.T) {
+	providers := []secrets.LLMProviderData{
+		{
+			Provider: "openai",
+			APIKey:   "sk-test",
+			BaseURL:  "https://example.com/v1",
+			Models: []secrets.LLMModelConfig{
+				{ID: "gpt-5", ContextLimit: 0},
+			},
+		},
+	}
+
+	out, err := FormatOpenCodeConfig(providers)
+	require.NoError(t, err)
+
+	var parsed map[string]interface{}
+	require.NoError(t, json.Unmarshal(out, &parsed))
+
+	provs := parsed["provider"].(map[string]interface{})
+	p := provs["openai"].(map[string]interface{})
+	models := p["models"].(map[string]interface{})
+	gpt5 := models["gpt-5"].(map[string]interface{})
+
+	_, hasLimit := gpt5["limit"]
+	assert.False(t, hasLimit, "ContextLimit=0 must produce no 'limit' field")
+}
+
+// TestFormatOpenCodeConfig_ExactSnapshot_WithContextLimit updates the snapshot
+// to include limit.context when a model has ContextLimit set. This is the
+// serialized form that opencode reads from agent-config.json.
+func TestFormatOpenCodeConfig_ExactSnapshot_WithContextLimit(t *testing.T) {
+	providers := []secrets.LLMProviderData{
+		{
+			Provider: "openai",
+			APIKey:   "sk-test-key",
+			BaseURL:  "https://litellm.example/v1",
+			Default:  "openai/deepseek-v3-chat",
+			Models: []secrets.LLMModelConfig{
+				{ID: "deepseek-v3-chat", Label: "DeepSeek V3 Chat", ContextLimit: 128000},
+			},
+		},
+	}
+
+	out, err := FormatOpenCodeConfig(providers)
+	require.NoError(t, err)
+
+	expected := `{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "openai": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "apiKey": "sk-test-key",
+        "baseURL": "https://litellm.example/v1"
+      },
+      "models": {
+        "deepseek-v3-chat": {
+          "name": "DeepSeek V3 Chat",
+          "limit": {
+            "context": 128000
+          }
+        }
+      }
+    }
+  },
+  "model": "openai/deepseek-v3-chat"
+}`
+
+	require.Equal(t, expected, string(out),
+		"snapshot mismatch — update the snapshot after re-validating against a live opencode pod")
+}

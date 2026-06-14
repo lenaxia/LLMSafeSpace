@@ -165,9 +165,13 @@ func (w *Watcher) runWatchLoop() {
 // seedResourceVersion does an initial List to populate lastResourceVersion and
 // knownPhases so the first Watch starts from a known position. Also records
 // workspace ownership in the user broker for snapshot delivery (FM3, FM7).
+// For workspaces already Active, onPhaseChange is invoked immediately so that
+// SSE tracker subscriptions and other phase-dependent state are established
+// on API restart (covers the case where the API restarts while workspaces are
+// already Active — without this, the EnsureWatching loop in proxy_lifecycle
+// runs against an empty knownPhases map because watcher.Start() is async).
 // For workspaces already Active with a non-empty imageTag, the version sync
-// callback is invoked immediately so the DB reflects the current image tag
-// without waiting for the next phase transition (covers the API-restart case).
+// callback is also invoked immediately so the DB reflects the current image tag.
 func (w *Watcher) seedResourceVersion() error {
 	v1Client, err := w.k8sClient.LlmsafespaceV1()
 	if err != nil {
@@ -179,10 +183,11 @@ func (w *Watcher) seedResourceVersion() error {
 	}
 	w.setResourceVersion(list.ResourceVersion)
 
-	// Collect (name, imageTag) pairs for Active workspaces before releasing
-	// locks, so callbacks fire without holding any mutex (avoids lock-under-I/O).
+	// Collect Active workspaces before releasing locks so callbacks fire
+	// without holding any mutex (avoids lock-under-I/O).
 	type versionEntry struct{ name, imageTag string }
 	var toSync []versionEntry
+	var activeWorkspaces []*v1.Workspace
 
 	w.knownPhasesMu.Lock()
 	w.knownImageTagsMu.Lock()
@@ -198,12 +203,23 @@ func (w *Watcher) seedResourceVersion() error {
 		if w.userBroker != nil && ws.Spec.Owner.UserID != "" {
 			w.userBroker.RecordWorkspaceOwner(ws.Name, ws.Spec.Owner.UserID)
 		}
-		if ws.Status.Phase == v1.WorkspacePhaseActive && ws.Status.ImageTag != "" {
-			toSync = append(toSync, versionEntry{ws.Name, ws.Status.ImageTag})
+		if ws.Status.Phase == v1.WorkspacePhaseActive {
+			wsCopy := list.Items[i]
+			activeWorkspaces = append(activeWorkspaces, &wsCopy)
+			if ws.Status.ImageTag != "" {
+				toSync = append(toSync, versionEntry{ws.Name, ws.Status.ImageTag})
+			}
 		}
 	}
 	w.knownImageTagsMu.Unlock()
 	w.knownPhasesMu.Unlock()
+
+	// Fire onPhaseChange for already-Active workspaces after releasing locks.
+	// This ensures the SSE tracker starts watching them on API restart, even
+	// though no phase transition event has been emitted for these workspaces.
+	for _, ws := range activeWorkspaces {
+		w.onPhaseChange(ws)
+	}
 
 	// Fire version sync callbacks after releasing locks to avoid holding
 	// mutexes across DB I/O.
