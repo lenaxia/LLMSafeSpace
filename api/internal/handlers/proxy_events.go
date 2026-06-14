@@ -136,11 +136,11 @@ func (h *ProxyHandler) onSessionIdle(workspaceID, sessionID string) {
 	if h.activityTracker != nil {
 		h.activityTracker.Record(workspaceID)
 	}
-	if h.sessionIndex != nil {
+	if h.sessionIndex != nil && !h.isSessionDeleted(workspaceID, sessionID) {
 		h.sessionIndex.RecordMessage(workspaceID, sessionID, "", time.Now())
 		go h.fetchAndPersistTitle(workspaceID, sessionID)
 	}
-	if h.queueSvc != nil {
+	if h.queueSvc != nil && !h.isSessionDeleted(workspaceID, sessionID) {
 		go h.drainQueuedMessage(workspaceID, sessionID)
 	}
 }
@@ -297,6 +297,9 @@ func (h *ProxyHandler) persistTitleFromEvent(workspaceID, rawData string) {
 	if id == "" {
 		return
 	}
+	if h.isSessionDeleted(workspaceID, id) {
+		return
+	}
 	if evt.Properties.Info.Title != "" {
 		_ = h.sessionIndex.UpsertTitle(context.Background(), workspaceID, id, evt.Properties.Info.Title)
 	}
@@ -325,6 +328,9 @@ func (h *ProxyHandler) persistContextFromEvent(workspaceID, rawData string) {
 		return
 	}
 	if evt.Properties.SessionID == "" || evt.Properties.Tokens == nil {
+		return
+	}
+	if h.isSessionDeleted(workspaceID, evt.Properties.SessionID) {
 		return
 	}
 	promptTokens := evt.Properties.Tokens.Input +

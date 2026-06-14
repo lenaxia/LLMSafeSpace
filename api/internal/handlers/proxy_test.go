@@ -2071,16 +2071,102 @@ func TestProxy_DeleteSession_DeepNestingEndpointMapping(t *testing.T) {
 	assert.Equal(t, "/session/sess_abc-123", capturedPath)
 }
 
+func TestProxy_DeleteSession_SuppressesLateSSEUpserts(t *testing.T) {
+	si := &recordingActivitySessionIndex{}
+	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]bool{"deleted": true})
+	})
+	env.handler.SetSessionIndex(si)
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+	env.setupWorkspaceWithT(t, "ws-1", 5)
+
+	// Delete the session
+	w := env.doRequestWithT(t, "DELETE", "/api/v1/workspaces/ws-1/sessions/s1", nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Verify the session is marked as deleted
+	assert.True(t, env.handler.isSessionDeleted("ws-1", "s1"))
+
+	// Simulate a late idle event — onSessionIdle should NOT call RecordMessage
+	env.handler.onSessionIdle("ws-1", "s1")
+
+	si.mu.Lock()
+	assert.Empty(t, si.recorded, "RecordMessage should not be called for deleted session")
+	si.mu.Unlock()
+}
+
+func TestProxy_DeleteSession_AllowsNonDeletedSessionUpserts(t *testing.T) {
+	si := &recordingActivitySessionIndex{}
+	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]bool{"deleted": true})
+	})
+	env.handler.SetSessionIndex(si)
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+	env.setupWorkspaceWithT(t, "ws-1", 5)
+
+	// Delete session s1
+	w := env.doRequestWithT(t, "DELETE", "/api/v1/workspaces/ws-1/sessions/s1", nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Late idle for a DIFFERENT session should still work
+	env.handler.onSessionIdle("ws-1", "s2")
+
+	si.mu.Lock()
+	assert.Len(t, si.recorded, 1, "RecordMessage should be called for non-deleted session")
+	si.mu.Unlock()
+}
+
+func TestProxy_PersistTitleFromEvent_SkipsDeletedSession(t *testing.T) {
+	si := &recordingActivitySessionIndex{}
+	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {})
+	env.handler.SetSessionIndex(si)
+
+	env.handler.markSessionDeleted("ws-1", "s1")
+
+	rawData := `{"properties":{"sessionID":"s1","info":{"id":"s1","title":"Late Title"}}}`
+	env.handler.persistTitleFromEvent("ws-1", rawData)
+
+	si.mu.Lock()
+	assert.Empty(t, si.titleUpserts, "UpsertTitle should be skipped for deleted session")
+	si.mu.Unlock()
+}
+
+func TestProxy_PersistContextFromEvent_SkipsDeletedSession(t *testing.T) {
+	si := &recordingActivitySessionIndex{}
+	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {})
+	env.handler.SetSessionIndex(si)
+
+	env.handler.markSessionDeleted("ws-1", "s1")
+
+	rawData := `{"properties":{"sessionID":"s1","tokens":{"input":100,"cache":{"read":0,"write":0}}}}`
+	env.handler.persistContextFromEvent("ws-1", rawData)
+
+	si.mu.Lock()
+	assert.Empty(t, si.contextUpserts, "UpsertContextUsed should be skipped for deleted session")
+	si.mu.Unlock()
+}
+
 var _ interfaces.SessionIndexService = (*recordingActivitySessionIndex)(nil)
 
 type recordingActivitySessionIndex struct {
-	mu            sync.Mutex
-	recorded      []activityRecordCall
-	titleUpserts  []upsertTitleCall
-	parentUpserts []upsertParentCall
-	deleteCalled  bool
-	deleteWID     string
-	deleteSID     string
+	mu             sync.Mutex
+	recorded       []activityRecordCall
+	titleUpserts   []upsertTitleCall
+	parentUpserts  []upsertParentCall
+	contextUpserts []upsertContextCall
+	deleteCalled   bool
+	deleteWID      string
+	deleteSID      string
+}
+
+type upsertContextCall struct {
+	workspaceID string
+	sessionID   string
+	contextUsed int64
 }
 
 type activityRecordCall struct {
@@ -2135,7 +2221,10 @@ func (r *recordingActivitySessionIndex) UpsertParent(_ context.Context, workspac
 	r.mu.Unlock()
 	return nil
 }
-func (r *recordingActivitySessionIndex) UpsertContextUsed(_ context.Context, _, _ string, _ int64) error {
+func (r *recordingActivitySessionIndex) UpsertContextUsed(_ context.Context, workspaceID, sessionID string, contextUsed int64) error {
+	r.mu.Lock()
+	r.contextUpserts = append(r.contextUpserts, upsertContextCall{workspaceID, sessionID, contextUsed})
+	r.mu.Unlock()
 	return nil
 }
 func (r *recordingActivitySessionIndex) Start() error { return nil }
