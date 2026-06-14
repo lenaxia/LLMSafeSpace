@@ -120,18 +120,22 @@ func (h *UserProviderCredentialsHandler) Create(c *gin.Context) {
 
 	now := time.Now()
 	row := &secrets.UserCredentialRow{
-		ID:             uuid.New().String(),
-		OwnerID:        userID,
-		Name:           req.Name,
-		Provider:       req.Provider,
-		Ciphertext:     ciphertext,
-		KeyVersion:     record.KeyVersion,
-		ModelAllowlist: req.ModelAllowlist,
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		ID:                 uuid.New().String(),
+		OwnerID:            userID,
+		Name:               req.Name,
+		Provider:           req.Provider,
+		Ciphertext:         ciphertext,
+		KeyVersion:         record.KeyVersion,
+		ModelAllowlist:     req.ModelAllowlist,
+		ModelContextLimits: req.ModelContextLimits,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 	if row.ModelAllowlist == nil {
 		row.ModelAllowlist = []string{}
+	}
+	if row.ModelContextLimits == nil {
+		row.ModelContextLimits = map[string]int{}
 	}
 
 	if err := h.store.CreateUserCredential(c.Request.Context(), row); err != nil {
@@ -144,12 +148,13 @@ func (h *UserProviderCredentialsHandler) Create(c *gin.Context) {
 	}
 
 	resp := AdminCredentialResponse{
-		ID:             row.ID,
-		Name:           row.Name,
-		Provider:       row.Provider,
-		ModelAllowlist: row.ModelAllowlist,
-		CreatedAt:      row.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:      row.UpdatedAt.Format(time.RFC3339),
+		ID:                 row.ID,
+		Name:               row.Name,
+		Provider:           row.Provider,
+		ModelAllowlist:     row.ModelAllowlist,
+		ModelContextLimits: row.ModelContextLimits,
+		CreatedAt:          row.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:          row.UpdatedAt.Format(time.RFC3339),
 	}
 
 	// Bind to all existing workspaces (C-2 fix: surface failure via 207 not silent header).
@@ -181,15 +186,19 @@ func (h *UserProviderCredentialsHandler) List(c *gin.Context) {
 	resp := make([]AdminCredentialResponse, 0, len(rows))
 	for _, row := range rows {
 		r := AdminCredentialResponse{
-			ID:             row.ID,
-			Name:           row.Name,
-			Provider:       row.Provider,
-			ModelAllowlist: row.ModelAllowlist,
-			CreatedAt:      row.CreatedAt.Format(time.RFC3339),
-			UpdatedAt:      row.UpdatedAt.Format(time.RFC3339),
+			ID:                 row.ID,
+			Name:               row.Name,
+			Provider:           row.Provider,
+			ModelAllowlist:     row.ModelAllowlist,
+			ModelContextLimits: row.ModelContextLimits,
+			CreatedAt:          row.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:          row.UpdatedAt.Format(time.RFC3339),
 		}
 		if r.ModelAllowlist == nil {
 			r.ModelAllowlist = []string{}
+		}
+		if r.ModelContextLimits == nil {
+			r.ModelContextLimits = map[string]int{}
 		}
 		resp = append(resp, r)
 	}
@@ -213,12 +222,13 @@ func (h *UserProviderCredentialsHandler) Get(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, AdminCredentialResponse{
-		ID:             row.ID,
-		Name:           row.Name,
-		Provider:       row.Provider,
-		ModelAllowlist: row.ModelAllowlist,
-		CreatedAt:      row.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:      row.UpdatedAt.Format(time.RFC3339),
+		ID:                 row.ID,
+		Name:               row.Name,
+		Provider:           row.Provider,
+		ModelAllowlist:     row.ModelAllowlist,
+		ModelContextLimits: row.ModelContextLimits,
+		CreatedAt:          row.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:          row.UpdatedAt.Format(time.RFC3339),
 	})
 }
 

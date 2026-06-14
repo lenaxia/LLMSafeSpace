@@ -227,7 +227,7 @@ func TestOrgCredentialStore_CRUD(t *testing.T) {
 	createTestOrg(t, pool, orgID, adminID)
 	t.Cleanup(func() { cleanupOrg(t, pool, orgID) })
 
-	credID, err := store.CreateOrgCredential(ctx, orgID, "shared-anthropic", "anthropic", []byte("encrypted-api-key"), nil)
+	credID, err := store.CreateOrgCredential(ctx, orgID, "shared-anthropic", "anthropic", []byte("encrypted-api-key"), nil, nil)
 	if err != nil {
 		t.Fatalf("CreateOrgCredential: %v", err)
 	}
@@ -260,7 +260,7 @@ func TestOrgCredentialStore_CRUD(t *testing.T) {
 		t.Error("Ciphertext mismatch")
 	}
 
-	err = store.UpdateOrgCredential(ctx, orgID, credID, nil, []byte("updated-key"), nil, 2)
+	err = store.UpdateOrgCredential(ctx, orgID, credID, nil, []byte("updated-key"), nil, nil, 2)
 	if err != nil {
 		t.Fatalf("UpdateOrgCredential: %v", err)
 	}
@@ -296,7 +296,7 @@ func TestOrgCredentialStore_AutoApply(t *testing.T) {
 	createTestOrg(t, pool, orgID, adminID)
 	t.Cleanup(func() { cleanupOrg(t, pool, orgID) })
 
-	credID, err := store.CreateOrgCredential(ctx, orgID, "shared-openai", "openai", []byte("cipher"), nil)
+	credID, err := store.CreateOrgCredential(ctx, orgID, "shared-openai", "openai", []byte("cipher"), nil, nil)
 	if err != nil {
 		t.Fatalf("CreateOrgCredential: %v", err)
 	}
@@ -360,7 +360,7 @@ func TestBindCredentialToAllOrgWorkspaces(t *testing.T) {
 	pool.Exec(ctx, "UPDATE workspaces SET org_id = $1 WHERE id = $2", orgID, wsID1)
 	pool.Exec(ctx, "UPDATE workspaces SET org_id = $1 WHERE id = $2", orgID, wsID2)
 
-	credID, err := store.CreateOrgCredential(ctx, orgID, "shared-anthropic", "anthropic", []byte("cipher"), nil)
+	credID, err := store.CreateOrgCredential(ctx, orgID, "shared-anthropic", "anthropic", []byte("cipher"), nil, nil)
 	if err != nil {
 		t.Fatalf("CreateOrgCredential: %v", err)
 	}
@@ -454,7 +454,7 @@ func TestOrgLifecycle_FullFlow(t *testing.T) {
 		t.Fatalf("EncryptSecret: %v", err)
 	}
 
-	credID, err := secretStore.CreateOrgCredential(ctx, orgID, "shared-anthropic", "anthropic", ciphertext, nil)
+	credID, err := secretStore.CreateOrgCredential(ctx, orgID, "shared-anthropic", "anthropic", ciphertext, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateOrgCredential: %v", err)
 	}
@@ -550,10 +550,10 @@ func TestSeedWorkspaceCredentials_OrgVsPersonal(t *testing.T) {
 		pool.Exec(ctx, "DELETE FROM users WHERE id = $1", adminID)
 	})
 
-	orgCredID, _ := store.CreateOrgCredential(ctx, orgID, "org-anthropic", "anthropic", []byte("org-cipher"), nil)
+	orgCredID, _ := store.CreateOrgCredential(ctx, orgID, "org-anthropic", "anthropic", []byte("org-cipher"), nil, nil)
 	store.CreateOrgAutoApply(ctx, orgID, orgCredID, 5)
 
-	otherOrgCredID, _ := store.CreateOrgCredential(ctx, otherOrgID, "other-org-anthropic", "anthropic", []byte("other-cipher"), nil)
+	otherOrgCredID, _ := store.CreateOrgCredential(ctx, otherOrgID, "other-org-anthropic", "anthropic", []byte("other-cipher"), nil, nil)
 	store.CreateOrgAutoApply(ctx, otherOrgID, otherOrgCredID, 5)
 
 	err := store.SeedWorkspaceCredentials(ctx, personalWS, adminID, nil)
@@ -612,11 +612,11 @@ func TestReEncryptOrgCredentials(t *testing.T) {
 	cipher1, _ := EncryptSecret(oldDEK, plain1)
 	cipher2, _ := EncryptSecret(oldDEK, plain2)
 
-	_, err := store.CreateOrgCredential(ctx, orgID, "cred-1", "anthropic", cipher1, nil)
+	_, err := store.CreateOrgCredential(ctx, orgID, "cred-1", "anthropic", cipher1, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateOrgCredential 1: %v", err)
 	}
-	_, err = store.CreateOrgCredential(ctx, orgID, "cred-2", "openai", cipher2, nil)
+	_, err = store.CreateOrgCredential(ctx, orgID, "cred-2", "openai", cipher2, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateOrgCredential 2: %v", err)
 	}
@@ -700,7 +700,7 @@ func TestRotateOrgDEK_DeletesOtherAdminKeys(t *testing.T) {
 
 	plainKey := []byte("sk-rotation-test-key")
 	cipher, _ := EncryptSecret(orgDEK, plainKey)
-	secretStore.CreateOrgCredential(ctx, orgID, "rot-cred", "anthropic", cipher, nil)
+	secretStore.CreateOrgCredential(ctx, orgID, "rot-cred", "anthropic", cipher, nil, nil)
 
 	reencrypted, err := svc.RotateOrgDEK(ctx, orgID, adminID, adminPass)
 	if err != nil {
@@ -721,5 +721,60 @@ func TestRotateOrgDEK_DeletesOtherAdminKeys(t *testing.T) {
 	}
 	if adminRec2.KeyVersion != 1 {
 		t.Errorf("KeyVersion after rotation: got %d, want 1", adminRec2.KeyVersion)
+	}
+}
+
+// TestOrgCredentialStore_UpdateContextLimits_NilPreservesExisting is the regression
+// test for the COALESCE wipe bug: passing nil modelContextLimits to UpdateOrgCredential
+// must preserve the previously-saved limits rather than overwriting them with {}.
+func TestOrgCredentialStore_UpdateContextLimits_NilPreservesExisting(t *testing.T) {
+	pool := getTestPool(t)
+	defer pool.Close()
+	store := NewPgSecretStore(pool)
+	ctx := context.Background()
+
+	adminID := "org-ctx-limits-admin"
+	orgID := "aaaaaaaa-bbbb-cccc-dddd-000000000099"
+	ensureTestUser(t, pool, adminID)
+	createTestOrg(t, pool, orgID, adminID)
+	t.Cleanup(func() { cleanupOrg(t, pool, orgID) })
+
+	// Create credential with explicit context limits.
+	limits := map[string]int{"glm-5.1": 200000, "glm-5.2": 1000000}
+	credID, err := store.CreateOrgCredential(ctx, orgID, "ctx-test", "thekao", []byte("cipher1"), []string{"glm-5.1", "glm-5.2"}, limits)
+	if err != nil {
+		t.Fatalf("CreateOrgCredential: %v", err)
+	}
+
+	// Verify initial limits are stored.
+	row, _ := store.GetOrgCredential(ctx, orgID, credID)
+	if row.ModelContextLimits["glm-5.1"] != 200000 {
+		t.Errorf("initial glm-5.1 limit: got %d, want 200000", row.ModelContextLimits["glm-5.1"])
+	}
+
+	// Update ciphertext only — pass nil modelContextLimits.
+	// Passing nil must NOT wipe the existing limits (COALESCE must see SQL NULL).
+	if err := store.UpdateOrgCredential(ctx, orgID, credID, nil, []byte("cipher2"), nil, nil, 2); err != nil {
+		t.Fatalf("UpdateOrgCredential: %v", err)
+	}
+
+	row2, _ := store.GetOrgCredential(ctx, orgID, credID)
+	if string(row2.Ciphertext) != "cipher2" {
+		t.Error("ciphertext not updated")
+	}
+	if row2.ModelContextLimits["glm-5.1"] != 200000 {
+		t.Errorf("REGRESSION: glm-5.1 limit wiped by nil update: got %d, want 200000", row2.ModelContextLimits["glm-5.1"])
+	}
+	if row2.ModelContextLimits["glm-5.2"] != 1000000 {
+		t.Errorf("REGRESSION: glm-5.2 limit wiped by nil update: got %d, want 1000000", row2.ModelContextLimits["glm-5.2"])
+	}
+
+	// Explicitly clearing limits with an empty map must work.
+	if err := store.UpdateOrgCredential(ctx, orgID, credID, nil, nil, nil, map[string]int{}, 2); err != nil {
+		t.Fatalf("UpdateOrgCredential with empty limits: %v", err)
+	}
+	row3, _ := store.GetOrgCredential(ctx, orgID, credID)
+	if len(row3.ModelContextLimits) != 0 {
+		t.Errorf("expected empty limits after explicit clear, got %v", row3.ModelContextLimits)
 	}
 }

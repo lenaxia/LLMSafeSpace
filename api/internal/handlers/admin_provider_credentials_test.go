@@ -103,6 +103,7 @@ func setupAdminCredRouter(h *AdminProviderCredentialsHandler) *gin.Engine {
 	g.GET("/:id", h.Get)
 	g.PUT("/:id", h.Update)
 	g.DELETE("/:id", h.Delete)
+	g.GET("/:id/models", h.ProbeModels)
 	return r
 }
 
@@ -348,4 +349,202 @@ func TestAdminProviderCredentials_AutoApply_NilStore_Returns503(t *testing.T) {
 			assert.Equal(t, http.StatusServiceUnavailable, w.Code, "method %s should return 503", tc.method)
 		})
 	}
+}
+
+// TestAdminProviderCredentials_Create_ModelContextLimits verifies that
+// modelContextLimits round-trips through create and appears in the response.
+func TestAdminProviderCredentials_Create_ModelContextLimits(t *testing.T) {
+	store := newFakeAdminCredStore()
+	kek := make([]byte, 32)
+	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
+	router := setupAdminCredRouter(h)
+
+	body := `{
+		"name":"limits-test","provider":"openai","apiKey":"sk-test",
+		"baseURL":"https://example.com/v1",
+		"modelAllowlist":["glm-5.1","gpt-4o"],
+		"modelContextLimits":{"glm-5.1":200000,"gpt-4o":128000}
+	}`
+	req, _ := http.NewRequest("POST", "/api/v1/admin/provider-credentials", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	var resp AdminCredentialResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, []string{"glm-5.1", "gpt-4o"}, resp.ModelAllowlist)
+	require.Equal(t, 200000, resp.ModelContextLimits["glm-5.1"])
+	require.Equal(t, 128000, resp.ModelContextLimits["gpt-4o"])
+}
+
+// TestAdminProviderCredentials_Update_ModelContextLimits verifies that
+// modelContextLimits can be updated independently via PUT.
+func TestAdminProviderCredentials_Update_ModelContextLimits(t *testing.T) {
+	store := newFakeAdminCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 1)
+	}
+	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
+	router := setupAdminCredRouter(h)
+
+	// Create first.
+	createBody := `{"name":"c1","provider":"openai","apiKey":"sk-orig","baseURL":"https://x.com/v1"}`
+	req, _ := http.NewRequest("POST", "/api/v1/admin/provider-credentials", bytes.NewBufferString(createBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+	var created AdminCredentialResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+
+	// Update context limits.
+	updateBody := `{"modelAllowlist":["glm-5.2"],"modelContextLimits":{"glm-5.2":1000000}}`
+	req, _ = http.NewRequest("PUT", "/api/v1/admin/provider-credentials/"+created.ID,
+		bytes.NewBufferString(updateBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var updated AdminCredentialResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &updated))
+	assert.Equal(t, []string{"glm-5.2"}, updated.ModelAllowlist)
+	assert.Equal(t, 1000000, updated.ModelContextLimits["glm-5.2"])
+}
+
+// TestAdminProviderCredentials_ProbeModels_NoBaseURL verifies that the probe
+// endpoint returns a graceful warning when the credential has no baseURL rather
+// than attempting to probe a nil URL.
+func TestAdminProviderCredentials_ProbeModels_NoBaseURL(t *testing.T) {
+	store := newFakeAdminCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 2)
+	}
+	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
+	router := setupAdminCredRouter(h)
+
+	// Create a credential without baseURL (native provider).
+	createBody := `{"name":"native","provider":"anthropic","apiKey":"sk-ant-123"}`
+	req, _ := http.NewRequest("POST", "/api/v1/admin/provider-credentials", bytes.NewBufferString(createBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+	var created AdminCredentialResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+
+	// Probe models — must return 200 with a warning, not 500.
+	req, _ = http.NewRequest("GET", "/api/v1/admin/provider-credentials/"+created.ID+"/models", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var probe ProbeModelsResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &probe))
+	assert.NotEmpty(t, probe.Warning, "no-baseURL credential must return a warning")
+	assert.Empty(t, probe.Models, "no-baseURL credential must return empty model list")
+}
+
+// TestAdminProviderCredentials_ProbeModels_NotFound verifies 404 for unknown ID.
+func TestAdminProviderCredentials_ProbeModels_NotFound(t *testing.T) {
+	store := newFakeAdminCredStore()
+	kek := make([]byte, 32)
+	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
+	router := setupAdminCredRouter(h)
+
+	req, _ := http.NewRequest("GET", "/api/v1/admin/provider-credentials/does-not-exist/models", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// TestAdminProviderCredentials_ProbeModels_WithBaseURL_CallsProvider verifies
+// that when a credential has a baseURL, the probe endpoint attempts to contact
+// the provider and returns a warning (not 500) when it fails.
+func TestAdminProviderCredentials_ProbeModels_WithBaseURL_CallsProvider(t *testing.T) {
+	store := newFakeAdminCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 3)
+	}
+	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
+	router := setupAdminCredRouter(h)
+
+	// Create with a baseURL that won't be reachable in tests.
+	createBody := `{"name":"custom","provider":"custom","apiKey":"sk-test","baseURL":"http://localhost:19999/v1"}`
+	req, _ := http.NewRequest("POST", "/api/v1/admin/provider-credentials", bytes.NewBufferString(createBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+	var created AdminCredentialResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+
+	// Probe — provider unreachable, must return 200 with warning.
+	req, _ = http.NewRequest("GET", "/api/v1/admin/provider-credentials/"+created.ID+"/models", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var probe ProbeModelsResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &probe))
+	assert.NotEmpty(t, probe.Warning, "unreachable provider must return a warning")
+}
+
+// TestAdminProviderCredentials_ProbeModels_WithBaseURL_Success verifies that
+// when a provider's /models endpoint is reachable and returns a valid list,
+// the probe response includes those models with saved context limits merged in.
+func TestAdminProviderCredentials_ProbeModels_WithBaseURL_Success(t *testing.T) {
+	// Spin up a fake /models server.
+	fakeProvider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/models", r.URL.Path)
+		assert.Equal(t, "Bearer sk-probe-key", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"glm-5.1"},{"id":"glm-5.2"},{"id":"classifier"}]}`))
+	}))
+	defer fakeProvider.Close()
+
+	store := newFakeAdminCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 4)
+	}
+	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
+	router := setupAdminCredRouter(h)
+
+	// Create with saved context limits for two of the three models.
+	createBody, _ := json.Marshal(map[string]interface{}{
+		"name":               "thekao",
+		"provider":           "thekao cloud",
+		"apiKey":             "sk-probe-key",
+		"baseURL":            fakeProvider.URL + "/v1",
+		"modelAllowlist":     []string{"glm-5.1", "glm-5.2"},
+		"modelContextLimits": map[string]int{"glm-5.1": 200000, "glm-5.2": 1000000},
+	})
+	req, _ := http.NewRequest("POST", "/api/v1/admin/provider-credentials", bytes.NewReader(createBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+	var created AdminCredentialResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+
+	// Probe — should return all 3 models from the fake provider,
+	// with saved context limits pre-populated for glm-5.1 and glm-5.2.
+	req, _ = http.NewRequest("GET", "/api/v1/admin/provider-credentials/"+created.ID+"/models", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var probe ProbeModelsResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &probe))
+
+	assert.Empty(t, probe.Warning)
+	require.Len(t, probe.Models, 3)
+	byID := map[string]ProbeModelEntry{}
+	for _, m := range probe.Models {
+		byID[m.ID] = m
+	}
+	assert.Equal(t, 200000, byID["glm-5.1"].ContextLimit)
+	assert.Equal(t, 1000000, byID["glm-5.2"].ContextLimit)
+	assert.Equal(t, 0, byID["classifier"].ContextLimit, "classifier has no saved limit")
 }

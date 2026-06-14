@@ -149,6 +149,7 @@ func setupUserCredRouter(h *UserProviderCredentialsHandler) *gin.Engine {
 	g.POST("", h.Create)
 	g.GET("", h.List)
 	g.GET("/:id", h.Get)
+	g.GET("/:id/models", h.ProbeModels)
 	g.DELETE("/:id", h.Delete)
 	g.GET("/:id/bindings", h.ListBindings)
 	g.POST("/:id/bind/:workspaceId", h.Bind)
@@ -671,4 +672,115 @@ func TestUserProviderCredentials_Create_RequiresSessionID(t *testing.T) {
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 	assert.Empty(t, store.creds, "no credential should be persisted without a session")
+}
+
+// TestUserProviderCredentials_ProbeModels_NotFound verifies 404 for unknown credential.
+func TestUserProviderCredentials_ProbeModels_NotFound(t *testing.T) {
+	store := newFakeUserCredStore()
+	dek := make([]byte, 32)
+	dekCache := &testDEKCacheForHandler{cache: map[string][]byte{"sess-1": dek}}
+	h := &UserProviderCredentialsHandler{
+		store:    store,
+		keys:     secrets.NewKeyService(&fakeKeyStore{version: 1}, dekCache),
+		keyStore: &fakeKeyStore{version: 1},
+	}
+	router := setupUserCredRouter(h)
+
+	req, _ := http.NewRequest("GET", "/api/v1/provider-credentials/does-not-exist/models", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// TestUserProviderCredentials_ProbeModels_NoBaseURL verifies graceful warning
+// when the credential has no baseURL (native provider).
+func TestUserProviderCredentials_ProbeModels_NoBaseURL(t *testing.T) {
+	store := newFakeUserCredStore()
+	dek := make([]byte, 32)
+	for i := range dek {
+		dek[i] = byte(i + 5)
+	}
+	dekCache := &testDEKCacheForHandler{cache: map[string][]byte{"sess-1": dek}}
+	h := &UserProviderCredentialsHandler{
+		store:    store,
+		keys:     secrets.NewKeyService(&fakeKeyStore{version: 1}, dekCache),
+		keyStore: &fakeKeyStore{version: 1},
+	}
+	router := setupUserCredRouter(h)
+
+	// Create a credential without baseURL.
+	body := `{"name":"native","provider":"anthropic","apiKey":"sk-ant-test"}`
+	req, _ := http.NewRequest("POST", "/api/v1/provider-credentials", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+	var created AdminCredentialResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+
+	// Probe models — must return 200 with warning, not 500.
+	req, _ = http.NewRequest("GET", "/api/v1/provider-credentials/"+created.ID+"/models", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var probe ProbeModelsResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &probe))
+	assert.NotEmpty(t, probe.Warning, "no-baseURL credential must return a warning")
+	assert.Empty(t, probe.Models)
+}
+
+// TestUserProviderCredentials_ProbeModels_WithBaseURL_Success verifies that
+// when a user credential has a baseURL, the probe endpoint fetches models
+// from the provider and merges saved context limits.
+func TestUserProviderCredentials_ProbeModels_WithBaseURL_Success(t *testing.T) {
+	fakeProvider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/models", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"glm-5.1"},{"id":"glm-5.2"}]}`))
+	}))
+	defer fakeProvider.Close()
+
+	store := newFakeUserCredStore()
+	dek := make([]byte, 32)
+	for i := range dek {
+		dek[i] = byte(i + 6)
+	}
+	dekCache := &testDEKCacheForHandler{cache: map[string][]byte{"sess-1": dek}}
+	h := &UserProviderCredentialsHandler{
+		store:    store,
+		keys:     secrets.NewKeyService(&fakeKeyStore{version: 1}, dekCache),
+		keyStore: &fakeKeyStore{version: 1},
+	}
+	router := setupUserCredRouter(h)
+
+	createBody, _ := json.Marshal(map[string]interface{}{
+		"name":               "thekao",
+		"provider":           "thekao cloud",
+		"apiKey":             "sk-probe-key",
+		"baseURL":            fakeProvider.URL + "/v1",
+		"modelAllowlist":     []string{"glm-5.1"},
+		"modelContextLimits": map[string]int{"glm-5.1": 200000},
+	})
+	req, _ := http.NewRequest("POST", "/api/v1/provider-credentials", bytes.NewReader(createBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+	var created AdminCredentialResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+
+	req, _ = http.NewRequest("GET", "/api/v1/provider-credentials/"+created.ID+"/models", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var probe ProbeModelsResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &probe))
+	assert.Empty(t, probe.Warning)
+	require.Len(t, probe.Models, 2)
+	byID := map[string]ProbeModelEntry{}
+	for _, m := range probe.Models {
+		byID[m.ID] = m
+	}
+	assert.Equal(t, 200000, byID["glm-5.1"].ContextLimit, "saved context limit must be populated")
+	assert.Equal(t, 0, byID["glm-5.2"].ContextLimit, "unsaved model has no context limit")
 }

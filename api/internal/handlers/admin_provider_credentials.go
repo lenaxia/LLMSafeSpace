@@ -27,31 +27,34 @@ type AdminCredentialStore interface {
 
 // AdminCredentialResponse is the API response for an admin credential (never exposes apiKey).
 type AdminCredentialResponse struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name"`
-	Provider       string   `json:"provider"`
-	BaseURL        string   `json:"baseURL,omitempty"`
-	ModelAllowlist []string `json:"modelAllowlist"`
-	CreatedAt      string   `json:"createdAt"`
-	UpdatedAt      string   `json:"updatedAt"`
+	ID                 string         `json:"id"`
+	Name               string         `json:"name"`
+	Provider           string         `json:"provider"`
+	BaseURL            string         `json:"baseURL,omitempty"`
+	ModelAllowlist     []string       `json:"modelAllowlist"`
+	ModelContextLimits map[string]int `json:"modelContextLimits"`
+	CreatedAt          string         `json:"createdAt"`
+	UpdatedAt          string         `json:"updatedAt"`
 }
 
 type createAdminCredentialRequest struct {
-	Name           string   `json:"name" binding:"required"`
-	Provider       string   `json:"provider" binding:"required"`
-	APIKey         string   `json:"apiKey" binding:"required"`
-	BaseURL        string   `json:"baseURL"`
-	ModelAllowlist []string `json:"modelAllowlist"`
+	Name               string         `json:"name" binding:"required"`
+	Provider           string         `json:"provider" binding:"required"`
+	APIKey             string         `json:"apiKey" binding:"required"`
+	BaseURL            string         `json:"baseURL"`
+	ModelAllowlist     []string       `json:"modelAllowlist"`
+	ModelContextLimits map[string]int `json:"modelContextLimits"`
 }
 
 // updateAdminCredentialRequest is used for PUT — all fields are optional so
 // callers can rotate just the API key without resending name/provider.
 type updateAdminCredentialRequest struct {
-	Name           *string  `json:"name"`
-	Provider       *string  `json:"provider"`
-	APIKey         *string  `json:"apiKey"`
-	BaseURL        *string  `json:"baseURL"`
-	ModelAllowlist []string `json:"modelAllowlist"`
+	Name               *string        `json:"name"`
+	Provider           *string        `json:"provider"`
+	APIKey             *string        `json:"apiKey"`
+	BaseURL            *string        `json:"baseURL"`
+	ModelAllowlist     []string       `json:"modelAllowlist"`
+	ModelContextLimits map[string]int `json:"modelContextLimits"`
 }
 
 // AdminProviderCredentialsHandler handles CRUD for admin provider credentials.
@@ -111,17 +114,21 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 
 	now := time.Now()
 	row := &secrets.AdminCredentialRow{
-		ID:             uuid.New().String(),
-		Name:           req.Name,
-		Provider:       req.Provider,
-		Ciphertext:     ciphertext,
-		KeyVersion:     1,
-		ModelAllowlist: req.ModelAllowlist,
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		ID:                 uuid.New().String(),
+		Name:               req.Name,
+		Provider:           req.Provider,
+		Ciphertext:         ciphertext,
+		KeyVersion:         1,
+		ModelAllowlist:     req.ModelAllowlist,
+		ModelContextLimits: req.ModelContextLimits,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 	if row.ModelAllowlist == nil {
 		row.ModelAllowlist = []string{}
+	}
+	if row.ModelContextLimits == nil {
+		row.ModelContextLimits = map[string]int{}
 	}
 
 	if err := h.store.CreateAdminCredential(c.Request.Context(), row); err != nil {
@@ -134,13 +141,14 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, AdminCredentialResponse{
-		ID:             row.ID,
-		Name:           row.Name,
-		Provider:       row.Provider,
-		BaseURL:        req.BaseURL,
-		ModelAllowlist: row.ModelAllowlist,
-		CreatedAt:      row.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:      row.UpdatedAt.Format(time.RFC3339),
+		ID:                 row.ID,
+		Name:               row.Name,
+		Provider:           row.Provider,
+		BaseURL:            req.BaseURL,
+		ModelAllowlist:     row.ModelAllowlist,
+		ModelContextLimits: row.ModelContextLimits,
+		CreatedAt:          row.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:          row.UpdatedAt.Format(time.RFC3339),
 	})
 }
 
@@ -156,15 +164,19 @@ func (h *AdminProviderCredentialsHandler) List(c *gin.Context) {
 	resp := make([]AdminCredentialResponse, 0, len(rows))
 	for _, row := range rows {
 		r := AdminCredentialResponse{
-			ID:             row.ID,
-			Name:           row.Name,
-			Provider:       row.Provider,
-			ModelAllowlist: row.ModelAllowlist,
-			CreatedAt:      row.CreatedAt.Format(time.RFC3339),
-			UpdatedAt:      row.UpdatedAt.Format(time.RFC3339),
+			ID:                 row.ID,
+			Name:               row.Name,
+			Provider:           row.Provider,
+			ModelAllowlist:     row.ModelAllowlist,
+			ModelContextLimits: row.ModelContextLimits,
+			CreatedAt:          row.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:          row.UpdatedAt.Format(time.RFC3339),
 		}
 		if r.ModelAllowlist == nil {
 			r.ModelAllowlist = []string{}
+		}
+		if r.ModelContextLimits == nil {
+			r.ModelContextLimits = map[string]int{}
 		}
 		if kek != nil {
 			if plain, decErr := secrets.DecryptSecret(kek, row.Ciphertext); decErr == nil {
@@ -193,15 +205,19 @@ func (h *AdminProviderCredentialsHandler) Get(c *gin.Context) {
 	}
 
 	r := AdminCredentialResponse{
-		ID:             row.ID,
-		Name:           row.Name,
-		Provider:       row.Provider,
-		ModelAllowlist: row.ModelAllowlist,
-		CreatedAt:      row.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:      row.UpdatedAt.Format(time.RFC3339),
+		ID:                 row.ID,
+		Name:               row.Name,
+		Provider:           row.Provider,
+		ModelAllowlist:     row.ModelAllowlist,
+		ModelContextLimits: row.ModelContextLimits,
+		CreatedAt:          row.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:          row.UpdatedAt.Format(time.RFC3339),
 	}
 	if r.ModelAllowlist == nil {
 		r.ModelAllowlist = []string{}
+	}
+	if r.ModelContextLimits == nil {
+		r.ModelContextLimits = map[string]int{}
 	}
 	if kek := h.kek(); kek != nil {
 		if plain, decErr := secrets.DecryptSecret(kek, row.Ciphertext); decErr == nil {
@@ -242,6 +258,9 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 	}
 	if req.ModelAllowlist != nil {
 		existing.ModelAllowlist = req.ModelAllowlist
+	}
+	if req.ModelContextLimits != nil {
+		existing.ModelContextLimits = req.ModelContextLimits
 	}
 
 	// Re-encrypt only when the caller is changing an encrypted field (apiKey or baseURL).
@@ -304,12 +323,16 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 	// existing.UpdatedAt is now populated from RETURNING updated_at (M-8 fix).
 	// Decrypt to include baseURL in the response (consistent with GET/List).
 	resp := AdminCredentialResponse{
-		ID:             existing.ID,
-		Name:           existing.Name,
-		Provider:       existing.Provider,
-		ModelAllowlist: existing.ModelAllowlist,
-		CreatedAt:      existing.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:      existing.UpdatedAt.Format(time.RFC3339),
+		ID:                 existing.ID,
+		Name:               existing.Name,
+		Provider:           existing.Provider,
+		ModelAllowlist:     existing.ModelAllowlist,
+		ModelContextLimits: existing.ModelContextLimits,
+		CreatedAt:          existing.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:          existing.UpdatedAt.Format(time.RFC3339),
+	}
+	if resp.ModelContextLimits == nil {
+		resp.ModelContextLimits = map[string]int{}
 	}
 	if kek := h.kek(); kek != nil {
 		if plain, decErr := secrets.DecryptSecret(kek, existing.Ciphertext); decErr == nil {

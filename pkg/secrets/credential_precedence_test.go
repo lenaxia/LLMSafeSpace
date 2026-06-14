@@ -486,3 +486,124 @@ func (l *asyncAuditTestLogger) Sync() error                               { retu
 func (l *asyncAuditTestLogger) With(_ ...interface{}) pkginterfaces.LoggerInterface {
 	return l
 }
+
+// TestCredentialPrecedence_ModelContextLimits_InjectedIntoLLMModelConfig verifies
+// that ModelContextLimits from the credential binding are plumbed into the
+// LLMModelConfig.ContextLimit field during injection.
+//
+// This is the critical path for the contextTotal fix (worklog 0272): ContextLimit
+// flows LLMModelConfig → FormatOpenCodeConfig → agent-config.json → opencode
+// /config/providers → agentd ModelContextLimit() → CRD contextTotal → frontend.
+func TestCredentialPrecedence_ModelContextLimits_InjectedIntoLLMModelConfig(t *testing.T) {
+	keyStore := newMockKeyStore()
+	dekCache := newTestDEKCache()
+	keyService := NewKeyService(keyStore, dekCache)
+	secretStore := newMockSecretStore()
+
+	adminKEK := make([]byte, 32)
+	for i := range adminKEK {
+		adminKEK[i] = byte(i + 10)
+	}
+
+	// Credential has no models in the blob — relies on ModelAllowlist + ModelContextLimits.
+	adminPlaintext, _ := json.Marshal(LLMProviderData{
+		Provider: "thekao cloud",
+		APIKey:   "sk-test",
+		BaseURL:  "https://ai.thekao.cloud/v1",
+	})
+	adminCipher, err := EncryptSecret(adminKEK, adminPlaintext)
+	require.NoError(t, err)
+
+	mockCredStore := &mockCredentialStore{
+		bindings: []CredentialBinding{{
+			ID: "cred-thekao", OwnerType: "admin", OwnerID: "_platform",
+			Provider: "thekao cloud", Ciphertext: adminCipher,
+			SourceType:         "auto",
+			ModelAllowlist:     []string{"glm-5.1", "glm-5.2", "classifier"},
+			ModelContextLimits: map[string]int{"glm-5.1": 200000, "glm-5.2": 1000000},
+			// classifier has no context limit
+		}},
+	}
+
+	combinedStore := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCredStore}
+	svc := NewSecretService(keyService, combinedStore)
+	svc.SetAdminKeyDeriver(func(label string) []byte { return adminKEK })
+
+	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
+	require.NoError(t, err)
+
+	var injected []InjectedSecret
+	require.NoError(t, json.Unmarshal(result, &injected))
+	llm := filterByType(injected, SecretTypeLLMProvider)
+	require.Len(t, llm, 1)
+
+	var pd LLMProviderData
+	require.NoError(t, json.Unmarshal([]byte(llm[0].Plaintext), &pd))
+	require.Len(t, pd.Models, 3, "all three allowlisted models must be present")
+
+	byID := map[string]LLMModelConfig{}
+	for _, m := range pd.Models {
+		byID[m.ID] = m
+	}
+
+	assert.Equal(t, 200000, byID["glm-5.1"].ContextLimit,
+		"glm-5.1 context limit must be 200000 from ModelContextLimits")
+	assert.Equal(t, 1000000, byID["glm-5.2"].ContextLimit,
+		"glm-5.2 context limit must be 1000000 from ModelContextLimits")
+	assert.Equal(t, 0, byID["classifier"].ContextLimit,
+		"classifier has no configured context limit — must remain 0")
+}
+
+// TestCredentialPrecedence_ModelContextLimits_DoesNotOverrideExisting verifies
+// that if a model in LLMProviderData.Models already has a ContextLimit set
+// (e.g. from the relay config), ModelContextLimits does NOT overwrite it.
+func TestCredentialPrecedence_ModelContextLimits_DoesNotOverrideExisting(t *testing.T) {
+	keyStore := newMockKeyStore()
+	dekCache := newTestDEKCache()
+	keyService := NewKeyService(keyStore, dekCache)
+	secretStore := newMockSecretStore()
+
+	adminKEK := make([]byte, 32)
+	for i := range adminKEK {
+		adminKEK[i] = byte(i + 20)
+	}
+
+	// Model in the blob already has ContextLimit=128000.
+	adminPlaintext, _ := json.Marshal(LLMProviderData{
+		Provider: "openai", APIKey: "sk-oai",
+		Models: []LLMModelConfig{
+			{ID: "gpt-4o", ContextLimit: 128000},
+		},
+	})
+	adminCipher, err := EncryptSecret(adminKEK, adminPlaintext)
+	require.NoError(t, err)
+
+	mockCredStore := &mockCredentialStore{
+		bindings: []CredentialBinding{{
+			ID: "cred-oai", OwnerType: "admin", OwnerID: "_platform",
+			Provider: "openai", Ciphertext: adminCipher,
+			SourceType:         "auto",
+			ModelAllowlist:     []string{"gpt-4o"},
+			ModelContextLimits: map[string]int{"gpt-4o": 999999}, // should NOT override
+		}},
+	}
+
+	combinedStore := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCredStore}
+	svc := NewSecretService(keyService, combinedStore)
+	svc.SetAdminKeyDeriver(func(label string) []byte { return adminKEK })
+
+	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
+	require.NoError(t, err)
+
+	var injected []InjectedSecret
+	require.NoError(t, json.Unmarshal(result, &injected))
+	llm := filterByType(injected, SecretTypeLLMProvider)
+	require.Len(t, llm, 1)
+
+	var pd LLMProviderData
+	require.NoError(t, json.Unmarshal([]byte(llm[0].Plaintext), &pd))
+	require.Len(t, pd.Models, 1)
+
+	assert.Equal(t, 128000, pd.Models[0].ContextLimit,
+		"ContextLimit from blob (128000) must NOT be overwritten by ModelContextLimits (999999)")
+}

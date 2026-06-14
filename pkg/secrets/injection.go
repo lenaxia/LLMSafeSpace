@@ -100,6 +100,11 @@ func (s *SecretService) PrepareSecretsForInjection(ctx context.Context, userID, 
 			var filtered []LLMModelConfig
 			for _, m := range pd.Models {
 				if allowed[m.ID] {
+					// Apply user-configured context limit if present and the
+					// model entry doesn't already have one from the credential blob.
+					if m.ContextLimit == 0 {
+						m.ContextLimit = b.ModelContextLimits[m.ID]
+					}
 					filtered = append(filtered, m)
 				}
 			}
@@ -110,7 +115,10 @@ func (s *SecretService) PrepareSecretsForInjection(ctx context.Context, userID, 
 				filtered = make([]LLMModelConfig, 0, len(allowed))
 				for _, id := range b.ModelAllowlist {
 					if allowed[id] { // only valid IDs
-						filtered = append(filtered, LLMModelConfig{ID: id})
+						filtered = append(filtered, LLMModelConfig{
+							ID:           id,
+							ContextLimit: b.ModelContextLimits[id],
+						})
 					}
 				}
 			}
