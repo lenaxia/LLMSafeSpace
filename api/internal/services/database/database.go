@@ -627,11 +627,12 @@ func (s *Service) CountActiveWorkspacesByUserAndOrg(ctx context.Context, userID,
 	if err := s.DB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM workspaces w
 		 WHERE w.user_id = $1 AND w.org_id = $2 AND w.deleted_at IS NULL
-		 AND EXISTS (
-		   SELECT 1 FROM workspace_lifecycle_events e
-		   WHERE e.workspace_id = w.id AND e.event_type = 'phase_changed'
-		   AND e.new_phase = 'Active'
-		 )`,
+		 AND (
+		   SELECT e.to_phase FROM workspace_lifecycle_events e
+		   WHERE e.workspace_id = w.id
+		   ORDER BY e.event_time DESC
+		   LIMIT 1
+		 ) = 'Active'`,
 		userID, orgID,
 	).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count active workspaces by user and org: %w", err)

@@ -482,6 +482,11 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		}
 	}
 
+	// US-43.8: Wire policy checker into secrets handler for model filtering.
+	if policySvc != nil && secretsHandler != nil {
+		secretsHandler.SetPolicyChecker(policySvc)
+	}
+
 	router := server.NewRouter(svc, log, proxyHandler, server.RouterConfig{
 		Debug:                           cfg.Logging.Development,
 		LoggingConfig:                   server.DefaultRouterConfig().LoggingConfig,

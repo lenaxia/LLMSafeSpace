@@ -29,12 +29,19 @@ type SecretsHandler struct {
 	wsUpdater        ModelStore
 	credStateWriter  CredentialStateWriter
 	passwordGetter   func(ctx context.Context, workspaceID string) (string, error)
-	// relayActive is true when INFERENCE_RELAY_BASEURL is set in the pod env,
-	// meaning free-tier opencode models should route through the CF Worker relay.
-	// When true, ListModels remaps free opencode models to providerID=opencode-relay.
-	relayActive bool
-	// metricsRecorder records billing/metering events (optional).
-	metricsRecorder ModelSelectionRecorder
+	relayActive      bool
+	metricsRecorder  ModelSelectionRecorder
+	policyChecker    OrgPolicyChecker
+}
+
+// OrgPolicyChecker is the minimal interface ListModels needs to filter models
+// by org policy. The policy.Service implements it.
+type OrgPolicyChecker interface {
+	GetEffectivePolicy(ctx context.Context, orgID string) (*types.OrgPolicyValues, error)
+}
+
+func (h *SecretsHandler) SetPolicyChecker(pc OrgPolicyChecker) {
+	h.policyChecker = pc
 }
 
 // ModelSelectionRecorder records model selection events for billing/metering.
