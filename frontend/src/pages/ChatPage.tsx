@@ -25,7 +25,7 @@ import { sessionsApi } from "../api/sessions";
 import type { Message, SessionListItem, WorkspaceStreamEvent, OpenCodeEvent, QuestionRequest, PermissionRequest } from "../api/types";
 import { QuestionPrompt } from "../components/chat/QuestionPrompt";
 import { PermissionPrompt } from "../components/chat/PermissionPrompt";
-import { useClearPendingUnread } from "../providers/SessionActivityProvider";
+import { useClearPendingUnread, useAddPendingAction, useRemovePendingAction } from "../providers/SessionActivityProvider";
 
 type StreamPart = { type: "text" | "thinking" | "tool"; text: string; toolState?: string; toolCallID?: string; toolInput?: unknown; toolOutput?: string };
 
@@ -78,6 +78,8 @@ export function ChatPage() {
 
   const isReady = status?.phase === "Active";
   const clearPendingUnread = useClearPendingUnread();
+  const addPendingAction = useAddPendingAction();
+  const removePendingAction = useRemovePendingAction();
 
   useEffect(() => {
     if (!workspaceId || !sessionId || !isReady) return;
@@ -665,29 +667,29 @@ export function ChatPage() {
         parseStreamEvent(oe, sessionId);
       }
     } else if (event.type === "agent.question") {
-      // US-16.11: Agent question event
-      // Match against root_session_id (subtask/subagent prompts bubble up to
-      // the parent session view) and fall back to session_id for top-level
-      // sessions and for backward compatibility with older API replicas.
       const req = event.data as QuestionRequest;
       const eventRoot = req.root_session_id ?? req.session_id;
       if (eventRoot === sessionId || req.session_id === sessionId) {
         setPendingQuestions((prev) => prev.some((q) => q.id === req.id) ? prev : [...prev, req]);
       }
+      addPendingAction(workspaceId ?? "", req.session_id, req.id);
     } else if (event.type === "agent.question.resolved") {
       const { request_id } = event.data as { request_id: string };
       setPendingQuestions((prev) => prev.filter((q) => q.id !== request_id));
+      removePendingAction(request_id);
     } else if (event.type === "agent.permission") {
       const req = event.data as PermissionRequest;
       const eventRoot = req.root_session_id ?? req.session_id;
       if (eventRoot === sessionId || req.session_id === sessionId) {
         setPendingPermissions((prev) => prev.some((p) => p.id === req.id) ? prev : [...prev, req]);
       }
+      addPendingAction(workspaceId ?? "", req.session_id, req.id);
     } else if (event.type === "agent.permission.resolved") {
       const { request_id } = event.data as { request_id: string };
       setPendingPermissions((prev) => prev.filter((p) => p.id !== request_id));
+      removePendingAction(request_id);
     }
-  }, [queryClient, workspaceId, sessionId, parseStreamEvent, notifySessionIdle, reconcileOnIdle, queue]);
+  }, [queryClient, workspaceId, sessionId, parseStreamEvent, notifySessionIdle, reconcileOnIdle, queue, addPendingAction, removePendingAction]);
 
   // US-15.2: On SSE reconnect, re-poll status to catch missed transitions
   const handleSSEReconnect = useCallback(() => {

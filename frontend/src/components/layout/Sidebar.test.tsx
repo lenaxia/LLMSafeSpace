@@ -14,12 +14,17 @@ vi.mock("../../api/auth", () => ({
 let mockIsSessionBusy = (_sid: string) => false;
 let mockIsSessionUnread = (_sid: string) => false;
 let mockWorkspaceBusyCount = (_wsid: string) => 0;
+let mockSessionPendingActions = (): Set<string> => new Set<string>();
 
 vi.mock("../../providers/SessionActivityProvider", () => ({
   useIsSessionBusy: (sid: string) => mockIsSessionBusy(sid),
   useIsSessionUnread: (sid: string) => mockIsSessionUnread(sid),
   useWorkspaceBusyCount: (wsid: string) => mockWorkspaceBusyCount(wsid),
   useClearPendingUnread: () => () => {},
+  useIsSessionPendingAction: () => false,
+  useSessionPendingActions: () => mockSessionPendingActions(),
+  useAddPendingAction: () => () => {},
+  useRemovePendingAction: () => () => {},
   SessionActivityProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
@@ -359,5 +364,73 @@ describe("Sidebar — suspended workspace does not auto-resume", () => {
     });
 
     expect(workspacesApi.activate).toHaveBeenCalledWith("ws-sus");
+  });
+});
+
+describe("Sidebar — pending action indicator", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsSessionBusy = (_sid: string) => false;
+    mockIsSessionUnread = (_sid: string) => false;
+    mockWorkspaceBusyCount = (_wsid: string) => 0;
+    mockSessionPendingActions = () => new Set<string>();
+    (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [
+        { id: "ws-1", name: "alpha", phase: "Active", userId: "u1", runtime: "python", storageSize: "5Gi", createdAt: "", updatedAt: "" },
+      ],
+      pagination: { limit: 20, offset: 0, total: 1 },
+    });
+  });
+
+  it("shows HelpCircle with pulse when session has pending action", async () => {
+    mockSessionPendingActions = () => new Set(["sess-pending"]);
+    (workspacesApi.getSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "sess-pending", title: "Needs action", messageCount: 1, status: "idle", hasUnread: false },
+    ]);
+
+    renderSidebar();
+
+    await screen.findByText("Needs action");
+    // The title span should pulse when a pending action exists
+    const titleSpan = screen.getByText("Needs action");
+    expect(titleSpan.className).toContain("animate-unread-pulse");
+  });
+
+  it("parent shows indicator when child has pending action (bubble-up)", async () => {
+    mockSessionPendingActions = () => new Set(["sess-child"]);
+    (workspacesApi.getSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "sess-parent", title: "Parent", messageCount: 1, status: "idle", hasUnread: false },
+      { id: "sess-child", parentId: "sess-parent", title: "Child with prompt", messageCount: 0, status: "idle", hasUnread: false },
+    ]);
+
+    renderSidebar();
+
+    await screen.findByText("Parent");
+    // Expand parent to verify child exists
+    await act(async () => { screen.getByLabelText("Expand subtasks").click(); });
+    await screen.findByText("Child with prompt");
+
+    // The parent (depth 0) should show the indicator — bubble-up from child
+    const parentTitle = screen.getByText("Parent");
+    const parentRowTitle = parentTitle.closest("button")?.querySelector("span");
+    expect(parentRowTitle?.className).toContain("animate-unread-pulse");
+
+    // The child (depth 1) should NOT show the indicator (only depth 0)
+    const childTitle = screen.getByText("Child with prompt");
+    expect(childTitle.className).not.toContain("animate-unread-pulse");
+  });
+
+  it("pending indicator shows even when session is unread", async () => {
+    mockSessionPendingActions = () => new Set(["sess-urgent"]);
+    mockIsSessionUnread = (sid: string) => sid === "sess-urgent";
+    (workspacesApi.getSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "sess-urgent", title: "Urgent", messageCount: 2, status: "idle", hasUnread: true },
+    ]);
+
+    renderSidebar();
+
+    await screen.findByText("Urgent");
+    const titleSpan = screen.getByText("Urgent");
+    expect(titleSpan.className).toContain("animate-unread-pulse");
   });
 });

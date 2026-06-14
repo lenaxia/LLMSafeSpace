@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
@@ -9,6 +9,11 @@ interface SessionActivityContextValue {
   isSessionUnread: (sessionId: string) => boolean;
   workspaceBusyCount: (workspaceId: string) => number;
   clearPendingUnread: (sessionId: string) => void;
+  isSessionPendingAction: (sessionId: string) => boolean;
+  pendingActionSessionIds: Set<string>;
+  addPendingAction: (workspaceId: string, sessionId: string, requestId: string) => void;
+  removePendingAction: (requestId: string) => void;
+  clearWorkspacePendingActions: (workspaceId: string) => void;
 }
 
 const SessionActivityContext = createContext<SessionActivityContextValue | null>(null);
@@ -34,6 +39,19 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
   // GET) until REST confirms hasUnread:false, or new activity arrives
   // (busy/idle SSE events). Keyed by sessionId → workspaceId.
   const clearedRef = useRef(new Map<string, string>());
+
+  // Sessions with pending agent questions or permission requests.
+  // Keyed by sessionId → Set<requestId> so multiple concurrent prompts
+  // per session are tracked independently.
+  const [pendingActions, setPendingActions] = useState<Map<string, Set<string>>>(new Map());
+
+  // Reverse lookup: requestId → sessionId so resolved events (which carry
+  // only request_id) can find the correct session to decrement.
+  const requestToSessionRef = useRef(new Map<string, string>());
+
+  // Track which workspace each session belongs to so clearWorkspacePendingActions
+  // can scope its clearing to a single workspace.
+  const pendingActionWsRef = useRef(new Map<string, string>());
 
   useEffect(() => {
     const queryCache = queryClient.getQueryCache();
@@ -188,6 +206,12 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
 
           if (evt.session_id !== currentSessionId) {
             clearedRef.current.delete(evt.session_id);
+            setPendingActions((prev) => {
+              if (!prev.has(evt.session_id!)) return prev;
+              const next = new Map(prev);
+              next.delete(evt.session_id!);
+              return next;
+            });
             setPendingUnread((prev) => {
               const next = new Map(prev);
               next.set(evt.session_id!, evt.workspace_id!);
@@ -205,6 +229,12 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
               });
             }
           } else {
+            setPendingActions((prev) => {
+              if (!prev.has(evt.session_id!)) return prev;
+              const next = new Map(prev);
+              next.delete(evt.session_id!);
+              return next;
+            });
             const sessionsKey = ["sessions", evt.workspace_id];
             const existing = queryClient.getQueryData(sessionsKey);
             if (existing) {
@@ -240,6 +270,7 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
           for (const [sid, wid] of clearedRef.current) {
             if (wid === wsId) clearedRef.current.delete(sid);
           }
+          clearWorkspacePendingActions(wsId);
         } else if (evt.phase === "Active") {
           seededRef.current.delete(wsId);
         }
@@ -296,9 +327,65 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
     clearedRef.current.set(sessionId, wsId ?? "");
   }, [pendingUnread, queryClient]);
 
+  const addPendingAction = useCallback((workspaceId: string, sessionId: string, requestId: string) => {
+    requestToSessionRef.current.set(requestId, sessionId);
+    pendingActionWsRef.current.set(sessionId, workspaceId);
+    setPendingActions((prev) => {
+      const existing = prev.get(sessionId);
+      if (existing?.has(requestId)) return prev;
+      const next = new Map(prev);
+      const set = new Set(existing ?? []);
+      set.add(requestId);
+      next.set(sessionId, set);
+      return next;
+    });
+  }, []);
+
+  const removePendingAction = useCallback((requestId: string) => {
+    const sessionId = requestToSessionRef.current.get(requestId);
+    if (!sessionId) return;
+    requestToSessionRef.current.delete(requestId);
+    setPendingActions((prev) => {
+      const existing = prev.get(sessionId);
+      if (!existing || !existing.has(requestId)) return prev;
+      const next = new Map(prev);
+      const set = new Set(existing);
+      set.delete(requestId);
+      if (set.size === 0) {
+        next.delete(sessionId);
+      } else {
+        next.set(sessionId, set);
+      }
+      return next;
+    });
+  }, []);
+
+  const clearWorkspacePendingActions = useCallback((workspaceId: string) => {
+    setPendingActions((prev) => {
+      let next: Map<string, Set<string>> | null = null;
+      for (const [sid] of prev) {
+        if (pendingActionWsRef.current.get(sid) === workspaceId) {
+          if (!next) next = new Map(prev);
+          next!.delete(sid);
+        }
+      }
+      return next ?? prev;
+    });
+  }, []);
+
+  const isSessionPendingAction = useCallback(
+    (sessionId: string) => pendingActions.has(sessionId),
+    [pendingActions]
+  );
+
+  const pendingActionSessionIds = useMemo(
+    () => new Set(pendingActions.keys()),
+    [pendingActions]
+  );
+
   return (
     <SessionActivityContext.Provider
-      value={{ isSessionBusy, isSessionUnread, workspaceBusyCount, clearPendingUnread }}
+      value={{ isSessionBusy, isSessionUnread, workspaceBusyCount, clearPendingUnread, isSessionPendingAction, pendingActionSessionIds, addPendingAction, removePendingAction, clearWorkspacePendingActions }}
     >
       {children}
     </SessionActivityContext.Provider>
@@ -327,4 +414,28 @@ export function useClearPendingUnread(): (sessionId: string) => void {
   const ctx = useContext(SessionActivityContext);
   if (!ctx) return () => {};
   return ctx.clearPendingUnread;
+}
+
+export function useIsSessionPendingAction(sessionId: string): boolean {
+  const ctx = useContext(SessionActivityContext);
+  if (!ctx) return false;
+  return ctx.isSessionPendingAction(sessionId);
+}
+
+export function useAddPendingAction(): (workspaceId: string, sessionId: string, requestId: string) => void {
+  const ctx = useContext(SessionActivityContext);
+  if (!ctx) return () => {};
+  return ctx.addPendingAction;
+}
+
+export function useRemovePendingAction(): (requestId: string) => void {
+  const ctx = useContext(SessionActivityContext);
+  if (!ctx) return () => {};
+  return ctx.removePendingAction;
+}
+
+export function useSessionPendingActions(): Set<string> {
+  const ctx = useContext(SessionActivityContext);
+  if (!ctx) return new Set();
+  return ctx.pendingActionSessionIds;
 }
