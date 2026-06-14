@@ -54,10 +54,11 @@ type FallbackConfig struct {
 // RelayProviderSpec configures a single cloud provider relay VM.
 type RelayProviderSpec struct {
 	// Provider is the cloud provider name.
-	// +kubebuilder:validation:Enum=oci;gcp
+	// +kubebuilder:validation:Enum=aws;oci;gcp
 	Provider string `json:"provider"`
 
-	// Region is the provider region (e.g. "us-ashburn-1", "us-central1-a").
+	// Region is the provider region (e.g. "us-east-1", "us-ashburn-1", "us-central1-a").
+	// AWS: any region (t4g.micro available globally).
 	// OCI: must be the tenancy home region for Always Free eligibility.
 	// GCP: must be us-west1, us-central1, or us-east1 for Always Free eligibility.
 	Region string `json:"region"`
@@ -65,12 +66,14 @@ type RelayProviderSpec struct {
 	// CredentialsRef references a K8s Secret containing provider credentials.
 	// Must be in the controller's namespace. The validating webhook checks
 	// that the Secret exists and contains the required keys:
+	//   aws: access-key-id, secret-access-key
 	//   oci: tenancy, user, fingerprint, key, region
 	//   gcp: service-account-json
 	// +kubebuilder:validation:MinLength=1
 	CredentialsRef corev1.LocalObjectReference `json:"credentialsRef"`
 
-	// Shape overrides the default free-tier shape.
+	// Shape overrides the default shape.
+	//   aws default: t4g.micro (2 vCPU Graviton2, 1 GB, Arm64 — paid ~$7/mo)
 	//   oci default: VM.Standard.A1.Flex (2 OCPU, 12 GB, Arm)
 	//   gcp default: e2-micro (0.25 shared vCPU, 1 GB)
 	// +optional
