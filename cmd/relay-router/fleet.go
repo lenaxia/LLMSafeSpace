@@ -21,8 +21,6 @@ const (
 	relayStateDraining  = "draining"
 	relayStateUnhealthy = "unhealthy"
 	relayStateSuspect   = "suspect"
-
-	wsIDHeader = "X-Workspace-ID"
 )
 
 // PeerConfig is the JSON shape of the relay-router-peers ConfigMap.
@@ -357,11 +355,12 @@ func (f *relayFleet) windowed429CountLocked(e *relayEntry) int {
 	return count
 }
 
-// windowedRequestCountLocked returns total requests in the rolling window.
-// Since we don't track per-request timestamps for non-429 requests, this
-// uses the lifetime total as an upper bound. The storm detection compares
-// windowed 429 count against a threshold, not a rate, so this approximation
-// is conservative (tends to undercount the rate).
+// windowedRequestCountLocked returns the total request count for rate
+// calculation. This is a lifetime count, not truly windowed — the rate
+// denominator dilutes over time for long-lived relays. The consecutive-
+// probe path in checkStorm compensates for the immediate-probe scenario.
+// A future improvement would track per-request timestamps for an exact
+// windowed rate.
 func (f *relayFleet) windowedRequestCountLocked(e *relayEntry) int64 {
 	return e.totalRequests
 }

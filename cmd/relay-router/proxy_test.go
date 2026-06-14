@@ -18,6 +18,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testWsIDHeader = "X-Workspace-ID"
+
 // ---------------------------------------------------------------------------
 // Helper: create a fleet + relay + test upstream
 // ---------------------------------------------------------------------------
@@ -168,12 +170,12 @@ func TestRouterProxy_StripsWorkspaceHeader(t *testing.T) {
 	t.Cleanup(router.Close)
 
 	req, _ := http.NewRequest(http.MethodGet, router.URL+"/v1/data", nil)
-	req.Header.Set(wsIDHeader, "ws-12345")
+	req.Header.Set(testWsIDHeader, "ws-12345")
 	resp, err := (&http.Client{}).Do(req)
 	require.NoError(t, err)
 	resp.Body.Close()
 
-	assert.Empty(t, receivedHeaders.Get(wsIDHeader), "X-Workspace-ID must be stripped before forwarding to relay")
+	assert.Empty(t, receivedHeaders.Get(testWsIDHeader), "X-Workspace-ID must be stripped before forwarding to relay")
 }
 
 // ---------------------------------------------------------------------------
@@ -432,11 +434,12 @@ func TestDetector_StormDetection(t *testing.T) {
 	})
 
 	det := newDetector429(fleet, 0.5, 8080)
-	_ = det
 
 	for i := 0; i < 20; i++ {
 		fleet.RecordRequest("r1", 429)
 	}
+
+	det.checkAllStorms()
 
 	statuses := fleet.HealthyRelays()
 	var r1Status RelayStatus
@@ -445,14 +448,11 @@ func TestDetector_StormDetection(t *testing.T) {
 			r1Status = s
 		}
 	}
-	rate := float64(r1Status.Requests429) / float64(r1Status.TotalRequests)
-	if rate >= 0.5 {
-		fleet.Mark429Draining("r1", "storm")
+	assert.True(t, r1Status.Draining429, "r1 should be draining after 100%% 429 storm detected by checkAllStorms")
 
-		id, _, ok := fleet.SelectRelay()
-		require.True(t, ok)
-		assert.Equal(t, "r2", id, "r1 should be excluded after 429 storm")
-	}
+	id, _, ok := fleet.SelectRelay()
+	require.True(t, ok)
+	assert.Equal(t, "r2", id, "r1 should be excluded after 429 storm")
 }
 
 func TestDetector_CheckAllStorms(t *testing.T) {

@@ -49,15 +49,15 @@ func (hc *healthChecker) checkAll(ctx context.Context) {
 	var wg sync.WaitGroup
 	for _, s := range statuses {
 		wg.Add(1)
-		go func(id, wgIP string) {
+		go func(id, wgIP string, draining429 bool) {
 			defer wg.Done()
-			hc.checkOne(ctx, id, wgIP)
-		}(s.ID, s.WgIP)
+			hc.checkOne(ctx, id, wgIP, draining429)
+		}(s.ID, s.WgIP, s.Draining429)
 	}
 	wg.Wait()
 }
 
-func (hc *healthChecker) checkOne(ctx context.Context, relayID, wgIP string) {
+func (hc *healthChecker) checkOne(ctx context.Context, relayID, wgIP string, draining429 bool) {
 	if wgIP == "" {
 		return
 	}
@@ -76,5 +76,10 @@ func (hc *healthChecker) checkOne(ctx context.Context, relayID, wgIP string) {
 	}
 	resp.Body.Close()
 
-	hc.fleet.RecordHealthCheck(relayID, resp.StatusCode == http.StatusOK)
+	success := resp.StatusCode == http.StatusOK
+	hc.fleet.RecordHealthCheck(relayID, success)
+
+	if success && draining429 {
+		hc.fleet.Clear429State(relayID)
+	}
 }
