@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { workspacesApi } from "../api/workspaces";
+import { ApiClientError } from "../api/client";
 import { useWorkspaceStatus } from "../hooks/useWorkspaces";
 import { useMessageHistory } from "../hooks/useMessageHistory";
 import { useActivateWorkspace } from "../hooks/useActivateWorkspace";
@@ -784,7 +785,8 @@ export function ChatPage() {
     {
       label: "Rename session",
       onClick: () => {
-        const name = window.prompt("Session name:", sessionDisplayName);
+        let name: string | null = null;
+        try { name = window.prompt("Session name:", sessionDisplayName); } catch { /* blocked */ }
         if (name && name.trim() && workspaceId && sessionId) {
           workspacesApi.renameSession(workspaceId, sessionId, name.trim()).then(() => {
             queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
@@ -796,19 +798,24 @@ export function ChatPage() {
     {
       label: "Delete session",
       onClick: () => {
-        if (window.confirm("Delete this session?") && workspaceId && sessionId) {
-          workspacesApi.deleteSession(workspaceId, sessionId)
-            .catch((err) => {
-              if (err?.status !== 404) throw err;
-            })
-            .then(() => {
-              queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
-              navigate(`/chat/${workspaceId}`);
-            })
-            .catch(() => {
-              window.alert("Failed to delete session.");
-            });
+        if (!workspaceId || !sessionId) return;
+        try {
+          if (!window.confirm("Delete this session?")) return;
+        } catch {
+          // confirm() blocked — proceed with deletion
         }
+        workspacesApi.deleteSession(workspaceId, sessionId)
+          .catch((err: unknown) => {
+            if (err instanceof ApiClientError && err.status === 404) return;
+            throw err;
+          })
+          .then(() => {
+            queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
+            navigate(`/chat/${workspaceId}`);
+          })
+          .catch(() => {
+            try { window.alert("Failed to delete session."); } catch { /* blocked */ }
+          });
       },
       destructive: true,
     },

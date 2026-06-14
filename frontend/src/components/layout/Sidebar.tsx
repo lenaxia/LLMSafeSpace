@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { workspacesApi } from "../../api/workspaces";
+import { ApiClientError } from "../../api/client";
 import { useAuth } from "../../providers/AuthProvider";
 import { useIsSessionBusy, useIsSessionUnread, useWorkspaceBusyCount, useSessionPendingActions } from "../../providers/SessionActivityProvider";
 import { RenameWorkspaceDialog } from "../workspace/RenameWorkspaceDialog";
@@ -179,29 +180,38 @@ export function Sidebar({ onNavigate }: Props) {
               onRenameCancel={() => setRenamingWs(null)}
               onRenameConfirm={(name) => renameWsMutation.mutate({ wsId: ws.id, name })}
               onDelete={() => {
-                if (window.confirm(`Delete workspace "${ws.name}"?`)) {
-                  deleteWsMutation.mutate(ws.id);
+                try {
+                  if (!window.confirm(`Delete workspace "${ws.name}"?`)) return;
+                } catch {
+                  // confirm() blocked — proceed with deletion
                 }
+                deleteWsMutation.mutate(ws.id);
               }}
               onSuspend={() => suspendMutation.mutate(ws.id)}
               onResume={() => activateMutation.mutate(ws.id)}
               onRenameSession={(sessionId, title) => setRenamingSession({ wsId: ws.id, sessionId, title })}
               onDeleteSession={(sid) => {
-                if (window.confirm("Delete this session?")) {
-                  workspacesApi.deleteSession(ws.id, sid)
-                    .catch((err) => {
-                      if (err?.status !== 404) throw err;
-                    })
-                    .then(() => {
-                      queryClient.invalidateQueries({ queryKey: ["sessions", ws.id] });
-                      if (sid === sessionId) {
-                        navigate(`/chat/${ws.id}`);
-                      }
-                    })
-                    .catch(() => {
-                      window.alert("Failed to delete session.");
-                    });
+                // wrap confirm() in try/catch — sandboxed iframes, CSP, or
+                // suppressed dialogs can throw and silently swallow the click.
+                try {
+                  if (!window.confirm("Delete this session?")) return;
+                } catch {
+                  // confirm() blocked — proceed with deletion
                 }
+                workspacesApi.deleteSession(ws.id, sid)
+                  .catch((err: unknown) => {
+                    if (err instanceof ApiClientError && err.status === 404) return;
+                    throw err;
+                  })
+                  .then(() => {
+                    queryClient.invalidateQueries({ queryKey: ["sessions", ws.id] });
+                    if (sid === sessionId) {
+                      navigate(`/chat/${ws.id}`);
+                    }
+                  })
+                  .catch(() => {
+                    try { window.alert("Failed to delete session."); } catch { /* blocked */ }
+                  });
               }}
               renamingSession={renamingSession?.wsId === ws.id ? renamingSession : null}
               onRenameSessionCancel={() => setRenamingSession(null)}
