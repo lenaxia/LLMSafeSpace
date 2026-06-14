@@ -2,7 +2,7 @@
 
 **Status:** Planning (updated 2026-06-12)
 **Created:** 2026-05-28
-**Depends On:** Epic 6 (Collapse Sandbox into Workspace), Epic 30 (Unified Credential Model — `owner_type`/`owner_id` pattern)
+**Depends On:** Epic 6 (Collapse Sandbox into Workspace), Epic 30 (Unified Credential Model — complete, `owner_type`/`owner_id` pattern in production)
 **Priority:** High
 
 **Motivation:** LLMSafeSpace needs per-tenant usage tracking for billing, cost attribution, quota enforcement, and abuse detection. The platform must meter compute time, LLM tokens, storage, and API calls — attributable to individual users today, rollable up to organizations in the future (Epic 11).
@@ -65,7 +65,7 @@
 ## Design Principles
 
 1. **Two-tier observability.** Prometheus is operational: fleet-level, real-time, lossy on restart, cardinality-bounded. PostgreSQL is billing-grade: per-user, durable, auditable, reconcilable. Both tiers are written from the same instrumentation points. Neither substitutes for the other.
-2. **Owner-aware from day one.** Every usage event records `owner_id + owner_type`. Reuses the `owner_type`/`owner_id` convention from Epic 30's `provider_credentials`. When Epic 11 adds organizations, billing rolls up without schema migration.
+2. **Owner-aware from day one.** Every usage event records `owner_id + owner_type`. Reuses the `owner_type`/`owner_id` convention from Epic 30's `provider_credentials` (complete, PR #39). With Epic 11 organizations now complete, billing rolls up without schema migration.
 3. **Actor ≠ Owner.** The `actor_id` (who performed the action) is always a user, even within an org-owned workspace. Enables per-member cost breakdown.
 4. **Metering never blocks requests.** Usage recording is async (buffered channel → batch write). A metering failure must never degrade the user experience.
 5. **At-least-once with idempotency.** Events may be delivered more than once (retries, reconciliation). `idempotency_key` with `ON CONFLICT DO NOTHING` prevents double-counting.
@@ -1209,9 +1209,9 @@ All new metrics use the `llmsafespace_` prefix. Metering-system metrics addition
 
 ---
 
-## Organization Extension Point (Epic 11)
+## Organization Extension Point (Epic 11 — Complete)
 
-When Epic 11 adds organizations:
+Epic 11 (Organizations) is complete (PR #137). The extension point is ready to activate:
 
 **What changes:**
 - `resolveBillingOwner()`: check `workspace.Spec.Owner.OrgID` → return `{ID: orgID, Type: OwnerTypeOrg}`
