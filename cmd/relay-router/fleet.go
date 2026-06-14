@@ -92,7 +92,7 @@ func newRelayFleet(unhealthyThreshold int, window time.Duration) *relayFleet {
 		relays:       make(map[string]*relayEntry),
 		unhealthyThr: unhealthyThreshold,
 		window:       window,
-		rng:          rand.New(rand.NewSource(time.Now().UnixNano())),
+		rng:          rand.New(rand.NewSource(time.Now().UnixNano())), //nolint:gosec // used for weighted random relay selection, not crypto
 	}
 }
 

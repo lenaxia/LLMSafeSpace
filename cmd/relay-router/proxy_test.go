@@ -417,9 +417,9 @@ func TestDetector_OnNon429ClearsState(t *testing.T) {
 	det := newDetector429(fleet, 0.5, extractPort(relay.URL))
 
 	fleet.RecordRequest("r1", 429)
-	det.OnResponse("r1", 429)
+	det.OnResponse(context.Background(), "r1", 429)
 
-	det.OnResponse("r1", 200)
+	det.OnResponse(context.Background(), "r1", 200)
 
 	statuses := fleet.HealthyRelays()
 	require.Len(t, statuses, 1)

@@ -72,7 +72,7 @@ func (rp *routerProxy) forwardToRelay(w http.ResponseWriter, r *http.Request, re
 		target += "?" + r.URL.RawQuery
 	}
 
-	upstreamReq, err := http.NewRequestWithContext(r.Context(), r.Method, target, r.Body)
+	upstreamReq, err := http.NewRequestWithContext(r.Context(), r.Method, target, r.Body) //nolint:gosec // target is constructed from trusted WG IPs
 	if err != nil {
 		http.Error(w, "bad gateway", http.StatusBadGateway)
 		return
@@ -93,7 +93,7 @@ func (rp *routerProxy) forwardToRelay(w http.ResponseWriter, r *http.Request, re
 		http.Error(w, "upstream unreachable", http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	copyRouterHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
@@ -118,7 +118,7 @@ func (rp *routerProxy) forwardToRelay(w http.ResponseWriter, r *http.Request, re
 	rp.fleet.RecordRequest(relayID, resp.StatusCode)
 	rp.fleet.RecordEgress(relayID, egress)
 	rp.metrics.recordRequest(relayID, resp.StatusCode)
-	rp.detector.OnResponse(relayID, resp.StatusCode)
+	rp.detector.OnResponse(r.Context(), relayID, resp.StatusCode)
 }
 
 func (rp *routerProxy) handleFallback(w http.ResponseWriter, r *http.Request) {
@@ -224,7 +224,7 @@ func (fp *fallbackProxy) forward(w http.ResponseWriter, r *http.Request) {
 		target += "?" + r.URL.RawQuery
 	}
 
-	upstreamReq, err := http.NewRequestWithContext(r.Context(), r.Method, target, r.Body)
+	upstreamReq, err := http.NewRequestWithContext(r.Context(), r.Method, target, r.Body) //nolint:gosec // target is the configured upstream URL
 	if err != nil {
 		http.Error(w, "bad gateway", http.StatusBadGateway)
 		return
@@ -240,7 +240,7 @@ func (fp *fallbackProxy) forward(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "upstream unreachable", http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	copyRouterHeaders(w.Header(), resp.Header)
 	w.Header().Set(fallbackHeader, fallbackHeaderValue)

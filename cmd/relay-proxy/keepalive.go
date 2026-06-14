@@ -51,6 +51,6 @@ func (k *keepalive) probe(ctx context.Context) {
 		k.metrics.recordKeepalive()
 		return
 	}
-	resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	k.metrics.recordKeepalive()
 }

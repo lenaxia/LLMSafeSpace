@@ -125,7 +125,7 @@ func newProxyHandler(upstreamURL string, client *http.Client, metrics *relayMetr
 func (p *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	upstreamURL := p.buildUpstreamURL(r)
 
-	upstreamReq, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL, r.Body)
+	upstreamReq, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL, r.Body) //nolint:gosec // proxy by design: forwards to configured upstream
 	if err != nil {
 		http.Error(w, "bad gateway", http.StatusBadGateway)
 		return
@@ -141,7 +141,7 @@ func (p *proxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "upstream unreachable", http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	copyNonHopByHopHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)

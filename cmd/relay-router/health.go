@@ -74,7 +74,7 @@ func (hc *healthChecker) checkOne(ctx context.Context, relayID, wgIP string, dra
 		hc.fleet.RecordHealthCheck(relayID, false)
 		return
 	}
-	resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	success := resp.StatusCode == http.StatusOK
 	hc.fleet.RecordHealthCheck(relayID, success)

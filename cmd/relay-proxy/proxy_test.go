@@ -151,7 +151,7 @@ func TestRelayMetrics_StatusCodesSorted(t *testing.T) {
 	if idx200 == -1 || idx429 == -1 || idx500 == -1 {
 		t.Fatalf("missing status codes in output:\n%s", out)
 	}
-	if !(idx200 < idx429 && idx429 < idx500) {
+	if idx200 >= idx429 || idx429 >= idx500 {
 		t.Errorf("status codes not sorted numerically in output:\n%s", out)
 	}
 }

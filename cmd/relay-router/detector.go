@@ -42,7 +42,7 @@ func newDetector429(fleet *relayFleet, max429Rate float64, relayPort int) *detec
 
 // OnResponse is called after each proxied response. If the response is 429,
 // it triggers an immediate probe (Tier 1).
-func (d *detector429) OnResponse(relayID string, statusCode int) {
+func (d *detector429) OnResponse(ctx context.Context, relayID string, statusCode int) {
 	if statusCode != http.StatusTooManyRequests {
 		d.fleet.Clear429State(relayID)
 		d.mu.Lock()
@@ -56,7 +56,7 @@ func (d *detector429) OnResponse(relayID string, statusCode int) {
 	d.mu.Unlock()
 
 	if !alreadyProbed {
-		d.probeRelay(context.Background(), relayID)
+		d.probeRelay(ctx, relayID)
 	}
 }
 
@@ -83,7 +83,7 @@ func (d *detector429) probeRelay(ctx context.Context, relayID string) {
 	if err != nil {
 		return
 	}
-	resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusTooManyRequests {
 		d.fleet.Mark429Suspect(relayID)
