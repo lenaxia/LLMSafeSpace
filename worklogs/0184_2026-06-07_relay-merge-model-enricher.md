@@ -27,6 +27,8 @@
 
 ### Free-tier relay 429 (opencode.ai rate limiting)
 
+> **CORRECTION (2026-06-13):** The diagnosis below that "This is a per-key rate limit, not an IP ban" is **wrong**. Verified by the project owner: the same `public` API key works without issue from a residential IP. Zen is throttling **Cloudflare's egress IP ranges**, not the `public` key. This confirms the premise of Epic 42 (Multi-Cloud Inference Relay) — the fix is moving traffic off Cloudflare IPs, not rotating keys.
+
 The CF Worker relay infrastructure is working correctly. `opencode.ai/zen` is rate-limiting the `public` anonymous key (`FreeUsageLimitError`, `retry-after: ~22876s`). This is a per-key rate limit on the anonymous free tier, not an IP ban. The relay was verified working once (worklog 0170, 1 call) and then hit the quota. Nothing in our code caused this. The relay architecture (IP distribution via CF edge POPs) remains valid for future multi-key rotation.
 
 ### workspace-secrets lifecycle (confirmed not a bug)
@@ -79,5 +81,5 @@ Model enricher verified locally against `https://ai.thekao.cloud/v1/models` with
 
 ## Open Items
 
-- Free-tier relay rate limit: `retry-after ~6h` from `opencode.ai/zen`. Will reset automatically. Tracked for future: per-workspace key rotation or alternative free-tier sourcing.
+- Free-tier relay rate limit: `retry-after ~6h` from `opencode.ai/zen`. ~~Will reset automatically. Tracked for future: per-workspace key rotation or alternative free-tier sourcing.~~ **CORRECTED (2026-06-13):** The throttle is per-IP (Cloudflare egress ranges), not per-key — see correction above. Key rotation would not help. The correct solution is moving relay traffic off Cloudflare IPs (Epic 42).
 - `relay.enabled` admin toggle deferred — requires live-pod update path (discussed in session, deferred to future worklog). Helm `inferenceRelayURL` flag remains the operational control.

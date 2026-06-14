@@ -35,6 +35,8 @@ func Resource(resource string) schema.GroupResource {
 // — which silently kills the controller's reconcile loop with no resources.
 func AddToScheme(scheme *runtime.Scheme) error {
 	scheme.AddKnownTypes(SchemeGroupVersion,
+		&InferenceRelay{},
+		&InferenceRelayList{},
 		&RuntimeEnvironment{},
 		&RuntimeEnvironmentList{},
 		&Workspace{},
