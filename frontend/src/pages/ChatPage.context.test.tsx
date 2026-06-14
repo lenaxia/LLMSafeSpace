@@ -39,6 +39,10 @@ vi.mock("../providers/SessionActivityProvider", () => ({
   useIsSessionBusy: () => false,
   useIsSessionUnread: () => false,
   useWorkspaceBusyCount: () => 0,
+  useIsSessionPendingAction: () => false,
+  useSessionPendingActions: () => new Set<string>(),
+  useAddPendingAction: () => () => {},
+  useRemovePendingAction: () => () => {},
   SessionActivityProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 vi.mock("../api/messages", () => {

@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { workspacesApi } from "../../api/workspaces";
 import { useAuth } from "../../providers/AuthProvider";
-import { useIsSessionBusy, useIsSessionUnread, useWorkspaceBusyCount } from "../../providers/SessionActivityProvider";
+import { useIsSessionBusy, useIsSessionUnread, useWorkspaceBusyCount, useSessionPendingActions } from "../../providers/SessionActivityProvider";
 import { RenameWorkspaceDialog } from "../workspace/RenameWorkspaceDialog";
 import { WorkspaceSettingsDrawer } from "../workspace/WorkspaceSettingsDrawer";
 import { RenameSessionDialog } from "../session/RenameSessionDialog";
@@ -16,6 +16,7 @@ import {
   Circle,
   MessageSquare,
   MessageSquareText,
+  HelpCircle,
   ChevronRight,
   ChevronDown,
   Play,
@@ -459,6 +460,27 @@ function WorkspaceSessionList({
   // arbitrary depth. Recomputed only when the session list changes.
   const tree = useMemo(() => buildSessionTree(sessions ?? []), [sessions]);
 
+  const pendingActionIds = useSessionPendingActions();
+
+  // Sessions that should show the pending-action indicator (HelpCircle with
+  // pulse). A session shows the indicator when it or any descendant has a
+  // pending question/permission — the indicator bubbles up so the top-level
+  // parent session catches the user's attention.
+  const pendingIndicatorIds = useMemo(() => {
+    const pending = new Set<string>();
+    function walk(node: SessionTreeNode): boolean {
+      let found = pendingActionIds.has(node.session.id);
+      for (const child of node.children) {
+        if (walk(child)) found = true;
+      }
+      if (found) pending.add(node.session.id);
+      return found;
+    }
+    for (const root of tree.roots) walk(root);
+    for (const orphan of tree.orphans) walk(orphan);
+    return pending;
+  }, [tree, pendingActionIds]);
+
   // Collapsed-by-default; auto-expand the chain of ancestors from the
   // active session so the user always sees where they are in the tree.
   // Per-workspace state so collapsing one workspace doesn't bleed into
@@ -589,6 +611,7 @@ function WorkspaceSessionList({
               onRenameSessionCancel={onRenameSessionCancel}
               onRenameSessionConfirm={onRenameSessionConfirm}
               contextBySessionId={contextBySessionId}
+              pendingIndicatorIds={pendingIndicatorIds}
             />
           ))}
 
@@ -608,6 +631,7 @@ function WorkspaceSessionList({
               onRenameSessionCancel={onRenameSessionCancel}
               onRenameSessionConfirm={onRenameSessionConfirm}
               contextBySessionId={contextBySessionId}
+              pendingIndicatorIds={pendingIndicatorIds}
             />
           )}
         </div>
@@ -631,6 +655,8 @@ interface SessionTreeRowProps {
   onRenameSessionConfirm: (sessionId: string, title: string) => void;
   /** Per-session context token count from workspace status (S36.5). */
   contextBySessionId: Map<string, number>;
+  /** Sessions (and ancestors) whose subtree has a pending question/permission request. */
+  pendingIndicatorIds: Set<string>;
 }
 
 /** Single row in the session tree. Renders its children recursively when
@@ -649,6 +675,7 @@ function SessionTreeRow({
   onRenameSessionCancel,
   onRenameSessionConfirm,
   contextBySessionId,
+  pendingIndicatorIds,
 }: SessionTreeRowProps) {
   const s = node.session;
   const isRenaming = renamingSession?.sessionId === s.id;
@@ -658,10 +685,8 @@ function SessionTreeRow({
   const isBusy = useIsSessionBusy(s.id);
   const isUnread = useIsSessionUnread(s.id);
   const isSelected = s.id === selectedSessionId;
-  // Only top-level (parent) sessions pulsate when they have an unread response.
-  // Subtasks (depth > 0) show the blue spinner while busy but stay quiet when
-  // done — pulsating every completed subtask is just noise.
   const showPulse = isUnread && !isSelected && !isBusy && depth === 0;
+  const showPending = depth === 0 && pendingIndicatorIds.has(s.id);
   const contextUsed = contextBySessionId.get(s.id);
 
   if (isRenaming) {
@@ -734,14 +759,14 @@ function SessionTreeRow({
         >
           {isBusy ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500 flex-shrink-0" />
+          ) : showPending ? (
+            <HelpCircle className="h-3.5 w-3.5 flex-shrink-0 animate-unread-pulse text-amber-500" />
+          ) : showPulse ? (
+            <MessageSquareText className="h-3.5 w-3.5 flex-shrink-0 animate-unread-pulse" />
           ) : (
-            showPulse ? (
-              <MessageSquareText className="h-3.5 w-3.5 flex-shrink-0 animate-unread-pulse" />
-            ) : (
-              <MessageSquare className="h-3.5 w-3.5 flex-shrink-0" />
-            )
+            <MessageSquare className="h-3.5 w-3.5 flex-shrink-0" />
           )}
-          <span className={cn("flex-1 truncate", showPulse && "animate-unread-pulse")}>{title}</span>
+          <span className={cn("flex-1 truncate", (showPulse || showPending) && "animate-unread-pulse")}>{title}</span>
           {contextUsed != null && (
             <span
               className="flex-shrink-0 text-[10px] tabular-nums text-muted-foreground/50"
@@ -775,6 +800,7 @@ function SessionTreeRow({
             onRenameSessionCancel={onRenameSessionCancel}
             onRenameSessionConfirm={onRenameSessionConfirm}
             contextBySessionId={contextBySessionId}
+            pendingIndicatorIds={pendingIndicatorIds}
           />
         ))}
     </>
@@ -797,6 +823,8 @@ interface OrphansGroupProps {
   onRenameSessionConfirm: (sessionId: string, title: string) => void;
   /** Per-session context token count from workspace status (S36.5). */
   contextBySessionId: Map<string, number>;
+  /** Sessions (and ancestors) whose subtree has a pending question/permission request. */
+  pendingIndicatorIds: Set<string>;
 }
 
 /** Synthetic top-level entry that collects all sessions whose parent is
@@ -818,6 +846,7 @@ function OrphansGroup({
   onRenameSessionCancel,
   onRenameSessionConfirm,
   contextBySessionId,
+  pendingIndicatorIds,
 }: OrphansGroupProps) {
   return (
     <>
@@ -854,6 +883,7 @@ function OrphansGroup({
             onRenameSessionCancel={onRenameSessionCancel}
             onRenameSessionConfirm={onRenameSessionConfirm}
             contextBySessionId={contextBySessionId}
+            pendingIndicatorIds={pendingIndicatorIds}
           />
         ))}
     </>

@@ -20,6 +20,10 @@ vi.mock("../../providers/SessionActivityProvider", () => ({
   useIsSessionUnread: (sid: string) => mockIsSessionUnread(sid),
   useWorkspaceBusyCount: (wsid: string) => mockWorkspaceBusyCount(wsid),
   useClearPendingUnread: () => () => {},
+  useIsSessionPendingAction: () => false,
+  useSessionPendingActions: () => new Set<string>(),
+  useAddPendingAction: () => () => {},
+  useRemovePendingAction: () => () => {},
   SessionActivityProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 

@@ -26,6 +26,10 @@ vi.mock("../providers/SessionActivityProvider", () => ({
   useIsSessionBusy: () => false,
   useIsSessionUnread: () => false,
   useWorkspaceBusyCount: () => 0,
+  useIsSessionPendingAction: () => false,
+  useSessionPendingActions: () => new Set<string>(),
+  useAddPendingAction: () => () => {},
+  useRemovePendingAction: () => () => {},
   SessionActivityProvider: ({ children }: { children: any }) => <>{children}</>,
 }));
 vi.mock("../api/messages", () => ({ messagesApi: { getHistory: vi.fn().mockResolvedValue([]), getHistoryPage: vi.fn().mockResolvedValue({ messages: [], nextCursor: undefined }), sendAsync: vi.fn() } }));
