@@ -306,8 +306,25 @@ func (m *testSecretStore) QueryAudit(_ context.Context, userID string, _ secrets
 	return result, nil
 }
 
-func (m *testSecretStore) GetWorkspaceCredentials(_ context.Context, _ string) ([]secrets.CredentialBinding, error) {
-	return nil, nil
+func (m *testSecretStore) GetWorkspaceCredentials(_ context.Context, workspaceID string) ([]secrets.CredentialBinding, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sids := m.bindings[workspaceID]
+	var result []secrets.CredentialBinding
+	for _, sid := range sids {
+		s, ok := m.secrets[sid]
+		if !ok || s.Type != secrets.SecretTypeLLMProvider {
+			continue
+		}
+		result = append(result, secrets.CredentialBinding{
+			ID:         s.ID,
+			OwnerType:  "user",
+			OwnerID:    s.UserID,
+			Provider:   s.Name, // use name as provider key for dedup; decryptBinding resolves the real provider
+			Ciphertext: s.Ciphertext,
+		})
+	}
+	return result, nil
 }
 
 func (m *testSecretStore) UpsertFreeTierCredential(_ context.Context, _ []byte) error { return nil }

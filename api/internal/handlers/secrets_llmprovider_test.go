@@ -144,7 +144,7 @@ func TestHandler_E2E_LLMProvider_BindTriggersReloadWithFormattedConfig(t *testin
 	require.NoError(t, json.Unmarshal(body, &injected))
 	require.Len(t, injected, 1)
 	require.Equal(t, "llm-provider", string(injected[0].Type))
-	require.Equal(t, "anthropic-prod", injected[0].Name)
+	require.Equal(t, "anthropic", injected[0].Name)
 
 	// Verify the plaintext is the original provider JSON (decrypted correctly).
 	var decryptedProvider map[string]any
