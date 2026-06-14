@@ -312,7 +312,7 @@ func (m *testSecretStore) GetWorkspaceCredentials(_ context.Context, _ string) (
 
 func (m *testSecretStore) UpsertFreeTierCredential(_ context.Context, _ []byte) error { return nil }
 
-func (m *testSecretStore) SeedWorkspaceCredentials(_ context.Context, _, _ string) error {
+func (m *testSecretStore) SeedWorkspaceCredentials(_ context.Context, _, _ string, _ *string) error {
 	return nil
 }
 
