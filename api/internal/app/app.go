@@ -28,6 +28,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/metering"
 	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespace/api/internal/services/msgqueue"
+	"github.com/lenaxia/llmsafespace/api/internal/services/policy"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sessionindex"
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
 	agentoc "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
@@ -147,6 +148,10 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var orgCredsHandler *handlers.OrgCredentialsHandler
 	var orgStoreForVerifier OrgMembershipChecker
 	var pgOrgStore *database.PgOrgStore
+	var pendingOrgCleaner *handlers.PendingOrgCleaner
+	var invitationsHandler *handlers.InvitationsHandler
+	var policySvc *policy.Service
+	var policyHandler *handlers.PolicyHandler
 	var asyncAudit *secrets.AsyncAuditLogger // populated when secrets are enabled; drained on Shutdown
 	var secretsPool *pgxpool.Pool            // closed on Shutdown
 	var dekCacheClient *redis.Client         // closed on Shutdown
@@ -321,10 +326,15 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		}
 	}
 
+	// US-43.7/43.8: Wire policy checker into workspace service AFTER policySvc
+	// is constructed.
+	if policySvc != nil {
+		if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
+			wsSvc.SetPolicyChecker(policySvc)
+		}
+	}
+
 	// In development mode, disable RequireHTTPS so the API works over plain
-	// HTTP via port-forward / local tooling. In production, set
-	// logging.development=false and front the API with an Ingress that
-	// terminates TLS and sets X-Forwarded-Proto=https.
 	securityCfg := server.DefaultRouterConfig().SecurityConfig
 	if cfg.Logging.Development {
 		securityCfg.Development = true
@@ -444,8 +454,6 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// checkout was never completed after 7 days. Only runs with a real Stripe
 	// provider (needs checkout-session lookup); in dev mode without Stripe the
 	// cleanup is a no-op (pending orgs accumulate but are harmless).
-	var pendingOrgCleaner *handlers.PendingOrgCleaner
-	var invitationsHandler *handlers.InvitationsHandler
 	if checkoutProvider != nil && pgOrgStore != nil {
 		pendingOrgCleaner = handlers.NewPendingOrgCleaner(
 			pgOrgStore, checkoutProvider, log, time.Hour, 7*24*time.Hour)
@@ -473,6 +481,12 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		invitationsHandler = handlers.NewInvitationsHandler(pgOrgStore, mailer, svc.GetAuth(), cfg.Email.BaseURL, log)
 	}
 
+	// US-43.7: Org policy service + handler.
+	if pgOrgStore != nil {
+		policySvc = policy.New(pgOrgStore, svc.Cache)
+		policyHandler = handlers.NewPolicyHandler(pgOrgStore, policySvc, svc.GetAuth())
+	}
+
 	router := server.NewRouter(svc, log, proxyHandler, server.RouterConfig{
 		Debug:                           cfg.Logging.Development,
 		LoggingConfig:                   server.DefaultRouterConfig().LoggingConfig,
@@ -494,6 +508,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		UsageHandler:                    usageHandler,
 		WebhookHandler:                  webhookHandler,
 		InvitationsHandler:              invitationsHandler,
+		PolicyHandler:                   policyHandler,
 		CookieName:                      cfg.Auth.CookieName,
 	})
 

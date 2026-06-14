@@ -241,6 +241,12 @@ func (m *fullMockDB) DeleteWorkspace(context.Context, string) error { return nil
 func (m *fullMockDB) ListWorkspaces(context.Context, string, int, int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error) {
 	return nil, nil, nil
 }
+func (m *fullMockDB) CountWorkspacesByUserAndOrg(context.Context, string, string) (int, error) {
+	return 0, nil
+}
+func (m *fullMockDB) CountActiveWorkspacesByUserAndOrg(context.Context, string, string) (int, error) {
+	return 0, nil
+}
 func (m *fullMockDB) SyncWorkspaceVersionInfo(context.Context, string, string, string) {}
 func (m *fullMockDB) MarkWorkspaceDeleted(context.Context, string)                     {}
 func (m *fullMockDB) CheckPermission(string, string, string, string) (bool, error)     { return false, nil }

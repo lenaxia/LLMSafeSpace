@@ -138,6 +138,16 @@ func (m *MockDatabaseService) ListWorkspaces(ctx context.Context, userID string,
 	return workspaces, pagination, args.Error(2)
 }
 
+func (m *MockDatabaseService) CountWorkspacesByUserAndOrg(ctx context.Context, userID, orgID string) (int, error) {
+	args := m.Called(ctx, userID, orgID)
+	return args.Int(0), args.Error(1)
+}
+
+func (m *MockDatabaseService) CountActiveWorkspacesByUserAndOrg(ctx context.Context, userID, orgID string) (int, error) {
+	args := m.Called(ctx, userID, orgID)
+	return args.Int(0), args.Error(1)
+}
+
 func (m *MockDatabaseService) SyncWorkspaceVersionInfo(ctx context.Context, workspaceID, imageTag, agentVersion string) {
 	m.Called(ctx, workspaceID, imageTag, agentVersion)
 }
