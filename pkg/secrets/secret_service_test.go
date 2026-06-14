@@ -227,7 +227,7 @@ func (m *mockSecretStore) GetWorkspaceCredentials(_ context.Context, _ string) (
 
 func (m *mockSecretStore) UpsertFreeTierCredential(_ context.Context, _ []byte) error { return nil }
 
-func (m *mockSecretStore) SeedWorkspaceCredentials(_ context.Context, _, _ string) error {
+func (m *mockSecretStore) SeedWorkspaceCredentials(_ context.Context, _, _ string, _ *string) error {
 	return nil
 }
 
