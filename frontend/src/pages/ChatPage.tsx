@@ -544,6 +544,9 @@ export function ChatPage() {
 
     if (event.type === "session.status" && workspaceId) {
       queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
+      if (event.status === "idle") {
+        queue.notifyIdle(event.session_id);
+      }
       if (event.session_id === sessionId) {
         if (event.status === "idle") {
           sseHasDrivenBusy.current = true;
@@ -552,7 +555,6 @@ export function ChatPage() {
           setRetryStatus(null);
           clearStreamTimedOut();
           reconcileOnIdle();
-          queue.notifyIdle();
           // US-16.12: Clear stale prompts on session idle
           setPendingQuestions([]);
           setPendingPermissions([]);

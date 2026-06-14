@@ -222,7 +222,7 @@ describe("useMessageQueue", () => {
 
   // ── per-session isolation ────────────────────────────────────────────────
 
-  it("changing sessionId clears messages from previous session", () => {
+  it("changing sessionId hides messages from other sessions but preserves them", () => {
     const { result, rerender } = renderHook(
       (props: { sid: string }) => useMessageQueue("ws-1", props.sid),
       { initialProps: { sid: "ses-1" } },
@@ -239,8 +239,9 @@ describe("useMessageQueue", () => {
     expect(result.current.queuedMessages).toHaveLength(1);
     expect(result.current.queuedMessages[0]!.text).toBe("msg for ses-2");
 
-    rerender({ sid: "ses-3" });
-    expect(result.current.queuedMessages).toHaveLength(0);
+    rerender({ sid: "ses-1" });
+    expect(result.current.queuedMessages).toHaveLength(1);
+    expect(result.current.queuedMessages[0]!.text).toBe("msg for ses-1");
   });
 
   // ── sending timeout ──────────────────────────────────────────────────────
@@ -580,5 +581,78 @@ describe("useMessageQueue", () => {
       expect(result.current.queuedMessages).toHaveLength(0);
     });
     expect(callCount).toBe(3);
+  });
+
+  // ── Cross-session queue persistence ─────────────────────────────────────────
+
+  it("queued message persists when navigating away and is sent on idle for its session", async () => {
+    const { result, rerender } = renderHook(
+      (props: { sid: string }) => useMessageQueue("ws-1", props.sid),
+      { initialProps: { sid: "ses-A" } },
+    );
+
+    act(() => { result.current.enqueue("msg for A"); });
+    expect(result.current.queuedMessages).toHaveLength(1);
+
+    rerender({ sid: "ses-B" });
+    expect(result.current.queuedMessages).toHaveLength(0);
+
+    await act(async () => { result.current.notifyIdle("ses-A"); });
+
+    expect(messagesApi.sendAsync).toHaveBeenCalledWith("ws-1", "ses-A", expect.objectContaining({
+      parts: [{ type: "text", text: "msg for A" }],
+    }));
+  });
+
+  it("notifyIdle with targetSessionId does not affect current session queue", async () => {
+    const { result, rerender } = renderHook(
+      (props: { sid: string }) => useMessageQueue("ws-1", props.sid),
+      { initialProps: { sid: "ses-A" } },
+    );
+
+    act(() => { result.current.enqueue("msg for A"); });
+    rerender({ sid: "ses-B" });
+    act(() => { result.current.enqueue("msg for B"); });
+
+    await act(async () => { result.current.notifyIdle("ses-A"); });
+
+    expect(messagesApi.sendAsync).toHaveBeenCalledTimes(1);
+    expect(messagesApi.sendAsync).toHaveBeenCalledWith("ws-1", "ses-A", expect.objectContaining({
+      parts: [{ type: "text", text: "msg for A" }],
+    }));
+
+    await act(async () => { result.current.notifyIdle("ses-B"); });
+
+    await waitFor(() => {
+      expect(messagesApi.sendAsync).toHaveBeenCalledTimes(2);
+    });
+    expect((messagesApi.sendAsync as ReturnType<typeof vi.fn>).mock.calls[1]![1]).toBe("ses-B");
+  });
+
+  it("independent draining for different sessions in same hook instance", async () => {
+    const { result, rerender } = renderHook(
+      (props: { sid: string }) => useMessageQueue("ws-1", props.sid),
+      { initialProps: { sid: "ses-1" } },
+    );
+
+    act(() => { result.current.enqueue("for ses-1"); });
+    rerender({ sid: "ses-2" });
+    act(() => { result.current.enqueue("for ses-2"); });
+
+    act(() => { result.current.notifyIdle("ses-1"); });
+    await waitFor(() => {
+      expect(messagesApi.sendAsync).toHaveBeenCalledTimes(1);
+    });
+    expect(messagesApi.sendAsync).toHaveBeenLastCalledWith("ws-1", "ses-1", expect.objectContaining({
+      parts: [{ type: "text", text: "for ses-1" }],
+    }));
+
+    act(() => { result.current.notifyIdle("ses-2"); });
+    await waitFor(() => {
+      expect(messagesApi.sendAsync).toHaveBeenCalledTimes(2);
+    });
+    expect(messagesApi.sendAsync).toHaveBeenLastCalledWith("ws-1", "ses-2", expect.objectContaining({
+      parts: [{ type: "text", text: "for ses-2" }],
+    }));
   });
 });

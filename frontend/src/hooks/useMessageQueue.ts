@@ -25,7 +25,6 @@ type Action =
   | { type: "send_success"; id: string }
   | { type: "remove"; id: string }
   | { type: "clear" }
-  | { type: "filter_session"; sessionId: string }
   | { type: "timeout_sending"; cutoff: number }
   | { type: "retry"; id: string }
   | { type: "phase_error" }
@@ -57,8 +56,6 @@ function reduce(state: QueuedMessage[], action: Action): QueuedMessage[] {
       return state.filter((m) => m.id !== action.id);
     case "clear":
       return [];
-    case "filter_session":
-      return state.filter((m) => m.sessionId === action.sessionId);
     case "timeout_sending": {
       const cutoff = action.cutoff;
       return state.map((m) => {
@@ -123,13 +120,9 @@ export function useMessageQueue(
   sessionId: string | undefined,
 ) {
   const [queuedMessages, dispatch] = useReducer(reduce, []);
-  const drainingRef = useRef(false);
+  const drainingSessionsRef = useRef<Set<string>>(new Set());
   const stateRef = useRef(queuedMessages);
   stateRef.current = queuedMessages;
-
-  useEffect(() => {
-    dispatch({ type: "filter_session", sessionId: sessionId! });
-  }, [sessionId]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -138,31 +131,32 @@ export function useMessageQueue(
       const hasStuck = prev.some((m) => m.status === "sending" && (!m._sentAt || m._sentAt < cutoff));
       if (hasStuck) {
         dispatch({ type: "timeout_sending", cutoff });
-        drainingRef.current = false;
+        drainingSessionsRef.current.clear();
       }
     }, 10_000);
     return () => clearInterval(interval);
   }, []);
 
-  const drainOne = useCallback((msgs: QueuedMessage[]) => {
-    if (!workspaceId || !sessionId) return;
-    if (drainingRef.current) return;
-    const head = msgs.find((m) => m.status === "pending");
+  const drainOne = useCallback((msgs: QueuedMessage[], targetSessionId?: string) => {
+    const sid = targetSessionId ?? sessionId;
+    if (!workspaceId || !sid) return;
+    if (drainingSessionsRef.current.has(sid)) return;
+    const head = msgs.find((m) => m.status === "pending" && m.sessionId === sid);
     if (!head) return;
 
-    drainingRef.current = true;
+    drainingSessionsRef.current.add(sid);
     const sentAt = Date.now();
 
     dispatch({ type: "mark_sending", id: head.id, sentAt });
 
     messagesApi
-      .sendAsync(workspaceId, sessionId, {
+      .sendAsync(workspaceId, sid, {
         parts: [{ type: "text", text: head.text }],
         messageID: head.id,
       })
       .then(() => {
         dispatch({ type: "send_success", id: head.id });
-        drainingRef.current = false;
+        drainingSessionsRef.current.delete(sid);
       })
       .catch((err: unknown) => {
         if (err instanceof ApiClientError && err.status === 409) {
@@ -172,7 +166,7 @@ export function useMessageQueue(
           } else {
             dispatch({ type: "mark_pending", id: head.id });
           }
-          drainingRef.current = false;
+          drainingSessionsRef.current.delete(sid);
           return;
         }
         let error = err instanceof Error ? err.message : "Failed to send";
@@ -181,7 +175,7 @@ export function useMessageQueue(
           error = `Rate limited. Retry after ${retryAfter}s`;
         }
         dispatch({ type: "mark_error", id: head.id, error });
-        drainingRef.current = false;
+        drainingSessionsRef.current.delete(sid);
       });
   }, [workspaceId, sessionId]);
 
@@ -191,8 +185,8 @@ export function useMessageQueue(
     dispatch({ type: "enqueue", msg: { id, text, status: "pending", sessionId } });
   }, [workspaceId, sessionId]);
 
-  const notifyIdle = useCallback(() => {
-    drainOne(stateRef.current);
+  const notifyIdle = useCallback((targetSessionId?: string) => {
+    drainOne(stateRef.current, targetSessionId);
   }, [drainOne]);
 
   const clear = useCallback(() => dispatch({ type: "clear" }), []);
@@ -221,7 +215,7 @@ export function useMessageQueue(
 
   const onPhaseChange = useCallback((phase: string) => {
     if (RESTART_PHASES.includes(phase)) {
-      drainingRef.current = false;
+      drainingSessionsRef.current.clear();
       dispatch({ type: "phase_error" });
     }
   }, []);
