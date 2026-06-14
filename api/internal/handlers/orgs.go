@@ -108,7 +108,7 @@ func (h *OrgsHandler) Create(c *gin.Context) {
 		return
 	}
 
-	adminKEK, err := secrets.DeriveKEK([]byte(req.Password), adminSalt, secrets.OrgKEKInfo)
+	adminKEK, err := secrets.DeriveKEKFromPasswordV0([]byte(req.Password), adminSalt, secrets.OrgKEKInfo)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to derive admin key"})
 		return

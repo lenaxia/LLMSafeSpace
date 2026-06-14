@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
@@ -11,6 +11,11 @@ interface Props {
 
 export function RenameWorkspaceDialog({ currentName, onRename, onCancel }: Props) {
   const [name, setName] = useState(currentName);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.select();
+  }, []);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -31,6 +36,7 @@ export function RenameWorkspaceDialog({ currentName, onRename, onCancel }: Props
     <form onSubmit={handleSubmit} className="flex flex-col gap-3 p-3">
       <h3 className="text-sm font-semibold">Rename Workspace</h3>
       <Input
+        ref={inputRef}
         value={name}
         onChange={(e) => setName(e.target.value)}
         onKeyDown={handleKeyDown}

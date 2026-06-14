@@ -839,9 +839,19 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, 
 			c.JSON(http.StatusBadRequest, gin.H{"error": "title is required"})
 			return
 		}
-		if err := wsSvc.RenameSession(c.Request.Context(), userID, c.Param("id"), c.Param("sessionId"), body.Title); err != nil {
+		wsID := c.Param("id")
+		sID := c.Param("sessionId")
+		if err := wsSvc.RenameSession(c.Request.Context(), userID, wsID, sID, body.Title); err != nil {
 			respondWithError(c, err)
 			return
+		}
+		// Also rename in the opencode agent so the frontend's periodic title
+		// fetch (useSessionTitle hook) doesn't retrieve the old agent-side
+		// title and overwrite the user-assigned one.
+		if proxyHandler != nil {
+			go func() {
+				_ = proxyHandler.RenameSessionInAgent(context.Background(), wsID, sID, body.Title)
+			}()
 		}
 		c.Status(http.StatusNoContent)
 	})

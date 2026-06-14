@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/lenaxia/llmsafespace/pkg/secrets"
 )
 
 var (
@@ -29,4 +31,8 @@ func ClassifyPostgresError(err error) error {
 		}
 	}
 	return err
+}
+
+func isDuplicateErr(err error) bool {
+	return errors.Is(err, ErrDuplicateCredential) || errors.Is(err, secrets.ErrDuplicateSecret)
 }

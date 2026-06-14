@@ -83,7 +83,7 @@ func (s *OrgKeyService) InitializeOrgKeys(ctx context.Context, orgID, adminUserI
 		return nil, fmt.Errorf("get admin salt: %w", err)
 	}
 
-	adminKEK, err := DeriveKEK(adminPassword, adminSalt, OrgKEKInfo)
+	adminKEK, err := DeriveKEKFromPasswordV0(adminPassword, adminSalt, OrgKEKInfo)
 	if err != nil {
 		zeroBytes(orgDEK)
 		return nil, fmt.Errorf("derive admin KEK: %w", err)
@@ -118,7 +118,7 @@ func (s *OrgKeyService) UnlockOrgDEK(ctx context.Context, record *OrgKeyMemberRe
 		return nil
 	}
 
-	adminKEK, err := DeriveKEK(password, userSalt, OrgKEKInfo)
+	adminKEK, err := DeriveKEKFromPasswordV0(password, userSalt, OrgKEKInfo)
 	if err != nil {
 		return fmt.Errorf("derive KEK: %w", err)
 	}
@@ -200,7 +200,7 @@ func (s *OrgKeyService) WrapOrgDEKForNewAdmin(ctx context.Context, orgID, newAdm
 		return fmt.Errorf("get new admin salt: %w", err)
 	}
 
-	newAdminKEK, err := DeriveKEK(newAdminPassword, newAdminSalt, OrgKEKInfo)
+	newAdminKEK, err := DeriveKEKFromPasswordV0(newAdminPassword, newAdminSalt, OrgKEKInfo)
 	if err != nil {
 		return fmt.Errorf("derive new admin KEK: %w", err)
 	}
@@ -251,7 +251,7 @@ func (s *OrgKeyService) RewrapOrgDEKForAdmin(ctx context.Context, orgID, userID 
 		return fmt.Errorf("get user salt: %w", err)
 	}
 
-	newKEK, err := DeriveKEK(newPassword, userSalt, OrgKEKInfo)
+	newKEK, err := DeriveKEKFromPasswordV0(newPassword, userSalt, OrgKEKInfo)
 	if err != nil {
 		return fmt.Errorf("derive new KEK: %w", err)
 	}
@@ -340,7 +340,7 @@ func (s *OrgKeyService) RotateOrgDEK(ctx context.Context, orgID, adminUserID str
 		return 0, fmt.Errorf("get admin salt: %w", err)
 	}
 
-	adminKEK, err := DeriveKEK(adminPassword, adminSalt, OrgKEKInfo)
+	adminKEK, err := DeriveKEKFromPasswordV0(adminPassword, adminSalt, OrgKEKInfo)
 	if err != nil {
 		zeroBytes(newDEK)
 		return 0, fmt.Errorf("derive admin KEK: %w", err)

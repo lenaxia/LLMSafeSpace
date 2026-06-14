@@ -4,9 +4,12 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -134,6 +137,54 @@ func (h *ProxyHandler) GetWorkspaceCRD(workspaceID string) (*v1.Workspace, error
 		return nil, fmt.Errorf("initialize LLMSafespaceV1 client: %w", err)
 	}
 	return v1Client.Workspaces(h.namespace).Get(context.Background(), workspaceID, metav1.GetOptions{})
+}
+
+// RenameSessionInAgent sends a title update to the opencode agent running on
+// the workspace pod so that the agent's in-memory session title matches the
+// user-assigned title. Without this, the period title fetch (useSessionTitle
+// hook in the frontend) retrieves the old agent-side title and overwrites the
+// user's rename in PostgreSQL.
+func (h *ProxyHandler) RenameSessionInAgent(ctx context.Context, workspaceID, sessionID, title string) error {
+	v1Client, err := h.k8sClient.LlmsafespaceV1()
+	if err != nil {
+		return fmt.Errorf("initialize LLMSafespaceV1 client: %w", err)
+	}
+	ws, err := v1Client.Workspaces(h.namespace).Get(ctx, workspaceID, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get workspace CRD: %w", err)
+	}
+	if ws.Status.Phase != phaseActive || ws.Status.PodIP == "" {
+		return fmt.Errorf("workspace not active")
+	}
+
+	password, err := h.getPassword(ctx, workspaceID)
+	if err != nil {
+		return fmt.Errorf("get password: %w", err)
+	}
+
+	payload := map[string]string{"title": title}
+	body, _ := json.Marshal(payload)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch,
+		fmt.Sprintf("http://%s:4096/session/%s", ws.Status.PodIP, sessionID),
+		bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth("opencode", password)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("request to agent: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("agent returned %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
 }
 
 var sessionIDPattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
