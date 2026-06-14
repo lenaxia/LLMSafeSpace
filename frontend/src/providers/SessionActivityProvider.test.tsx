@@ -380,10 +380,11 @@ describe("SessionActivityProvider", () => {
     expect(sessions.find((s) => s.id === "sess-1")?.hasUnread).toBe(true);
   });
 
-  // Regression: clearPendingUnread must also clear hasUnread in cache so
-  // seedFromCache does not re-add the session to pendingUnread on subsequent
-  // cache updates.
-  it("clearPendingUnread clears hasUnread in cache to prevent re-seed (regression)", () => {
+  // Regression: clearPendingUnread must suppress re-adding the session from a
+  // stale REST refetch (markSessionSeen PUT racing the GET) until REST confirms
+  // hasUnread:false. This replaces the old "write hasUnread:false to cache"
+  // approach with clearedRef suppression that survives a stale refetch.
+  it("clearPendingUnread suppresses stale refetch and releases on REST confirm", () => {
     function Display() {
       const isUnread = useIsSessionUnread("sess-1");
       const clear = useClearPendingUnread();
@@ -413,16 +414,39 @@ describe("SessionActivityProvider", () => {
 
     expect(screen.getByTestId("unread").textContent).toBe("yes");
 
-    // Clear unread
+    // Clear unread (user navigates to the session)
     act(() => {
       screen.getByTestId("clear").click();
     });
 
     expect(screen.getByTestId("unread").textContent).toBe("no");
 
-    // Cache must have hasUnread:false so seedFromCache won't re-add it
-    const sessions = qc.getQueryData(["sessions", "ws-1"]) as Array<{ id: string; hasUnread: boolean }>;
-    expect(sessions.find((s) => s.id === "sess-1")?.hasUnread).toBe(false);
+    // Stale refetch: REST still returns hasUnread:true (PUT not committed).
+    // reconcileUnread must NOT re-add it (clearedRef suppression).
+    act(() => {
+      qc.setQueryData(["sessions", "ws-1"], [
+        { id: "sess-1", title: "Test", messageCount: 1, status: "idle", hasUnread: true },
+      ]);
+    });
+    expect(screen.getByTestId("unread").textContent).toBe("no");
+
+    // Real refetch: REST now confirms hasUnread:false (PUT committed).
+    // clearedRef is released so a future unread response will pulse again.
+    act(() => {
+      qc.setQueryData(["sessions", "ws-1"], [
+        { id: "sess-1", title: "Test", messageCount: 1, status: "idle", hasUnread: false },
+      ]);
+    });
+    expect(screen.getByTestId("unread").textContent).toBe("no");
+
+    // New unread response arrives via REST — should pulse again now that
+    // clearedRef was released.
+    act(() => {
+      qc.setQueryData(["sessions", "ws-1"], [
+        { id: "sess-1", title: "Test", messageCount: 2, status: "idle", hasUnread: true },
+      ]);
+    });
+    expect(screen.getByTestId("unread").textContent).toBe("yes");
   });
 
   // Regression: SSE-tracked busy session must survive a cache refetch that
@@ -747,6 +771,193 @@ describe("SessionActivityProvider", () => {
     act(() => {
       qc.setQueryData(["sessions", "ws-1"], [
         { id: "sess-1", title: "Test", messageCount: 0, status: "idle", hasUnread: true },
+      ]);
+    });
+    expect(screen.getByTestId("unread").textContent).toBe("yes");
+  });
+
+  // Regression (refresh): on a full page refresh, sessions that were already
+  // idle with an unread response never receive an SSE idle event (only the
+  // busy→idle transition emits one). The unread state must therefore come from
+  // the REST hasUnread field. The old seed-once design locked in whatever the
+  // FIRST cache read returned — if that read was stale (hasUnread:false because
+  // last_message_at hadn't persisted), the session never pulsed. Reconcile
+  // re-reads hasUnread on every cache update, so a delayed/stale first read
+  // self-heals on the next refetch.
+  it("refresh: stale first read self-heals on subsequent refetch (regression)", () => {
+    function UnreadDisplay() {
+      const isUnread = useIsSessionUnread("sess-1");
+      return <span data-testid="unread">{isUnread ? "yes" : "no"}</span>;
+    }
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    // Simulate a stale first REST response (hasUnread:false — the async
+    // RecordMessage queue hasn't persisted last_message_at yet)
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-1", title: "Test", messageCount: 1, status: "idle", hasUnread: false },
+    ]);
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <UnreadDisplay />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("unread").textContent).toBe("no");
+
+    // The queue drains and the next refetch returns the correct hasUnread:true.
+    // Reconcile picks it up immediately — no SSE event required.
+    act(() => {
+      qc.setQueryData(["sessions", "ws-1"], [
+        { id: "sess-1", title: "Test", messageCount: 1, status: "idle", hasUnread: true },
+      ]);
+    });
+    expect(screen.getByTestId("unread").textContent).toBe("yes");
+  });
+
+  // Regression (refresh, multiple workspaces): reconcile must add unread
+  // sessions from any workspace whose cache data arrives, not just the first.
+  it("refresh: reconcile adds unread across multiple workspaces", () => {
+    function Display() {
+      const u1 = useIsSessionUnread("sess-a");
+      const u2 = useIsSessionUnread("sess-b");
+      return (
+        <>
+          <span data-testid="unread-a">{u1 ? "yes" : "no"}</span>
+          <span data-testid="unread-b">{u2 ? "yes" : "no"}</span>
+        </>
+      );
+    }
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <Display />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("unread-a").textContent).toBe("no");
+    expect(screen.getByTestId("unread-b").textContent).toBe("no");
+
+    // ws-1 data arrives
+    act(() => {
+      qc.setQueryData(["sessions", "ws-1"], [
+        { id: "sess-a", title: "A", messageCount: 2, status: "idle", hasUnread: true },
+      ]);
+    });
+    expect(screen.getByTestId("unread-a").textContent).toBe("yes");
+
+    // ws-2 data arrives later
+    act(() => {
+      qc.setQueryData(["sessions", "ws-2"], [
+        { id: "sess-b", title: "B", messageCount: 1, status: "idle", hasUnread: true },
+      ]);
+    });
+    expect(screen.getByTestId("unread-a").textContent).toBe("yes");
+    expect(screen.getByTestId("unread-b").textContent).toBe("yes");
+  });
+
+  // Regression (clear then new activity): after clearPendingUnread, a new SSE
+  // idle event (a genuinely new response) must release the clearedRef
+  // suppression so the session pulses again.
+  it("new SSE idle after clear releases suppression and re-pulses", () => {
+    function Display() {
+      const isUnread = useIsSessionUnread("sess-1");
+      const clear = useClearPendingUnread();
+      return (
+        <>
+          <span data-testid="unread">{isUnread ? "yes" : "no"}</span>
+          <button data-testid="clear" onClick={() => clear("sess-1")}>clear</button>
+        </>
+      );
+    }
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-1", title: "Test", messageCount: 1, status: "idle", hasUnread: true },
+    ]);
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <Display />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("unread").textContent).toBe("yes");
+
+    act(() => { screen.getByTestId("clear").click(); });
+    expect(screen.getByTestId("unread").textContent).toBe("no");
+
+    // A stale refetch still returns hasUnread:true but must stay suppressed
+    act(() => {
+      qc.setQueryData(["sessions", "ws-1"], [
+        { id: "sess-1", title: "Test", messageCount: 1, status: "idle", hasUnread: true },
+      ]);
+    });
+    expect(screen.getByTestId("unread").textContent).toBe("no");
+
+    // A brand-new response arrives via SSE (busy → idle). The idle handler
+    // releases clearedRef and re-marks unread.
+    act(() => {
+      capturedOnEvent!({ type: "session.status", workspace_id: "ws-1", session_id: "sess-1", status: "busy" });
+      capturedOnEvent!({ type: "session.status", workspace_id: "ws-1", session_id: "sess-1", status: "idle" });
+    });
+    expect(screen.getByTestId("unread").textContent).toBe("yes");
+  });
+
+  // Regression (add-only reconcile): an SSE-set unread (a response that just
+  // arrived) must survive a stale REST refetch returning hasUnread:false. This
+  // happens when RecordMessage hasn't persisted last_message_at yet but the
+  // sessions query refetches (e.g. ChatPage invalidates on a session.status
+  // event for the current session). The old seed-once design preserved this by
+  // never re-reading; reconcile preserves it by being ADD-ONLY.
+  it("SSE-set unread survives stale refetch returning hasUnread:false", () => {
+    function Display() {
+      const isUnread = useIsSessionUnread("sess-1");
+      return <span data-testid="unread">{isUnread ? "yes" : "no"}</span>;
+    }
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    qc.setQueryData(["sessions", "ws-1"], [
+      { id: "sess-1", title: "Test", messageCount: 0, status: "idle", hasUnread: false },
+    ]);
+
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <Display />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId("unread").textContent).toBe("no");
+
+    // SSE: a response completes for a non-current session → unread
+    act(() => {
+      capturedOnEvent!({ type: "session.status", workspace_id: "ws-1", session_id: "sess-1", status: "busy" });
+      capturedOnEvent!({ type: "session.status", workspace_id: "ws-1", session_id: "sess-1", status: "idle" });
+    });
+    expect(screen.getByTestId("unread").textContent).toBe("yes");
+
+    // A refetch returns hasUnread:false (RecordMessage hasn't persisted yet).
+    // The unread MUST survive — reconcile is add-only.
+    act(() => {
+      qc.setQueryData(["sessions", "ws-1"], [
+        { id: "sess-1", title: "Test", messageCount: 0, status: "idle", hasUnread: false },
       ]);
     });
     expect(screen.getByTestId("unread").textContent).toBe("yes");
