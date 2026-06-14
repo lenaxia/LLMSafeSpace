@@ -567,12 +567,12 @@ export function ChatPage() {
       }
     } else if (event.type === "queue.update" && workspaceId) {
       const qe = (event.data ?? {}) as { event?: string; messageID?: string; error?: string };
-      if (qe.event === "sent") {
-        queue.refreshQueue();
+      if (qe.event === "sent" || qe.event === "enqueued") {
+        void queue.refreshQueue();
       } else if (qe.event === "error" && qe.messageID) {
         queue.markError(qe.messageID, qe.error ?? "Send failed");
-      } else if (qe.event === "enqueued" || qe.event === "dismissed") {
-        queue.refreshQueue();
+      } else if (qe.event === "dismissed" && qe.messageID) {
+        queue.removeById(qe.messageID);
       }
     } else if (event.type === "opencode.event" && workspaceId) {
       const oe = event as OpenCodeEvent;
@@ -701,7 +701,8 @@ export function ChatPage() {
       sseHasDrivenBusy.current = false;
       queryClient.invalidateQueries({ queryKey: ["workspace-status", workspaceId] });
     }
-  }, [queryClient, workspaceId]);
+    void queue.refreshQueue();
+  }, [queryClient, workspaceId, queue]);
 
   // Connect SSE unconditionally (even before workspace is Active) so we can
   // detect the Pending→Active phase transition and auto-create a session.
@@ -951,7 +952,7 @@ export function ChatPage() {
                 workspacesApi.abortSession(workspaceId, sessionId);
               }
               abort();
-              queue.clear();
+              void queue.clearAll();
             }}
             onLoadEarlier={() => fetchNextPage()}
             hasOlderMessages={hasNextPage}
