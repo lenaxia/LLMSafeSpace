@@ -47,12 +47,22 @@ type Service struct {
 	secretInjector   SecretInjector
 	credProvisioner  CredentialProvisioner
 	instanceSettings *settings.InstanceService
+	orgStore         OrgMembershipChecker
 	config           *Config
+}
+
+type OrgMembershipChecker interface {
+	IsOrgMember(ctx context.Context, orgID, userID string) (bool, error)
+	IsOrgAdmin(ctx context.Context, orgID, userID string) (bool, error)
+}
+
+func (s *Service) SetOrgStore(store OrgMembershipChecker) {
+	s.orgStore = store
 }
 
 // CredentialProvisioner seeds workspace_credential_bindings from credential_auto_apply.
 type CredentialProvisioner interface {
-	SeedWorkspaceCredentials(ctx context.Context, workspaceID, userID string) error
+	SeedWorkspaceCredentials(ctx context.Context, workspaceID, userID string, orgID *string) error
 }
 
 // SetCredentialProvisioner installs the credential auto-apply seeder.
@@ -183,6 +193,23 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 		)
 	}
 
+	if req.OrgID != nil && *req.OrgID != "" {
+		if s.orgStore == nil {
+			return nil, apierrors.NewValidationError(
+				"org support not configured",
+				map[string]interface{}{"field": "orgId"},
+				fmt.Errorf("org store not available"),
+			)
+		}
+		isMember, err := s.orgStore.IsOrgMember(ctx, *req.OrgID, userID)
+		if err != nil {
+			return nil, apierrors.NewInternalError("org_membership_check_failed", err)
+		}
+		if !isMember {
+			return nil, apierrors.NewForbiddenError("user is not a member of the specified org", fmt.Errorf("user %s is not a member of org %s", userID, *req.OrgID))
+		}
+	}
+
 	// Apply default runtime from settings if not specified
 	if req.Runtime == "" && s.instanceSettings != nil {
 		if img, err := s.instanceSettings.GetString(ctx, "workspace.defaultImage"); err == nil && img != "" {
@@ -217,6 +244,7 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 		Name:        req.Name,
 		Runtime:     req.Runtime,
 		StorageSize: req.StorageSize,
+		OrgID:       req.OrgID,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
@@ -241,7 +269,7 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 	// Seeding is best-effort: a failure does NOT roll back workspace creation,
 	// but is logged at Error (not Warn) so it surfaces in alerting dashboards.
 	if s.credProvisioner != nil {
-		if err := s.credProvisioner.SeedWorkspaceCredentials(ctx, meta.ID, userID); err != nil {
+		if err := s.credProvisioner.SeedWorkspaceCredentials(ctx, meta.ID, userID, meta.OrgID); err != nil {
 			s.logger.Error("credential seeding failed for new workspace; it will have no LLM credentials",
 				err, "workspaceID", meta.ID, "userID", userID)
 		}
@@ -287,11 +315,8 @@ func (s *Service) GetWorkspace(ctx context.Context, userID, workspaceID string) 
 	if meta == nil {
 		return nil, apierrors.NewNotFoundError("workspace", workspaceID, fmt.Errorf("workspace not found"))
 	}
-	if meta.UserID != userID {
-		return nil, apierrors.NewForbiddenError(
-			"user does not own this workspace",
-			fmt.Errorf("user %s does not own workspace %s", userID, workspaceID),
-		)
+	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
+		return nil, err
 	}
 
 	crd, err := func() (*v1.Workspace, error) {
@@ -419,7 +444,7 @@ func (s *Service) DeleteWorkspace(ctx context.Context, userID, workspaceID strin
 		}
 	}()
 
-	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
+	if err := s.verifyOrgAdmin(ctx, userID, workspaceID); err != nil {
 		return err
 	}
 
@@ -449,7 +474,7 @@ func (s *Service) SuspendWorkspace(ctx context.Context, userID, workspaceID stri
 		}
 	}()
 
-	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
+	if err := s.verifyOrgAdmin(ctx, userID, workspaceID); err != nil {
 		return err
 	}
 
@@ -522,7 +547,7 @@ func (s *Service) RestartWorkspace(ctx context.Context, userID, workspaceID stri
 		}
 	}()
 
-	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
+	if err := s.verifyOrgAdmin(ctx, userID, workspaceID); err != nil {
 		return err
 	}
 
@@ -664,13 +689,48 @@ func (s *Service) verifyOwner(ctx context.Context, userID, workspaceID string) e
 	if meta == nil {
 		return apierrors.NewNotFoundError("workspace", workspaceID, fmt.Errorf("workspace not found"))
 	}
-	if meta.UserID != userID {
-		return apierrors.NewForbiddenError(
-			"user does not own this workspace",
-			fmt.Errorf("user %s does not own workspace %s", userID, workspaceID),
-		)
+	if meta.UserID == userID {
+		return nil
 	}
-	return nil
+	if meta.OrgID != nil && *meta.OrgID != "" && s.orgStore != nil {
+		isMember, err := s.orgStore.IsOrgMember(ctx, *meta.OrgID, userID)
+		if err != nil {
+			return fmt.Errorf("check org membership: %w", err)
+		}
+		if isMember {
+			return nil
+		}
+	}
+	return apierrors.NewForbiddenError(
+		"workspace access denied",
+		fmt.Errorf("user %s does not have access to workspace %s", userID, workspaceID),
+	)
+}
+
+func (s *Service) verifyOrgAdmin(ctx context.Context, userID, workspaceID string) error {
+	meta, err := s.dbService.GetWorkspace(ctx, workspaceID)
+	if err != nil {
+		return apierrors.NewInternalError("workspace_retrieval_failed", err)
+	}
+	if meta == nil {
+		return apierrors.NewNotFoundError("workspace", workspaceID, fmt.Errorf("workspace not found"))
+	}
+	if meta.UserID == userID {
+		return nil
+	}
+	if meta.OrgID != nil && *meta.OrgID != "" && s.orgStore != nil {
+		isAdmin, err := s.orgStore.IsOrgAdmin(ctx, *meta.OrgID, userID)
+		if err != nil {
+			return fmt.Errorf("check org admin: %w", err)
+		}
+		if isAdmin {
+			return nil
+		}
+	}
+	return apierrors.NewForbiddenError(
+		"workspace admin access denied",
+		fmt.Errorf("user %s does not have admin access to workspace %s", userID, workspaceID),
+	)
 }
 
 // buildWorkspaceCRD constructs a v1.Workspace CRD from an API request.
@@ -679,12 +739,20 @@ func buildWorkspaceCRD(workspaceID, userID string, req types.CreateWorkspaceRequ
 		"app":     "llmsafespace",
 		"user-id": userID,
 	}
+	if req.OrgID != nil && *req.OrgID != "" {
+		labels["org-id"] = *req.OrgID
+	}
 	for k, v := range req.Labels {
 		labels[k] = v
 	}
 
+	owner := v1.WorkspaceOwner{UserID: userID}
+	if req.OrgID != nil {
+		owner.OrgID = *req.OrgID
+	}
+
 	spec := v1.WorkspaceSpec{
-		Owner: v1.WorkspaceOwner{UserID: userID},
+		Owner: owner,
 		Storage: v1.WorkspaceStorageConfig{
 			Size:             req.StorageSize,
 			StorageClassName: req.StorageClass,
@@ -1013,7 +1081,7 @@ func (s *Service) MarkSessionSeen(ctx context.Context, userID, workspaceID, sess
 
 // RenameWorkspace updates the name of a workspace.
 func (s *Service) RenameWorkspace(ctx context.Context, userID, workspaceID, name string) error {
-	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
+	if err := s.verifyOrgAdmin(ctx, userID, workspaceID); err != nil {
 		return err
 	}
 	return s.dbService.UpdateWorkspace(ctx, workspaceID, types.WorkspaceUpdates{Name: &name})

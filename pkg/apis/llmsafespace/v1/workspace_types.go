@@ -10,6 +10,7 @@ import (
 // WorkspaceOwner identifies the user who owns a Workspace.
 type WorkspaceOwner struct {
 	UserID string `json:"userID"`
+	OrgID  string `json:"orgID,omitempty"`
 }
 
 // Annotation keys written by the API server and read by the controller.

@@ -6,6 +6,7 @@ import { ApiKeysTab } from "../components/settings/ApiKeysTab";
 import { AdminSettingsPage } from "./AdminSettingsPage";
 import { AdminProviderCredentialsTab } from "../components/settings/AdminProviderCredentialsTab";
 import { UserProviderCredentialsTab } from "../components/settings/UserProviderCredentialsTab";
+import { OrgSettingsTab } from "../components/settings/OrgSettingsTab";
 import { useAuth } from "../providers/AuthProvider";
 
 const allTabs = [
@@ -13,6 +14,7 @@ const allTabs = [
   { id: "provider-keys", label: "Provider Keys", adminOnly: false },
   { id: "secrets", label: "Secrets", adminOnly: false },
   { id: "api-keys", label: "API Keys", adminOnly: false },
+  { id: "organisations", label: "Organisations", adminOnly: false },
   { id: "platform-credentials", label: "Platform Credentials", adminOnly: true },
   { id: "admin", label: "Admin", adminOnly: true },
 ] as const;
@@ -51,6 +53,7 @@ export function SettingsPage() {
         {activeTab === "provider-keys" && <UserProviderCredentialsTab />}
         {activeTab === "secrets" && <SecretsTab />}
         {activeTab === "api-keys" && <ApiKeysTab />}
+        {activeTab === "organisations" && <OrgSettingsTab />}
         {activeTab === "platform-credentials" && isAdmin && <AdminProviderCredentialsTab />}
         {activeTab === "admin" && isAdmin && <AdminSettingsPage />}
       </div>

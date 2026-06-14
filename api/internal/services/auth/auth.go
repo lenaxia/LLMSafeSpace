@@ -40,6 +40,10 @@ type KeyServiceInterface interface {
 	HasKeys(ctx context.Context, userID string) (bool, error)
 	GetDEK(ctx context.Context, sessionID string) ([]byte, error)
 	CacheDEK(ctx context.Context, sessionID string, dek []byte, ttl time.Duration) error
+	// UnlockAllOrgDEKs unlocks DEKs for all orgs this user admins. Non-fatal.
+	// The userSalt parameter is accepted for symmetry but may be nil — the
+	// implementation fetches it internally using a single DB query.
+	UnlockAllOrgDEKs(ctx context.Context, userID string, userSalt []byte, password []byte, ttl time.Duration) error
 }
 
 // SetKeyService sets the optional key service for secret management.
@@ -749,6 +753,11 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 			}
 			if err := s.keyService.UnlockDEK(ctx, user.ID, []byte(req.Password), jti, tokenDur); err != nil {
 				s.logger.Warn("Login: failed to unlock DEK", "user_id", user.ID, "error", err.Error())
+			}
+			// Unlock org DEKs for all orgs this user admins. Non-fatal: any
+			// failure is logged inside UnlockAllOrgDEKs; login proceeds.
+			if err := s.keyService.UnlockAllOrgDEKs(ctx, user.ID, nil, []byte(req.Password), tokenDur); err != nil {
+				s.logger.Warn("Login: failed to unlock org DEKs", "user_id", user.ID, "error", err.Error())
 			}
 		}
 	}

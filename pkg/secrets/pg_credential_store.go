@@ -74,21 +74,18 @@ func (s *PgSecretStore) UpsertFreeTierCredential(ctx context.Context, ciphertext
 	return tx.Commit(ctx)
 }
 
-// SeedWorkspaceCredentials inserts credential bindings for a new workspace:
-//  1. Admin auto-apply rules (target_type='all', 'user', or 'org' matching workspace owner).
-//     org rules use userID as a placeholder until org membership is implemented.
-//  2. All user-owned credentials belonging to userID.
-//
+// SeedWorkspaceCredentials inserts credential bindings for a new workspace.
 // Idempotent — uses ON CONFLICT DO NOTHING throughout.
-func (s *PgSecretStore) SeedWorkspaceCredentials(ctx context.Context, workspaceID, userID string) error {
-	// Bind admin auto-apply rules (all target types including org — H-4 fix).
+//   - orgID nil: personal workspace — org auto-apply rules are not applied.
+//   - orgID non-nil: org workspace — org auto-apply rules and all org credentials are bound.
+func (s *PgSecretStore) SeedWorkspaceCredentials(ctx context.Context, workspaceID, userID string, orgID *string) error {
+	// Bind admin auto-apply rules (target_type='all' or 'user' matching userID).
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO workspace_credential_bindings (credential_id, workspace_id, source_type, within_priority)
 		SELECT caa.credential_id, $1, 'auto', caa.within_priority
 		FROM credential_auto_apply caa
 		WHERE caa.target_type = 'all'
 		   OR (caa.target_type = 'user' AND caa.target_id = $2)
-		   OR (caa.target_type = 'org'  AND caa.target_id = $2)
 		ON CONFLICT (credential_id, workspace_id) DO NOTHING
 	`, workspaceID, userID)
 	if err != nil {
@@ -105,6 +102,36 @@ func (s *PgSecretStore) SeedWorkspaceCredentials(ctx context.Context, workspaceI
 	`, workspaceID, userID)
 	if err != nil {
 		return fmt.Errorf("seed workspace credentials (user creds): %w", err)
+	}
+
+	if orgID == nil || *orgID == "" {
+		return nil
+	}
+
+	// Bind org auto-apply rules.
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO workspace_credential_bindings (credential_id, workspace_id, source_type, within_priority)
+		SELECT caa.credential_id, $1, 'auto', caa.within_priority
+		FROM credential_auto_apply caa
+		JOIN provider_credentials pc ON pc.id = caa.credential_id
+		  AND pc.owner_type = 'org' AND pc.owner_id = $2
+		WHERE caa.target_type = 'org' AND caa.target_id = $2
+		ON CONFLICT (credential_id, workspace_id) DO NOTHING
+	`, workspaceID, *orgID)
+	if err != nil {
+		return fmt.Errorf("seed workspace credentials (org auto-apply rules): %w", err)
+	}
+
+	// Bind all org-owned credentials directly.
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO workspace_credential_bindings (credential_id, workspace_id, source_type, within_priority)
+		SELECT pc.id, $1, 'auto', 5
+		FROM provider_credentials pc
+		WHERE pc.owner_type = 'org' AND pc.owner_id = $2
+		ON CONFLICT (credential_id, workspace_id) DO NOTHING
+	`, workspaceID, *orgID)
+	if err != nil {
+		return fmt.Errorf("seed workspace credentials (org creds): %w", err)
 	}
 
 	return nil

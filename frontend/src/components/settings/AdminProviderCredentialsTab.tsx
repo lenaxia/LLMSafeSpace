@@ -439,7 +439,7 @@ function AddAutoApplyRuleForm({
         >
           <option value="all">All workspaces</option>
           <option value="user">Specific user</option>
-          <option value="org" disabled>Organisation (coming soon)</option>
+          <option value="org">Organisation</option>
         </select>
         {targetType !== "all" && (
           <input

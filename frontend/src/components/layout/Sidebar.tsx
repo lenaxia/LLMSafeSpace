@@ -60,7 +60,7 @@ export function Sidebar({ onNavigate }: Props) {
   }, [workspaces?.items]);
 
   const createMutation = useMutation({
-    mutationFn: async (params: { name: string }) => {
+    mutationFn: async (params: { name: string; orgId?: string }) => {
       const ws = await workspacesApi.create(params);
       return ws;
     },

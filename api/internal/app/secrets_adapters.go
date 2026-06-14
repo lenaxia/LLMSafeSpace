@@ -355,8 +355,13 @@ func (a *dbSecretStoreAdapter) QueryAudit(_ context.Context, userID string, _ se
 // turn every binding op across the fleet into uniform 404s with
 // zero log signal. Matches the precedent set by secretsPodIPResolver.
 type workspaceOwnerVerifierAdapter struct {
-	db     interfaces.DatabaseService
-	logger pkginterfaces.LoggerInterface
+	db       interfaces.DatabaseService
+	orgStore OrgMembershipChecker
+	logger   pkginterfaces.LoggerInterface
+}
+
+type OrgMembershipChecker interface {
+	IsOrgMember(ctx context.Context, orgID, userID string) (bool, error)
 }
 
 func (a *workspaceOwnerVerifierAdapter) VerifyWorkspaceOwner(ctx context.Context, userID, workspaceID string) error {
@@ -365,19 +370,32 @@ func (a *workspaceOwnerVerifierAdapter) VerifyWorkspaceOwner(ctx context.Context
 	}
 	meta, err := a.db.GetWorkspace(ctx, workspaceID)
 	if err != nil {
-		// Treat DB blip as not-owned to keep the response uniform.
-		// Log at Warn so a real Postgres outage is operator-visible
-		// rather than silently turning every binding op into a 404.
 		if a.logger != nil {
 			a.logger.Warn("workspaceOwnerVerifier: DB lookup failed; downgrading to not-owned",
 				"workspaceID", workspaceID, "userID", userID, "error", err.Error())
 		}
 		return secrets.ErrWorkspaceNotOwned
 	}
-	if meta == nil || meta.UserID != userID {
+	if meta == nil {
 		return secrets.ErrWorkspaceNotOwned
 	}
-	return nil
+	if meta.UserID == userID {
+		return nil
+	}
+	if meta.OrgID != nil && *meta.OrgID != "" && a.orgStore != nil {
+		isMember, err := a.orgStore.IsOrgMember(ctx, *meta.OrgID, userID)
+		if err != nil {
+			if a.logger != nil {
+				a.logger.Warn("workspaceOwnerVerifier: org membership check failed; downgrading to not-owned",
+					"workspaceID", workspaceID, "userID", userID, "orgID", *meta.OrgID, "error", err.Error())
+			}
+			return secrets.ErrWorkspaceNotOwned
+		}
+		if isMember {
+			return nil
+		}
+	}
+	return secrets.ErrWorkspaceNotOwned
 }
 
 type duplicateErr struct{ name string }

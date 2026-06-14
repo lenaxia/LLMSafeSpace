@@ -61,6 +61,12 @@ type RouterConfig struct {
 	// RotateKeyHandler is the handler for key rotation (optional)
 	RotateKeyHandler *handlers.RotateKeyHandler
 
+	// OrgsHandler handles org CRUD routes (optional)
+	OrgsHandler *handlers.OrgsHandler
+
+	// OrgCredentialsHandler handles org credential routes (optional)
+	OrgCredentialsHandler *handlers.OrgCredentialsHandler
+
 	// TerminalHandler is the handler for WebSocket terminal proxy (optional)
 	TerminalHandler *handlers.TerminalHandler
 
@@ -291,6 +297,11 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		accountGroup.POST("/rotate-key", cfg.RotateKeyHandler.RotateKey)
 		accountGroup.POST("/change-password", cfg.RotateKeyHandler.ChangePassword)
 		router.POST("/api/v1/account/recover", cfg.RotateKeyHandler.RecoverAccount)
+	}
+
+	// Org CRUD routes (Epic 11)
+	if cfg.OrgsHandler != nil {
+		registerOrgRoutes(router, services, cfg.OrgsHandler, cfg.OrgCredentialsHandler)
 	}
 
 	// Metrics endpoint.
@@ -910,4 +921,40 @@ func getMaxActiveSessions(ctx context.Context, instanceSettings *settings.Instan
 		}
 	}
 	return 5
+}
+
+// registerOrgRoutes adds all /api/v1/orgs routes.
+func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *handlers.OrgsHandler, credH *handlers.OrgCredentialsHandler) {
+	authMW := services.GetAuth().AuthMiddleware()
+
+	orgGroup := router.Group("/api/v1/orgs")
+	orgGroup.Use(authMW)
+	orgGroup.POST("", h.Create)
+	orgGroup.GET("", h.List)
+
+	orgIDGroup := orgGroup.Group("/:id")
+	orgIDGroup.Use(middleware.OrgMemberGuard(h))
+	orgIDGroup.GET("", h.Get)
+	orgIDGroup.GET("/workspaces", h.ListWorkspaces)
+	orgIDGroup.GET("/members", h.ListMembers)
+	orgIDGroup.POST("/accept-key", h.AcceptKey)
+
+	orgAdminGroup := orgGroup.Group("/:id")
+	orgAdminGroup.Use(middleware.OrgAdminGuard(h))
+	orgAdminGroup.PUT("", h.Update)
+	orgAdminGroup.DELETE("", h.Delete)
+	orgAdminGroup.POST("/members", h.AddMember)
+	orgAdminGroup.DELETE("/members/:userID", h.RemoveMember)
+	orgAdminGroup.PUT("/members/:userID", h.ChangeMemberRole)
+	orgAdminGroup.POST("/rotate-key", h.RotateKey)
+
+	if credH != nil {
+		orgAdminGroup.POST("/credentials", credH.Create)
+		orgAdminGroup.GET("/credentials", credH.List)
+		orgAdminGroup.PUT("/credentials/:credID", credH.Update)
+		orgAdminGroup.DELETE("/credentials/:credID", credH.Delete)
+		orgAdminGroup.POST("/credentials/:credID/auto-apply", credH.CreateAutoApply)
+		orgAdminGroup.GET("/credentials/:credID/auto-apply", credH.ListAutoApply)
+		orgAdminGroup.DELETE("/credentials/:credID/auto-apply", credH.DeleteAutoApply)
+	}
 }

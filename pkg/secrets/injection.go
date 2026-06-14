@@ -146,6 +146,15 @@ func (s *SecretService) decryptBinding(ctx context.Context, b CredentialBinding,
 			return LLMProviderData{}, fmt.Errorf("server KEK unavailable")
 		}
 		key = serverKEK
+	case "org":
+		if s.orgKeySvc == nil {
+			return LLMProviderData{}, fmt.Errorf("org credential injection not enabled (OrgKeyService not wired)")
+		}
+		orgDEK, err := s.orgKeySvc.GetOrgDEK(ctx, b.OwnerID)
+		if err != nil {
+			return LLMProviderData{}, fmt.Errorf("get org DEK for %s: %w", b.OwnerID, err)
+		}
+		key = orgDEK
 	default:
 		return LLMProviderData{}, fmt.Errorf("unsupported owner_type %q", b.OwnerType)
 	}

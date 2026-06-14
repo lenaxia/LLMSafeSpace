@@ -130,6 +130,9 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var rotateKeyHandler *handlers.RotateKeyHandler
 	var adminProvCredHandler *handlers.AdminProviderCredentialsHandler
 	var userProvCredHandler *handlers.UserProviderCredentialsHandler
+	var orgsHandler *handlers.OrgsHandler
+	var orgCredsHandler *handlers.OrgCredentialsHandler
+	var orgStoreForVerifier OrgMembershipChecker
 	var asyncAudit *secrets.AsyncAuditLogger // populated when secrets are enabled; drained on Shutdown
 	var secretsPool *pgxpool.Pool            // closed on Shutdown
 	var dekCacheClient *redis.Client         // closed on Shutdown
@@ -200,7 +203,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		adminProvCredHandler.SetAutoApplyStore(pgStore)
 		userProvCredHandler = handlers.NewUserProviderCredentialsHandler(pgStore, keyService, secrets.NewPgKeyStore(secretsPool))
 		userProvCredHandler.SetWorkspaceOwnerChecker(func(ctx context.Context, userID, wsID string) error {
-			return (&workspaceOwnerVerifierAdapter{db: dbSvc, logger: log}).VerifyWorkspaceOwner(ctx, userID, wsID)
+			return (&workspaceOwnerVerifierAdapter{db: dbSvc, orgStore: orgStoreForVerifier, logger: log}).VerifyWorkspaceOwner(ctx, userID, wsID)
 		})
 		userProvCredHandler.SetCredentialStateWriter(dbSvc)
 
@@ -244,7 +247,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		// into fail-closed mode so a future wiring regression
 		// produces a uniform 404 rather than silently re-enabling
 		// cross-tenant pollution (NEW-1).
-		secretService.SetWorkspaceOwnerVerifier(&workspaceOwnerVerifierAdapter{db: dbSvc, logger: log})
+		secretService.SetWorkspaceOwnerVerifier(&workspaceOwnerVerifierAdapter{db: dbSvc, orgStore: orgStoreForVerifier, logger: log})
 		secretService.RequireOwnerVerification()
 		secretService.SetAdminKeyDeriver(deriveServerKey)
 		rotateKeyHandler = handlers.NewRotateKeyHandler(keyService)
@@ -272,6 +275,22 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			}
 		}
 
+		pgOrgKeyStore := secrets.NewPgOrgKeyStore(secretsPool)
+		orgKeyService := secrets.NewOrgKeyService(pgOrgKeyStore, dekCache)
+		orgKeyService.SetLogger(log)
+		orgKeyService.SetCredentialStore(pgStore)
+		orgAwareKS := secrets.NewOrgAwareKeyService(keyService, orgKeyService)
+		if authSvc, ok := svc.Auth.(*auth.Service); ok {
+			authSvc.SetKeyService(orgAwareKS)
+		}
+		secretService.SetOrgKeyService(orgKeyService)
+
+		pgOrgStore := database.NewPgOrgStore(dbSvc.DB)
+		orgStoreForVerifier = pgOrgStore
+		orgsHandler = handlers.NewOrgsHandler(pgOrgStore, orgKeyService, dekCache, svc.GetAuth())
+		orgCredsHandler = handlers.NewOrgCredentialsHandler(pgStore, orgKeyService, svc.GetAuth())
+		rotateKeyHandler.SetOrgKeyService(orgKeyService)
+
 		if rkp != nil {
 			keyService.SetAPIKeyStore(&apiKeyStoreAdapter{db: dbSvc}, rkp)
 		} else {
@@ -284,6 +303,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
 			wsSvc.SetSecretInjector(secretService)
 			wsSvc.SetCredentialProvisioner(pgStore)
+			wsSvc.SetOrgStore(pgOrgStore)
 		}
 	}
 
@@ -394,6 +414,8 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		UserProviderCredentialsHandler:  userProvCredHandler,
 		SecretsHandler:                  secretsHandler,
 		RotateKeyHandler:                rotateKeyHandler,
+		OrgsHandler:                     orgsHandler,
+		OrgCredentialsHandler:           orgCredsHandler,
 		TerminalHandler:                 terminalHandler,
 		AgentReloadHandler:              agentReloadHandler,
 		BulkReloadHandler:               bulkReloadHandler,

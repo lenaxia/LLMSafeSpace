@@ -427,6 +427,7 @@ type CreateWorkspaceRequest struct {
 	StorageSize  string            `json:"storageSize"`
 	StorageClass string            `json:"storageClass,omitempty"`
 	Labels       map[string]string `json:"labels,omitempty"`
+	OrgID        *string           `json:"orgId,omitempty"`
 }
 
 // ListOptions carries pagination and filtering parameters.
@@ -534,6 +535,8 @@ type WorkspaceMetadata struct {
 	// Epic 27a: agent credential state (LEFT JOIN workspace_agent_state)
 	AgentNeedsRefresh       bool       `json:"agentNeedsRefresh" db:"agent_needs_refresh"`
 	CredentialsPendingSince *time.Time `json:"credentialsPendingSince,omitempty" db:"credentials_pending_since"`
+	// Epic 11: org attribution (nullable — personal workspaces have no org)
+	OrgID *string `json:"orgId,omitempty" db:"org_id"`
 }
 
 // WorkspaceUpdates carries the fields that may be changed on a WorkspaceMetadata record.
@@ -610,6 +613,72 @@ type SessionListItem struct {
 type ActiveSessionsResponse struct {
 	Active    []string `json:"active"`
 	MaxActive int      `json:"maxActive"`
+}
+
+// OrgRole represents a user's role within an organization.
+type OrgRole string
+
+const (
+	OrgRoleAdmin  OrgRole = "admin"
+	OrgRoleMember OrgRole = "member"
+)
+
+// Organization is the API DTO for an organization.
+type Organization struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Slug      string    `json:"slug"`
+	CreatedBy string    `json:"createdBy"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// OrgMember is the API DTO for an organization membership.
+type OrgMember struct {
+	OrgID          string    `json:"orgId"`
+	UserID         string    `json:"userId"`
+	Username       string    `json:"username"`
+	Email          string    `json:"email"`
+	Role           OrgRole   `json:"role"`
+	PendingKeyWrap bool      `json:"pendingKeyWrap"`
+	CreatedAt      time.Time `json:"createdAt"`
+}
+
+// CreateOrgRequest is the request body for creating an organization.
+type CreateOrgRequest struct {
+	Name     string `json:"name"     binding:"required,min=2,max=100"`
+	Slug     string `json:"slug"     binding:"required,min=2,max=50,alphanum"`
+	Password string `json:"password" binding:"required"               log:"-"`
+}
+
+// UpdateOrgRequest is the request body for updating an organization.
+type UpdateOrgRequest struct {
+	Name string `json:"name" binding:"omitempty,min=2,max=100"`
+	Slug string `json:"slug" binding:"omitempty,min=2,max=50,alphanum"`
+}
+
+// OrgResponse extends Organization with the calling user's membership context.
+type OrgResponse struct {
+	Organization
+	UserRole           OrgRole `json:"userRole"`
+	UserPendingKeyWrap bool    `json:"userPendingKeyWrap"`
+	MemberCount        int     `json:"memberCount"`
+}
+
+// AddOrgMemberRequest is the request body for adding an org member.
+type AddOrgMemberRequest struct {
+	UserID string  `json:"userId" binding:"required"`
+	Role   OrgRole `json:"role"   binding:"required"`
+}
+
+// AcceptOrgKeyRequest is the request body for completing the admin key handshake.
+type AcceptOrgKeyRequest struct {
+	Password string `json:"password" binding:"required" log:"-"`
+}
+
+// ChangeOrgMemberRoleRequest is the request body for changing a member's role.
+type ChangeOrgMemberRoleRequest struct {
+	Role OrgRole `json:"role" binding:"required"`
 }
 
 type OwnerType string

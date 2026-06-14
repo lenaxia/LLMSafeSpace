@@ -409,6 +409,9 @@ func (c *capturingKeyService) GetDEK(ctx context.Context, sessionID string) ([]b
 func (c *capturingKeyService) CacheDEK(ctx context.Context, sessionID string, dek []byte, ttl time.Duration) error {
 	return c.inner.CacheDEK(ctx, sessionID, dek, ttl)
 }
+func (c *capturingKeyService) UnlockAllOrgDEKs(ctx context.Context, userID string, userSalt []byte, password []byte, ttl time.Duration) error {
+	return c.inner.UnlockAllOrgDEKs(ctx, userID, userSalt, password, ttl)
+}
 
 func TestE2E_APIKey_CreateWithDecryptAccess_SecretsOperationSucceeds(t *testing.T) {
 	gin.SetMode(gin.TestMode)
