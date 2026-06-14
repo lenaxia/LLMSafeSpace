@@ -50,7 +50,7 @@ type ProbeModelsResponse struct {
 // ProbeModelsRequest is the body for POST /api/v1/probe-models — a
 // credential-free probe for use before a credential is saved.
 type ProbeModelsRequest struct {
-	APIKey  string `json:"apiKey" binding:"required"`
+	APIKey  string `json:"apiKey" binding:"required" log:"-"` //nolint:gosec // G117 false positive — field has log:"-" tag, never marshaled to response
 	BaseURL string `json:"baseURL" binding:"required"`
 }
 
@@ -65,7 +65,7 @@ func ProbeModelsAnon(c *gin.Context) {
 	}
 
 	pd := secrets.LLMProviderData{APIKey: req.APIKey, BaseURL: req.BaseURL}
-	plaintext, err := json.Marshal(pd)
+	plaintext, err := json.Marshal(pd) //nolint:gosec // G117: marshaling for probeCredentialModels, never returned to caller
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
