@@ -8,7 +8,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"html"
 	"net/http"
@@ -42,9 +41,6 @@ type invitationStore interface {
 	GetOrg(ctx context.Context, orgID string) (*types.Organization, error)
 	GetOrgMember(ctx context.Context, orgID, userID string) (*types.OrgMember, error)
 }
-
-// errBouncedEmail is used in Resend to reject resend to a bounced address.
-var errBouncedEmail = errors.New("email address has a permanent bounce; cannot resend")
 
 // InvitationsHandler handles org invitation CRUD and the accept/decline flows.
 type InvitationsHandler struct {
