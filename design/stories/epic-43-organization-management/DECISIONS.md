@@ -231,7 +231,7 @@ access := meta.UserID == userID || orgStore.IsOrgAdmin(meta.OrgID, userID)
 
 **Code-verified reality:** The `provider_credentials` table does **NOT** have a `base_url` column (`api/migrations/000015_unified_credential_model.up.sql:13-25`). The column does not exist in any migration. Custom endpoint support requires:
 
-- **Migration (000036):** `ALTER TABLE provider_credentials ADD COLUMN base_url TEXT NOT NULL DEFAULT '';`
+- **Migration (000037):** `ALTER TABLE provider_credentials ADD COLUMN base_url TEXT NOT NULL DEFAULT '';`
 - **Handler change:** `CreateOrgCredential` / `UpdateOrgCredential` accept `baseURL` in request body
 - **Store change:** `pg_secret_store` writes/reads `base_url`
 - **Injection change:** `FormatOpenCodeConfig` emits `baseURL` into the opencode provider config when non-empty
@@ -239,7 +239,7 @@ access := meta.UserID == userID || orgStore.IsOrgAdmin(meta.OrgID, userID)
 
 **Impact:** ~4-6h (migration + handler + store + injection + frontend). Not the "~1h UI only" originally estimated.
 
-**Migration:** `000036_provider_credentials_base_url` — `ALTER TABLE provider_credentials ADD COLUMN base_url TEXT NOT NULL DEFAULT '';`
+**Migration:** `000037_provider_credentials_base_url` — `ALTER TABLE provider_credentials ADD COLUMN base_url TEXT NOT NULL DEFAULT '';`
 
 ---
 

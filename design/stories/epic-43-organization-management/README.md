@@ -59,7 +59,7 @@ All 5 phases at a glance. All decisions confirmed — see [`DECISIONS.md`](./DEC
 |---|---|
 | **Stories** | US-43.7 (policy schema + API), US-43.8 (enforcement). ~~US-43.9 (policy UI)~~ — **deferred** (D15). |
 | **Key decisions** | ✅ D15: Ship 4 policies (`allowed_models`, `allowed_providers`, `max_workspaces_per_member`, `max_active_workspaces_per_member`). No policy UI — admins configure via API. Defer `egress_policy`, `require_mfa`, `allowed_runtimes`, `max_session_duration_hours`. ✅ D16: Org policy intersects platform policy (`final = org ∩ platform`). |
-| **New interfaces** | **DB:** `org_policies` table (migration 033). **API:** `GET/PUT /api/v1/orgs/:id/policies` (admin-only, no UI). **Go:** `PolicyService` interface, injected into `CreateWorkspace`, `ListModels`, credential injection. Redis-cached (5-min TTL). |
+| **New interfaces** | **DB:** `org_policies` table (migration 034). **API:** `GET/PUT /api/v1/orgs/:id/policies` (admin-only, no UI). **Go:** `PolicyService` interface, injected into `CreateWorkspace`, `ListModels`, credential injection. Redis-cached (5-min TTL). |
 | **Protocols** | Policy evaluation at workspace creation (reject if quota exceeded). Policy evaluation at model selection (filter disallowed models). Provider restriction at credential injection (skip disallowed providers). |
 
 ### Phase 3: Enterprise (OIDC only — SAML/SCIM deferred)
@@ -68,7 +68,7 @@ All 5 phases at a glance. All decisions confirmed — see [`DECISIONS.md`](./DEC
 |---|---|
 | **Stories** | US-43.10 (OIDC SSO), US-43.13 (org-scoped audit log). ~~US-43.11 (SAML)~~ and ~~US-43.12 (SCIM)~~ deferred — see [DECISIONS.md D3](./DECISIONS.md). |
 | **Key decisions** | ✅ D17: Auto-provision (creates separate account per IdP email — see D9). Domain mapping with DNS verification. Group claim → role mapping. Server KEK for client secret storage. |
-| **New interfaces** | **DB:** `org_sso_configs` table (migration 034); `audit_log` — add `'org'` domain value + `org_id` column (migration 035). **API:** `GET/PUT /api/v1/orgs/:id/sso`, `GET /api/v1/orgs/:id/audit`, OIDC callback `GET /auth/oidc/:orgSlug/callback`. **Go:** OIDC provider in auth flow, async audit writer for org events. **Frontend:** SSO tab, Audit tab. |
+| **New interfaces** | **DB:** `org_sso_configs` table (migration 035); `audit_log` — add `'org'` domain value + `org_id` column (migration 036). **API:** `GET/PUT /api/v1/orgs/:id/sso`, `GET /api/v1/orgs/:id/audit`, OIDC callback `GET /auth/oidc/:orgSlug/callback`. **Go:** OIDC provider in auth flow, async audit writer for org events. **Frontend:** SSO tab, Audit tab. |
 | **Protocols** | OIDC Authorization Code Flow with PKCE. Email-domain-to-org matching at login screen. Auto-provisioning: OIDC userinfo → create user with IdP email → create membership. Group claim (`groups[]`) → role mapping (`admin`/`member`). |
 
 ### Phase 4: Billing Integration (metered billing is critical path)
@@ -86,7 +86,7 @@ All 5 phases at a glance. All decisions confirmed — see [`DECISIONS.md`](./DEC
 |---|---|
 | **Stories** | US-43.18 (platform admin dashboard), US-43.19 (org suspension + user suspension), US-43.20 (cross-org audit) |
 | **Key decisions** | ✅ D18: Reuse `users.role='admin'`. ✅ D19: **Both** org-level and user-level suspension. ✅ D20: Hard operational suspension (kill all pods), data preserved (PVCs retained), storage metering continues, compute/token metering stops. |
-| **New interfaces** | **DB:** `users.status` column (migration 032). **Frontend:** `/admin/platform/*` routes (org list, user list, suspend/unsuspend). **API:** `GET /api/v1/admin/orgs`, `POST /api/v1/admin/orgs/:id/suspend`, `POST /api/v1/admin/orgs/:id/unsuspend`, `GET /api/v1/admin/users`, `POST /api/v1/admin/users/:id/suspend`, `POST /api/v1/admin/users/:id/unsuspend`, `GET /api/v1/admin/audit`. **Internal API:** `GET /api/v1/internal/orgs/:orgID/status` (controller queries org status on reconcile). **Controller:** org-status cache (30s TTL), suspend workspaces when org is suspended. |
+| **New interfaces** | **DB:** `users.status` column (migration 033). **Frontend:** `/admin/platform/*` routes (org list, user list, suspend/unsuspend). **API:** `GET /api/v1/admin/orgs`, `POST /api/v1/admin/orgs/:id/suspend`, `POST /api/v1/admin/orgs/:id/unsuspend`, `GET /api/v1/admin/users`, `POST /api/v1/admin/users/:id/suspend`, `POST /api/v1/admin/users/:id/unsuspend`, `GET /api/v1/admin/audit`. **Internal API:** `GET /api/v1/internal/orgs/:orgID/status` (controller queries org status on reconcile). **Controller:** org-status cache (30s TTL), suspend workspaces when org is suspended. |
 | **Protocols** | Org suspension: set status → controller queries org status on reconcile → suspends all pods → OrgMemberGuard rejects (403) → PVCs preserved → storage metering continues. User suspension: set `users.status` → auth middleware rejects (403) → user blocked across all contexts. Cross-org audit: query `audit_log` across all orgs (platform admin only). |
 
 ---
@@ -574,6 +574,7 @@ func (s *StripeProvider) ParseWebhook(payload []byte, sig string) (event stripe.
 **Pending org cleanup cron:**
 - Runs every 1h. Selects orgs where `status='pending_activation' AND created_at < now() - interval '7 days'`.
 - **Before deleting:** queries Stripe for the checkout session status. If the checkout session was completed (payment succeeded but webhook didn't arrive), activate the org instead of deleting it. Only delete orgs where the Stripe checkout session is expired/canceled/unpaid.
+- **On Stripe API failure (timeout, 5xx, network error):** skip the org entirely — do NOT delete. Retry on the next cron cycle. Treating a Stripe API failure as "checkout expired" would delete orgs where the user actually paid. Log the skip at Warn level with the org ID and error.
 - The 7-day window matches Stripe's checkout session expiry (default 24h) + webhook retry window (3 days) + margin (2.5 days). The previous 24h window risked deleting orgs where the user paid but the webhook was delayed.
 - Deletion cascades to memberships and key members.
 
@@ -920,7 +921,7 @@ This protects SES sender reputation — sending to known-bad addresses degrades 
 **Custom endpoint support (BYO inference):**
 - When provider = "custom", show Base URL field
 - `provider_credentials` does NOT currently have a `base_url` column (verified — `api/migrations/000015_unified_credential_model.up.sql:13-25` has no such column). This requires:
-  - Migration `000036`: `ALTER TABLE provider_credentials ADD COLUMN base_url TEXT NOT NULL DEFAULT '';`
+  - Migration `000037`: `ALTER TABLE provider_credentials ADD COLUMN base_url TEXT NOT NULL DEFAULT '';`
   - Handler change: accept `baseURL` in create/update requests
   - Store change: persist and read `base_url`
   - Injection change: `FormatOpenCodeConfig` emits `baseURL` into opencode provider config when non-empty
@@ -1451,7 +1452,7 @@ These questions can be settled when their phase is about to start, but preferenc
 | Invoice complexity | Simple | Moderate | Complex |
 | Effort | ~2h | ~4h | ~8h (includes US-43.17 metered) |
 
-**Recommendation:** Start with **Option B (per-seat)**. It's Stripe's native model for SaaS, handles proration automatically, and scales with org growth. The seat count from Stripe's webhook becomes the source of truth — we block invitations when `org_memberships count >= stripe_subscription_quantity`. Usage-based metering (Option C) can be layered on later via US-43.17.
+**Recommendation:** ~~Start with **Option B (per-seat)**.~~ **Confirmed as D12: metered billing for both tiers** (Option C — base + seats + usage). Per-seat pricing (Option B) is part of the model for orgs, but usage metering is required from day one for both individual and org tiers to prevent power-user abuse. US-43.17 (Stripe Metered) is critical path, not deferred.
 
 ---
 
@@ -1552,7 +1553,7 @@ Effort: ~2h (webhook handler + frontend banner)
 - Customers see usage in the portal but aren't billed for it
 - Activate metered billing when pricing model is validated and metering reliability is proven
 
-**Recommendation:** Option B (flat-only at launch). Metering has reliability requirements (at-least-once, reconciliation, dispute resolution) that take time to validate. Launch with predictable flat + per-seat pricing. Activate usage-based billing in a follow-up release once you're confident the metering is accurate. US-43.17 remains in the epic but is marked "Phase 4b — post-launch activation."
+**Recommendation:** ~~Option B (flat-only at launch).~~ **Confirmed as D12: metered billing at launch** (Option A). Metering reliability concerns are addressed in D12 (synchronous `llm_tokens` writes recommended, ~2ms p99 overhead). US-43.17 is critical path. The metering infrastructure from Epic 12 must be validated as billing-grade before launch — see D12 for the specific fixes needed (token reconciliation path, synchronous write option).
 
 ---
 
@@ -1827,7 +1828,7 @@ Effort: 0h (reuse existing)
 - User-level suspension (Phase 5b or separate epic)
 - User-level is primarily a security/abuse tool, not a billing tool
 
-**Recommendation:** ~~Option A (org-level only) for Phase 5.~~ **Confirmed as D19: Option C — both org-level and user-level suspension.** The user wants to suspend individual accounts that aren't tied to an org (personal accounts that abuse the system). User-level suspension adds `users.status` column (migration 000032) and an auth middleware check.
+**Recommendation:** ~~Option A (org-level only) for Phase 5.~~ **Confirmed as D19: Option C — both org-level and user-level suspension.** The user wants to suspend individual accounts that aren't tied to an org (personal accounts that abuse the system). User-level suspension adds `users.status` column (migration 000033) and an auth middleware check.
 
 ---
 
