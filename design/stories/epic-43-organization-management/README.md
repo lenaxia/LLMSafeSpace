@@ -1688,7 +1688,7 @@ CREATE TABLE org_sso_configs (
     org_id              UUID PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
     oidc_discovery_url  TEXT NOT NULL,
     oidc_client_id      TEXT NOT NULL,
-    oidc_client_secret  BYTEA NOT NULL,  -- encrypted with org DEK
+    oidc_client_secret  BYTEA NOT NULL,  -- encrypted with server KEK (D17 S4)
     claimed_domains     TEXT[] NOT NULL DEFAULT '{}',  -- ['acme.com', 'acme.io']
     auto_provision      BOOLEAN NOT NULL DEFAULT true,
     group_role_mapping  JSONB NOT NULL DEFAULT '{}',   -- {"admins": "admin", "developers": "member"}
