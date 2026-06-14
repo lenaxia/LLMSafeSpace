@@ -12,6 +12,7 @@ import {
   type CreateUserCredentialRequest,
   type CredentialBindingInfo,
   type CreateUserCredentialResponse,
+  type ProbeModelEntry,
 } from "../../api/providerCredentials";
 import { workspacesApi } from "../../api/workspaces";
 import type { WorkspaceListItem } from "../../api/types";
@@ -28,6 +29,8 @@ import {
   ChevronUp,
   Link,
   Unlink,
+  RefreshCw,
+  Search,
 } from "lucide-react";
 
 // ─── Main tab ────────────────────────────────────────────────────────────────
@@ -372,6 +375,75 @@ function CredentialRow({
 
 // ─── Create form ──────────────────────────────────────────────────────────────
 
+// ─── Model config table (shared with admin tab) ───────────────────────────────
+
+interface ModelRow {
+  id: string;
+  enabled: boolean;
+  contextLimit: string;
+}
+
+function ModelConfigTable({
+  rows,
+  onChange,
+}: {
+  rows: ModelRow[];
+  onChange: (rows: ModelRow[]) => void;
+}) {
+  const update = (idx: number, patch: Partial<ModelRow>) =>
+    onChange(rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+
+  if (rows.length === 0) {
+    return (
+      <p className="text-xs text-muted-foreground italic">
+        No models found. Check your API key and base URL, or skip to save without a model list.
+      </p>
+    );
+  }
+
+  return (
+    <div className="max-h-48 overflow-y-auto rounded-md border border-border">
+      <table className="w-full text-xs">
+        <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm">
+          <tr>
+            <th className="px-2 py-1.5 text-left font-medium text-muted-foreground w-8">On</th>
+            <th className="px-2 py-1.5 text-left font-medium text-muted-foreground">Model ID</th>
+            <th className="px-2 py-1.5 text-left font-medium text-muted-foreground w-40">
+              Context window <span className="text-muted-foreground/50">(tokens)</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, idx) => (
+            <tr key={row.id} className="border-t border-border/50 hover:bg-muted/30">
+              <td className="px-2 py-1">
+                <input
+                  type="checkbox"
+                  checked={row.enabled}
+                  onChange={(e) => update(idx, { enabled: e.target.checked })}
+                  className="h-3.5 w-3.5"
+                />
+              </td>
+              <td className="px-2 py-1 font-mono">{row.id}</td>
+              <td className="px-2 py-1">
+                <input
+                  type="number"
+                  min={0}
+                  value={row.contextLimit}
+                  onChange={(e) => update(idx, { contextLimit: e.target.value })}
+                  placeholder="e.g. 200000"
+                  disabled={!row.enabled}
+                  className="h-6 w-full rounded border border-border bg-background px-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-40"
+                />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function CreateUserCredentialForm({
   onCreated,
   onCancel,
@@ -391,9 +463,40 @@ function CreateUserCredentialForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Inline model fetch state
+  const [modelRows, setModelRows] = useState<ModelRow[]>([]);
+  const [fetchState, setFetchState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [fetchWarning, setFetchWarning] = useState<string | null>(null);
+
   const setField = (k: keyof CreateUserCredentialRequest) =>
     (e: React.ChangeEvent<HTMLInputElement>) =>
       setForm((prev) => ({ ...prev, [k]: e.target.value }));
+
+  const handleFetchModels = async () => {
+    if (!form.apiKey?.trim() || !form.baseURL?.trim()) {
+      setFetchWarning("Enter API key and base URL first to fetch models.");
+      return;
+    }
+    setFetchState("loading");
+    setFetchWarning(null);
+    try {
+      const result = await userProviderCredentialsApi.probeModelsAnon(
+        form.apiKey?.trim() ?? "",
+        form.baseURL?.trim() ?? ""
+      );
+      if (result.warning) setFetchWarning(result.warning);
+      const rows: ModelRow[] = (result.models ?? []).map((m: ProbeModelEntry) => ({
+        id: m.id,
+        enabled: true,
+        contextLimit: m.contextLimit > 0 ? String(m.contextLimit) : "",
+      }));
+      setModelRows(rows);
+      setFetchState("done");
+    } catch {
+      setFetchState("error");
+      setFetchWarning("Failed to fetch model list. You can still save without it.");
+    }
+  };
 
   const handleSubmit = async () => {
     if (!form.name.trim() || !form.provider.trim() || !form.apiKey.trim()) {
@@ -403,11 +506,20 @@ function CreateUserCredentialForm({
     setSaving(true);
     setError(null);
     try {
+      const enabled = modelRows.filter((r) => r.enabled);
+      const modelAllowlist = enabled.length > 0 ? enabled.map((r) => r.id) : undefined;
+      const modelContextLimits: Record<string, number> = {};
+      for (const r of enabled) {
+        const v = parseInt(r.contextLimit, 10);
+        if (v > 0) modelContextLimits[r.id] = v;
+      }
       const req: CreateUserCredentialRequest = {
         name: form.name.trim(),
         provider: form.provider.trim(),
         apiKey: form.apiKey.trim(),
         ...(form.baseURL?.trim() ? { baseURL: form.baseURL.trim() } : {}),
+        ...(modelAllowlist ? { modelAllowlist } : {}),
+        ...(Object.keys(modelContextLimits).length > 0 ? { modelContextLimits } : {}),
       };
       const c = await userProviderCredentialsApi.create(req);
       onCreated(c);
@@ -460,7 +572,7 @@ function CreateUserCredentialForm({
           <input
             type={showKey ? "text" : "password"}
             value={form.apiKey}
-            onChange={setField("apiKey")}
+            onChange={(e) => { setField("apiKey")(e); setFetchState("idle"); setModelRows([]); }}
             placeholder="sk-… or key-…"
             className="h-8 w-full rounded-md border border-border bg-background px-2 pr-8 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
           />
@@ -479,14 +591,50 @@ function CreateUserCredentialForm({
         <label className="text-xs text-muted-foreground">
           Base URL <span className="text-muted-foreground/50">(optional, for custom endpoints)</span>
         </label>
-        <input
-          type="text"
-          value={form.baseURL ?? ""}
-          onChange={setField("baseURL")}
-          placeholder="https://api.example.com/v1"
-          className="mt-0.5 h-8 w-full rounded-md border border-border bg-background px-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-        />
+        <div className="flex gap-2 mt-0.5">
+          <input
+            type="text"
+            value={form.baseURL ?? ""}
+            onChange={(e) => { setField("baseURL")(e); setFetchState("idle"); setModelRows([]); }}
+            placeholder="https://api.example.com/v1"
+            className="h-8 flex-1 rounded-md border border-border bg-background px-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+          <button
+            type="button"
+            onClick={handleFetchModels}
+            disabled={fetchState === "loading" || !form.baseURL?.trim() || !form.apiKey?.trim()}
+            className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:bg-accent disabled:opacity-40"
+          >
+            {fetchState === "loading" ? <Spinner className="h-3 w-3" /> : <Search className="h-3 w-3" />}
+            Fetch models
+          </button>
+        </div>
       </div>
+
+      {/* Model list shown after fetch */}
+      {fetchWarning && (
+        <p className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded px-2 py-1.5">
+          {fetchWarning}
+        </p>
+      )}
+      {(fetchState === "done" || (fetchState === "error" && modelRows.length > 0)) && (
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <label className="text-xs text-muted-foreground">
+              Models — toggle on/off and set context window size
+            </label>
+            <button
+              type="button"
+              onClick={handleFetchModels}
+              disabled={(fetchState as string) === "loading"}
+              className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-40"
+            >
+              <RefreshCw className="h-3 w-3" /> Refresh
+            </button>
+          </div>
+          <ModelConfigTable rows={modelRows} onChange={setModelRows} />
+        </div>
+      )}
 
       <div className="flex gap-2 pt-1">
         <button

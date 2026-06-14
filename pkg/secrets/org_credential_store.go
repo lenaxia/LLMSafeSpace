@@ -14,13 +14,14 @@ import (
 
 // OrgCredentialMetadata is the list-view of an org credential (no ciphertext).
 type OrgCredentialMetadata struct {
-	ID             string
-	OrgID          string
-	Name           string
-	Provider       string
-	ModelAllowlist []string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID                 string
+	OrgID              string
+	Name               string
+	Provider           string
+	ModelAllowlist     []string
+	ModelContextLimits map[string]int // model_id → context window size in tokens
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // OrgCredentialRow is the full row including ciphertext (for update operations).
@@ -32,10 +33,10 @@ type OrgCredentialRow struct {
 
 // OrgCredentialStore is the DB interface for org-scoped credential operations.
 type OrgCredentialStore interface {
-	CreateOrgCredential(ctx context.Context, orgID, name, provider string, ciphertext []byte, modelAllowlist []string) (string, error)
+	CreateOrgCredential(ctx context.Context, orgID, name, provider string, ciphertext []byte, modelAllowlist []string, modelContextLimits map[string]int) (string, error)
 	ListOrgCredentials(ctx context.Context, orgID string) ([]*OrgCredentialMetadata, error)
 	GetOrgCredential(ctx context.Context, orgID, credID string) (*OrgCredentialRow, error)
-	UpdateOrgCredential(ctx context.Context, orgID, credID string, name *string, ciphertext []byte, modelAllowlist []string, keyVersion int) error
+	UpdateOrgCredential(ctx context.Context, orgID, credID string, name *string, ciphertext []byte, modelAllowlist []string, modelContextLimits map[string]int, keyVersion int) error
 	DeleteOrgCredential(ctx context.Context, orgID, credID string) error
 	BindCredentialToAllOrgWorkspaces(ctx context.Context, credentialID, orgID string) error
 	CreateOrgAutoApply(ctx context.Context, credentialID, orgID string, withinPriority int) error
@@ -46,13 +47,16 @@ type OrgCredentialStore interface {
 // PgSecretStore implements OrgCredentialStore. Methods are defined here alongside
 // the other PgSecretStore credential methods.
 
-func (s *PgSecretStore) CreateOrgCredential(ctx context.Context, orgID, name, provider string, ciphertext []byte, modelAllowlist []string) (string, error) {
+func (s *PgSecretStore) CreateOrgCredential(ctx context.Context, orgID, name, provider string, ciphertext []byte, modelAllowlist []string, modelContextLimits map[string]int) (string, error) {
+	if modelContextLimits == nil {
+		modelContextLimits = map[string]int{}
+	}
 	var id string
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO provider_credentials (owner_type, owner_id, name, provider, ciphertext, key_version, model_allowlist, created_at, updated_at)
-		VALUES ('org', $1, $2, $3, $4, 1, COALESCE($5, '{}'::text[]), now(), now())
+		INSERT INTO provider_credentials (owner_type, owner_id, name, provider, ciphertext, key_version, model_allowlist, model_context_limits, created_at, updated_at)
+		VALUES ('org', $1, $2, $3, $4, 1, COALESCE($5, '{}'::text[]), $6, now(), now())
 		RETURNING id
-	`, orgID, name, provider, ciphertext, modelAllowlist).Scan(&id)
+	`, orgID, name, provider, ciphertext, modelAllowlist, modelContextLimits).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("create org credential: %w", err)
 	}
@@ -61,7 +65,7 @@ func (s *PgSecretStore) CreateOrgCredential(ctx context.Context, orgID, name, pr
 
 func (s *PgSecretStore) ListOrgCredentials(ctx context.Context, orgID string) ([]*OrgCredentialMetadata, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, owner_id, name, provider, model_allowlist, created_at, updated_at
+		SELECT id, owner_id, name, provider, model_allowlist, model_context_limits, created_at, updated_at
 		FROM provider_credentials
 		WHERE owner_type = 'org' AND owner_id = $1
 		ORDER BY created_at DESC
@@ -74,8 +78,11 @@ func (s *PgSecretStore) ListOrgCredentials(ctx context.Context, orgID string) ([
 	var out []*OrgCredentialMetadata
 	for rows.Next() {
 		var m OrgCredentialMetadata
-		if err := rows.Scan(&m.ID, &m.OrgID, &m.Name, &m.Provider, &m.ModelAllowlist, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.OrgID, &m.Name, &m.Provider, &m.ModelAllowlist, &m.ModelContextLimits, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan org credential: %w", err)
+		}
+		if m.ModelContextLimits == nil {
+			m.ModelContextLimits = map[string]int{}
 		}
 		out = append(out, &m)
 	}
@@ -85,11 +92,11 @@ func (s *PgSecretStore) ListOrgCredentials(ctx context.Context, orgID string) ([
 func (s *PgSecretStore) GetOrgCredential(ctx context.Context, orgID, credID string) (*OrgCredentialRow, error) {
 	var r OrgCredentialRow
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, owner_id, name, provider, model_allowlist, created_at, updated_at, ciphertext, key_version
+		SELECT id, owner_id, name, provider, model_allowlist, model_context_limits, created_at, updated_at, ciphertext, key_version
 		FROM provider_credentials
 		WHERE owner_type = 'org' AND owner_id = $1 AND id = $2
 	`, orgID, credID).Scan(
-		&r.ID, &r.OrgID, &r.Name, &r.Provider, &r.ModelAllowlist,
+		&r.ID, &r.OrgID, &r.Name, &r.Provider, &r.ModelAllowlist, &r.ModelContextLimits,
 		&r.CreatedAt, &r.UpdatedAt, &r.Ciphertext, &r.KeyVersion,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -98,19 +105,26 @@ func (s *PgSecretStore) GetOrgCredential(ctx context.Context, orgID, credID stri
 	if err != nil {
 		return nil, fmt.Errorf("get org credential: %w", err)
 	}
+	if r.ModelContextLimits == nil {
+		r.ModelContextLimits = map[string]int{}
+	}
 	return &r, nil
 }
 
-func (s *PgSecretStore) UpdateOrgCredential(ctx context.Context, orgID, credID string, name *string, ciphertext []byte, modelAllowlist []string, keyVersion int) error {
+func (s *PgSecretStore) UpdateOrgCredential(ctx context.Context, orgID, credID string, name *string, ciphertext []byte, modelAllowlist []string, modelContextLimits map[string]int, keyVersion int) error {
+	if modelContextLimits == nil {
+		modelContextLimits = map[string]int{}
+	}
 	_, err := s.pool.Exec(ctx, `
 		UPDATE provider_credentials
-		SET name            = COALESCE($3, name),
-		    ciphertext      = CASE WHEN $4::bytea IS NOT NULL THEN $4 ELSE ciphertext END,
-		    model_allowlist = COALESCE($5, model_allowlist),
-		    key_version     = $6,
-		    updated_at      = now()
+		SET name                 = COALESCE($3, name),
+		    ciphertext           = CASE WHEN $4::bytea IS NOT NULL THEN $4 ELSE ciphertext END,
+		    model_allowlist      = COALESCE($5, model_allowlist),
+		    model_context_limits = COALESCE($6, model_context_limits),
+		    key_version          = $7,
+		    updated_at           = now()
 		WHERE owner_type = 'org' AND owner_id = $1 AND id = $2
-	`, orgID, credID, name, ciphertext, modelAllowlist, keyVersion)
+	`, orgID, credID, name, ciphertext, modelAllowlist, modelContextLimits, keyVersion)
 	if err != nil {
 		return fmt.Errorf("update org credential: %w", err)
 	}

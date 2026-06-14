@@ -13,6 +13,7 @@ import {
   type AdminProviderCredential,
   type AutoApplyRule,
   type CreateAdminCredentialRequest,
+  type ProbeModelEntry,
 } from "../../api/providerCredentials";
 import { useToast } from "../../providers/ToastProvider";
 import { Spinner } from "../ui/Spinner";
@@ -27,6 +28,7 @@ import {
   EyeOff,
   Zap,
   RefreshCw,
+  Search,
 } from "lucide-react";
 
 // ─── Main tab ────────────────────────────────────────────────────────────────
@@ -470,6 +472,78 @@ function AddAutoApplyRuleForm({
   );
 }
 
+// ─── Shared model config table ────────────────────────────────────────────────
+// Used by both admin and user create forms. Shows models fetched from the
+// provider's /v1/models endpoint and lets the user enable/disable each one
+// and optionally enter a context window size.
+
+interface ModelRow {
+  id: string;
+  enabled: boolean;
+  contextLimit: string; // stored as string for controlled input
+}
+
+function ModelConfigTable({
+  rows,
+  onChange,
+}: {
+  rows: ModelRow[];
+  onChange: (rows: ModelRow[]) => void;
+}) {
+  const update = (idx: number, patch: Partial<ModelRow>) =>
+    onChange(rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+
+  if (rows.length === 0) {
+    return (
+      <p className="text-xs text-muted-foreground italic">
+        No models found. Check your API key and base URL, or add models manually below.
+      </p>
+    );
+  }
+
+  return (
+    <div className="max-h-48 overflow-y-auto rounded-md border border-border">
+      <table className="w-full text-xs">
+        <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm">
+          <tr>
+            <th className="px-2 py-1.5 text-left font-medium text-muted-foreground w-8">On</th>
+            <th className="px-2 py-1.5 text-left font-medium text-muted-foreground">Model ID</th>
+            <th className="px-2 py-1.5 text-left font-medium text-muted-foreground w-40">
+              Context window <span className="text-muted-foreground/50">(tokens)</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, idx) => (
+            <tr key={row.id} className="border-t border-border/50 hover:bg-muted/30">
+              <td className="px-2 py-1">
+                <input
+                  type="checkbox"
+                  checked={row.enabled}
+                  onChange={(e) => update(idx, { enabled: e.target.checked })}
+                  className="h-3.5 w-3.5"
+                />
+              </td>
+              <td className="px-2 py-1 font-mono">{row.id}</td>
+              <td className="px-2 py-1">
+                <input
+                  type="number"
+                  min={0}
+                  value={row.contextLimit}
+                  onChange={(e) => update(idx, { contextLimit: e.target.value })}
+                  placeholder="e.g. 200000"
+                  disabled={!row.enabled}
+                  className="h-6 w-full rounded border border-border bg-background px-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-40"
+                />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // ─── Create form ──────────────────────────────────────────────────────────────
 
 function CreateAdminCredentialForm({
@@ -487,17 +561,47 @@ function CreateAdminCredentialForm({
     apiKey: "",
     baseURL: "",
     modelAllowlist: [],
+    modelContextLimits: {},
   });
   const [showKey, setShowKey] = useState(false);
-  const [allowlistInput, setAllowlistInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Model fetch state
+  const [modelRows, setModelRows] = useState<ModelRow[]>([]);
+  const [fetchState, setFetchState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [fetchWarning, setFetchWarning] = useState<string | null>(null);
+  const [fetchedCredId, setFetchedCredId] = useState<string | null>(null);
 
   const setField = (k: keyof CreateAdminCredentialRequest) =>
     (e: React.ChangeEvent<HTMLInputElement>) =>
       setForm((prev) => ({ ...prev, [k]: e.target.value }));
 
-  const handleSubmit = async () => {
+  // After creating the credential, probe its models automatically.
+  // This is done after creation (not before) because we need the credential
+  // ID to call the probe endpoint — which decrypts using the server-side KEK.
+  const handleFetchModels = async (credId: string) => {
+    setFetchState("loading");
+    setFetchWarning(null);
+    try {
+      const result = await adminProviderCredentialsApi.probeModels(credId);
+      if (result.warning) setFetchWarning(result.warning);
+      const rows: ModelRow[] = (result.models ?? []).map((m: ProbeModelEntry) => ({
+        id: m.id,
+        enabled: true,
+        contextLimit: m.contextLimit > 0 ? String(m.contextLimit) : "",
+      }));
+      setModelRows(rows);
+      setFetchedCredId(credId);
+      setFetchState("done");
+    } catch {
+      setFetchState("error");
+      setFetchWarning("Failed to fetch model list. You can save without configuring models.");
+    }
+  };
+
+  // Phase 1: create the credential shell (no models yet).
+  const handleCreate = async () => {
     if (!form.name.trim() || !form.provider.trim() || !form.apiKey.trim()) {
       setError("Name, provider, and API key are required");
       return;
@@ -505,19 +609,15 @@ function CreateAdminCredentialForm({
     setSaving(true);
     setError(null);
     try {
-      const modelAllowlist = allowlistInput
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
       const req: CreateAdminCredentialRequest = {
         name: form.name.trim(),
         provider: form.provider.trim(),
         apiKey: form.apiKey.trim(),
         ...(form.baseURL?.trim() ? { baseURL: form.baseURL.trim() } : {}),
-        ...(modelAllowlist.length > 0 ? { modelAllowlist } : {}),
       };
-      const c = await adminProviderCredentialsApi.create(req);
-      onCreated(c);
+      const cred = await adminProviderCredentialsApi.create(req);
+      // Auto-probe models after credential is created
+      await handleFetchModels(cred.id);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Create failed";
       setError(msg);
@@ -527,8 +627,82 @@ function CreateAdminCredentialForm({
     }
   };
 
+  // Phase 2: save model configuration (allowlist + context limits).
+  const handleSaveModels = async () => {
+    if (!fetchedCredId) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const enabled = modelRows.filter((r) => r.enabled);
+      const modelAllowlist = enabled.map((r) => r.id);
+      const modelContextLimits: Record<string, number> = {};
+      for (const r of enabled) {
+        const v = parseInt(r.contextLimit, 10);
+        if (v > 0) modelContextLimits[r.id] = v;
+      }
+      const updated = await adminProviderCredentialsApi.update(fetchedCredId, {
+        modelAllowlist,
+        modelContextLimits,
+      });
+      onCreated(updated);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Failed to save model configuration";
+      setError(msg);
+      onError(msg);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const PROVIDERS = ["openai", "anthropic", "google", "openrouter", "groq", "mistral", "zhipuai"];
 
+  // Phase 2: model configuration screen
+  if (fetchState === "done" || fetchState === "error") {
+    return (
+      <div className="rounded-md border border-border bg-muted/20 p-4 space-y-3">
+        <h3 className="text-sm font-semibold">Configure Models</h3>
+        <p className="text-xs text-muted-foreground">
+          Toggle which models to expose and set their context window sizes (in tokens).
+          Context window size is shown in the usage bar while chatting.
+          Leave a field empty if unknown.
+        </p>
+
+        {fetchWarning && (
+          <p className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 rounded px-2 py-1.5">
+            {fetchWarning}
+          </p>
+        )}
+        {error && <p className="text-xs text-destructive">{error}</p>}
+
+        <ModelConfigTable rows={modelRows} onChange={setModelRows} />
+
+        <div className="flex gap-2 pt-1">
+          <button
+            onClick={handleSaveModels}
+            disabled={saving}
+            className="rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            {saving ? "Saving…" : "Save configuration"}
+          </button>
+          <button
+            onClick={() => fetchedCredId && handleFetchModels(fetchedCredId)}
+            disabled={saving || (fetchState as string) === "loading"}
+            className="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs hover:bg-accent disabled:opacity-50"
+          >
+            <RefreshCw className="h-3 w-3" /> Re-fetch
+          </button>
+          <button
+            onClick={onCancel}
+            className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-accent"
+          >
+            Skip
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Phase 1: credential entry screen
   return (
     <div className="rounded-md border border-border bg-muted/20 p-4 space-y-3">
       <h3 className="text-sm font-semibold">New Platform Credential</h3>
@@ -593,31 +767,22 @@ function CreateAdminCredentialForm({
           placeholder="https://api.example.com/v1"
           className="mt-0.5 h-8 w-full rounded-md border border-border bg-background px-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
         />
-      </div>
-
-      <div>
-        <label className="text-xs text-muted-foreground">
-          Model allowlist <span className="text-muted-foreground/50">(optional, comma-separated)</span>
-        </label>
-        <input
-          type="text"
-          value={allowlistInput}
-          onChange={(e) => setAllowlistInput(e.target.value)}
-          placeholder="e.g. glm-5.1, gpt-4o"
-          className="mt-0.5 h-8 w-full rounded-md border border-border bg-background px-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-        />
         <p className="mt-0.5 text-[10px] text-muted-foreground">
-          Leave empty to allow all models from this provider.
+          Required for custom endpoints (LiteLLM, vLLM, etc.). Leave empty for first-party providers.
         </p>
       </div>
 
       <div className="flex gap-2 pt-1">
         <button
-          onClick={handleSubmit}
-          disabled={saving}
-          className="rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          onClick={handleCreate}
+          disabled={saving || fetchState === "loading"}
+          className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
-          {saving ? "Creating…" : "Create"}
+          {saving || fetchState === "loading" ? (
+            <><Spinner className="h-3 w-3" /> {saving ? "Creating…" : "Fetching models…"}</>
+          ) : (
+            <><Search className="h-3 w-3" /> Create &amp; fetch models</>
+          )}
         </button>
         <button
           onClick={onCancel}

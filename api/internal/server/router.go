@@ -225,9 +225,18 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		adminCreds.GET("/:id", cfg.AdminProviderCredentialsHandler.Get)
 		adminCreds.PUT("/:id", cfg.AdminProviderCredentialsHandler.Update)
 		adminCreds.DELETE("/:id", cfg.AdminProviderCredentialsHandler.Delete)
+		adminCreds.GET("/:id/models", cfg.AdminProviderCredentialsHandler.ProbeModels)
 		adminCreds.POST("/:id/auto-apply", cfg.AdminProviderCredentialsHandler.CreateAutoApply)
 		adminCreds.GET("/:id/auto-apply", cfg.AdminProviderCredentialsHandler.ListAutoApply)
 		adminCreds.DELETE("/:id/auto-apply/:targetType/:targetId", cfg.AdminProviderCredentialsHandler.DeleteAutoApply)
+	}
+
+	// Anon credential probe — authenticated but credential-free.
+	// Used by the user credential form to fetch models before saving.
+	{
+		probeGroup := router.Group("/api/v1/probe-models")
+		probeGroup.Use(services.GetAuth().AuthMiddleware())
+		probeGroup.POST("", handlers.ProbeModelsAnon)
 	}
 
 	// User provider credentials routes (Epic 30)
@@ -237,6 +246,7 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		userCreds.POST("", cfg.UserProviderCredentialsHandler.Create)
 		userCreds.GET("", cfg.UserProviderCredentialsHandler.List)
 		userCreds.GET("/:id", cfg.UserProviderCredentialsHandler.Get)
+		userCreds.GET("/:id/models", cfg.UserProviderCredentialsHandler.ProbeModels)
 		userCreds.DELETE("/:id", cfg.UserProviderCredentialsHandler.Delete)
 		userCreds.GET("/:id/bindings", cfg.UserProviderCredentialsHandler.ListBindings)
 		userCreds.POST("/:id/bind/:workspaceId", cfg.UserProviderCredentialsHandler.Bind)

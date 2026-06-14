@@ -11,6 +11,7 @@ export interface AdminProviderCredential {
   provider: string;
   baseURL?: string;
   modelAllowlist: string[];
+  modelContextLimits: Record<string, number>;
   createdAt: string;
   updatedAt: string;
 }
@@ -21,6 +22,7 @@ export interface CreateAdminCredentialRequest {
   apiKey: string;
   baseURL?: string;
   modelAllowlist?: string[];
+  modelContextLimits?: Record<string, number>;
 }
 
 export interface UpdateAdminCredentialRequest {
@@ -28,6 +30,21 @@ export interface UpdateAdminCredentialRequest {
   apiKey?: string;
   baseURL?: string;
   modelAllowlist?: string[];
+  modelContextLimits?: Record<string, number>;
+}
+
+// ProbeModelEntry is one entry from GET /:id/models.
+export interface ProbeModelEntry {
+  id: string;
+  contextLimit: number; // 0 = unknown / not yet configured
+}
+
+// ProbeModelsResponse is the response from GET /provider-credentials/:id/models
+// and GET /admin/provider-credentials/:id/models.
+export interface ProbeModelsResponse {
+  models: ProbeModelEntry[];
+  baseURL?: string;
+  warning?: string;
 }
 
 // Go handler validates "all" | "user" | "org" — "workspace" is not a valid type.
@@ -52,6 +69,8 @@ export const adminProviderCredentialsApi = {
   update: (id: string, req: UpdateAdminCredentialRequest) =>
     api.put<AdminProviderCredential>(`/admin/provider-credentials/${id}`, req),
   delete: (id: string) => api.delete<void>(`/admin/provider-credentials/${id}`),
+  probeModels: (id: string) =>
+    api.get<ProbeModelsResponse>(`/admin/provider-credentials/${id}/models`),
   listAutoApply: (id: string) =>
     api.get<AutoApplyRule[]>(`/admin/provider-credentials/${id}/auto-apply`),
   createAutoApply: (id: string, req: CreateAutoApplyRequest) =>
@@ -78,6 +97,7 @@ export interface UserProviderCredential {
   provider: string;
   baseURL?: string;
   modelAllowlist?: string[];
+  modelContextLimits?: Record<string, number>;
   createdAt: string;
   updatedAt: string;
 }
@@ -88,6 +108,7 @@ export interface CreateUserCredentialRequest {
   apiKey: string;
   baseURL?: string;
   modelAllowlist?: string[];
+  modelContextLimits?: Record<string, number>;
 }
 
 // CredentialBindingInfo is returned by GET /provider-credentials/:id/bindings.
@@ -116,6 +137,12 @@ export const userProviderCredentialsApi = {
   create: (req: CreateUserCredentialRequest) =>
     api.post<CreateUserCredentialResponse>("/provider-credentials", req),
   delete: (id: string) => api.delete<void>(`/provider-credentials/${id}`),
+  probeModels: (id: string) =>
+    api.get<ProbeModelsResponse>(`/provider-credentials/${id}/models`),
+  // Probe models without a saved credential — pass apiKey + baseURL directly.
+  // Used in the create form to show the model list before saving.
+  probeModelsAnon: (apiKey: string, baseURL: string) =>
+    api.post<ProbeModelsResponse>("/probe-models", { apiKey, baseURL }),
   listBindings: (id: string) =>
     api.get<ListBindingsResponse>(`/provider-credentials/${id}/bindings`),
   bindToWorkspace: (id: string, workspaceId: string) =>

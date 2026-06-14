@@ -15,10 +15,10 @@ import (
 
 // orgCredentialStore is the minimal OrgCredentialStore interface used by OrgCredentialsHandler.
 type orgCredentialStore interface {
-	CreateOrgCredential(ctx context.Context, orgID, name, provider string, ciphertext []byte, modelAllowlist []string) (string, error)
+	CreateOrgCredential(ctx context.Context, orgID, name, provider string, ciphertext []byte, modelAllowlist []string, modelContextLimits map[string]int) (string, error)
 	ListOrgCredentials(ctx context.Context, orgID string) ([]*secrets.OrgCredentialMetadata, error)
 	GetOrgCredential(ctx context.Context, orgID, credID string) (*secrets.OrgCredentialRow, error)
-	UpdateOrgCredential(ctx context.Context, orgID, credID string, name *string, ciphertext []byte, modelAllowlist []string, keyVersion int) error
+	UpdateOrgCredential(ctx context.Context, orgID, credID string, name *string, ciphertext []byte, modelAllowlist []string, modelContextLimits map[string]int, keyVersion int) error
 	DeleteOrgCredential(ctx context.Context, orgID, credID string) error
 	BindCredentialToAllOrgWorkspaces(ctx context.Context, credentialID, orgID string) error
 	CreateOrgAutoApply(ctx context.Context, credentialID, orgID string, withinPriority int) error
@@ -39,18 +39,20 @@ func NewOrgCredentialsHandler(store orgCredentialStore, orgKeySvc *secrets.OrgKe
 }
 
 type createOrgCredentialRequest struct {
-	Name           string   `json:"name"           binding:"required,min=1,max=128"`
-	Provider       string   `json:"provider"       binding:"required"`
-	APIKey         string   `json:"apiKey"         binding:"required"              log:"-"` //nolint:gosec // G117 false positive — field has log:"-" tag, never marshaled to response
-	BaseURL        string   `json:"baseURL"`
-	ModelAllowlist []string `json:"modelAllowlist"`
+	Name               string         `json:"name"           binding:"required,min=1,max=128"`
+	Provider           string         `json:"provider"       binding:"required"`
+	APIKey             string         `json:"apiKey"         binding:"required"              log:"-"` //nolint:gosec // G117 false positive — field has log:"-" tag, never marshaled to response
+	BaseURL            string         `json:"baseURL"`
+	ModelAllowlist     []string       `json:"modelAllowlist"`
+	ModelContextLimits map[string]int `json:"modelContextLimits"`
 }
 
 type updateOrgCredentialRequest struct {
-	Name           *string  `json:"name"`
-	APIKey         *string  `json:"apiKey"          log:"-"` //nolint:gosec // G117 false positive — field has log:"-" tag, never marshaled to response
-	BaseURL        *string  `json:"baseURL"`
-	ModelAllowlist []string `json:"modelAllowlist"`
+	Name               *string        `json:"name"`
+	APIKey             *string        `json:"apiKey"          log:"-"` //nolint:gosec // G117 false positive — field has log:"-" tag, never marshaled to response
+	BaseURL            *string        `json:"baseURL"`
+	ModelAllowlist     []string       `json:"modelAllowlist"`
+	ModelContextLimits map[string]int `json:"modelContextLimits"`
 }
 
 // Create handles POST /api/v1/orgs/:id/credentials.
@@ -91,7 +93,7 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 		allowlist = []string{}
 	}
 
-	credID, err := h.credStore.CreateOrgCredential(ctx, orgID, req.Name, req.Provider, ciphertext, allowlist)
+	credID, err := h.credStore.CreateOrgCredential(ctx, orgID, req.Name, req.Provider, ciphertext, allowlist, req.ModelContextLimits)
 	if err != nil {
 		if isDuplicateErr(err) {
 			c.JSON(http.StatusConflict, gin.H{"error": "credential for this provider already exists"})
@@ -186,7 +188,7 @@ func (h *OrgCredentialsHandler) Update(c *gin.Context) {
 		newKeyVersion++
 	}
 
-	if err := h.credStore.UpdateOrgCredential(ctx, orgID, credID, req.Name, newCiphertext, req.ModelAllowlist, newKeyVersion); err != nil {
+	if err := h.credStore.UpdateOrgCredential(ctx, orgID, credID, req.Name, newCiphertext, req.ModelAllowlist, req.ModelContextLimits, newKeyVersion); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update credential"})
 		return
 	}

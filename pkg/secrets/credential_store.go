@@ -16,15 +16,16 @@ var ErrAutoBindingProtected = errors.New("auto-binding cannot be removed via unb
 
 // CredentialBinding is a joined row from workspace_credential_bindings + provider_credentials.
 type CredentialBinding struct {
-	ID             string
-	OwnerType      string
-	OwnerID        string
-	Provider       string
-	Ciphertext     []byte
-	KeyVersion     int
-	ModelAllowlist []string
-	SourceType     string // "explicit" or "auto"
-	WithinPriority int
+	ID                 string
+	OwnerType          string
+	OwnerID            string
+	Provider           string
+	Ciphertext         []byte
+	KeyVersion         int
+	ModelAllowlist     []string
+	ModelContextLimits map[string]int // model_id → context window size in tokens
+	SourceType         string         // "explicit" or "auto"
+	WithinPriority     int
 }
 
 // CredentialBindingInfo is a minimal binding row used for the ListBindings API.

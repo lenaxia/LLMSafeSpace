@@ -13,6 +13,7 @@ const mockList = vi.fn();
 const mockCreate = vi.fn();
 const mockUpdate = vi.fn();
 const mockDelete = vi.fn();
+const mockProbeModels = vi.fn();
 const mockListAutoApply = vi.fn();
 const mockCreateAutoApply = vi.fn();
 const mockDeleteAutoApply = vi.fn();
@@ -23,6 +24,7 @@ vi.mock("../../api/providerCredentials", () => ({
     create: (req: unknown) => mockCreate(req),
     update: (id: string, req: unknown) => mockUpdate(id, req),
     delete: (id: string) => mockDelete(id),
+    probeModels: (id: string) => mockProbeModels(id),
     listAutoApply: (id: string) => mockListAutoApply(id),
     createAutoApply: (id: string, req: unknown) => mockCreateAutoApply(id, req),
     deleteAutoApply: (id: string, targetType: string, targetId?: string) =>
@@ -36,6 +38,7 @@ const CRED = {
   provider: "openai",
   baseURL: "https://ai.example.com/v1",
   modelAllowlist: ["glm-5.1"],
+  modelContextLimits: {} as Record<string, number>,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-02T00:00:00Z",
 };
@@ -51,6 +54,8 @@ function renderTab() {
 beforeEach(() => {
   vi.clearAllMocks();
   mockListAutoApply.mockResolvedValue([]);
+  // Default: probe returns empty model list (no models endpoint available)
+  mockProbeModels.mockResolvedValue({ models: [], warning: "no baseURL configured" });
 });
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -193,7 +198,8 @@ describe("AdminProviderCredentialsTab", () => {
     fireEvent.change(screen.getByPlaceholderText("e.g. openai"), { target: { value: "openai" } });
     fireEvent.change(screen.getByPlaceholderText("sk-…"), { target: { value: "sk-test-key" } });
 
-    fireEvent.click(screen.getByText("Create"));
+    // New form: button text is "Create & fetch models" — click it
+    fireEvent.click(screen.getByText(/Create & fetch models/));
     await waitFor(() => {
       expect(mockCreate).toHaveBeenCalledWith(
         expect.objectContaining({ name: "New Cred", provider: "openai", apiKey: "sk-test-key" }),
@@ -206,14 +212,20 @@ describe("AdminProviderCredentialsTab", () => {
     renderTab();
     await waitFor(() => screen.getByText(/Add credential/));
     fireEvent.click(screen.getByText(/Add credential/));
-    fireEvent.click(screen.getByText("Create"));
+    // New form: button text is "Create & fetch models"
+    fireEvent.click(screen.getByText(/Create & fetch models/));
     expect(screen.getByText(/Name, provider, and API key are required/)).toBeInTheDocument();
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
-  it("create form parses comma-separated model allowlist into array", async () => {
+  it("create form saves credential without model allowlist when no models fetched", async () => {
+    // Replaces the old comma-separated allowlist test.
+    // The new flow: create credential → auto-probe → show model table.
+    // When the provider has no baseURL, probe returns a warning and empty list.
+    // The credential is created with no modelAllowlist.
     mockList.mockResolvedValue([]);
-    mockCreate.mockResolvedValue({ ...CRED, id: "c2", modelAllowlist: ["glm-5.1", "gpt-4o"] });
+    mockCreate.mockResolvedValue({ ...CRED, id: "c2", modelAllowlist: [] });
+    mockProbeModels.mockResolvedValue({ models: [], warning: "no baseURL configured — models for built-in providers cannot be discovered." });
     renderTab();
     await waitFor(() => screen.getByText(/Add credential/));
     fireEvent.click(screen.getByText(/Add credential/));
@@ -221,12 +233,11 @@ describe("AdminProviderCredentialsTab", () => {
     fireEvent.change(screen.getByPlaceholderText("e.g. OpenAI Production"), { target: { value: "X" } });
     fireEvent.change(screen.getByPlaceholderText("e.g. openai"), { target: { value: "openai" } });
     fireEvent.change(screen.getByPlaceholderText("sk-…"), { target: { value: "key" } });
-    fireEvent.change(screen.getByPlaceholderText("e.g. glm-5.1, gpt-4o"), { target: { value: "glm-5.1, gpt-4o" } });
 
-    fireEvent.click(screen.getByText("Create"));
+    fireEvent.click(screen.getByText(/Create & fetch models/));
     await waitFor(() => {
       expect(mockCreate).toHaveBeenCalledWith(
-        expect.objectContaining({ modelAllowlist: ["glm-5.1", "gpt-4o"] }),
+        expect.objectContaining({ name: "X", provider: "openai", apiKey: "key" }),
       );
     });
   });
