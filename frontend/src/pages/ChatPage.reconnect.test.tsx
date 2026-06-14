@@ -38,7 +38,7 @@ vi.mock("../api/messages", () => {
         const msgs = await gh();
         return { messages: msgs, nextCursor: undefined };
       }),
-      sendAsync: vi.fn().mockResolvedValue(undefined),
+      sendAsync: vi.fn(), queueMessage: vi.fn().mockResolvedValue({ messageID: "msg_q_mock" }), getQueue: vi.fn().mockResolvedValue({ messages: [] }).mockResolvedValue(undefined),
     },
   };
 });
