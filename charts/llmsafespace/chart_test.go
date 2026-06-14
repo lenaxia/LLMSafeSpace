@@ -1650,6 +1650,31 @@ func TestMonitoring_NamespaceOverride(t *testing.T) {
 	}
 }
 
+// TestMonitoring_PrometheusRule_SpecIsTopLevel verifies that the rendered
+// PrometheusRule has spec.groups as a top-level key. This is a regression
+// test for an accidental indentation bug that nested `spec:` under
+// `metadata:`, silently breaking all alerting rules.
+func TestMonitoring_PrometheusRule_SpecIsTopLevel(t *testing.T) {
+	docs := helmTemplate(t, "monitoring:\n  enabled: true\n")
+	var rule map[string]any
+	for _, d := range docs {
+		if d["kind"] == "PrometheusRule" {
+			rule = d
+			break
+		}
+	}
+	require.NotNil(t, rule, "PrometheusRule must be rendered")
+
+	spec, ok := rule["spec"].(map[string]any)
+	require.True(t, ok,
+		"PrometheusRule must have a top-level spec key (not nested under metadata)")
+	groups, ok := spec["groups"].([]any)
+	require.True(t, ok,
+		"PrometheusRule spec must have a groups array")
+	require.NotEmpty(t, groups,
+		"PrometheusRule spec.groups must not be empty")
+}
+
 // TestMonitoring_PrometheusRule_ContainsAllAlerts verifies all expected
 // alert names are present in the rendered PrometheusRule.
 func TestMonitoring_PrometheusRule_ContainsAllAlerts(t *testing.T) {
@@ -1663,7 +1688,8 @@ func TestMonitoring_PrometheusRule_ContainsAllAlerts(t *testing.T) {
 	}
 	require.NotNil(t, rule, "PrometheusRule must be rendered")
 
-	spec, _ := rule["spec"].(map[string]any)
+	spec, ok := rule["spec"].(map[string]any)
+	require.True(t, ok, "spec must be top-level")
 	groups, _ := spec["groups"].([]any)
 
 	alertNames := map[string]bool{}
@@ -1679,8 +1705,7 @@ func TestMonitoring_PrometheusRule_ContainsAllAlerts(t *testing.T) {
 	}
 
 	expected := []string{
-		"LLMSafeSpaceHighAPIErrorRate",
-		"LLMSafeSpaceHighAPIErrorRateCritical",
+		"LLMSafeSpaceLowAvailability",
 		"LLMSafeSpaceHighLatency",
 		"LLMSafeSpaceHighAuthFailures",
 		"LLMSafeSpaceSSEBrokerDroppingEvents",
@@ -1702,5 +1727,66 @@ func TestMonitoring_PrometheusRule_ContainsAllAlerts(t *testing.T) {
 	for _, expectedName := range expected {
 		require.True(t, alertNames[expectedName],
 			"PrometheusRule must contain alert %q", expectedName)
+	}
+
+	// Old two-tier error rate alerts must be removed.
+	require.False(t, alertNames["LLMSafeSpaceHighAPIErrorRate"],
+		"old warning-tier LLMSafeSpaceHighAPIErrorRate must be removed (replaced by LLMSafeSpaceLowAvailability)")
+	require.False(t, alertNames["LLMSafeSpaceHighAPIErrorRateCritical"],
+		"old critical-tier LLMSafeSpaceHighAPIErrorRateCritical must be removed (replaced by LLMSafeSpaceLowAvailability)")
+}
+
+// TestMonitoring_DatasourceConfigMap_RendersWithLabel verifies the
+// Grafana Postgres datasource ConfigMap is rendered with the correct
+// sidecar label when monitoring and datasources are enabled.
+func TestMonitoring_DatasourceConfigMap_RendersWithLabel(t *testing.T) {
+	docs := helmTemplate(t, "monitoring:\n  enabled: true\n")
+	var cm map[string]any
+	for _, d := range docs {
+		if d["kind"] == "ConfigMap" && strings.Contains(metaName(d), "grafana-datasources") {
+			cm = d
+			break
+		}
+	}
+	require.NotNil(t, cm, "datasource ConfigMap must render when monitoring.enabled=true")
+	meta, _ := cm["metadata"].(map[string]any)
+	labels, _ := meta["labels"].(map[string]any)
+	require.Equal(t, "1", labels["grafana_datasource"],
+		"datasource ConfigMap must have grafana_datasource=1 label for sidecar import")
+	data, _ := cm["data"].(map[string]any)
+	require.Contains(t, data, "llmsafespace-postgres.yaml",
+		"datasource ConfigMap must contain llmsafespace-postgres.yaml")
+}
+
+// TestMonitoring_DatasourcesDisabled_NoConfigMap verifies the sub-toggle
+// can independently disable the datasource ConfigMap.
+func TestMonitoring_DatasourcesDisabled_NoConfigMap(t *testing.T) {
+	docs := helmTemplate(t, "monitoring:\n  enabled: true\n  datasources:\n    enabled: false\n")
+	for _, d := range docs {
+		if d["kind"] == "ConfigMap" {
+			require.False(t, strings.Contains(metaName(d), "grafana-datasources"),
+				"datasource ConfigMap must NOT render when datasources.enabled=false")
+		}
+	}
+}
+
+// TestMonitoring_DashboardConfigMap_NotEmpty verifies the dashboard JSON
+// files are non-trivial (not accidentally truncated or emptied).
+func TestMonitoring_DashboardConfigMap_NotEmpty(t *testing.T) {
+	docs := helmTemplate(t, "monitoring:\n  enabled: true\n")
+	var cm map[string]any
+	for _, d := range docs {
+		if d["kind"] == "ConfigMap" && strings.Contains(metaName(d), "grafana-dashboards") {
+			cm = d
+			break
+		}
+	}
+	require.NotNil(t, cm)
+	data, _ := cm["data"].(map[string]any)
+	for _, key := range []string{"operational.json", "billing.json"} {
+		content, ok := data[key].(string)
+		require.True(t, ok, "ConfigMap must contain key %q", key)
+		require.Greater(t, len(content), 1000,
+			"dashboard %q must be non-trivial (>1000 chars); got %d", key, len(content))
 	}
 }

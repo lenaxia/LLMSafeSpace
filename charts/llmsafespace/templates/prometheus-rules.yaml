@@ -21,42 +21,32 @@ spec:
   groups:
     - name: llmsafespace.api
       rules:
-        {{- /* Graduated alert: warning at 5%, critical at 15%. Configure
-              Alertmanager inhibition rules to suppress the warning when
-              the critical fires. */}}
-        - alert: LLMSafeSpaceHighAPIErrorRate
+        {{- /* Availability = 1 - 5xx/(total - 4xx).
+              4xx are excluded because they are client errors, not
+              server availability failures. Critical only — no
+              warning tier. `for: 3m` approximates 3-of-5 data
+              points at a 1-minute evaluation interval. */}}
+        - alert: LLMSafeSpaceLowAvailability
           expr: |
             (
+              1 -
               sum(rate(http_requests_total{job=~"{{ $apiJob }}",status=~"5.."}[5m]))
               /
-              sum(rate(http_requests_total{job=~"{{ $apiJob }}"}[5m]))
-            ) > 0.05
-          for: 5m
-          labels:
-            severity: warning
-            component: api
-          annotations:
-            summary: "LLMSafeSpace API error rate above 5%"
-            description: >-
-              API 5xx error rate is {{ `{{ $value | humanizePercentage }}` }} of all requests
-              over the last 5 minutes.
-
-        - alert: LLMSafeSpaceHighAPIErrorRateCritical
-          expr: |
-            (
-              sum(rate(http_requests_total{job=~"{{ $apiJob }}",status=~"5.."}[5m]))
-              /
-              sum(rate(http_requests_total{job=~"{{ $apiJob }}"}[5m]))
-            ) > 0.15
-          for: 2m
+              clamp_min(
+                sum(rate(http_requests_total{job=~"{{ $apiJob }}"}[5m]))
+                - sum(rate(http_requests_total{job=~"{{ $apiJob }}",status=~"4.."}[5m]))
+              , 0.001)
+            ) < 0.99
+          for: 3m
           labels:
             severity: critical
             component: api
           annotations:
-            summary: "LLMSafeSpace API error rate above 15%"
+            summary: "LLMSafeSpace availability below 99%"
             description: >-
-              API 5xx error rate is {{ `{{ $value | humanizePercentage }}` }} of all requests
-              over the last 5 minutes. Immediate investigation required.
+              Platform availability (5xx-free of server-handled requests, 4xx excluded)
+              is {{ `{{ $value | humanizePercentage }}` }} — below the 99% critical threshold
+              for 3 of the last 5 evaluation points. Immediate investigation required.
 
         - alert: LLMSafeSpaceHighLatency
           expr: |
@@ -217,7 +207,7 @@ spec:
               pods. Use $apiJob to match. */}}
         - alert: LLMSafeSpaceAgentReloadFailures
           expr: |
-            sum(rate(llmsafespace_agent_reload_total{job=~"{{ $apiJob }}",result="failure"}[5m]))
+            sum(rate(llmsafespace_agent_reload_total{job=~"{{ $apiJob }}",result="error"}[5m]))
             /
             sum(rate(llmsafespace_agent_reload_total{job=~"{{ $apiJob }}"}[5m]))
             > 0.1

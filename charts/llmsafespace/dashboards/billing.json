@@ -3,10 +3,7 @@
     "list": [
       {
         "builtIn": 1,
-        "datasource": {
-          "type": "grafana",
-          "uid": "-- Grafana --"
-        },
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
         "enable": true,
         "hide": true,
         "iconColor": "rgba(0, 211, 255, 1)",
@@ -15,7 +12,7 @@
       }
     ]
   },
-  "description": "LLMSafeSpace billing and metering: inference costs, token usage, per-user/per-workspace resource consumption",
+  "description": "LLMSafeSpace billing and cost attribution: inference spend, token economics, per-user/per-workspace usage, quota enforcement. Pipeline health is on the Operational dashboard.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -26,9 +23,7 @@
       "icon": "external link",
       "includeVars": false,
       "keepTime": true,
-      "tags": [
-        "llmsafespace"
-      ],
+      "tags": ["llmsafespace"],
       "targetBlank": true,
       "title": "LLMSafeSpace Dashboards",
       "tooltip": "",
@@ -39,620 +34,374 @@
   "panels": [
     {
       "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 0
-      },
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
       "id": 1,
       "panels": [],
-      "title": "Inference Billing Summary",
+      "title": "Burn Rate (Fleet-wide Inference Spend)",
       "type": "row",
-      "description": "Cumulative totals for the selected time window ($__range). Use these stat panels to answer: how much did inference cost, how many calls were made, and how many tokens were consumed in this period?"
+      "description": "How fast are we spending on inference? Total cost, cost by model, cost by tier. These panels answer: what is driving spend, and is the free tier costing more than expected?"
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "fixedColor": "green",
-            "mode": "fixed"
-          },
+          "color": {"fixedColor": "green", "mode": "fixed"},
           "decimals": 2,
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 10
-              },
-              {
-                "color": "red",
-                "value": 50
-              }
+              {"color": "green", "value": null},
+              {"color": "red", "value": 500}
             ]
           },
           "unit": "currencyUSD"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 0,
-        "y": 1
-      },
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 1},
       "id": 2,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "wideLayout": true
-      },
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
           "expr": "sum(increase(llmsafespace_inference_cost_dollars_total{job=~\"$job\"}[$__range]))",
           "refId": "A"
         }
       ],
       "title": "Total Inference Cost (period)",
       "type": "stat",
-      "description": "Sum of all inference spend in USD over the dashboard time range. Zero for providers that do not report cost (e.g. self-hosted or relay models). Derived from cumulative cost deltas emitted per session.updated SSE event."
+      "description": "Cumulative inference spend in USD over the dashboard time range. Zero for providers that do not report cost (self-hosted, relay models). Red threshold at $500/period — adjust to match your daily budget. If spend exceeds budget, check Cost Rate by Model to identify which model is driving it."
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "fixedColor": "blue",
-            "mode": "fixed"
-          },
+          "color": {"fixedColor": "blue", "mode": "fixed"},
           "decimals": 0,
           "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "blue",
-                "value": null
-              }
-            ]
-          },
+          "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]},
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 6,
-        "y": 1
-      },
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 1},
       "id": 3,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "wideLayout": true
-      },
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
           "expr": "sum(increase(llmsafespace_inference_requests_total{job=~\"$job\"}[$__range]))",
           "refId": "A"
         }
       ],
       "title": "Total Inference Requests (period)",
       "type": "stat",
-      "description": "Number of inference calls that produced at least one output token in the selected period. Each session.updated event with new output tokens counts as one request."
+      "description": "Number of inference calls that produced at least one output token in the selected period. Use with Total Cost to compute cost-per-request. A high request count with low cost indicates cheap models are being used; low requests with high cost indicates expensive models."
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "fixedColor": "purple",
-            "mode": "fixed"
-          },
+          "color": {"fixedColor": "purple", "mode": "fixed"},
           "decimals": 0,
           "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "purple",
-                "value": null
-              }
-            ]
-          },
+          "thresholds": {"mode": "absolute", "steps": [{"color": "purple", "value": null}]},
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 12,
-        "y": 1
-      },
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 1},
       "id": 4,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "wideLayout": true
-      },
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
           "expr": "sum(increase(llmsafespace_inference_input_tokens_total{job=~\"$job\"}[$__range]))",
           "refId": "A"
         }
       ],
       "title": "Total Input Tokens (period)",
       "type": "stat",
-      "description": "Total prompt tokens sent to models in the selected period. Includes cache hits \u2014 a high value relative to output tokens is normal for long-context sessions."
+      "description": "Total prompt tokens sent to models. A high input-to-output ratio indicates long-context sessions (large codebases being re-submitted). This is the secondary cost driver for token-priced providers."
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "fixedColor": "orange",
-            "mode": "fixed"
-          },
+          "color": {"fixedColor": "orange", "mode": "fixed"},
           "decimals": 0,
           "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "orange",
-                "value": null
-              }
-            ]
-          },
+          "thresholds": {"mode": "absolute", "steps": [{"color": "orange", "value": null}]},
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 18,
-        "y": 1
-      },
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 1},
       "id": 5,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "wideLayout": true
-      },
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
           "expr": "sum(increase(llmsafespace_inference_output_tokens_total{job=~\"$job\"}[$__range]))",
           "refId": "A"
         }
       ],
       "title": "Total Output Tokens (period)",
       "type": "stat",
-      "description": "Total tokens generated by models in the selected period. This is the primary driver of cost for token-priced providers."
+      "description": "Total tokens generated by models. This is the PRIMARY cost driver for token-priced providers. Compare with Input Tokens to understand the prompt-vs-generation economics."
     },
     {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 5
-      },
-      "id": 6,
-      "panels": [],
-      "title": "Inference Cost Breakdown",
-      "type": "row",
-      "description": "Time-series breakdown of inference spend and throughput. Use these graphs to identify which models or providers are driving cost, and to detect sudden spikes in usage."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
+          "color": {"mode": "palette-classic"},
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 20,
-            "gradientMode": "scheme",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 20, "gradientMode": "scheme",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "off"}
           },
           "mappings": [],
           "unit": "$/h"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 6
-      },
-      "id": 7,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+      "id": 6,
+      "options": {"legend": {"calcs": ["mean", "sum"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(rate(llmsafespace_inference_cost_dollars_total{job=~\"$job\"}[$__rate_interval])) by (model_id)",
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "expr": "sum(rate(llmsafespace_inference_cost_dollars_total{job=~\"$job\"}[$__rate_interval])) by (model_id) * 3600",
           "legendFormat": "{{model_id}}",
           "refId": "A"
         }
       ],
-      "title": "Inference Cost Rate by Model ($/h)",
+      "title": "Cost Rate by Model ($/h)",
       "type": "timeseries",
-      "description": "Cost accrual rate in USD per hour for each model. A flat line indicates steady usage; a rising line indicates an active session consuming tokens. Zero for providers that do not report cost."
+      "description": "Inference spend rate in USD per hour for each model. A flat line = steady usage. A rising line = an active session consuming tokens. A single model dominating this chart is the primary cost lever — consider offering a cheaper alternative or adjusting free-tier model availability. Action: negotiate pricing with provider, limit expensive models to paid tiers."
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
+          "color": {"mode": "palette-classic"},
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 30, "gradientMode": "scheme",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "normal"},
+            "thresholdsStyle": {"mode": "off"}
           },
           "mappings": [],
           "unit": "$/h"
         },
-        "overrides": []
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "free"}, "properties": [{"id": "color", "value": {"fixedColor": "yellow", "mode": "fixed"}}]},
+          {"matcher": {"id": "byName", "options": "paid"}, "properties": [{"id": "color", "value": {"fixedColor": "green", "mode": "fixed"}}]}
+        ]
       },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 6
-      },
-      "id": 8,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+      "id": 7,
+      "options": {"legend": {"calcs": ["mean", "sum"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(rate(llmsafespace_inference_cost_dollars_total{job=~\"$job\"}[$__rate_interval])) by (tier)",
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "expr": "sum(rate(llmsafespace_inference_cost_dollars_total{job=~\"$job\"}[$__rate_interval])) by (tier) * 3600",
           "legendFormat": "{{tier}}",
           "refId": "A"
         }
       ],
-      "title": "Inference Cost Rate by Tier ($/h)",
+      "title": "Cost Rate by Tier — Free vs Paid ($/h, stacked)",
       "type": "timeseries",
-      "description": "Same as above but grouped by tier (free vs paid). Free-tier calls route through the opencode relay; paid-tier use direct provider credentials. If the free line is significantly higher, most usage is relay-routed."
+      "description": "Inference spend split by credential tier. Free (yellow) = calls routed through opencode relay (platform bears the cost). Paid (green) = calls using user's own provider credentials (user bears the cost). If free-tier cost is growing, the platform is subsidizing inference for free users. Action: tighten free-tier model availability, enforce token quotas, or convert free users to paid."
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 14},
+      "id": 8,
+      "panels": [],
+      "title": "Per-User Attribution (from usage_events table)",
+      "type": "row",
+      "description": "Who is costing the most? Top consumers by tokens and compute time. These panels query the PostgreSQL usage_events table directly, enabling per-user attribution that Prometheus cardinality limits prevent. Requires the Postgres datasource to be configured in Grafana."
+    },
+    {
+      "datasource": {"type": "postgres", "uid": "${pg_datasource}"},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 10000000}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 15},
+      "id": 9,
+      "options": {"displayMode": "lcd", "minVizHeight": 10, "minVizWidth": 0, "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": true}, "showUnfilled": true, "text": {}},
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "${pg_datasource}"},
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT owner_id AS metric, SUM(quantity) AS value FROM usage_events WHERE event_type = 'llm_tokens' AND owner_type = 'user' AND event_time BETWEEN $__timeFrom() AND $__timeTo() GROUP BY owner_id ORDER BY value DESC LIMIT 10",
+          "refId": "A"
+        }
+      ],
+      "title": "Top-10 Users by Token Consumption",
+      "type": "bargauge",
+      "description": "Top-10 users by total token consumption (input + output) in the selected period. Red threshold at 10M tokens. A single user dominating this chart is the primary cost driver. Action: enforce per-user token quota, upsell to paid tier, investigate for abuse (automated loops, token farming)."
+    },
+    {
+      "datasource": {"type": "postgres", "uid": "${pg_datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 100}]},
+          "unit": "h"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 15},
+      "id": 10,
+      "options": {"displayMode": "lcd", "minVizHeight": 10, "minVizWidth": 0, "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": true}, "showUnfilled": true, "text": {}},
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "${pg_datasource}"},
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT owner_id AS metric, SUM(quantity) / 3600.0 AS value FROM usage_events WHERE event_type = 'compute_seconds' AND owner_type = 'user' AND event_time BETWEEN $__timeFrom() AND $__timeTo() GROUP BY owner_id ORDER BY value DESC LIMIT 10",
+          "refId": "A"
+        }
+      ],
+      "title": "Top-10 Users by Compute Hours",
+      "type": "bargauge",
+      "description": "Top-10 users by active workspace compute hours in the selected period. Red threshold at 100h. Users with very high compute hours may be running workspaces idle (wasting PVC storage and node capacity). Action: enforce idle-eviction policy, implement compute-hour quotas, contact user about usage patterns."
+    },
+    {
+      "datasource": {"type": "postgres", "uid": "${pg_datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 500}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 23},
+      "id": 11,
+      "options": {"displayMode": "lcd", "minVizHeight": 10, "minVizWidth": 0, "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": true}, "showUnfilled": true, "text": {}},
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "${pg_datasource}"},
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT workspace_id AS metric, SUM(quantity) / 3600.0 AS value FROM usage_events WHERE event_type = 'compute_seconds' AND workspace_id IS NOT NULL AND event_time BETWEEN $__timeFrom() AND $__timeTo() GROUP BY workspace_id ORDER BY value DESC LIMIT 10",
+          "refId": "A"
+        }
+      ],
+      "title": "Top-10 Workspaces by Compute Hours",
+      "type": "bargauge",
+      "description": "Top-10 individual workspaces by compute hours. Red threshold at 500h. A single workspace with very high compute hours is a candidate for suspension if idle, or resource-limit adjustment if actively used. Action: check if workspace is actively used (session activity), suspend long-idle workspaces, adjust resource requests."
+    },
+    {
+      "datasource": {"type": "postgres", "uid": "${pg_datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "decimals": 1,
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 90}]},
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 23},
+      "id": 12,
+      "options": {"displayMode": "lcd", "minVizHeight": 10, "minVizWidth": 0, "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": true}, "showUnfilled": true, "text": {}},
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "${pg_datasource}"},
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT ul.owner_id || ' / ' || ul.event_type AS metric, COALESCE(SUM(ue.quantity), 0)::float / NULLIF(ul.max_quantity, 0) * 100 AS value FROM usage_limits ul LEFT JOIN usage_events ue ON ue.owner_id = ul.owner_id AND ue.owner_type = ul.owner_type AND ue.event_type = ul.event_type AND ue.period = CURRENT_DATE WHERE ul.period_type = 'daily' GROUP BY ul.owner_id, ul.event_type, ul.max_quantity HAVING COALESCE(SUM(ue.quantity), 0)::float / NULLIF(ul.max_quantity, 0) > 0 ORDER BY value DESC LIMIT 10",
+          "refId": "A"
+        }
+      ],
+      "title": "Top-10 Users by Daily Quota Utilization %",
+      "type": "bargauge",
+      "description": "Top-10 users approaching their daily quota limit for any event type. Red threshold at 90%: users above this will soon hit their quota and start receiving 429s. Action: proactively contact high-usage users for upsell, review if quota limits are appropriate for the usage pattern."
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 31},
+      "id": 13,
+      "panels": [],
+      "title": "Token Economics & Model Mix",
+      "type": "row",
+      "description": "Which models are being used and how efficiently? Token throughput, model selection patterns, and request distribution by provider. Use these to optimize model offerings and identify token inefficiency."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "off"}
           },
           "mappings": [],
           "unit": "tok/s"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 14
-      },
-      "id": 9,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32},
+      "id": 14,
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(rate(llmsafespace_inference_input_tokens_total{job=~\"$job\"}[$__rate_interval])) by (model_id)",
-          "legendFormat": "input {{model_id}}",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(rate(llmsafespace_inference_output_tokens_total{job=~\"$job\"}[$__rate_interval])) by (model_id)",
-          "legendFormat": "output {{model_id}}",
-          "refId": "B"
-        }
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(llmsafespace_inference_input_tokens_total{job=~\"$job\"}[$__rate_interval])) by (model_id)", "legendFormat": "input {{model_id}}", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(llmsafespace_inference_output_tokens_total{job=~\"$job\"}[$__rate_interval])) by (model_id)", "legendFormat": "output {{model_id}}", "refId": "B"}
       ],
-      "title": "Token Throughput by Model",
+      "title": "Token Throughput by Model (input vs output)",
       "type": "timeseries",
-      "description": "Input and output token rates in tokens/second per model. Two lines per model: solid = input tokens, dashed = output tokens. Output rate is a direct proxy for how fast the model is generating text. A spike in input with flat output indicates a large context being re-submitted (e.g. cache miss)."
+      "description": "Token rate per model, split into input (prompt) and output (generation). Output rate is a direct proxy for generation speed. A spike in input with flat output indicates a large context being re-submitted (cache miss) — this wastes input tokens without producing output. Action: investigate cache configuration, consider prompt caching for repeated contexts."
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
+          "color": {"mode": "palette-classic"},
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "off"}
           },
           "mappings": [],
           "unit": "reqps"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 14
-      },
-      "id": 10,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32},
+      "id": 15,
+      "options": {"legend": {"calcs": ["mean", "sum"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
           "expr": "sum(rate(llmsafespace_inference_requests_total{job=~\"$job\"}[$__rate_interval])) by (model_id, provider_id)",
           "legendFormat": "{{model_id}} ({{provider_id}})",
           "refId": "A"
@@ -660,1232 +409,150 @@
       ],
       "title": "Inference Request Rate by Model & Provider",
       "type": "timeseries",
-      "description": "Rate of inference calls (requests/second) grouped by model and provider. Use this to see which model/provider combination is most active. Spikes correlate with concurrent users actively inferencing."
+      "description": "Requests per second grouped by model and provider. Use this to see which model/provider combination is most active. Spikes correlate with concurrent users actively inferencing. A sudden shift from one provider to another may indicate a credential issue or relay routing change."
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
+          "color": {"mode": "palette-classic"},
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "bars", "fillOpacity": 50, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "normal"},
+            "thresholdsStyle": {"mode": "off"}
           },
           "mappings": [],
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 22
-      },
-      "id": 11,
-      "options": {
-        "legend": {
-          "calcs": [
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 40},
+      "id": 16,
+      "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
           "expr": "sum(increase(llmsafespace_model_selections_total{job=~\"$job\"}[$__rate_interval])) by (model_id, tier)",
           "legendFormat": "{{model_id}} ({{tier}})",
           "refId": "A"
         }
       ],
-      "title": "Model Selections",
+      "title": "Model Selection Churn (user-initiated model changes)",
       "type": "timeseries",
-      "description": "Count of model change events (user explicitly selected a different model via PUT /model). Not a rate \u2014 shows absolute counts per interval. Low volume is expected; a sudden spike may indicate users cycling through models due to quality issues."
+      "description": "Count of explicit model change events (PUT /model calls that succeeded). Low volume is normal. A sudden spike may indicate users cycling through models due to quality issues or rate limits on their preferred model. Action: investigate if a specific model is degraded, check provider rate limits."
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
+          "color": {"mode": "palette-classic"},
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "reqps"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 22
-      },
-      "id": 12,
-      "options": {
-        "legend": {
-          "calcs": [
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(rate(llmsafespace_inference_requests_total{job=~\"$job\"}[$__rate_interval]))",
-          "legendFormat": "fleet total",
-          "refId": "A"
-        }
-      ],
-      "title": "LLM Call Rate (Fleet)",
-      "type": "timeseries",
-      "description": "Inference request rate across all workspaces. Per-user breakdown requires DB query via GET /api/v1/usage (US-12.7). The phantom metric llmsafespace_user_llm_calls_total was removed — fleet data exists in llmsafespace_inference_requests_total."
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 30
-      },
-      "id": 13,
-      "panels": [],
-      "title": "Per-User Metering",
-      "type": "row",
-      "description": "Resource consumption aggregated per user. Each line represents one user. Use these graphs to identify the highest-cost users, compare relative usage, and support billing or quota enforcement."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 31
-      },
-      "id": 14,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(rate(llmsafespace_user_active_seconds_total{job=~\"$controller_job\"}[$__rate_interval])) by (user_id)",
-          "legendFormat": "{{user_id}}",
-          "refId": "A"
-        }
-      ],
-      "title": "User Active Compute Seconds/s",
-      "type": "timeseries",
-      "description": "Rate at which active compute time accumulates per user (seconds of active workspace time per second). A value of 1.0 means one workspace is continuously active for that user. Values above 1.0 indicate the user has multiple workspaces running simultaneously."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "cpucores"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 31
-      },
-      "id": 15,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(rate(llmsafespace_user_cpu_milliseconds_total{job=~\"$controller_job\"}[$__rate_interval])) by (user_id) / 1000",
-          "legendFormat": "{{user_id}}",
-          "refId": "A"
-        }
-      ],
-      "title": "User CPU Usage (cores)",
-      "type": "timeseries",
-      "description": "Estimated CPU consumption per user, derived from cgroup CPU usage reported by agentd. This is workspace-pod-level CPU, not inference CPU. Units: CPU cores (1.0 = one full core). Sampled every health-check interval (~60s)."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "off"}
           },
           "mappings": [],
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 31
-      },
-      "id": 16,
-      "options": {
-        "legend": {
-          "calcs": [
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(rate(llmsafespace_inference_requests_total{job=~\"$job\"}[$__rate_interval]))",
-          "legendFormat": "fleet total",
-          "refId": "A"
-        }
-      ],
-      "title": "LLM Calls (Fleet Total)",
-      "type": "timeseries",
-      "description": "Inference call rate at fleet level. Per-user/per-credential-source breakdown requires DB query via GET /api/v1/usage (US-12.7). The phantom metric llmsafespace_user_llm_calls_total was removed."
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 39
-      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 40},
       "id": 17,
-      "panels": [],
-      "title": "Per-Workspace Metering",
-      "type": "row",
-      "description": "Resource consumption aggregated per workspace pod. Use these graphs to see the compute footprint of individual workspaces over time. Note: LLM Proxy Latency and Proxy Bytes panels require the events-gateway (Epic 33) and will remain empty until that component is deployed."
+      "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(increase(llmsafespace_relay_injector_total{job=~\"$job\"}[$__rate_interval])) by (outcome)", "legendFormat": "{{outcome}}", "refId": "A"}
+      ],
+      "title": "Relay Injector Outcomes (free-tier routing)",
+      "type": "timeseries",
+      "description": "Outcome of relay config injection per workspace boot. success = relay configured (free-tier available). skipped_personal_key = user has own credentials. no_free_models = no relay-eligible models. config_write_failed / unhealthy_timeout = injection errors (free-tier broken for that workspace). Action: investigate error outcomes — affected users cannot use free-tier models."
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 40
-      },
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 48},
       "id": 18,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(rate(llmsafespace_workspace_active_seconds_total{job=~\"$controller_job\"}[$__rate_interval])) by (workspace_id)",
-          "legendFormat": "{{workspace_id}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Workspace Active Seconds/s",
-      "type": "timeseries",
-      "description": "Rate of active time accumulation per workspace. A workspace contributes ~1 second of active time per second while in the Active phase. Use this to find workspaces that have been running continuously for long periods."
+      "panels": [],
+      "title": "Quota Enforcement",
+      "type": "row",
+      "description": "Are usage limits being enforced? Quota exceeded events confirm the enforcement pipeline is working. Per-user quota utilization shows who is approaching their limits."
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
+          "color": {"fixedColor": "orange", "mode": "fixed"},
           "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "off"}
           },
           "mappings": [],
-          "unit": "decbytes"
+          "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 40
-      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 49},
       "id": 19,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
+      "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "llmsafespace_workspace_storage_bytes{job=~\"$controller_job\"}",
-          "legendFormat": "{{workspace_id}} allocated",
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "expr": "sum(increase(llmsafespace_metering_quota_exceeded_total{job=~\"$job\"}[$__rate_interval])) by (event_type)",
+          "legendFormat": "{{event_type}}",
           "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "llmsafespace_workspace_disk_used_bytes{job=~\"$controller_job\"}",
-          "legendFormat": "{{workspace_id}} used",
-          "refId": "B"
         }
       ],
-      "title": "Workspace Storage (Allocated vs Used)",
+      "title": "Quota Exceeded Events (429 responses)",
       "type": "timeseries",
-      "description": "Two lines per workspace: allocated (PVC size from spec) and used (actual disk bytes from agentd). The gap between allocated and used is wasted space. A used line approaching the allocated line indicates the workspace is near its storage limit."
+      "description": "Rate of quota enforcement triggers. Each event = one request rejected with 429. event_type tells which resource limit was hit: llm_request, llm_tokens, compute_seconds, etc. This confirms the enforcement pipeline is working. A high rate for a specific event_type may indicate quotas are set too low for legitimate use. Action: review quota limits for affected event types, check if a specific user is repeatedly hitting limits."
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
+      "datasource": {"type": "postgres", "uid": "${pg_datasource}"},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
+          "color": {"mode": "thresholds"},
+          "decimals": 0,
           "mappings": [],
-          "unit": "decbytes"
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]},
+          "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 40
-      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 49},
       "id": 20,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
+      "options": {"displayMode": "lcd", "minVizHeight": 10, "minVizWidth": 0, "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": true}, "showUnfilled": true, "text": {}},
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "llmsafespace_workspace_memory_used_bytes{job=~\"$controller_job\"}",
-          "legendFormat": "{{workspace_id}}",
+          "datasource": {"type": "postgres", "uid": "${pg_datasource}"},
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT owner_id AS metric, SUM(quantity) AS value FROM usage_events WHERE event_type = 'llm_request' AND owner_type = 'user' AND event_time BETWEEN $__timeFrom() AND $__timeTo() GROUP BY owner_id ORDER BY value DESC LIMIT 10",
           "refId": "A"
         }
       ],
-      "title": "Workspace Memory Usage",
-      "type": "timeseries",
-      "description": "Current memory bytes used inside the workspace pod's cgroup, as reported by agentd. This reflects the sum of all processes inside the container. Sustained high memory may cause OOM kills."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "cpucores"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 48
-      },
-      "id": 21,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(rate(llmsafespace_workspace_cpu_milliseconds_total{job=~\"$controller_job\"}[$__rate_interval])) by (workspace_id) / 1000",
-          "legendFormat": "{{workspace_id}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Workspace CPU Usage (cores)",
-      "type": "timeseries",
-      "description": "CPU consumption per workspace in cores, derived from cumulative cgroup CPU milliseconds. Sampled by the controller health check, not continuous \u2014 expect staircase-shaped graphs."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 48
-      },
-      "id": 22,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "histogram_quantile(0.99, sum(rate(llmsafespace_workspace_llm_request_duration_seconds_bucket{job=~\"$controller_job\"}[$__rate_interval])) by (le, provider, model))",
-          "legendFormat": "p99 {{provider}}/{{model}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Workspace LLM Proxy Latency (p99)",
-      "type": "timeseries",
-      "description": "p99 round-trip latency for LLM API calls proxied through the workspace. Empty until the events-gateway (Epic 33) is deployed \u2014 this metric requires the proxy to instrument request timing per-workspace."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "Bps"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 48
-      },
-      "id": 23,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(rate(llmsafespace_workspace_proxy_bytes_total{job=~\"$controller_job\"}[$__rate_interval])) by (direction)",
-          "legendFormat": "{{direction}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Total Proxy Bytes (ingress/egress)",
-      "type": "timeseries",
-      "description": "Bytes per second flowing through the workspace LLM proxy, split by direction. Empty until the events-gateway (Epic 33) is deployed."
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 56
-      },
-      "id": 24,
-      "panels": [],
-      "title": "Relay & Credential Breakdown",
-      "type": "row",
-      "description": "Tracks how free-tier inference routing is working and the health of stored credential state."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "bars",
-            "fillOpacity": 50,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "normal"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 57
-      },
-      "id": 25,
-      "options": {
-        "legend": {
-          "calcs": [
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "sum(increase(llmsafespace_relay_injector_total{job=~\"$job\"}[$__rate_interval])) by (outcome)",
-          "legendFormat": "{{outcome}}",
-          "refId": "A"
-        }
-      ],
-      "title": "Relay Injector Outcomes (Billing Impact)",
-      "type": "timeseries",
-      "description": "Counts of relay config injection outcomes per workspace boot. success: relay was configured and the workspace will use the free-tier relay. skipped_personal_key: user has their own credentials so the relay was not injected. no_free_models: no free-tier models available for the workspace's runtime. Other outcomes (config_write_failed, unhealthy_timeout) indicate injection errors."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "fixedColor": "red",
-            "mode": "fixed"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 57
-      },
-      "id": 26,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "expr": "llmsafespace_api_key_legacy_total{job=~\"$controller_job\"}",
-          "legendFormat": "legacy plaintext keys",
-          "refId": "A"
-        }
-      ],
-      "title": "Legacy Plaintext API Keys (Security Debt)",
-      "type": "stat",
-      "description": "Count of API keys still using pre-migration plaintext storage (migration 000017). Target value is 0. Any non-zero value means affected keys have not been rotated since the DEK encryption migration."
-    },
-    {
-      "collapsed": false,
-      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 66},
-      "id": 27,
-      "panels": [],
-      "title": "Metering Pipeline Health",
-      "type": "row",
-      "description": "US-12.1 metering service internals. Events recorded/failed/dropped, batch write latency, DLQ depth, reconciliation catch-up, export lag."
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisBorderShow": false, "axisLabel": "", "drawAsColumns": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "unit": "short"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 67},
-      "id": 28,
-      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(llmsafespace_metering_events_recorded_total[$__rate_interval])) by (event_type, source)", "legendFormat": "{{event_type}} / {{source}}", "refId": "A"}],
-      "title": "Metering Events Recorded Rate",
-      "type": "timeseries",
-      "description": "Rate of usage events successfully written to the usage_events table by event_type and source."
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisBorderShow": false, "axisLabel": "", "drawAsColumns": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "unit": "short"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 67},
-      "id": 29,
-      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(llmsafespace_metering_events_failed_total[$__rate_interval])) by (error_type)", "legendFormat": "{{error_type}}", "refId": "A"}],
-      "title": "Metering Events Failed Rate",
-      "type": "timeseries",
-      "description": "Rate of usage events that failed batch write and went to DLQ."
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "fieldConfig": {"defaults": {"color": {"fixedColor": "red", "mode": "fixed"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}, "unit": "short"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 67},
-      "id": 30,
-      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(llmsafespace_metering_events_dropped_total[$__rate_interval]))", "legendFormat": "dropped", "refId": "A"}],
-      "title": "Metering Events Dropped Rate",
-      "type": "timeseries",
-      "description": "Rate of usage events dropped entirely (buffer full or DLQ write also failed). Non-zero indicates Postgres is unreachable."
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisBorderShow": false, "axisLabel": "", "drawAsColumns": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "unit": "s"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 75},
-      "id": 31,
-      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "histogram_quantile(0.95, sum(rate(llmsafespace_metering_batch_write_duration_seconds_bucket[$__rate_interval])) by (le))", "legendFormat": "p95 batch write", "refId": "A"}],
-      "title": "Batch Write Latency (p95)",
-      "type": "timeseries",
-      "description": "95th percentile DB batch flush latency for metering events."
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "fieldConfig": {"defaults": {"color": {"fixedColor": "orange", "mode": "fixed"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 10}]}, "unit": "short"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 75},
-      "id": 32,
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showThresholdLabels": false, "showThresholdMarkers": true},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(llmsafespace_metering_dlq_size)", "legendFormat": "unresolved DLQ", "refId": "A"}],
-      "title": "DLQ Unresolved Entries",
-      "type": "gauge",
-      "description": "Current number of unresolved dead-letter queue entries. Non-zero means the DLQ reaper is failing to reprocess events."
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "fieldConfig": {"defaults": {"color": {"fixedColor": "red", "mode": "fixed"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}, "unit": "short"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 75},
-      "id": 33,
-      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showThresholdLabels": false, "showThresholdMarkers": true},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(increase(llmsafespace_metering_dlq_dead_total[$__range]))", "legendFormat": "dead entries", "refId": "A"}],
-      "title": "DLQ Dead Entries (Exhausted Retries)",
-      "type": "stat",
-      "description": "DLQ entries that exhausted all 5 retries. Non-zero requires manual intervention via admin API."
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisBorderShow": false, "axisLabel": "", "drawAsColumns": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "unit": "short"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 83},
-      "id": 34,
-      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(increase(llmsafespace_metering_reconciliation_catchup_total[$__range]))", "legendFormat": "compute catch-up events", "refId": "A"}],
-      "title": "Compute Reconciliation Catch-up Events",
-      "type": "timeseries",
-      "description": "Compute_seconds events emitted by the reconciliation cron to fill gaps from process restarts or queue saturation."
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "${datasource}"},
-      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisBorderShow": false, "axisLabel": "", "drawAsColumns": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "unit": "s"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 83},
-      "id": 35,
-      "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(llmsafespace_metering_export_lag_seconds)", "legendFormat": "export lag", "refId": "A"}],
-      "title": "Billing Export Lag",
-      "type": "timeseries",
-      "description": "Seconds since last successful billing export. Rising lag indicates export goroutine failures."
+      "title": "Top-10 Users by LLM Request Count",
+      "type": "bargauge",
+      "description": "Top-10 users by total LLM request count in the selected period. Users with disproportionately high request counts may be running automated loops or hitting rate limits. Combined with Token Consumption, this distinguishes heavy users (many small requests) from expensive users (few large-context requests). Action: enforce per-user request quotas, investigate automated usage patterns. NOTE: per-user quota-exceeded attribution requires recording a usage_event on 429 rejection (future code change); this panel uses llm_request events which are recorded today."
     }
   ],
   "refresh": "30s",
   "schemaVersion": 39,
-  "tags": [
-    "llmsafespace",
-    "billing"
-  ],
+  "tags": ["llmsafespace", "billing"],
   "templating": {
     "list": [
       {
-        "current": {
-          "selected": true,
-          "text": "Prometheus",
-          "value": "default"
-        },
+        "current": {"selected": true, "text": "Prometheus", "value": "default"},
         "hide": 0,
         "includeAll": false,
-        "label": "Datasource",
+        "label": "Prometheus Datasource",
         "multi": false,
         "name": "datasource",
         "options": [],
@@ -1897,19 +564,23 @@
         "type": "datasource"
       },
       {
-        "current": {
-          "selected": true,
-          "text": [
-            "llmsafespace-api"
-          ],
-          "value": [
-            "llmsafespace-api"
-          ]
-        },
-        "datasource": {
-          "type": "prometheus",
-          "uid": "${datasource}"
-        },
+        "current": {"selected": true, "text": "LLMSafeSpace Postgres", "value": "llmsafespace-postgres"},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Postgres Datasource",
+        "multi": false,
+        "name": "pg_datasource",
+        "options": [],
+        "query": "postgres",
+        "queryValue": "",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "current": {"selected": true, "text": ["llmsafespace-api"], "value": ["llmsafespace-api"]},
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
         "definition": "label_values(llmsafespace_inference_requests_total, job)",
         "hide": 0,
         "includeAll": false,
@@ -1917,43 +588,7 @@
         "multi": true,
         "name": "job",
         "options": [],
-        "query": {
-          "qryType": 1,
-          "query": "label_values(llmsafespace_inference_requests_total, job)",
-          "refId": "VariableQuery"
-        },
-        "refresh": 2,
-        "regex": "",
-        "skipUrlSync": false,
-        "sort": 1,
-        "type": "query"
-      },
-      {
-        "current": {
-          "selected": true,
-          "text": [
-            "llmsafespace-controller"
-          ],
-          "value": [
-            "llmsafespace-controller"
-          ]
-        },
-        "datasource": {
-          "type": "prometheus",
-          "uid": "${datasource}"
-        },
-        "definition": "label_values(llmsafespace_workspace_active_seconds_total, job)",
-        "hide": 0,
-        "includeAll": false,
-        "label": "Controller Job",
-        "multi": true,
-        "name": "controller_job",
-        "options": [],
-        "query": {
-          "qryType": 1,
-          "query": "label_values(llmsafespace_workspace_active_seconds_total, job)",
-          "refId": "VariableQuery"
-        },
+        "query": {"qryType": 1, "query": "label_values(llmsafespace_inference_requests_total, job)", "refId": "VariableQuery"},
         "refresh": 2,
         "regex": "",
         "skipUrlSync": false,
@@ -1962,13 +597,10 @@
       }
     ]
   },
-  "time": {
-    "from": "now-24h",
-    "to": "now"
-  },
+  "time": {"from": "now-24h", "to": "now"},
   "timepicker": {},
   "timezone": "utc",
   "title": "LLMSafeSpace - Billing & Metering",
   "uid": "llmsafespace-billing",
-  "version": 1
+  "version": 2
 }

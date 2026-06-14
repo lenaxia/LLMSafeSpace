@@ -689,6 +689,33 @@ monitoring:
       grafana_dashboard: "1"
     annotations: {}
 
+  # Grafana datasource ConfigMaps. Deploys a Postgres datasource that
+  # the billing dashboard uses for per-user/per-workspace attribution
+  # queries against the usage_events table.
+  #
+  # Requires:
+  #   - Grafana with the sidecar datasource importer (grafana_datasource: "1" label)
+  #   - A Kubernetes Secret containing the Postgres password under the
+  #     key "PG_PASSWORD". By default this is the same Secret used by
+  #     the API service (see existingSecret / postgresPassword above).
+  #     The sidecar resolves ${PG_PASSWORD} from env vars injected into
+  #     the Grafana pod; configure the Grafana chart to set this env var
+  #     from the Secret.
+  datasources:
+    enabled: true
+    # Namespace to deploy datasource ConfigMaps into. Defaults to the
+    # release namespace. Override to deploy into Grafana's watching namespace.
+    namespace: ""
+    # Labels applied to the datasource ConfigMap. The grafana_datasource
+    # label is required for the Grafana sidecar to import the datasource.
+    labels:
+      grafana_datasource: "1"
+    annotations: {}
+    postgres:
+      # UID used by dashboard panels to reference this datasource.
+      # Must match the pg_datasource variable default in billing.json.
+      uid: "llmsafespace-postgres"
+
   # PrometheusRule resources (alerting rules).
   prometheusRules:
     enabled: true
