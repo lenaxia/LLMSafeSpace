@@ -14,12 +14,12 @@ import (
 )
 
 const (
-	BrokerChannelBuffer     = 16
-	numShards               = 16
-	userChannelBuffer       = 128
-	replayBufferSize        = 128
-	MaxSubscribersPerUser   = 20
-	HeartbeatSentinelType   = "_heartbeat"
+	BrokerChannelBuffer   = 16
+	numShards             = 16
+	userChannelBuffer     = 128
+	replayBufferSize      = 128
+	MaxSubscribersPerUser = 20
+	HeartbeatSentinelType = "_heartbeat"
 )
 
 var ErrTooManySubscribers = errors.New("too many subscribers for user")

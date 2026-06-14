@@ -16,8 +16,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/lenaxia/llmsafespace/api/internal/middleware"
 	apilogger "github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/middleware"
 	"github.com/lenaxia/llmsafespace/api/internal/services/ratelimit"
 	logmock "github.com/lenaxia/llmsafespace/mocks/logger"
 )
