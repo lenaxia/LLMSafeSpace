@@ -24,7 +24,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -57,10 +60,20 @@ type ProbeModelsRequest struct {
 // ProbeModelsAnon handles POST /api/v1/probe-models.
 // No credential ID needed — caller passes apiKey + baseURL directly.
 // Auth is still required so arbitrary API keys can't be proxied by unauthenticated users.
+// The baseURL is validated against SSRF rules before making any outbound request.
 func ProbeModelsAnon(c *gin.Context) {
 	var req ProbeModelsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "apiKey and baseURL are required"})
+		return
+	}
+
+	// SSRF guard: reject private/internal URLs before making any outbound request.
+	// This is the primary SSRF defense for the anon endpoint. Stored-credential
+	// probes (GET /:id/models) are authenticated and the baseURL was user-supplied
+	// at credential create time — they rely on network policy for additional isolation.
+	if err := validateProbeBaseURL(req.BaseURL); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("baseURL rejected: %v", err)})
 		return
 	}
 
@@ -72,6 +85,82 @@ func ProbeModelsAnon(c *gin.Context) {
 	}
 	result := probeCredentialModels(c.Request.Context(), plaintext, nil)
 	c.JSON(http.StatusOK, result)
+}
+
+// validateProbeBaseURL checks that a baseURL is safe to probe:
+// - must parse as a valid URL
+// - scheme must be https or http (not file://, ftp://, etc.)
+// - host must not resolve to a private/loopback/internal address (SSRF guard)
+//
+// Private ranges blocked: loopback (127.x, ::1), link-local (169.254.x),
+// RFC-1918 (10.x, 172.16-31.x, 192.168.x), IPv6 ULA (fc00::/7), and
+// carrier-NAT shared space (100.64.0.0/10).
+func validateProbeBaseURL(rawURL string) error {
+	if rawURL == "" {
+		return fmt.Errorf("baseURL is empty")
+	}
+	u, err := url.ParseRequestURI(rawURL)
+	if err != nil {
+		return fmt.Errorf("baseURL is not a valid URL: %w", err)
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return fmt.Errorf("baseURL scheme %q is not allowed (must be https or http)", u.Scheme)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("baseURL has no host")
+	}
+	// Reject bare IPs that are private without needing DNS.
+	if ip := net.ParseIP(host); ip != nil {
+		if isPrivateIP(ip) {
+			return fmt.Errorf("baseURL %q is a private/internal address: SSRF not allowed", host)
+		}
+		return nil
+	}
+	// Reject private-looking hostnames before DNS resolution.
+	lower := strings.ToLower(host)
+	if lower == "localhost" || strings.HasSuffix(lower, ".local") || strings.HasSuffix(lower, ".internal") {
+		return fmt.Errorf("baseURL hostname %q resolves to an internal address: SSRF not allowed", host)
+	}
+	// DNS resolution — check all returned addresses.
+	resolver := &net.Resolver{}
+	addrs, err := resolver.LookupHost(context.Background(), host)
+	if err != nil {
+		// DNS failure is not a security issue per se; let the subsequent HTTP
+		// call fail naturally with a connect error.
+		return nil
+	}
+	for _, addr := range addrs {
+		if ip := net.ParseIP(addr); ip != nil && isPrivateIP(ip) {
+			return fmt.Errorf("baseURL %q resolves to a private/internal address (%s): SSRF not allowed", host, addr)
+		}
+	}
+	return nil
+}
+
+// isPrivateIP returns true for loopback, link-local, RFC-1918, and similar
+// internal address ranges that must not be reachable via the probe endpoint.
+func isPrivateIP(ip net.IP) bool {
+	for _, cidr := range []string{
+		"127.0.0.0/8",    // loopback
+		"::1/128",        // IPv6 loopback
+		"169.254.0.0/16", // link-local
+		"fe80::/10",      // IPv6 link-local
+		"10.0.0.0/8",     // RFC-1918
+		"172.16.0.0/12",  // RFC-1918
+		"192.168.0.0/16", // RFC-1918
+		"fc00::/7",       // IPv6 ULA
+		"100.64.0.0/10",  // shared address space (carrier NAT)
+	} {
+		_, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			continue
+		}
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // plaintext bytes), calls GET {baseURL}/v1/models with the stored API key,

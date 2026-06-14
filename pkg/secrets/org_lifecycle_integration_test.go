@@ -723,3 +723,58 @@ func TestRotateOrgDEK_DeletesOtherAdminKeys(t *testing.T) {
 		t.Errorf("KeyVersion after rotation: got %d, want 1", adminRec2.KeyVersion)
 	}
 }
+
+// TestOrgCredentialStore_UpdateContextLimits_NilPreservesExisting is the regression
+// test for the COALESCE wipe bug: passing nil modelContextLimits to UpdateOrgCredential
+// must preserve the previously-saved limits rather than overwriting them with {}.
+func TestOrgCredentialStore_UpdateContextLimits_NilPreservesExisting(t *testing.T) {
+	pool := getTestPool(t)
+	defer pool.Close()
+	store := NewPgSecretStore(pool)
+	ctx := context.Background()
+
+	adminID := "org-ctx-limits-admin"
+	orgID := "aaaaaaaa-bbbb-cccc-dddd-000000000099"
+	ensureTestUser(t, pool, adminID)
+	createTestOrg(t, pool, orgID, adminID)
+	t.Cleanup(func() { cleanupOrg(t, pool, orgID) })
+
+	// Create credential with explicit context limits.
+	limits := map[string]int{"glm-5.1": 200000, "glm-5.2": 1000000}
+	credID, err := store.CreateOrgCredential(ctx, orgID, "ctx-test", "thekao", []byte("cipher1"), []string{"glm-5.1", "glm-5.2"}, limits)
+	if err != nil {
+		t.Fatalf("CreateOrgCredential: %v", err)
+	}
+
+	// Verify initial limits are stored.
+	row, _ := store.GetOrgCredential(ctx, orgID, credID)
+	if row.ModelContextLimits["glm-5.1"] != 200000 {
+		t.Errorf("initial glm-5.1 limit: got %d, want 200000", row.ModelContextLimits["glm-5.1"])
+	}
+
+	// Update ciphertext only — pass nil modelContextLimits.
+	// Passing nil must NOT wipe the existing limits (COALESCE must see SQL NULL).
+	if err := store.UpdateOrgCredential(ctx, orgID, credID, nil, []byte("cipher2"), nil, nil, 2); err != nil {
+		t.Fatalf("UpdateOrgCredential: %v", err)
+	}
+
+	row2, _ := store.GetOrgCredential(ctx, orgID, credID)
+	if string(row2.Ciphertext) != "cipher2" {
+		t.Error("ciphertext not updated")
+	}
+	if row2.ModelContextLimits["glm-5.1"] != 200000 {
+		t.Errorf("REGRESSION: glm-5.1 limit wiped by nil update: got %d, want 200000", row2.ModelContextLimits["glm-5.1"])
+	}
+	if row2.ModelContextLimits["glm-5.2"] != 1000000 {
+		t.Errorf("REGRESSION: glm-5.2 limit wiped by nil update: got %d, want 1000000", row2.ModelContextLimits["glm-5.2"])
+	}
+
+	// Explicitly clearing limits with an empty map must work.
+	if err := store.UpdateOrgCredential(ctx, orgID, credID, nil, nil, nil, map[string]int{}, 2); err != nil {
+		t.Fatalf("UpdateOrgCredential with empty limits: %v", err)
+	}
+	row3, _ := store.GetOrgCredential(ctx, orgID, credID)
+	if len(row3.ModelContextLimits) != 0 {
+		t.Errorf("expected empty limits after explicit clear, got %v", row3.ModelContextLimits)
+	}
+}

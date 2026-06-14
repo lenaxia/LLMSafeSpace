@@ -112,9 +112,10 @@ func (s *PgSecretStore) GetOrgCredential(ctx context.Context, orgID, credID stri
 }
 
 func (s *PgSecretStore) UpdateOrgCredential(ctx context.Context, orgID, credID string, name *string, ciphertext []byte, modelAllowlist []string, modelContextLimits map[string]int, keyVersion int) error {
-	if modelContextLimits == nil {
-		modelContextLimits = map[string]int{}
-	}
+	// Do NOT normalize nil→{} here. A nil modelContextLimits means "don't change
+	// this column" — COALESCE($6, model_context_limits) must receive a SQL NULL
+	// to fall through to the existing value. An empty map {} is a valid "clear all
+	// limits" value and must be written as-is.
 	_, err := s.pool.Exec(ctx, `
 		UPDATE provider_credentials
 		SET name                 = COALESCE($3, name),
