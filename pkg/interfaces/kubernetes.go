@@ -29,6 +29,7 @@ type KubernetesClient interface {
 type LLMSafespaceV1Interface interface {
 	RuntimeEnvironments() RuntimeEnvironmentInterface
 	Workspaces(namespace string) WorkspaceInterface
+	InferenceRelays() InferenceRelayInterface
 }
 
 type RuntimeEnvironmentInterface interface {
@@ -48,5 +49,15 @@ type WorkspaceInterface interface {
 	Delete(ctx context.Context, name string, options metav1.DeleteOptions) error
 	Get(ctx context.Context, name string, options metav1.GetOptions) (*v1.Workspace, error)
 	List(ctx context.Context, opts metav1.ListOptions) (*v1.WorkspaceList, error)
+	Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error)
+}
+
+type InferenceRelayInterface interface {
+	Create(ctx context.Context, obj *v1.InferenceRelay) (*v1.InferenceRelay, error)
+	Update(ctx context.Context, obj *v1.InferenceRelay) (*v1.InferenceRelay, error)
+	UpdateStatus(ctx context.Context, obj *v1.InferenceRelay) (*v1.InferenceRelay, error)
+	Delete(ctx context.Context, name string, options metav1.DeleteOptions) error
+	Get(ctx context.Context, name string, options metav1.GetOptions) (*v1.InferenceRelay, error)
+	List(ctx context.Context, opts metav1.ListOptions) (*v1.InferenceRelayList, error)
 	Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error)
 }

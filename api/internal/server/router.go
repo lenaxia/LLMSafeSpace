@@ -83,6 +83,9 @@ type RouterConfig struct {
 	PolicyHandler      *handlers.PolicyHandler
 	AuditHandler       *handlers.AuditHandler
 
+	// RelayAdminHandler handles relay admin setup + status endpoints (optional)
+	RelayAdminHandler *handlers.RelayAdminHandler
+
 	CookieName string
 }
 
@@ -279,6 +282,23 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 
 	if cfg.WebhookHandler != nil {
 		router.POST("/api/v1/webhooks/stripe", cfg.WebhookHandler.HandleWebhook)
+	}
+
+	// Relay admin routes (Epic 43)
+	if cfg.RelayAdminHandler != nil {
+		relayAdmin := router.Group("/api/v1/admin/relay")
+		relayAdmin.Use(services.GetAuth().AuthMiddleware())
+		relayAdmin.Use(middleware.AdminGuard())
+		relayAdmin.GET("/setup", cfg.RelayAdminHandler.GetSetup)
+		relayAdmin.GET("/status", cfg.RelayAdminHandler.GetStatus)
+		relayAdmin.GET("/ca", cfg.RelayAdminHandler.GetCA)
+		relayAdmin.POST("/aws-config", cfg.RelayAdminHandler.SaveAWSConfig)
+		relayAdmin.POST("/test-aws", cfg.RelayAdminHandler.TestAWS)
+		relayAdmin.POST("/oci-creds", cfg.RelayAdminHandler.SaveOCICreds)
+		relayAdmin.POST("/deploy", cfg.RelayAdminHandler.Deploy)
+		relayAdmin.POST("/rotate/:id", cfg.RelayAdminHandler.Rotate)
+		relayAdmin.POST("/pause", cfg.RelayAdminHandler.Pause)
+		relayAdmin.POST("/resume", cfg.RelayAdminHandler.Resume)
 	}
 
 	// Secret management routes (Epic 10)
