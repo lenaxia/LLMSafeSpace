@@ -624,8 +624,9 @@ const (
 )
 
 // OrgStatus is the operational status of an organization. It gates access:
-// only 'active' orgs are usable via OrgMemberGuard/OrgAdminGuard. It is
-// distinct from SubscriptionStatus, which tracks the payment lifecycle.
+// only non-suspended orgs are usable via OrgMemberGuard/OrgAdminGuard. Both
+// 'active' and 'pending_activation' allow access (the creator needs to reach
+// the portal and Stripe checkout while pending); 'suspended' is fully locked.
 type OrgStatus string
 
 const (
