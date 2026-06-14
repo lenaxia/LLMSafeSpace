@@ -26,7 +26,11 @@ export function useMessageQueue(
       const res = await messagesApi.getQueue(workspaceId, sessionId);
       setQueuedMessages((prev) => {
         const redisIds = new Set(res.messages.map((m) => m.id));
-        const kept = prev.filter((m) => m.status === "error" || redisIds.has(m.id));
+        const kept = prev.filter((m) =>
+          m.status === "error" ||
+          redisIds.has(m.id) ||
+          m.sessionId !== sessionId,
+        );
         const existingIds = new Set(kept.map((m) => m.id));
         const added: QueuedMessage[] = res.messages
           .filter((m) => !existingIds.has(m.id))
@@ -65,24 +69,35 @@ export function useMessageQueue(
     );
   }, []);
 
+  const removeById = useCallback((id: string) => {
+    setQueuedMessages((prev) => prev.filter((m) => m.id !== id));
+  }, []);
+
   const retry = useCallback(async (id: string) => {
     if (!workspaceId || !sessionId) return;
     const msg = queuedMessages.find((m) => m.id === id);
-    setQueuedMessages((prev) => prev.filter((m) => m.id !== id));
+    removeById(id);
     if (msg) await enqueue(msg.text);
-  }, [workspaceId, sessionId, queuedMessages, enqueue]);
+  }, [workspaceId, sessionId, queuedMessages, enqueue, removeById]);
 
   const dismiss = useCallback(async (id: string) => {
     if (!workspaceId || !sessionId) return;
-    setQueuedMessages((prev) => prev.filter((m) => m.id !== id));
+    removeById(id);
     try {
       await messagesApi.deleteQueueMessage(workspaceId, sessionId, id);
     } catch {
     }
     void refreshQueue();
-  }, [workspaceId, sessionId, refreshQueue]);
+  }, [workspaceId, sessionId, refreshQueue, removeById]);
 
-  const clear = useCallback(() => setQueuedMessages([]), []);
+  const clearAll = useCallback(async () => {
+    if (!workspaceId || !sessionId) return;
+    const toDelete = queuedMessages.filter((m) => m.sessionId === sessionId && m.status === "pending");
+    setQueuedMessages((prev) => prev.filter((m) => m.sessionId !== sessionId));
+    await Promise.allSettled(
+      toDelete.map((m) => messagesApi.deleteQueueMessage(workspaceId, sessionId, m.id)),
+    );
+  }, [workspaceId, sessionId, queuedMessages]);
 
   const onPhaseChange = useCallback((phase: string) => {
     if (RESTART_PHASES.includes(phase)) {
@@ -99,9 +114,10 @@ export function useMessageQueue(
     enqueue,
     refreshQueue,
     markError,
+    removeById,
     retry,
     dismiss,
-    clear,
+    clearAll,
     onPhaseChange,
   };
 }

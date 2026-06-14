@@ -151,4 +151,67 @@ describe("useMessageQueue (refresh-based reconciliation)", () => {
     act(() => { result.current.onPhaseChange("Suspending"); });
     expect(result.current.queuedMessages).toHaveLength(0);
   });
+
+  it("clearAll removes pills and calls DELETE for each pending message", async () => {
+    const { result } = render();
+    await waitFor(() => expect(messagesApi.getQueue).toHaveBeenCalled());
+
+    (messagesApi.queueMessage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ messageID: "msg_a" });
+    await act(async () => { await result.current.enqueue("a"); });
+    (messagesApi.queueMessage as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ messageID: "msg_b" });
+    await act(async () => { await result.current.enqueue("b"); });
+    expect(result.current.queuedMessages).toHaveLength(2);
+
+    await act(async () => { await result.current.clearAll(); });
+
+    expect(result.current.queuedMessages).toHaveLength(0);
+    expect(messagesApi.deleteQueueMessage).toHaveBeenCalledWith("ws-1", "ses-1", "msg_a");
+    expect(messagesApi.deleteQueueMessage).toHaveBeenCalledWith("ws-1", "ses-1", "msg_b");
+  });
+
+  it("removeById removes a message by id regardless of status", async () => {
+    const { result } = render();
+    await waitFor(() => expect(messagesApi.getQueue).toHaveBeenCalled());
+
+    await act(async () => { await result.current.enqueue("hello"); });
+    act(() => { result.current.markError("msg_test_1", "fail"); });
+
+    act(() => { result.current.removeById("msg_test_1"); });
+    expect(result.current.queuedMessages).toHaveLength(0);
+  });
+
+  it("refreshQueue after enqueue correctly syncs with Redis", async () => {
+    const { result } = render();
+    await waitFor(() => expect(messagesApi.getQueue).toHaveBeenCalled());
+
+    (messagesApi.queueMessage as ReturnType<typeof vi.fn>).mockResolvedValue({ messageID: "msg_test_1" });
+    await act(async () => { await result.current.enqueue("hello"); });
+    expect(result.current.queuedMessages).toHaveLength(1);
+
+    (messagesApi.getQueue as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [{ id: "msg_test_1", text: "hello", session_id: "ses-1", workspace_id: "ws-1", enqueued_at: "", retry_count: 0 }],
+    });
+    await act(async () => { await result.current.refreshQueue(); });
+
+    expect(result.current.queuedMessages).toHaveLength(1);
+  });
+
+  it("refreshQueue does not clobber messages from other sessions", async () => {
+    const { result, rerender } = renderHook(
+      (props: { sid: string }) => useMessageQueue("ws-1", props.sid),
+      { initialProps: { sid: "ses-A" } },
+    );
+
+    await waitFor(() => expect(messagesApi.getQueue).toHaveBeenCalled());
+
+    await act(async () => { await result.current.enqueue("for A"); });
+    expect(result.current.queuedMessages).toHaveLength(1);
+
+    (messagesApi.getQueue as ReturnType<typeof vi.fn>).mockResolvedValue({ messages: [] });
+    rerender({ sid: "ses-B" });
+    await waitFor(() => expect(result.current.queuedMessages).toHaveLength(0));
+
+    rerender({ sid: "ses-A" });
+    await waitFor(() => expect(result.current.queuedMessages).toHaveLength(1));
+  });
 });

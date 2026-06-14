@@ -880,4 +880,22 @@ describe("ChatPage auto-abort stuck input sessions", () => {
     expect((workspacesApi as Record<string, unknown>).abortSession).not.toHaveBeenCalled();
     expect(screen.queryByText(/session was interrupted/i)).toBeNull();
   });
+
+  it("refreshes message queue on SSE reconnect", async () => {
+    const qc = makeQueryClient();
+    qc.setQueryData(["workspace-status", "ws-1"], { phase: "Active", sessions: [{ id: "ses_1", status: "idle" }] });
+    qc.setQueryData(["messages", "ws-1", "ses_1"], { pages: [{ messages: [] }], pageParams: [undefined] });
+    renderChat(qc, "/chat/ws-1/ses_1");
+
+    await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+    const callsBefore = (messagesApi.getQueue as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    triggerReconnect();
+
+    await waitFor(() => {
+      const callsAfter = (messagesApi.getQueue as ReturnType<typeof vi.fn>).mock.calls.length;
+      expect(callsAfter).toBeGreaterThan(callsBefore);
+    });
+  });
 });
