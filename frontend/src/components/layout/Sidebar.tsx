@@ -129,13 +129,6 @@ export function Sidebar({ onNavigate }: Props) {
   const handleWorkspaceClick = (ws: WorkspaceListItem) => {
     const isExpanded = expandedWs.has(ws.id);
 
-    if (ws.phase === "Suspended") {
-      activateMutation.mutate(ws.id);
-      setExpandedWs((prev) => new Set(prev).add(ws.id));
-      navigate(`/chat/${ws.id}`);
-      return;
-    }
-
     setExpandedWs((prev) => {
       const next = new Set(prev);
       if (isExpanded) {
