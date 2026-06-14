@@ -1,11 +1,9 @@
 /**
- * Integration tests for ChatPage message queue (v3).
+ * Integration tests for ChatPage message queue (backend-backed).
  *
- * v3 design (matching TUI behavior): messages are held locally and sent one
- * at a time. enqueue() does NOT fire promptAsync. The message is sent when
- * session.status=idle arrives via SSE (notifyIdle). The pill is removed as
- * soon as promptAsync returns 204. The next item is sent on the subsequent
- * idle event.
+ * Messages are enqueued via POST /queue (Redis-backed). The backend drains
+ * the queue on session idle and publishes queue.update SSE events (sent/error).
+ * The frontend manages display state (pills) locally, synced via SSE.
  */
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { screen, waitFor, act } from "@testing-library/react";
