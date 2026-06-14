@@ -31,14 +31,20 @@ func TestGenerateContractFixtures(t *testing.T) {
 			Resumed:   "ws-1",
 			Suspended: "ws-old",
 		},
-		"SessionListItem": SessionListItem{
-			ID:            "sess-1",
-			Title:         "Chat about auth",
-			ParentID:      "sess-root",
-			LastMessageAt: &now,
-			MessageCount:  12,
-			Status:        "active",
-		},
+		"SessionListItem": func() SessionListItem {
+			cu := int64(12500)
+			return SessionListItem{
+				ID:            "sess-1",
+				Title:         "Chat about auth",
+				ParentID:      "sess-root",
+				LastMessageAt: &now,
+				MessageCount:  12,
+				Status:        "active",
+				LastSeenAt:    &now,
+				HasUnread:     true,
+				ContextUsed:   &cu,
+			}
+		}(),
 		"ActiveSessionsResponse": ActiveSessionsResponse{
 			Active:    []string{"sess-1", "sess-2"},
 			MaxActive: 5,
