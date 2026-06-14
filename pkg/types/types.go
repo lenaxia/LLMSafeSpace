@@ -779,3 +779,38 @@ type QuotaStatus struct {
 	Remaining  int64     `json:"remaining"`
 	ResetsAt   time.Time `json:"resetsAt"`
 }
+
+// --- US-43.2: Org invitations ---
+
+// OrgInvitation is the API DTO for an org invitation row.
+type OrgInvitation struct {
+	ID         string     `json:"id"`
+	OrgID      string     `json:"orgId"`
+	Email      string     `json:"email"`
+	Role       OrgRole    `json:"role"`
+	InvitedBy  string     `json:"invitedBy"`
+	TokenHash  string     `json:"-"`
+	ExpiresAt  time.Time  `json:"expiresAt"`
+	AcceptedAt *time.Time `json:"acceptedAt,omitempty"`
+	DeclinedAt *time.Time `json:"declinedAt,omitempty"`
+	BounceType string     `json:"bounceType,omitempty"`
+	BouncedAt  *time.Time `json:"bouncedAt,omitempty"`
+	CreatedAt  time.Time  `json:"createdAt"`
+}
+
+// CreateInvitationsRequest is the body for POST /orgs/:id/invitations.
+type CreateInvitationsRequest struct {
+	Emails []string `json:"emails" binding:"required,min=1,max=100,dive,email"`
+	Role   OrgRole  `json:"role"   binding:"required"`
+}
+
+// InvitationDetail is the public response for GET /invitations/:token. It does
+// not expose the token hash or internal IDs beyond what the recipient needs to
+// decide whether to accept.
+type InvitationDetail struct {
+	OrgName     string    `json:"orgName"`
+	OrgSlug     string    `json:"orgSlug"`
+	InviterName string    `json:"inviterName"`
+	Role        OrgRole   `json:"role"`
+	ExpiresAt   time.Time `json:"expiresAt"`
+}

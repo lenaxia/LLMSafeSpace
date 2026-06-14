@@ -59,28 +59,19 @@ type OrgStore interface {
 	// GetStripeCustomerID resolves an org to its Stripe customer id via
 	// billing_accounts. Returns ("", nil) when no billing account exists.
 	GetStripeCustomerID(ctx context.Context, orgID string) (string, error)
-	// RecordStripeEvent inserts an idempotency row for a Stripe webhook event.
-	// Returns (true, nil) when the row was newly inserted (caller should process
-	// the event), (false, nil) when it already existed (duplicate delivery).
-	RecordStripeEvent(ctx context.Context, eventID, eventType string) (bool, error)
-	// DeleteStripeEvent removes an idempotency row so a failed delivery can be
-	// retried. Called when dispatch fails after the row was claimed.
-	DeleteStripeEvent(ctx context.Context, eventID string) error
-	// ListPendingOrgsOlderThan returns orgs still pending_activation older than
-	// maxAge, for the cleanup cron. Each entry carries the Stripe checkout
-	// session id (stored on the billing_accounts row) so the cron can verify the
-	// checkout state before deleting.
-	ListPendingOrgsOlderThan(ctx context.Context, maxAge time.Duration) ([]PendingOrgCleanup, error)
-	// HardDeleteOrg permanently removes an org and cascades to memberships and
-	// key members. Used by the pending-org cleanup cron. billingAccountID is the
-	// billing_accounts.id to also remove.
-	HardDeleteOrg(ctx context.Context, orgID string) error
-	// CreateBillingAccount inserts a billing_accounts row linking an owner
-	// (org) to a provider's external customer.
-	CreateBillingAccount(ctx context.Context, ownerID, ownerType, provider, externalCustomerID string) (int64, error)
-	// SetBillingAccountSubscription records the Stripe subscription id on an
-	// existing billing account.
-	SetBillingAccountSubscription(ctx context.Context, ownerID, ownerType, provider, subscriptionID string) error
+	// --- US-43.2: Invitations ---
+	CreateInvitation(ctx context.Context, inv *types.OrgInvitation) error
+	ListPendingInvitations(ctx context.Context, orgID string) ([]*types.OrgInvitation, error)
+	GetInvitationByTokenHash(ctx context.Context, tokenHash string) (*types.OrgInvitation, error)
+	GetInvitationByID(ctx context.Context, invID string) (*types.OrgInvitation, error)
+	// AcceptInvitation performs the accept flow atomically under FOR UPDATE:
+	// locks the invitation row, re-checks it is still pending, inserts the
+	// membership, and marks the invitation accepted. Returns
+	// (membership, alreadyAccepted, error).
+	AcceptInvitationTx(ctx context.Context, invID, userID string, role types.OrgRole) (*types.OrgMember, bool, error)
+	DeclineInvitation(ctx context.Context, invID string) error
+	DeleteInvitation(ctx context.Context, invID string) error
+	CountInvitationsLastHour(ctx context.Context, orgID string) (int, error)
 }
 
 // PgOrgStore implements OrgStore using database/sql.
@@ -841,4 +832,195 @@ func (s *PgOrgStore) SetBillingAccountSubscription(ctx context.Context, ownerID,
 		return fmt.Errorf("set billing account subscription: %w", err)
 	}
 	return nil
+}
+
+// --- US-43.2: Invitation implementations ---
+
+func (s *PgOrgStore) CreateInvitation(ctx context.Context, inv *types.OrgInvitation) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO org_invitations (id, org_id, email, role, invited_by, token_hash, expires_at, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())`,
+		inv.ID, inv.OrgID, inv.Email, inv.Role, inv.InvitedBy, inv.TokenHash, inv.ExpiresAt,
+	)
+	if err != nil {
+		return fmt.Errorf("create invitation: %w", err)
+	}
+	return nil
+}
+
+func (s *PgOrgStore) ListPendingInvitations(ctx context.Context, orgID string) ([]*types.OrgInvitation, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, org_id, email, role, invited_by, expires_at, bounce_type, bounced_at, created_at
+		 FROM org_invitations
+		 WHERE org_id = $1 AND accepted_at IS NULL AND declined_at IS NULL
+		 ORDER BY created_at DESC`,
+		orgID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list pending invitations: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []*types.OrgInvitation
+	for rows.Next() {
+		var inv types.OrgInvitation
+		var bounceType sql.NullString
+		var bouncedAt sql.NullTime
+		if err := rows.Scan(&inv.ID, &inv.OrgID, &inv.Email, &inv.Role, &inv.InvitedBy,
+			&inv.ExpiresAt, &bounceType, &bouncedAt, &inv.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan invitation: %w", err)
+		}
+		inv.BounceType = bounceType.String
+		if bouncedAt.Valid {
+			inv.BouncedAt = &bouncedAt.Time
+		}
+		out = append(out, &inv)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate invitations: %w", err)
+	}
+	if out == nil {
+		out = []*types.OrgInvitation{}
+	}
+	return out, nil
+}
+
+func (s *PgOrgStore) GetInvitationByTokenHash(ctx context.Context, tokenHash string) (*types.OrgInvitation, error) {
+	return s.scanInvitation(ctx,
+		`SELECT id, org_id, email, role, invited_by, expires_at, accepted_at, accepted_by,
+		        declined_at, bounce_type, bounced_at, created_at
+		 FROM org_invitations WHERE token_hash = $1`, tokenHash)
+}
+
+func (s *PgOrgStore) GetInvitationByID(ctx context.Context, invID string) (*types.OrgInvitation, error) {
+	return s.scanInvitation(ctx,
+		`SELECT id, org_id, email, role, invited_by, expires_at, accepted_at, accepted_by,
+		        declined_at, bounce_type, bounced_at, created_at
+		 FROM org_invitations WHERE id = $1`, invID)
+}
+
+func (s *PgOrgStore) scanInvitation(ctx context.Context, query string, args ...interface{}) (*types.OrgInvitation, error) {
+	var inv types.OrgInvitation
+	var acceptedAt, declinedAt, bouncedAt sql.NullTime
+	var acceptedBy sql.NullString
+	var bounceType sql.NullString
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(
+		&inv.ID, &inv.OrgID, &inv.Email, &inv.Role, &inv.InvitedBy, &inv.ExpiresAt,
+		&acceptedAt, &acceptedBy, &declinedAt, &bounceType, &bouncedAt, &inv.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("scan invitation row: %w", err)
+	}
+	if acceptedAt.Valid {
+		inv.AcceptedAt = &acceptedAt.Time
+	}
+	if declinedAt.Valid {
+		inv.DeclinedAt = &declinedAt.Time
+	}
+	if bouncedAt.Valid {
+		inv.BouncedAt = &bouncedAt.Time
+	}
+	inv.BounceType = bounceType.String
+	return &inv, nil
+}
+
+func (s *PgOrgStore) AcceptInvitationTx(ctx context.Context, invID, userID string, role types.OrgRole) (*types.OrgMember, bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, false, fmt.Errorf("begin transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var orgID string
+	var acceptedAt, declinedAt sql.NullTime
+	err = tx.QueryRowContext(ctx,
+		`SELECT org_id, accepted_at, declined_at
+		 FROM org_invitations
+		 WHERE id = $1 AND expires_at > NOW()
+		 FOR UPDATE`,
+		invID,
+	).Scan(&orgID, &acceptedAt, &declinedAt)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("lock invitation: %w", err)
+	}
+	if acceptedAt.Valid || declinedAt.Valid {
+		return nil, true, nil
+	}
+
+	pendingKeyWrap := role == types.OrgRoleAdmin
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO org_memberships (org_id, user_id, role, pending_key_wrap, created_at)
+		 VALUES ($1, $2, $3, $4, NOW())
+		 ON CONFLICT (org_id, user_id) DO NOTHING`,
+		orgID, userID, role, pendingKeyWrap,
+	); err != nil {
+		return nil, false, fmt.Errorf("insert membership: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE org_invitations SET accepted_at = NOW(), accepted_by = $2 WHERE id = $1`,
+		invID, userID,
+	); err != nil {
+		return nil, false, fmt.Errorf("mark invitation accepted: %w", err)
+	}
+
+	committed = true
+	if err := tx.Commit(); err != nil {
+		return nil, false, fmt.Errorf("commit: %w", err)
+	}
+
+	return &types.OrgMember{
+		OrgID:          orgID,
+		UserID:         userID,
+		Role:           role,
+		PendingKeyWrap: pendingKeyWrap,
+	}, false, nil
+}
+
+func (s *PgOrgStore) DeclineInvitation(ctx context.Context, invID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE org_invitations SET declined_at = NOW() WHERE id = $1
+		 AND accepted_at IS NULL AND declined_at IS NULL`,
+		invID,
+	)
+	if err != nil {
+		return fmt.Errorf("decline invitation: %w", err)
+	}
+	return nil
+}
+
+func (s *PgOrgStore) DeleteInvitation(ctx context.Context, invID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM org_invitations WHERE id = $1 AND accepted_at IS NULL AND declined_at IS NULL`,
+		invID,
+	)
+	if err != nil {
+		return fmt.Errorf("delete invitation: %w", err)
+	}
+	return nil
+}
+
+func (s *PgOrgStore) CountInvitationsLastHour(ctx context.Context, orgID string) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM org_invitations
+		 WHERE org_id = $1 AND created_at > NOW() - interval '1 hour'`,
+		orgID,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count invitations last hour: %w", err)
+	}
+	return count, nil
 }

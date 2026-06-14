@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -30,6 +32,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
 	agentoc "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
 	"github.com/lenaxia/llmsafespace/pkg/billing"
+	emailpkg "github.com/lenaxia/llmsafespace/pkg/email"
 	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/lenaxia/llmsafespace/pkg/settings"
@@ -53,6 +56,7 @@ type App struct {
 	secretsPool        *pgxpool.Pool             // pgx pool for secrets store; closed on shutdown
 	dekCacheClient     *redis.Client             // redis client for DEK cache; closed on shutdown
 	pendingOrgCleaner  *handlers.PendingOrgCleaner
+	invitationsHandler *handlers.InvitationsHandler
 	shutdownCh         chan struct{}
 	ctx                context.Context
 	cancel             context.CancelFunc
@@ -441,9 +445,32 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// provider (needs checkout-session lookup); in dev mode without Stripe the
 	// cleanup is a no-op (pending orgs accumulate but are harmless).
 	var pendingOrgCleaner *handlers.PendingOrgCleaner
+	var invitationsHandler *handlers.InvitationsHandler
 	if checkoutProvider != nil && pgOrgStore != nil {
 		pendingOrgCleaner = handlers.NewPendingOrgCleaner(
 			pgOrgStore, checkoutProvider, log, time.Hour, 7*24*time.Hour)
+	}
+
+	// US-43.2: Invitation system. Wire the email provider based on config.
+	if pgOrgStore != nil {
+		var mailer emailpkg.EmailProvider
+		switch strings.ToLower(cfg.Email.Provider) {
+		case "ses":
+			if cfg.Email.FromAddress == "" || cfg.Email.BaseURL == "" {
+				cancel()
+				return nil, fmt.Errorf("email provider 'ses' requires fromAddress and baseUrl to be set")
+			}
+			awsCfg, err := awsconfig.LoadDefaultConfig(context.Background(),
+				awsconfig.WithRegion(cfg.Email.SESRegion))
+			if err != nil {
+				cancel()
+				return nil, fmt.Errorf("init aws config for ses: %w", err)
+			}
+			mailer = emailpkg.NewSESProvider(awsCfg, cfg.Email.FromAddress)
+		default:
+			mailer = &emailpkg.NoopProvider{}
+		}
+		invitationsHandler = handlers.NewInvitationsHandler(pgOrgStore, mailer, svc.GetAuth(), cfg.Email.BaseURL, log)
 	}
 
 	router := server.NewRouter(svc, log, proxyHandler, server.RouterConfig{
@@ -466,6 +493,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		BulkReloadHandler:               bulkReloadHandler,
 		UsageHandler:                    usageHandler,
 		WebhookHandler:                  webhookHandler,
+		InvitationsHandler:              invitationsHandler,
 		CookieName:                      cfg.Auth.CookieName,
 	})
 
@@ -495,6 +523,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		asyncAudit:         asyncAudit,
 		secretsPool:        secretsPool,
 		pendingOrgCleaner:  pendingOrgCleaner,
+		invitationsHandler: invitationsHandler,
 		dekCacheClient:     dekCacheClient,
 		shutdownCh:         make(chan struct{}),
 		ctx:                ctx,

@@ -101,18 +101,23 @@ type Config struct {
 	// When SecretKey is empty, a NoopCheckoutProvider is used and the webhook
 	// endpoint rejects all deliveries — development/test mode.
 	Billing struct {
-		SecretKey          string `mapstructure:"secretKey"`
-		WebhookSecret      string `mapstructure:"webhookSecret"`
-		CheckoutSuccessURL string `mapstructure:"checkoutSuccessUrl"`
-		CheckoutCancelURL  string `mapstructure:"checkoutCancelUrl"`
-		PortalReturnURL    string `mapstructure:"portalReturnUrl"`
-		// PlanPrices maps an internal plan id to a Stripe Price id. Required for
-		// the self-service checkout flow; without an entry for a plan,
-		// CreateCheckoutSession returns an error. Populated from
-		// LLMSAFESPACE_BILLING_PLANPRICES_<PLAN> env vars (e.g.
-		// LLMSAFESPACE_BILLING_PLANPRICES_TEAM=price_abc).
-		PlanPrices map[string]string `mapstructure:"planPrices"`
+		SecretKey          string            `mapstructure:"secretKey"`
+		WebhookSecret      string            `mapstructure:"webhookSecret"`
+		CheckoutSuccessURL string            `mapstructure:"checkoutSuccessUrl"`
+		CheckoutCancelURL  string            `mapstructure:"checkoutCancelUrl"`
+		PortalReturnURL    string            `mapstructure:"portalReturnUrl"`
+		PlanPrices         map[string]string `mapstructure:"planPrices"`
 	} `mapstructure:"billing"`
+
+	// Email holds outbound email configuration (US-43.2 invitations). When
+	// Provider is empty or "noop", NoopProvider logs to stderr — no AWS
+	// dependency. "ses" requires AWS credentials via IRSA or env.
+	Email struct {
+		Provider    string `mapstructure:"provider"`
+		SESRegion   string `mapstructure:"sesRegion"`
+		FromAddress string `mapstructure:"fromAddress"`
+		BaseURL     string `mapstructure:"baseUrl"`
+	} `mapstructure:"email"`
 }
 
 // Load loads configuration from file and environment variables
@@ -252,6 +257,18 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("LLMSAFESPACE_BILLING_PORTALRETURNURL"); v != "" {
 		config.Billing.PortalReturnURL = v
+	}
+	if v := os.Getenv("LLMSAFESPACE_EMAIL_PROVIDER"); v != "" {
+		config.Email.Provider = v
+	}
+	if v := os.Getenv("LLMSAFESPACE_EMAIL_SESREGION"); v != "" {
+		config.Email.SESRegion = v
+	}
+	if v := os.Getenv("LLMSAFESPACE_EMAIL_FROMADDRESS"); v != "" {
+		config.Email.FromAddress = v
+	}
+	if v := os.Getenv("LLMSAFESPACE_EMAIL_BASEURL"); v != "" {
+		config.Email.BaseURL = v
 	}
 	for _, envKey := range []string{
 		"LLMSAFESPACE_BILLING_PLANPRICES_TEAM",
