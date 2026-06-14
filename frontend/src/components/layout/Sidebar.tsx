@@ -344,16 +344,23 @@ function WorkspaceGroup({
             />
             <span className="flex-1 truncate">{workspace.name}</span>
             {activating && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
-            {isSuspended && !activating && (
-              <Play className="h-3 w-3 flex-shrink-0 text-yellow-500" />
-            )}
-            {!isActive && !isSuspended && !activating && workspace.phase && (
+            {!activating && workspace.phase && !isActive && !isSuspended && (
               <span className="text-xs text-muted-foreground">{workspace.phase}</span>
             )}
             {!expanded && busyCount > 0 && (
               <Loader2 className="h-3 w-3 animate-spin text-blue-500 flex-shrink-0" />
             )}
           </button>
+          {isSuspended && !activating && (
+            <button
+              onClick={onResume}
+              className="rounded p-1 text-yellow-500 hover:bg-accent hover:text-yellow-400 transition-colors"
+              aria-label="Resume workspace"
+              title="Resume workspace"
+            >
+              <Play className="h-3 w-3" />
+            </button>
+          )}
           {isActive && (
             <button
               onClick={onNewSession}

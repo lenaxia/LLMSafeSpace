@@ -316,3 +316,48 @@ describe("Sidebar — activity spinner and unread pulsation (US-37.5/37.6)", () 
     expect(blueSpinners.length).toBe(1);
   });
 });
+
+describe("Sidebar — suspended workspace does not auto-resume", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsSessionBusy = (_sid: string) => false;
+    mockIsSessionUnread = (_sid: string) => false;
+    mockWorkspaceBusyCount = (_wsid: string) => 0;
+  });
+
+  it("clicking suspended workspace name does not call activate", async () => {
+    (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [
+        { id: "ws-sus", name: "suspended", phase: "Suspended", userId: "u1", runtime: "python", storageSize: "5Gi", createdAt: "", updatedAt: "" },
+      ],
+      pagination: { limit: 20, offset: 0, total: 1 },
+    });
+    (workspacesApi.getSessions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    renderSidebar();
+
+    await screen.findByText("suspended");
+    screen.getByText("suspended").closest("button")!.click();
+
+    expect(workspacesApi.activate).not.toHaveBeenCalled();
+  });
+
+  it("clicking the resume (Play) button calls activate", async () => {
+    (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [
+        { id: "ws-sus", name: "suspended", phase: "Suspended", userId: "u1", runtime: "python", storageSize: "5Gi", createdAt: "", updatedAt: "" },
+      ],
+      pagination: { limit: 20, offset: 0, total: 1 },
+    });
+    (workspacesApi.getSessions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    renderSidebar();
+
+    await screen.findByText("suspended");
+    await act(async () => {
+      screen.getByLabelText("Resume workspace").click();
+    });
+
+    expect(workspacesApi.activate).toHaveBeenCalledWith("ws-sus");
+  });
+});
