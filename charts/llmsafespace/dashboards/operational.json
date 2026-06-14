@@ -2253,7 +2253,7 @@
       "gridPos": {"h": 8, "w": 8, "x": 16, "y": 81},
       "id": 36,
       "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "llmsafespace_db_pool_active_connections{job=~\"$job\"}", "legendFormat": "active", "refId": "A"}, {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "llmsafespace_db_pool_idle_connections{job=~\"$job\"}", "legendFormat": "idle", "refId": "B"}, {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "llmsafespace_db_pool_max_connections{job=~\"$job\"}", "legendFormat": "max", "refId": "C"}],
+      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(llmsafespace_db_pool_active_connections{job=~\"$job\"})", "legendFormat": "active", "refId": "A"}, {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(llmsafespace_db_pool_idle_connections{job=~\"$job\"})", "legendFormat": "idle", "refId": "B"}, {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(llmsafespace_db_pool_max_connections{job=~\"$job\"})", "legendFormat": "max", "refId": "C"}],
       "title": "DB Connection Pool",
       "type": "timeseries",
       "description": "Active, idle, and max database pool connections. Active approaching max indicates pool exhaustion."
@@ -2297,7 +2297,7 @@
       "gridPos": {"h": 8, "w": 6, "x": 12, "y": 97},
       "id": 40,
       "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showThresholdLabels": false, "showThresholdMarkers": true},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "increase(llmsafespace_auth_lockouts_total{job=~\"$job\"}[$__range])", "legendFormat": "lockouts", "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(increase(llmsafespace_auth_lockouts_total{job=~\"$job\"}[$__range]))", "legendFormat": "lockouts", "refId": "A"}],
       "title": "Account Lockouts",
       "type": "stat",
       "description": "Brute-force lockout triggers in the selected time range."
@@ -2330,7 +2330,7 @@
       "gridPos": {"h": 8, "w": 6, "x": 12, "y": 105},
       "id": 43,
       "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showThresholdLabels": false, "showThresholdMarkers": true},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "llmsafespace_workspaces_suspended_total{job=~\"$job\"}", "legendFormat": "suspended", "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(llmsafespace_workspaces_suspended_total{job=~\"$job\"})", "legendFormat": "suspended", "refId": "A"}],
       "title": "Suspended Workspaces",
       "type": "gauge",
       "description": "Current count of workspaces in Suspended phase."
@@ -2341,7 +2341,7 @@
       "gridPos": {"h": 8, "w": 6, "x": 18, "y": 105},
       "id": 44,
       "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showThresholdLabels": false, "showThresholdMarkers": true},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "increase(llmsafespace_metering_quota_exceeded_total{job=~\"$job\"}[$__range])", "legendFormat": "{{event_type}}", "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(increase(llmsafespace_metering_quota_exceeded_total{job=~\"$job\"}[$__range])) by (event_type)", "legendFormat": "{{event_type}}", "refId": "A"}],
       "title": "Quota Exceeded Events",
       "type": "stat",
       "description": "Count of quota enforcement triggers (429 responses) in the selected time range."

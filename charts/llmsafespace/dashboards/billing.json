@@ -817,7 +817,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(llmsafespace_inference_requests_total{job=~\"$controller_job\"}[$__rate_interval]))",
+          "expr": "sum(rate(llmsafespace_inference_requests_total{job=~\"$job\"}[$__rate_interval]))",
           "legendFormat": "fleet total",
           "refId": "A"
         }
@@ -1079,7 +1079,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(llmsafespace_inference_requests_total{job=~\"$controller_job\"}[$__rate_interval]))",
+          "expr": "sum(rate(llmsafespace_inference_requests_total{job=~\"$job\"}[$__rate_interval]))",
           "legendFormat": "fleet total",
           "refId": "A"
         }
@@ -1830,7 +1830,7 @@
       "gridPos": {"h": 8, "w": 8, "x": 8, "y": 59},
       "id": 32,
       "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showThresholdLabels": false, "showThresholdMarkers": true},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "llmsafespace_metering_dlq_size", "legendFormat": "unresolved DLQ", "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(llmsafespace_metering_dlq_size)", "legendFormat": "unresolved DLQ", "refId": "A"}],
       "title": "DLQ Unresolved Entries",
       "type": "gauge",
       "description": "Current number of unresolved dead-letter queue entries. Non-zero means the DLQ reaper is failing to reprocess events."
@@ -1841,7 +1841,7 @@
       "gridPos": {"h": 8, "w": 8, "x": 16, "y": 59},
       "id": 33,
       "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showThresholdLabels": false, "showThresholdMarkers": true},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "increase(llmsafespace_metering_dlq_dead_total[$__range])", "legendFormat": "dead entries", "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(increase(llmsafespace_metering_dlq_dead_total[$__range]))", "legendFormat": "dead entries", "refId": "A"}],
       "title": "DLQ Dead Entries (Exhausted Retries)",
       "type": "stat",
       "description": "DLQ entries that exhausted all 5 retries. Non-zero requires manual intervention via admin API."
@@ -1852,7 +1852,7 @@
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 67},
       "id": 34,
       "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "increase(llmsafespace_metering_reconciliation_catchup_total[$__range])", "legendFormat": "compute catch-up events", "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(increase(llmsafespace_metering_reconciliation_catchup_total[$__range]))", "legendFormat": "compute catch-up events", "refId": "A"}],
       "title": "Compute Reconciliation Catch-up Events",
       "type": "timeseries",
       "description": "Compute_seconds events emitted by the reconciliation cron to fill gaps from process restarts or queue saturation."
@@ -1863,7 +1863,7 @@
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 67},
       "id": 35,
       "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "llmsafespace_metering_export_lag_seconds", "legendFormat": "export lag", "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(llmsafespace_metering_export_lag_seconds)", "legendFormat": "export lag", "refId": "A"}],
       "title": "Billing Export Lag",
       "type": "timeseries",
       "description": "Seconds since last successful billing export. Rising lag indicates export goroutine failures."
