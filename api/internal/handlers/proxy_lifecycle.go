@@ -55,14 +55,9 @@ func (h *ProxyHandler) Start() error {
 			return
 		}
 		h.watcher = watcher
-
-		if h.sseTracker != nil {
-			for wsName, phase := range watcher.GetAllKnownPhases() {
-				if phase == string(phaseActive) {
-					h.sseTracker.EnsureWatching(wsName)
-				}
-			}
-		}
+		// SSE subscriptions for already-Active workspaces are established
+		// by the watcher's seedResourceVersion(), which calls onPhaseChange
+		// for each Active workspace it discovers. No post-Start loop needed.
 	})
 	return startErr
 }

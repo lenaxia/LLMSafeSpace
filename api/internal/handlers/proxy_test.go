@@ -1278,11 +1278,17 @@ func TestProxy_OnPhaseChange_RunningKeepsSSE(t *testing.T) {
 	handler.sseTracker.EnsureWatching("ws-1")
 	assert.Equal(t, 1, handler.sseTracker.SubscriptionCount())
 
+	// Set prior to Active — this is the Active→Active reconcile path. The subscription
+	// must NOT be reset (no Stop+EnsureWatching) because the workspace hasn't changed phase.
+	handler.priorPhaseMu.Lock()
+	handler.priorPhase["ws-1"] = string(phaseActive)
+	handler.priorPhaseMu.Unlock()
+
 	sb := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(phaseActive), "ws-1")
 	handler.onPhaseChange(sb)
 
 	assert.Equal(t, 1, handler.sseTracker.SubscriptionCount(),
-		"SSE subscription should NOT be stopped on Running phase change")
+		"SSE subscription should NOT be stopped on Active→Active reconcile")
 }
 
 // TestProxy_OnPhaseChange_CreatingToActive_ResetsSSETracker verifies that when
@@ -2374,8 +2380,6 @@ func TestProxy_OnPhaseChange_RecordsLifecycleEvent(t *testing.T) {
 	handler.SetMeteringService(meteringSvc)
 
 	// Set prior phase to simulate a real Creating→Active transition.
-	// Lifecycle events must only be recorded for real transitions (prior != ""),
-	// not for seed calls where prior=="" (API restart with already-Active workspace).
 	handler.priorPhaseMu.Lock()
 	handler.priorPhase["ws-1"] = "Creating"
 	handler.priorPhaseMu.Unlock()
@@ -2408,22 +2412,47 @@ func TestProxy_OnPhaseChange_RecordsLifecycleEvent(t *testing.T) {
 	)
 }
 
-// TestProxy_OnPhaseChange_SeedCall_NoLifecycleEvent verifies that when onPhaseChange is
-// called with no prior phase (seed call — API restart), no lifecycle event is recorded.
-// Recording a lifecycle event with prior="" would corrupt billing data with phantom transitions.
-func TestProxy_OnPhaseChange_SeedCall_NoLifecycleEvent(t *testing.T) {
+// TestProxy_OnPhaseChange_CreatingToActive_AfterRestart_RecordsLifecycleEvent verifies that
+// when the API restarts with a Creating workspace, and that workspace later transitions to Active,
+// the lifecycle event IS recorded — even though prior=="" in the handler's priorPhase map
+// (because seedResourceVersion only calls onPhaseChange for Active workspaces).
+// Regression test for the billing regression introduced by the `prior != ""` guard that was
+// present in an earlier version of this fix and removed.
+func TestProxy_OnPhaseChange_CreatingToActive_AfterRestart_RecordsLifecycleEvent(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
 	meteringSvc := new(mocks.MockMeteringService)
 	handler.SetMeteringService(meteringSvc)
 
-	// No prior phase — seed call.
-	ws := makeWorkspaceCRDWithStatus("ws-seed", "10.0.0.1", string(v1.WorkspacePhaseActive), "user-seed")
+	// Simulate API restart: workspace is Creating → priorPhase never set in handler.
+	// Then a Creating→Active transition arrives from the watcher.
+	ws := makeWorkspaceCRDWithStatus("ws-restart", "10.0.0.1", string(v1.WorkspacePhaseActive), "")
+	ws.Spec.Owner.UserID = "user-restart"
 	ws.Spec.SecurityLevel = "standard"
+
+	meteringSvc.On("RecordLifecycleEvent",
+		mock.Anything,
+		"ws-restart",
+		"user-restart",
+		types.OwnerTypeUser,
+		"", // prior is "" because this is the first handler invocation
+		string(v1.WorkspacePhaseActive),
+		"standard",
+		mock.AnythingOfType("time.Time"),
+	).Return(nil)
 
 	handler.onPhaseChange(ws)
 
-	meteringSvc.AssertNotCalled(t, "RecordLifecycleEvent")
+	meteringSvc.AssertCalled(t, "RecordLifecycleEvent",
+		mock.Anything,
+		"ws-restart",
+		"user-restart",
+		types.OwnerTypeUser,
+		"",
+		string(v1.WorkspacePhaseActive),
+		"standard",
+		mock.AnythingOfType("time.Time"),
+	)
 }
 
 func TestProxy_OnPhaseChange_NoMeteringService_NoPanic(t *testing.T) {

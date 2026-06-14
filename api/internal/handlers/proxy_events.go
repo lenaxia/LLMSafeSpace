@@ -32,7 +32,7 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 		})
 	}
 
-	if h.meteringSvc != nil && workspace.Spec.Owner.UserID != "" && prior != "" {
+	if h.meteringSvc != nil && workspace.Spec.Owner.UserID != "" {
 		if err := h.meteringSvc.RecordLifecycleEvent(
 			context.Background(),
 			workspace.Name,
@@ -73,9 +73,12 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 	}
 
 	if phase == phaseActive {
-		// prior == "" means this is a seed call (API restart, workspace was already Active).
-		// prior != phaseActive means a real transition into Active (e.g. Resuming → Active).
-		// Both cases require starting the SSE subscription.
+		// prior == "" means this is the first invocation for this workspace in the handler —
+		// either a seed call (workspace was already Active on API restart) or a real transition
+		// from a phase not yet seen by the handler (e.g. Creating→Active on a new workspace
+		// whose Creating event arrived before the handler was aware of it).
+		// prior != phaseActive means a real transition into Active (e.g. Creating → Active,
+		// Resuming → Active). Both prior=="" and prior!=Active require starting the SSE subscription.
 		// prior == phaseActive means a watch event with no phase change — only clear cached config.
 		if prior == "" || prior != string(phaseActive) {
 			h.invalidateCaches(workspace.Name)
