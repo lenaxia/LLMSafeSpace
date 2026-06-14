@@ -534,13 +534,13 @@
           "datasource": {"type": "postgres", "uid": "${pg_datasource}"},
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT owner_id || ' / ' || event_type AS metric, COUNT(*) AS value FROM usage_events WHERE event_type = 'llm_request' AND owner_type = 'user' AND metadata->>'quota_exceeded' = 'true' AND event_time BETWEEN $__timeFrom() AND $__timeTo() GROUP BY owner_id, event_type ORDER BY value DESC LIMIT 10",
+          "rawSql": "SELECT owner_id AS metric, SUM(quantity) AS value FROM usage_events WHERE event_type = 'llm_request' AND owner_type = 'user' AND event_time BETWEEN $__timeFrom() AND $__timeTo() GROUP BY owner_id ORDER BY value DESC LIMIT 10",
           "refId": "A"
         }
       ],
-      "title": "Top-10 Users Hitting Quota Limits",
+      "title": "Top-10 Users by LLM Request Count",
       "type": "bargauge",
-      "description": "Top-10 users who triggered the most quota-exceeded rejections in the selected period. These users are actively constrained by their current plan limits. Action: upsell to higher tier, or review if limits are appropriate. Any non-zero value confirms enforcement is working."
+      "description": "Top-10 users by total LLM request count in the selected period. Users with disproportionately high request counts may be running automated loops or hitting rate limits. Combined with Token Consumption, this distinguishes heavy users (many small requests) from expensive users (few large-context requests). Action: enforce per-user request quotas, investigate automated usage patterns. NOTE: per-user quota-exceeded attribution requires recording a usage_event on 429 rejection (future code change); this panel uses llm_request events which are recorded today."
     }
   ],
   "refresh": "30s",

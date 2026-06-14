@@ -17,7 +17,7 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 
-  spec:
+spec:
   groups:
     - name: llmsafespace.api
       rules:
@@ -35,7 +35,7 @@ metadata:
               clamp_min(
                 sum(rate(http_requests_total{job=~"{{ $apiJob }}"}[5m]))
                 - sum(rate(http_requests_total{job=~"{{ $apiJob }}",status=~"4.."}[5m]))
-              , 1)
+              , 0.001)
             ) < 0.99
           for: 3m
           labels:
