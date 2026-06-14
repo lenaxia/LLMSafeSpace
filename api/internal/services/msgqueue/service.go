@@ -15,6 +15,7 @@ const (
 	keyTTL    = 24 * time.Hour
 )
 
+// QueuedMessage represents a message held in the Redis-backed queue.
 type QueuedMessage struct {
 	ID          string    `json:"id"`
 	Text        string    `json:"text"`
@@ -24,10 +25,13 @@ type QueuedMessage struct {
 	RetryCount  int       `json:"retry_count"`
 }
 
+// Service provides a Redis-backed FIFO message queue per workspace+session.
 type Service struct {
 	client *redis.Client
 }
 
+// NewWithClient creates a queue Service backed by the given Redis client.
+// The client is borrowed — its lifecycle is managed by the caller.
 func NewWithClient(client *redis.Client) *Service {
 	return &Service{client: client}
 }
@@ -98,7 +102,7 @@ func (s *Service) PeekAll(ctx context.Context, workspaceID, sessionID string) ([
 	for _, d := range data {
 		var msg QueuedMessage
 		if err := json.Unmarshal([]byte(d), &msg); err != nil {
-			continue
+			return nil, fmt.Errorf("unmarshaling queued message from list: %w", err)
 		}
 		msgs = append(msgs, msg)
 	}

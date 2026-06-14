@@ -350,6 +350,12 @@ func (h *ProxyHandler) getPodIPForSSE(workspaceID string) string {
 
 const maxQueueRetries = 5
 
+type queueUpdateData struct {
+	Event     string `json:"event"`
+	MessageID string `json:"messageID"`
+	Error     string `json:"error,omitempty"`
+}
+
 func (h *ProxyHandler) drainQueuedMessage(workspaceID, sessionID string) {
 	if h.queueSvc == nil {
 		return
@@ -383,6 +389,16 @@ func (h *ProxyHandler) drainQueuedMessage(workspaceID, sessionID string) {
 	h.publishQueueEvent(workspaceID, sessionID, "sent", msg.ID, "")
 }
 
+type promptRequestBody struct {
+	Parts     []promptPart `json:"parts"`
+	MessageID string       `json:"messageID"`
+}
+
+type promptPart struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
 func (h *ProxyHandler) sendQueuedToOpencode(ctx context.Context, workspaceID, sessionID string, msg *msgqueue.QueuedMessage) error {
 	v1Client, v1Err := h.k8sClient.LlmsafespaceV1()
 	if v1Err != nil {
@@ -400,9 +416,9 @@ func (h *ProxyHandler) sendQueuedToOpencode(ctx context.Context, workspaceID, se
 		return fmt.Errorf("getting password: %w", err)
 	}
 
-	body := map[string]interface{}{
-		"parts":     []map[string]string{{"type": "text", "text": msg.Text}},
-		"messageID": msg.ID,
+	body := promptRequestBody{
+		Parts:     []promptPart{{Type: "text", Text: msg.Text}},
+		MessageID: msg.ID,
 	}
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
@@ -436,12 +452,12 @@ func (h *ProxyHandler) publishQueueEvent(workspaceID, sessionID, event, messageI
 	if h.broker == nil {
 		return
 	}
-	data := map[string]interface{}{
-		"event":     event,
-		"messageID": messageID,
+	data := queueUpdateData{
+		Event:     event,
+		MessageID: messageID,
 	}
 	if errMsg != "" {
-		data["error"] = errMsg
+		data.Error = errMsg
 	}
 	h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
 		Type:      "queue.update",

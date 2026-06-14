@@ -257,7 +257,10 @@ func (h *ProxyHandler) EnqueueMessage(c *gin.Context) {
 		h.broker.Publish(wid, apitypes.WorkspaceSSEEvent{
 			Type:      "queue.update",
 			SessionID: sid,
-			Data:      map[string]interface{}{"event": "enqueued", "messageID": msgID},
+			Data: queueUpdateData{
+				Event:     "enqueued",
+				MessageID: msgID,
+			},
 		})
 	}
 
