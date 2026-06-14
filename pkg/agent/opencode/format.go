@@ -77,6 +77,9 @@ func FormatOpenCodeConfig(providers []secrets.LLMProviderData) ([]byte, error) {
 				if m.Label != "" {
 					om.Name = m.Label
 				}
+				if m.ContextLimit > 0 {
+					om.Limit = &opencodeModelLimit{Context: m.ContextLimit}
+				}
 				op.Models[m.ID] = om
 			}
 		}
@@ -124,5 +127,13 @@ type opencodeOptions struct {
 }
 
 type opencodeModel struct {
-	Name string `json:"name,omitempty"`
+	Name  string              `json:"name,omitempty"`
+	Limit *opencodeModelLimit `json:"limit,omitempty"`
+}
+
+// opencodeModelLimit mirrors the opencode config schema's model.limit object.
+// Only the context and output fields are accepted by opencode — the input field
+// causes ConfigInvalidError (confirmed in relay_injector.go buildRelayConfig comment).
+type opencodeModelLimit struct {
+	Context int `json:"context,omitempty"`
 }

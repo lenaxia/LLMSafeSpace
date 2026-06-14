@@ -350,3 +350,74 @@ func TestEnrichProviderModels_CacheWrittenToEnricherCacheDir(t *testing.T) {
 			"cache file must not be written to secretsBaseDir (reset() deletes it on every reload)")
 	}
 }
+
+// TestEnrichProviderModels_PreservesContextLimitOnExistingModels verifies that
+// when a provider's Models list is already populated (e.g. from the user-configured
+// credential secret with explicit ContextLimit values), the enricher leaves it
+// untouched — no HTTP call, ContextLimit values preserved.
+//
+// This is the normal path for personal-key providers where the workspace owner
+// explicitly sets ContextLimit in their credential to fix the "Unknown" denominator
+// in the context usage bar. The enricher must not overwrite those values with a
+// fresh fetch (which would return ContextLimit=0 since /v1/models doesn't include it).
+func TestEnrichProviderModels_PreservesContextLimitOnExistingModels(t *testing.T) {
+	dir := t.TempDir()
+
+	existingModels := []sec.LLMModelConfig{
+		{ID: "glm-5.1", ContextLimit: 200000},
+		{ID: "glm-5.2", Label: "GLM 5.2", ContextLimit: 200000},
+	}
+	providers := []sec.LLMProviderData{
+		{
+			Provider: "thekao cloud",
+			APIKey:   "sk-test",
+			BaseURL:  "https://ai.thekao.cloud/v1",
+			Models:   existingModels,
+		},
+	}
+
+	callCount := 0
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		callCount++
+		return nil, nil
+	})}
+
+	fn := enrichProviderModels(context.Background(), dir, client)
+	out := fn(providers)
+
+	assert.Equal(t, 0, callCount, "enricher must not call /v1/models when Models is already set")
+
+	require.Len(t, out[0].Models, 2)
+	assert.Equal(t, "glm-5.1", out[0].Models[0].ID)
+	assert.Equal(t, 200000, out[0].Models[0].ContextLimit,
+		"ContextLimit must be preserved — enricher must not zero it out")
+	assert.Equal(t, "glm-5.2", out[0].Models[1].ID)
+	assert.Equal(t, 200000, out[0].Models[1].ContextLimit)
+	assert.Equal(t, "GLM 5.2", out[0].Models[1].Label)
+}
+
+// TestEnrichProviderModels_FetchedModels_HaveZeroContextLimit documents that
+// models discovered by the enricher from /v1/models always have ContextLimit=0
+// because the OpenAI-compatible /v1/models endpoint does not return context
+// window data. This is expected and correct — such models will show "Unknown"
+// as the denominator in the context usage bar unless the user later configures
+// an explicit ContextLimit in their credential secret.
+func TestEnrichProviderModels_FetchedModels_HaveZeroContextLimit(t *testing.T) {
+	srv := fakeModelsServer(t, []string{"glm-5.1", "glm-5.2", "deepseek-v4-flash"})
+	defer srv.Close()
+
+	dir := t.TempDir()
+	providers := []sec.LLMProviderData{
+		{Provider: "thekao cloud", APIKey: "test-key", BaseURL: srv.URL},
+	}
+
+	fn := enrichProviderModels(context.Background(), dir, srv.Client())
+	out := fn(providers)
+
+	require.Len(t, out[0].Models, 3)
+	for _, m := range out[0].Models {
+		assert.Equal(t, 0, m.ContextLimit,
+			"enricher-discovered models must have ContextLimit=0 — /v1/models does not return context window sizes. "+
+				"Users must configure ContextLimit explicitly in their credential secret to fix the 'Unknown' denominator.")
+	}
+}

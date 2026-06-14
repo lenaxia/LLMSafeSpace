@@ -163,9 +163,23 @@ type AuditQuery struct {
 
 // LLMModelConfig specifies a model identifier and optional display label
 // for model visibility allowlisting.
+//
+// ContextLimit is the context window size in tokens. When non-zero it is
+// written into the opencode agent-config.json as limit.context, which
+// makes ModelContextLimit() return a non-zero value and causes the
+// contextTotal field in agentd statusz / workspace CRD status to be
+// populated. Without it, custom provider models (e.g. thekao cloud / glm-5.x)
+// show "Unknown" in the context usage bar because /v1/models returns only
+// {id, object, created, owned_by} — no context window data.
+//
+// This value cannot be auto-discovered from the provider API (the
+// LiteLLM /v1/models endpoint does not expose it and /v1/model/info
+// requires elevated key permissions that standard LLM keys don't have).
+// It must be configured explicitly by the workspace owner.
 type LLMModelConfig struct {
-	ID    string `json:"id"`
-	Label string `json:"label,omitempty"`
+	ID           string `json:"id"`
+	Label        string `json:"label,omitempty"`
+	ContextLimit int    `json:"contextLimit,omitempty"`
 }
 
 // LLMProviderData holds structured credentials for one LLM provider.
