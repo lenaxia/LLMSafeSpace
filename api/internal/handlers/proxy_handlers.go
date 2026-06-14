@@ -17,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/lenaxia/llmsafespace/api/internal/services/msgqueue"
 	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
@@ -213,4 +214,79 @@ func validateSessionID(s string) error {
 		return errors.New("sessionId contains characters outside [a-zA-Z0-9._-]")
 	}
 	return nil
+}
+
+type enqueueRequest struct {
+	Text string `json:"text" binding:"required"`
+}
+
+func (h *ProxyHandler) EnqueueMessage(c *gin.Context) {
+	sid := c.Param("sessionId")
+	if err := validateSessionID(sid); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sessionId: " + err.Error()})
+		return
+	}
+	wid := c.Param("id")
+
+	var req enqueueRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	if len(req.Text) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "text must not be empty"})
+		return
+	}
+	if len(req.Text) > 100_000 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "text exceeds 100KB limit"})
+		return
+	}
+
+	if h.queueSvc == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "message queue not available"})
+		return
+	}
+
+	msgID, err := h.queueSvc.Enqueue(c.Request.Context(), wid, sid, req.Text)
+	if err != nil {
+		h.logger.Error("Failed to enqueue message", err, "workspaceID", wid, "sessionID", sid)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to enqueue message"})
+		return
+	}
+
+	if h.broker != nil {
+		h.broker.Publish(wid, apitypes.WorkspaceSSEEvent{
+			Type:      "queue.update",
+			SessionID: sid,
+			Data: queueUpdateData{
+				Event:     "enqueued",
+				MessageID: msgID,
+			},
+		})
+	}
+
+	c.JSON(http.StatusAccepted, gin.H{"messageID": msgID})
+}
+
+func (h *ProxyHandler) ListQueue(c *gin.Context) {
+	sid := c.Param("sessionId")
+	if err := validateSessionID(sid); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sessionId: " + err.Error()})
+		return
+	}
+	wid := c.Param("id")
+
+	if h.queueSvc == nil {
+		c.JSON(http.StatusOK, gin.H{"messages": []msgqueue.QueuedMessage{}})
+		return
+	}
+
+	msgs, err := h.queueSvc.PeekAll(c.Request.Context(), wid, sid)
+	if err != nil {
+		h.logger.Error("Failed to list queue", err, "workspaceID", wid, "sessionID", sid)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list queue"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"messages": msgs})
 }

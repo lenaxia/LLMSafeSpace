@@ -97,6 +97,10 @@ func (h *ProxyHandler) SetMeteringService(svc interfaces.MeteringService) {
 	h.meteringSvc = svc
 }
 
+func (h *ProxyHandler) SetMessageQueueService(svc interfaces.MessageQueueService) {
+	h.queueSvc = svc
+}
+
 func (h *ProxyHandler) GetWorkspaceOwner(workspaceID string) string {
 	if h.userBroker == nil {
 		return ""

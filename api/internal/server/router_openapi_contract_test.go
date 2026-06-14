@@ -302,6 +302,10 @@ var implOnlyAllowlist = map[route]bool{
 
 	// Session delete — proxies to opencode's DELETE /session/:id.
 	{method: "DELETE", path: "/api/v1/workspaces/:id/sessions/:sessionId"}: true,
+
+	// Message queue — Redis-backed queue for messages typed while busy.
+	{method: "POST", path: "/api/v1/workspaces/:id/sessions/:sessionId/queue"}: true,
+	{method: "GET", path: "/api/v1/workspaces/:id/sessions/:sessionId/queue"}:  true,
 }
 
 // -----------------------------------------------------------------------------

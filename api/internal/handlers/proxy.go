@@ -88,6 +88,8 @@ type ProxyHandler struct {
 	// Active. Set via SetVersionSyncCallback before Start().
 	versionSyncCb workspace.VersionSyncCallback
 
+	queueSvc interfaces.MessageQueueService
+
 	startOnce sync.Once
 	stopOnce  sync.Once
 }

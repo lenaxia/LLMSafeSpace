@@ -77,7 +77,7 @@ vi.mock("../api/messages", () => ({
   messagesApi: {
     getHistory: vi.fn().mockResolvedValue([]),
     getHistoryPage: vi.fn().mockResolvedValue({ messages: [], nextCursor: undefined }),
-    sendAsync: vi.fn().mockResolvedValue(undefined),
+    sendAsync: vi.fn(), queueMessage: vi.fn().mockResolvedValue({ messageID: "msg_q_mock" }), getQueue: vi.fn().mockResolvedValue({ messages: [] }).mockResolvedValue(undefined),
   },
 }));
 vi.mock("../api/sessions", () => ({

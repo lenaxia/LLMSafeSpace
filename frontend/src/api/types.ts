@@ -265,6 +265,12 @@ export interface AgentPermissionResolvedEvent {
   data: { request_id: string; session_id: string; reply: string };
 }
 
+export interface QueueUpdateEvent {
+  type: "queue.update";
+  session_id: string;
+  data: { event: "enqueued" | "sent" | "error"; messageID: string; error?: string };
+}
+
 /**
  * Discriminated union of all event types delivered over the workspace SSE stream.
  * Narrow on `type` to access type-specific fields.
@@ -276,4 +282,5 @@ export type WorkspaceStreamEvent =
   | AgentQuestionEvent
   | AgentQuestionResolvedEvent
   | AgentPermissionEvent
-  | AgentPermissionResolvedEvent;
+  | AgentPermissionResolvedEvent
+  | QueueUpdateEvent;

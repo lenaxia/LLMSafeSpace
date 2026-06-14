@@ -546,9 +546,6 @@ export function ChatPage() {
 
     if (event.type === "session.status" && workspaceId) {
       queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
-      if (event.status === "idle") {
-        queue.notifyIdle(event.session_id);
-      }
       if (event.session_id === sessionId) {
         if (event.status === "idle") {
           sseHasDrivenBusy.current = true;
@@ -565,10 +562,13 @@ export function ChatPage() {
           setServerBusy(true);
           setRetryStatus(null);
         }
-        // Note: session.status=retry is NOT handled here. The synthesized
-        // session.status event from the proxy only carries string "busy" for
-        // retry events. The full retry payload (attempt, message, next, action)
-        // travels inside an opencode.event wrapper and is handled below.
+      }
+    } else if (event.type === "queue.update" && workspaceId) {
+      const qe = (event.data ?? {}) as { event?: string; messageID?: string; error?: string };
+      if (qe.event === "sent" && qe.messageID) {
+        queue.markSent(qe.messageID);
+      } else if (qe.event === "error" && qe.messageID) {
+        queue.markError(qe.messageID, qe.error ?? "Send failed");
       }
     } else if (event.type === "opencode.event" && workspaceId) {
       const oe = event as OpenCodeEvent;
