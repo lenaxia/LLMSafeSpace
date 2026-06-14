@@ -8,6 +8,7 @@
 package v1
 
 import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -442,6 +443,217 @@ func (in *WorkspaceStorageConfig) DeepCopy() *WorkspaceStorageConfig {
 		return nil
 	}
 	out := new(WorkspaceStorageConfig)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyInto copies the receiver, writing into out. in must be non-nil.
+func (in *FallbackConfig) DeepCopyInto(out *FallbackConfig) {
+	*out = *in
+}
+
+// DeepCopy copies the receiver, creating a new FallbackConfig.
+func (in *FallbackConfig) DeepCopy() *FallbackConfig {
+	if in == nil {
+		return nil
+	}
+	out := new(FallbackConfig)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyInto copies the receiver, writing into out. in must be non-nil.
+func (in *HealthCheckConfig) DeepCopyInto(out *HealthCheckConfig) {
+	*out = *in
+}
+
+// DeepCopy copies the receiver, creating a new HealthCheckConfig.
+func (in *HealthCheckConfig) DeepCopy() *HealthCheckConfig {
+	if in == nil {
+		return nil
+	}
+	out := new(HealthCheckConfig)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyInto copies the receiver, writing into out. in must be non-nil.
+func (in *InferenceRelay) DeepCopyInto(out *InferenceRelay) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
+	in.Spec.DeepCopyInto(&out.Spec)
+	in.Status.DeepCopyInto(&out.Status)
+}
+
+// DeepCopy copies the receiver, creating a new InferenceRelay.
+func (in *InferenceRelay) DeepCopy() *InferenceRelay {
+	if in == nil {
+		return nil
+	}
+	out := new(InferenceRelay)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyObject copies the receiver, creating a new runtime.Object.
+func (in *InferenceRelay) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+// DeepCopyInto copies the receiver, writing into out. in must be non-nil.
+func (in *InferenceRelayList) DeepCopyInto(out *InferenceRelayList) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ListMeta.DeepCopyInto(&out.ListMeta)
+	if in.Items != nil {
+		in, out := &in.Items, &out.Items
+		*out = make([]InferenceRelay, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+}
+
+// DeepCopy copies the receiver, creating a new InferenceRelayList.
+func (in *InferenceRelayList) DeepCopy() *InferenceRelayList {
+	if in == nil {
+		return nil
+	}
+	out := new(InferenceRelayList)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyObject copies the receiver, creating a new runtime.Object.
+func (in *InferenceRelayList) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+// DeepCopyInto copies the receiver, writing into out. in must be non-nil.
+func (in *InferenceRelaySpec) DeepCopyInto(out *InferenceRelaySpec) {
+	*out = *in
+	if in.Providers != nil {
+		in, out := &in.Providers, &out.Providers
+		*out = make([]RelayProviderSpec, len(*in))
+		copy(*out, *in)
+	}
+	out.WireGuard = in.WireGuard
+	out.HealthCheck = in.HealthCheck
+	out.Rotation = in.Rotation
+	out.Fallback = in.Fallback
+}
+
+// DeepCopy copies the receiver, creating a new InferenceRelaySpec.
+func (in *InferenceRelaySpec) DeepCopy() *InferenceRelaySpec {
+	if in == nil {
+		return nil
+	}
+	out := new(InferenceRelaySpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyInto copies the receiver, writing into out. in must be non-nil.
+func (in *InferenceRelayStatus) DeepCopyInto(out *InferenceRelayStatus) {
+	*out = *in
+	if in.Instances != nil {
+		in, out := &in.Instances, &out.Instances
+		*out = make([]RelayInstanceStatus, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+	if in.Conditions != nil {
+		in, out := &in.Conditions, &out.Conditions
+		*out = make([]metav1.Condition, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+	if in.LastRotation != nil {
+		in, out := &in.LastRotation, &out.LastRotation
+		*out = (*in).DeepCopy()
+	}
+}
+
+// DeepCopy copies the receiver, creating a new InferenceRelayStatus.
+func (in *InferenceRelayStatus) DeepCopy() *InferenceRelayStatus {
+	if in == nil {
+		return nil
+	}
+	out := new(InferenceRelayStatus)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyInto copies the receiver, writing into out. in must be non-nil.
+func (in *RelayInstanceStatus) DeepCopyInto(out *RelayInstanceStatus) {
+	*out = *in
+	if in.LastCheck != nil {
+		in, out := &in.LastCheck, &out.LastCheck
+		*out = (*in).DeepCopy()
+	}
+}
+
+// DeepCopy copies the receiver, creating a new RelayInstanceStatus.
+func (in *RelayInstanceStatus) DeepCopy() *RelayInstanceStatus {
+	if in == nil {
+		return nil
+	}
+	out := new(RelayInstanceStatus)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyInto copies the receiver, writing into out. in must be non-nil.
+func (in *RelayProviderSpec) DeepCopyInto(out *RelayProviderSpec) {
+	*out = *in
+	out.CredentialsRef = in.CredentialsRef
+}
+
+// DeepCopy copies the receiver, creating a new RelayProviderSpec.
+func (in *RelayProviderSpec) DeepCopy() *RelayProviderSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(RelayProviderSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyInto copies the receiver, writing into out. in must be non-nil.
+func (in *RotationConfig) DeepCopyInto(out *RotationConfig) {
+	*out = *in
+}
+
+// DeepCopy copies the receiver, creating a new RotationConfig.
+func (in *RotationConfig) DeepCopy() *RotationConfig {
+	if in == nil {
+		return nil
+	}
+	out := new(RotationConfig)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyInto copies the receiver, writing into out. in must be non-nil.
+func (in *WireGuardConfig) DeepCopyInto(out *WireGuardConfig) {
+	*out = *in
+}
+
+// DeepCopy copies the receiver, creating a new WireGuardConfig.
+func (in *WireGuardConfig) DeepCopy() *WireGuardConfig {
+	if in == nil {
+		return nil
+	}
+	out := new(WireGuardConfig)
 	in.DeepCopyInto(out)
 	return out
 }

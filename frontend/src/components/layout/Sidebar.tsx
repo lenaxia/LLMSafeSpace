@@ -658,7 +658,10 @@ function SessionTreeRow({
   const isBusy = useIsSessionBusy(s.id);
   const isUnread = useIsSessionUnread(s.id);
   const isSelected = s.id === selectedSessionId;
-  const showPulse = isUnread && !isSelected && !isBusy;
+  // Only top-level (parent) sessions pulsate when they have an unread response.
+  // Subtasks (depth > 0) show the blue spinner while busy but stay quiet when
+  // done — pulsating every completed subtask is just noise.
+  const showPulse = isUnread && !isSelected && !isBusy && depth === 0;
   const contextUsed = contextBySessionId.get(s.id);
 
   if (isRenaming) {

@@ -14,6 +14,7 @@ BINARY_UNIX=$(BINARY_NAME)_unix
         helm-chart-test helm-deploy \
         openapi-validate \
         repolint chart-sync-migrations install-hooks \
+        relay-bin \
         check tools-install \
         gitleaks govulncheck trivy-fs trivy-config security-scan \
         migration-roundtrip migration-fk-cascade migration-idempotent migration-data-cleanup migration-safety \
@@ -88,6 +89,11 @@ build-linux:
 
 build-linux-arm64:
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GOBUILD) -o $(BINARY_UNIX)-arm64 -v ./api/cmd/api
+
+# relay-proxy: standalone relay binary for OCI/GCP VMs (Epic 42)
+relay-bin:
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GOBUILD) -o deploy/relay-proxy-arm64 ./cmd/relay-proxy/
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GOBUILD) -o deploy/relay-proxy-amd64 ./cmd/relay-proxy/
 
 docker-build:
 	docker build -t $(BINARY_NAME):latest .
