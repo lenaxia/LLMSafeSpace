@@ -223,3 +223,34 @@ func TestTTLExpiry(t *testing.T) {
 	n, _ := svc.Len(ctx, "ws-1", "ses-1")
 	assert.Equal(t, int64(0), n, "queue should expire after TTL")
 }
+
+func TestClearWorkspace(t *testing.T) {
+	svc, _, cleanup := setupTestService(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	_, _ = svc.Enqueue(ctx, "ws-1", "ses-A", "for A")
+	_, _ = svc.Enqueue(ctx, "ws-1", "ses-B", "for B")
+	_, _ = svc.Enqueue(ctx, "ws-2", "ses-C", "for ws-2")
+
+	err := svc.ClearWorkspace(ctx, "ws-1")
+	require.NoError(t, err)
+
+	n, _ := svc.Len(ctx, "ws-1", "ses-A")
+	assert.Equal(t, int64(0), n, "ws-1 ses-A should be cleared")
+
+	n, _ = svc.Len(ctx, "ws-1", "ses-B")
+	assert.Equal(t, int64(0), n, "ws-1 ses-B should be cleared")
+
+	n, _ = svc.Len(ctx, "ws-2", "ses-C")
+	assert.Equal(t, int64(1), n, "ws-2 should be unaffected")
+}
+
+func TestClearWorkspace_EmptyWorkspace(t *testing.T) {
+	svc, _, cleanup := setupTestService(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	err := svc.ClearWorkspace(ctx, "nonexistent")
+	require.NoError(t, err)
+}

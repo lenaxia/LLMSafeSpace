@@ -18,6 +18,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
+	"github.com/lenaxia/llmsafespace/api/internal/services/msgqueue"
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
@@ -276,7 +277,7 @@ func (h *ProxyHandler) ListQueue(c *gin.Context) {
 	wid := c.Param("id")
 
 	if h.queueSvc == nil {
-		c.JSON(http.StatusOK, gin.H{"messages": []interface{}{}})
+		c.JSON(http.StatusOK, gin.H{"messages": []msgqueue.QueuedMessage{}})
 		return
 	}
 

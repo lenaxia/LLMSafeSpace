@@ -5,7 +5,7 @@ import type { Message } from "../api/types";
 export type QueuedMessage = {
   id: string;
   text: string;
-  status: "pending" | "sending" | "error";
+  status: "pending" | "error";
   error?: string;
   sessionId: string;
 };
@@ -16,7 +16,6 @@ type Action =
   | { type: "mark_error"; id: string; error: string }
   | { type: "remove"; id: string }
   | { type: "clear" }
-  | { type: "filter_session"; sessionId: string }
   | { type: "hydrate"; sessionId: string; messages: QueuedMessage[] }
   | { type: "reconcile"; historyIds: Set<string> };
 
@@ -34,8 +33,6 @@ function reduce(state: QueuedMessage[], action: Action): QueuedMessage[] {
       return state.filter((m) => m.id !== action.id);
     case "clear":
       return [];
-    case "filter_session":
-      return state.filter((m) => m.sessionId === action.sessionId);
     case "hydrate":
       return state.some((m) => m.sessionId === action.sessionId)
         ? state

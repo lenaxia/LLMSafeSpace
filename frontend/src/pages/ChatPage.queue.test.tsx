@@ -83,7 +83,7 @@ function sendSSE(event: Record<string, unknown>) {
   act(() => { capturedSSEHandler?.(event); });
 }
 
-describe("ChatPage message queue (v3 — TUI-matching serialized)", () => {
+describe("ChatPage message queue (backend-backed)", () => {
   beforeEach(() => {
     capturedSSEHandler = null;
     vi.clearAllMocks();

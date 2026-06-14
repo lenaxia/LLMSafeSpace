@@ -98,8 +98,10 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	}
 	proxyHandler.SetSessionIndex(sessionIndexSvc)
 
-	queueSvc := msgqueue.NewWithClient(svc.Cache.(*cache.Service).GetClient())
-	proxyHandler.SetMessageQueueService(queueSvc)
+	if cacheSvc, ok := svc.Cache.(*cache.Service); ok {
+		queueSvc := msgqueue.NewWithClient(cacheSvc.GetClient())
+		proxyHandler.SetMessageQueueService(queueSvc)
+	}
 
 	if svc.Metering != nil {
 		proxyHandler.SetMeteringService(svc.Metering)

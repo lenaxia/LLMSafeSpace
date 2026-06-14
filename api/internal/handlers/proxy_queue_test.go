@@ -198,11 +198,15 @@ func TestDrainQueuedMessage_SendsToOpencode(t *testing.T) {
 	require.Eventually(t, func() bool {
 		select {
 		case evt := <-sub.Ch:
-			return evt.Type == "queue.update"
+			if evt.Type != "queue.update" {
+				return false
+			}
+			data, ok := evt.Data.(queueUpdateData)
+			return ok && data.Event == "sent"
 		default:
 			return false
 		}
-	}, 2*time.Second, 10*time.Millisecond)
+	}, 2*time.Second, 10*time.Millisecond, "should publish queue.update with event=sent")
 
 	n, _ := svc.Len(context.Background(), "ws-1", "ses-1")
 	assert.Equal(t, int64(0), n, "message should be consumed from queue")
