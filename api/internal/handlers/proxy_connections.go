@@ -130,6 +130,8 @@ func (h *ProxyHandler) invalidateCaches(workspaceID string) {
 	h.parentBackfilledMu.Lock()
 	delete(h.parentBackfilled, workspaceID)
 	h.parentBackfilledMu.Unlock()
+
+	h.clearDeletedSessions(workspaceID)
 }
 
 func (h *ProxyHandler) GetActiveSessions(workspaceID string) []string {

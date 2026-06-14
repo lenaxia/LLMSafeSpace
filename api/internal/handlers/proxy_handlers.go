@@ -112,6 +112,8 @@ func (h *ProxyHandler) DeleteSession(c *gin.Context) {
 		return
 	}
 
+	h.markSessionDeleted(workspaceID, sid)
+
 	if h.sessionIndex != nil {
 		if err := h.sessionIndex.DeleteSession(context.Background(), workspaceID, sid); err != nil {
 			h.logger.Error("failed to delete session from index", err, "workspaceID", workspaceID, "sessionID", sid)
@@ -131,6 +133,48 @@ func (h *ProxyHandler) DeleteSession(c *gin.Context) {
 			})
 		}
 	}()
+}
+
+// markSessionDeleted records that a session was explicitly deleted so that
+// late SSE events from opencode don't re-insert it into session_index.
+func (h *ProxyHandler) markSessionDeleted(workspaceID, sessionID string) {
+	h.deletedSessionsMu.Lock()
+	h.deletedSessions[workspaceID+"/"+sessionID] = struct{}{}
+	// Bounded: if the set grows beyond a reasonable size, evict a batch.
+	// In practice this never triggers — sessions are deleted rarely and the
+	// set is cleared on workspace suspend/delete.
+	if len(h.deletedSessions) > 500 {
+		count := 0
+		for k := range h.deletedSessions {
+			delete(h.deletedSessions, k)
+			count++
+			if count >= 250 {
+				break
+			}
+		}
+	}
+	h.deletedSessionsMu.Unlock()
+}
+
+// isSessionDeleted returns true if the session was recently deleted via the
+// API and late events should be suppressed.
+func (h *ProxyHandler) isSessionDeleted(workspaceID, sessionID string) bool {
+	h.deletedSessionsMu.RLock()
+	_, ok := h.deletedSessions[workspaceID+"/"+sessionID]
+	h.deletedSessionsMu.RUnlock()
+	return ok
+}
+
+// clearDeletedSessions removes all deleted-session markers for a workspace.
+func (h *ProxyHandler) clearDeletedSessions(workspaceID string) {
+	h.deletedSessionsMu.Lock()
+	prefix := workspaceID + "/"
+	for k := range h.deletedSessions {
+		if strings.HasPrefix(k, prefix) {
+			delete(h.deletedSessions, k)
+		}
+	}
+	h.deletedSessionsMu.Unlock()
 }
 
 func (h *ProxyHandler) GetWorkspaceCRD(workspaceID string) (*v1.Workspace, error) {
