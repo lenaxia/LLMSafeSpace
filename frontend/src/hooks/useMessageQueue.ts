@@ -25,7 +25,6 @@ type Action =
   | { type: "send_success"; id: string }
   | { type: "remove"; id: string }
   | { type: "clear" }
-  | { type: "filter_session"; sessionId: string }
   | { type: "timeout_sending"; cutoff: number }
   | { type: "retry"; id: string }
   | { type: "phase_error" }
@@ -57,8 +56,6 @@ function reduce(state: QueuedMessage[], action: Action): QueuedMessage[] {
       return state.filter((m) => m.id !== action.id);
     case "clear":
       return [];
-    case "filter_session":
-      return state.filter((m) => m.sessionId === action.sessionId);
     case "timeout_sending": {
       const cutoff = action.cutoff;
       return state.map((m) => {
