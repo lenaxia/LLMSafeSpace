@@ -29,11 +29,6 @@ var (
 	ErrOrgKeyStale = errors.New("org key member record is stale — org DEK rotation required")
 )
 
-// OrgKEKInfo is the HKDF info string for org KEK derivation.
-// MUST differ from kekInfo ("llmsafespace-kek") to prevent the org KEK
-// from being identical to the user KEK given the same password+salt.
-const OrgKEKInfo = "llmsafespace-org-kek"
-
 // OrgKeyService manages org DEK lifecycle (create, unlock, rewrap, rotate).
 // Parallel to KeyService (which handles user DEKs) but purpose-built for the
 // per-admin-wrapped org DEK model.
@@ -83,7 +78,7 @@ func (s *OrgKeyService) InitializeOrgKeys(ctx context.Context, orgID, adminUserI
 		return nil, fmt.Errorf("get admin salt: %w", err)
 	}
 
-	adminKEK, err := DeriveKEK(adminPassword, adminSalt, OrgKEKInfo)
+	adminKEK, err := DeriveKEKFromPassword(adminPassword, adminSalt)
 	if err != nil {
 		zeroBytes(orgDEK)
 		return nil, fmt.Errorf("derive admin KEK: %w", err)
@@ -118,7 +113,7 @@ func (s *OrgKeyService) UnlockOrgDEK(ctx context.Context, record *OrgKeyMemberRe
 		return nil
 	}
 
-	adminKEK, err := DeriveKEK(password, userSalt, OrgKEKInfo)
+	adminKEK, err := DeriveKEKFromPassword(password, userSalt)
 	if err != nil {
 		return fmt.Errorf("derive KEK: %w", err)
 	}
@@ -200,7 +195,7 @@ func (s *OrgKeyService) WrapOrgDEKForNewAdmin(ctx context.Context, orgID, newAdm
 		return fmt.Errorf("get new admin salt: %w", err)
 	}
 
-	newAdminKEK, err := DeriveKEK(newAdminPassword, newAdminSalt, OrgKEKInfo)
+	newAdminKEK, err := DeriveKEKFromPassword(newAdminPassword, newAdminSalt)
 	if err != nil {
 		return fmt.Errorf("derive new admin KEK: %w", err)
 	}
@@ -251,7 +246,7 @@ func (s *OrgKeyService) RewrapOrgDEKForAdmin(ctx context.Context, orgID, userID 
 		return fmt.Errorf("get user salt: %w", err)
 	}
 
-	newKEK, err := DeriveKEK(newPassword, userSalt, OrgKEKInfo)
+	newKEK, err := DeriveKEKFromPassword(newPassword, userSalt)
 	if err != nil {
 		return fmt.Errorf("derive new KEK: %w", err)
 	}
@@ -340,7 +335,7 @@ func (s *OrgKeyService) RotateOrgDEK(ctx context.Context, orgID, adminUserID str
 		return 0, fmt.Errorf("get admin salt: %w", err)
 	}
 
-	adminKEK, err := DeriveKEK(adminPassword, adminSalt, OrgKEKInfo)
+	adminKEK, err := DeriveKEKFromPassword(adminPassword, adminSalt)
 	if err != nil {
 		zeroBytes(newDEK)
 		return 0, fmt.Errorf("derive admin KEK: %w", err)

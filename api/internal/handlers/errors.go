@@ -15,6 +15,10 @@ var (
 	ErrCredentialNotFound  = errors.New("credential not found")
 )
 
+func isDuplicateErr(err error) bool {
+	return errors.Is(ClassifyPostgresError(err), ErrDuplicateCredential)
+}
+
 func ClassifyPostgresError(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrCredentialNotFound
