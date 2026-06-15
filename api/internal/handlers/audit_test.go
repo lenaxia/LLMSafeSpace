@@ -5,6 +5,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"sync"
 	"testing"
@@ -61,6 +62,22 @@ func TestAuditHandler_List_Success(t *testing.T) {
 	w := doRequest(setupAuditRouter(h), "GET", "/api/v1/orgs/org-1/audit", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Items      []*types.AuditEntry       `json:"items"`
+		Pagination *types.PaginationMetadata `json:"pagination"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(resp.Items))
+	}
+	if resp.Items[0].Action != "policy.set" {
+		t.Errorf("first entry action: got %q", resp.Items[0].Action)
+	}
+	if resp.Pagination == nil || resp.Pagination.Total != 2 {
+		t.Errorf("expected pagination total 2, got %+v", resp.Pagination)
 	}
 }
 

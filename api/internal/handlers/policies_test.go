@@ -67,7 +67,7 @@ func (m *mockPolicyStore) LogOrgEvent(_ context.Context, _, _, _, _ string, _ ma
 
 func setupPolicyRouter(t *testing.T, store *mockPolicyStore) *PolicyHandler {
 	t.Helper()
-	return NewPolicyHandler(store, nil, &mockOrgAuthService{userID: "admin-1"})
+	return NewPolicyHandler(store, nil, &mockOrgAuthService{userID: "admin-1"}, nil)
 }
 
 func TestPolicyHandler_Get_Empty(t *testing.T) {

@@ -27,12 +27,17 @@ type PolicyHandler struct {
 	store   policyStore
 	svc     *policy.Service
 	authSvc orgAuthService
+	logger  policyLogger
+}
+
+type policyLogger interface {
+	Warn(msg string, args ...any)
 }
 
 // NewPolicyHandler constructs the handler. svc is used for cache invalidation
-// after mutations.
-func NewPolicyHandler(store policyStore, svc *policy.Service, authSvc orgAuthService) *PolicyHandler {
-	return &PolicyHandler{store: store, svc: svc, authSvc: authSvc}
+// after mutations. logger is used to surface audit emission failures.
+func NewPolicyHandler(store policyStore, svc *policy.Service, authSvc orgAuthService, logger policyLogger) *PolicyHandler {
+	return &PolicyHandler{store: store, svc: svc, authSvc: authSvc, logger: logger}
 }
 
 // Get handles GET /api/v1/orgs/:id/policies. Returns all configured policies.
@@ -72,7 +77,9 @@ func (h *PolicyHandler) Put(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to set policy"})
 		return
 	}
-	_ = h.store.LogOrgEvent(c.Request.Context(), orgID, userID, "policy.set", string(key), map[string]any{"value": body})
+	if err := h.store.LogOrgEvent(c.Request.Context(), orgID, userID, "policy.set", string(key), map[string]any{"value": body}); err != nil && h.logger != nil {
+		h.logger.Warn("audit log emission failed", "action", "policy.set", "orgID", orgID, "error", err.Error())
+	}
 	if h.svc != nil {
 		h.svc.InvalidateCache(c.Request.Context(), orgID)
 	}
@@ -96,7 +103,9 @@ func (h *PolicyHandler) Delete(c *gin.Context) {
 		return
 	}
 	actorID := h.authSvc.GetUserID(c)
-	_ = h.store.LogOrgEvent(c.Request.Context(), orgID, actorID, "policy.delete", string(key), nil)
+	if err := h.store.LogOrgEvent(c.Request.Context(), orgID, actorID, "policy.delete", string(key), nil); err != nil && h.logger != nil {
+		h.logger.Warn("audit log emission failed", "action", "policy.delete", "orgID", orgID, "error", err.Error())
+	}
 	if h.svc != nil {
 		h.svc.InvalidateCache(c.Request.Context(), orgID)
 	}

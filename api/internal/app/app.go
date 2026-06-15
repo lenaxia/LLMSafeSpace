@@ -477,7 +477,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// US-43.7: Org policy service + handler.
 	if pgOrgStore != nil {
 		policySvc = policy.New(pgOrgStore, svc.Cache)
-		policyHandler = handlers.NewPolicyHandler(pgOrgStore, policySvc, svc.GetAuth())
+		policyHandler = handlers.NewPolicyHandler(pgOrgStore, policySvc, svc.GetAuth(), log)
 		if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
 			wsSvc.SetPolicyChecker(policySvc)
 		}
