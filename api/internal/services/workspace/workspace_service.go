@@ -1359,7 +1359,13 @@ func (s *Service) EnsureSecretsManifest(ctx context.Context, workspaceID string,
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		existing, err := secretClient.Get(ctx, secretName, metav1.GetOptions{})
 		if err == nil {
-			existing.Data = map[string][]byte{"secrets.json": secretsJSON}
+			// Merge secrets.json into existing data. Replace the key only, so
+			// workspace-config.json (written by EnsureWorkspaceConfig) and any
+			// other keys added in the future are preserved unmodified.
+			if existing.Data == nil {
+				existing.Data = map[string][]byte{}
+			}
+			existing.Data["secrets.json"] = secretsJSON
 			// Merge labels: preserve any additions made by an
 			// operator while ensuring our markers are present.
 			if existing.Labels == nil {

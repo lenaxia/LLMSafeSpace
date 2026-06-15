@@ -553,10 +553,19 @@ func (h *SecretsHandler) SetModel(c *gin.Context) {
 	defaultModelCache.Evict(workspaceID)
 
 	// Also persist to K8s Secret so the next pod boot picks it up.
+	// Log a warning on failure — the DB write already succeeded, so the user's
+	// selection is durable in PostgreSQL. The Secret write failing is recoverable
+	// (the selection will take effect on next successful SetModel call or the next
+	// credential bind which also calls EnsureSecretsManifest). Do not return a 500:
+	// the user's intent has been recorded and the live agent patch (below) may still
+	// succeed for the current session.
 	if h.manifestWriter != nil {
-		_ = h.manifestWriter.EnsureWorkspaceConfig(c.Request.Context(), workspaceID, types.WorkspaceConfig{
+		if cfgErr := h.manifestWriter.EnsureWorkspaceConfig(c.Request.Context(), workspaceID, types.WorkspaceConfig{
 			DefaultModel: req.Model,
-		})
+		}); cfgErr != nil {
+			h.warn("SetModel: EnsureWorkspaceConfig failed — model will not persist across pod restart until next successful write",
+				"workspaceID", workspaceID, "error", cfgErr.Error())
+		}
 	}
 
 	// Push model selection to running agent (if pod available).
