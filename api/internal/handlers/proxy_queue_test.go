@@ -658,49 +658,6 @@ func setupPasswordSecret(t *testing.T, handler *ProxyHandler, workspaceID, passw
 	require.NoError(t, err)
 }
 
-// setupFlushTestEnv creates a ProxyHandler wired with a real SSE tracker,
-// a miniredis-backed queue service, an event broker, and a mock k8s client.
-// The sseIdle function simulates opencode emitting a session.status=idle event.
-func setupFlushTestEnv(t *testing.T) (
-	handler *ProxyHandler,
-	svc *msgqueue.Service,
-	tracker *ssetracker.Tracker,
-	sseIdle func(sessionID string),
-	cleanup func(),
-) {
-	t.Helper()
-	mr, err := miniredis.Run()
-	require.NoError(t, err)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	svc = msgqueue.NewWithClient(client)
-
-	k8sMock := newMockK8sWithWorkspace(t, "ws-1", "10.0.0.1")
-	httpClient := &http.Client{Timeout: 5 * time.Second}
-	handler, err = NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient, nil)
-	require.NoError(t, err)
-	handler.SetMessageQueueService(svc)
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
-
-	// Real SSE tracker with idle callback wired to onSessionIdle.
-	tracker = ssetracker.NewTracker(httpClient, &testLogger{}, func(workspaceID, sessionID string) {
-		handler.onSessionIdle(workspaceID, sessionID)
-	})
-	handler.sseTracker = tracker
-
-	sseIdle = func(sessionID string) {
-		props, _ := json.Marshal(map[string]interface{}{
-			"sessionID": sessionID,
-			"status":    map[string]string{"type": "idle"},
-		})
-		tracker.DispatchProperties("ws-1", "session.status", props)
-	}
-
-	return handler, svc, tracker, sseIdle, func() {
-		_ = client.Close()
-		mr.Close()
-	}
-}
-
 // TestFlushAndAbortAfterIdle_SingleMessage verifies that flushAndAbortAfterIdle
 // sends one message to opencode after the session goes idle and then issues
 // a second abort.
@@ -837,9 +794,10 @@ func TestFlushAndAbortAfterIdle_MultipleMessages(t *testing.T) {
 	promptCount := 0
 	abortCount := 0
 	for _, p := range paths {
-		if p == "/session/ses-1/prompt_async" {
+		switch p {
+		case "/session/ses-1/prompt_async":
 			promptCount++
-		} else if p == "/session/ses-1/abort" {
+		case "/session/ses-1/abort":
 			abortCount++
 		}
 	}
