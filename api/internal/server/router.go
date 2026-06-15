@@ -293,6 +293,7 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		relayAdmin.GET("/status", cfg.RelayAdminHandler.GetStatus)
 		relayAdmin.POST("/oci-creds", cfg.RelayAdminHandler.SaveOCICreds)
 		relayAdmin.POST("/gcp-creds", cfg.RelayAdminHandler.SaveGCPCreds)
+		relayAdmin.POST("/aws-creds", cfg.RelayAdminHandler.SaveAWSCreds)
 		relayAdmin.POST("/deploy", cfg.RelayAdminHandler.Deploy)
 		relayAdmin.POST("/rotate/:id", cfg.RelayAdminHandler.Rotate)
 		relayAdmin.POST("/pause", cfg.RelayAdminHandler.Pause)

@@ -21,8 +21,8 @@ import (
 )
 
 // RelayAdminHandler serves the relay admin setup wizard and status dashboard endpoints.
-// The relay fleet uses OCI (Always Free, primary) and GCP (Always Free, failover)
-// providers — matching the InferenceRelay CRD enum `oci;gcp`.
+// The relay fleet supports AWS (paid primary), OCI (free secondary), and GCP (optional)
+// providers — matching the InferenceRelay CRD enum `aws;oci;gcp`.
 type RelayAdminHandler struct {
 	clientset    kubernetes.Interface
 	llmClient    interfaces.LLMSafespaceV1Interface
@@ -56,6 +56,7 @@ type setupResponse struct {
 	MetalLBInstalled  bool   `json:"metalLBInstalled"`
 	RouterDeployed    bool   `json:"routerDeployed"`
 	CRDInstalled      bool   `json:"crdInstalled"`
+	AWSConfigured     bool   `json:"awsConfigured"`
 	OCIConfigured     bool   `json:"ociConfigured"`
 	GCPConfigured     bool   `json:"gcpConfigured"`
 	WireGuardEndpoint string `json:"wireGuardEndpoint"`
@@ -78,6 +79,7 @@ func (h *RelayAdminHandler) GetSetup(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "CRD check failed: " + err.Error()})
 		return
 	}
+	h.checkAWSSecret(ctx, &resp)
 	h.checkOCISecret(ctx, &resp)
 	h.checkGCPSecret(ctx, &resp)
 	h.fillWireGuardEndpoint(ctx, &resp)
@@ -127,6 +129,11 @@ func (h *RelayAdminHandler) checkCRD(ctx context.Context, resp *setupResponse) e
 		}
 	}
 	return nil
+}
+
+func (h *RelayAdminHandler) checkAWSSecret(ctx context.Context, resp *setupResponse) {
+	_, err := h.clientset.CoreV1().Secrets(h.namespace).Get(ctx, "aws-relay-irwa", metav1.GetOptions{})
+	resp.AWSConfigured = err == nil
 }
 
 func (h *RelayAdminHandler) checkOCISecret(ctx context.Context, resp *setupResponse) {
@@ -290,7 +297,7 @@ func (h *RelayAdminHandler) GetStatus(c *gin.Context) {
 				EgressLimitBytes: egressLimitForProvider(inst.Provider),
 				ActiveStreams:    routerMetrics.streamsByProvider[inst.Provider],
 			},
-			Cost:               computeCost(inst.Provider),
+			Cost:               computeCost(inst.Provider, inst.Healthy),
 			LastProvisionError: inst.LastProvisionError,
 		}
 		resp.Instances = append(resp.Instances, is)
@@ -391,6 +398,47 @@ func (h *RelayAdminHandler) SaveGCPCreds(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"configured": true})
 }
 
+// ─── AWS credentials ────────────────────────────────────────────────────────
+
+type awsCredsRequest struct {
+	TrustAnchorID string `json:"trustAnchorId" binding:"required"`
+	ProfileID     string `json:"profileId" binding:"required"`
+	RoleARN       string `json:"roleArn" binding:"required"`
+	Region        string `json:"region" binding:"required"`
+}
+
+// SaveAWSCreds saves AWS IAM Roles Anywhere configuration to a K8s Secret.
+func (h *RelayAdminHandler) SaveAWSCreds(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxRelayBodyBytes)
+	var req awsCredsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "trustAnchorId, profileId, roleArn, and region are required"})
+		return
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "aws-relay-irwa",
+			Namespace: h.namespace,
+		},
+		Data: map[string][]byte{
+			"trustAnchorId": []byte(req.TrustAnchorID),
+			"profileId":     []byte(req.ProfileID),
+			"roleArn":       []byte(req.RoleARN),
+			"region":        []byte(req.Region),
+		},
+	}
+
+	if err := h.upsertSecret(ctx, secret); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save AWS credentials: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"configured": true})
+}
+
 // ─── US-43.6: Deploy relay fleet ────────────────────────────────────────────
 
 type deployRequest struct {
@@ -401,7 +449,7 @@ type deployRequest struct {
 }
 
 // Deploy creates or updates the InferenceRelay CR.
-// Valid providers are "oci" and "gcp" — matching the CRD enum validation.
+// Valid providers are "aws", "oci", and "gcp" — matching the CRD enum validation.
 func (h *RelayAdminHandler) Deploy(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -419,6 +467,12 @@ func (h *RelayAdminHandler) Deploy(c *gin.Context) {
 	providers := make([]v1.RelayProviderSpec, 0, len(req.Providers))
 	for _, p := range req.Providers {
 		switch p {
+		case "aws":
+			providers = append(providers, v1.RelayProviderSpec{
+				Provider:       "aws",
+				Region:         "us-east-1",
+				CredentialsRef: corev1.LocalObjectReference{Name: "aws-relay-irwa"},
+			})
 		case "oci":
 			providers = append(providers, v1.RelayProviderSpec{
 				Provider:       "oci",
@@ -432,7 +486,7 @@ func (h *RelayAdminHandler) Deploy(c *gin.Context) {
 				CredentialsRef: corev1.LocalObjectReference{Name: "gcp-credentials"},
 			})
 		default:
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("unknown provider: %s (valid: oci, gcp)", p)})
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("unknown provider: %s (valid: aws, oci, gcp)", p)})
 			return
 		}
 	}
@@ -676,23 +730,33 @@ func parseInt(s string, out *int64) {
 	*out = n
 }
 
-// egressLimitForProvider returns the free-tier egress limit in bytes.
-// OCI Always Free: 10 TB/month. GCP Always Free (e2-micro): 1 GB/month.
+// egressLimitForProvider returns the egress limit in bytes for each provider.
+// AWS: 100 GB (Lightsail free tier). OCI: 10 TB (Always Free). GCP: 1 GB.
 func egressLimitForProvider(provider string) int64 {
 	switch provider {
+	case "aws":
+		return 100 * 1024 * 1024 * 1024
 	case "oci":
-		return 10 * 1024 * 1024 * 1024 * 1024 // 10 TB
+		return 10 * 1024 * 1024 * 1024 * 1024
 	case "gcp":
-		return 1 * 1024 * 1024 * 1024 // 1 GB
+		return 1 * 1024 * 1024 * 1024
 	default:
 		return 1 * 1024 * 1024 * 1024
 	}
 }
 
-// computeCost returns the cost estimate for a provider.
-// Both OCI and GCP are Always Free tier — cost is always $0.
-func computeCost(_ string) instanceCost {
-	return instanceCost{}
+// computeCost returns the monthly cost estimate in cents for a provider.
+// AWS is the only paid provider (~$7/month for t4g.micro). OCI and GCP are free.
+func computeCost(provider string, healthy bool) instanceCost {
+	if !healthy {
+		return instanceCost{}
+	}
+	switch provider {
+	case "aws":
+		return instanceCost{MonthlyEstimate: 700}
+	default:
+		return instanceCost{}
+	}
 }
 
 func buildAlerts(healthy, total int) []alertInfo {

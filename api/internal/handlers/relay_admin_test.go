@@ -52,6 +52,7 @@ func setupRelayRouter(t *testing.T, clientset *fake.Clientset) (*gin.Engine, *Re
 	g.GET("/status", h.GetStatus)
 	g.POST("/oci-creds", h.SaveOCICreds)
 	g.POST("/gcp-creds", h.SaveGCPCreds)
+	g.POST("/aws-creds", h.SaveAWSCreds)
 	g.POST("/deploy", h.Deploy)
 	g.POST("/rotate/:id", h.Rotate)
 	g.POST("/pause", h.Pause)
@@ -402,6 +403,59 @@ func TestRelayGCPCreds_MissingFields_400(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// ─── AWS credentials tests ──────────────────────────────────────────────────
+
+func TestRelayAWSCreds_Create_Success(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	r, _, _ := setupRelayRouter(t, clientset)
+
+	body := `{"trustAnchorId":"ta-abc","profileId":"p-xyz","roleArn":"arn:aws:iam::123:role/relay","region":"us-east-1"}`
+	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/aws-creds", body)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	secret, err := clientset.CoreV1().Secrets(testNamespace).Get(context.Background(), "aws-relay-irwa", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "ta-abc", string(secret.Data["trustAnchorId"]))
+	assert.Equal(t, "p-xyz", string(secret.Data["profileId"]))
+	assert.Equal(t, "arn:aws:iam::123:role/relay", string(secret.Data["roleArn"]))
+	assert.Equal(t, "us-east-1", string(secret.Data["region"]))
+}
+
+func TestRelayAWSCreds_MissingFields_400(t *testing.T) {
+	r, _, _ := setupRelayRouter(t, fake.NewSimpleClientset())
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"missing trustAnchorId", `{"profileId":"p","roleArn":"r","region":"us-east-1"}`},
+		{"missing roleArn", `{"trustAnchorId":"t","profileId":"p","region":"us-east-1"}`},
+		{"empty body", `{}`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			w := doRelayRequest(r, "POST", "/api/v1/admin/relay/aws-creds", tc.body)
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+		})
+	}
+}
+
+func TestRelaySetup_AWSSecretExists_Configured(t *testing.T) {
+	clientset := fake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "aws-relay-irwa", Namespace: testNamespace},
+	})
+	r, _, _ := setupRelayRouter(t, clientset)
+
+	w := doRelayRequest(r, "GET", "/api/v1/admin/relay/setup")
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp setupResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.True(t, resp.AWSConfigured)
+}
+
 // ─── US-43.6: Deploy tests ──────────────────────────────────────────────────
 
 func TestRelayDeploy_Create_Success(t *testing.T) {
@@ -431,14 +485,15 @@ func TestRelayDeploy_Update_Existing(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 }
 
-func TestRelayDeploy_RejectAWS_400(t *testing.T) {
-	r, _, _ := setupRelayRouter(t, fake.NewSimpleClientset())
+func TestRelayDeploy_AcceptsAWS_Success(t *testing.T) {
+	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
+	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, notFoundError()).Maybe()
+	relayMock.On("Create", mock.Anything, mock.Anything).Return(makeRelayCR("relay-fleet", nil, 0), nil).Maybe()
 
-	body := `{"upstreamURL":"https://example.com","routerEndpoint":"gw:51820","providers":["aws"]}`
+	body := `{"upstreamURL":"https://example.com","routerEndpoint":"gw:51820","providers":["aws","oci"]}`
 	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/deploy", body)
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "unknown provider")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 }
 
 func TestRelayDeploy_MissingFields_400(t *testing.T) {
@@ -658,14 +713,17 @@ func TestParseRouterMetrics_EmptyInput(t *testing.T) {
 }
 
 func TestEgressLimitForProvider(t *testing.T) {
+	assert.Equal(t, int64(100*1024*1024*1024), egressLimitForProvider("aws"))
 	assert.Equal(t, int64(10*1024*1024*1024*1024), egressLimitForProvider("oci"))
 	assert.Equal(t, int64(1*1024*1024*1024), egressLimitForProvider("gcp"))
 	assert.Equal(t, int64(1*1024*1024*1024), egressLimitForProvider("unknown"))
 }
 
-func TestComputeCost_AllFreeTier(t *testing.T) {
-	assert.Equal(t, int64(0), computeCost("oci").MonthlyEstimate)
-	assert.Equal(t, int64(0), computeCost("gcp").MonthlyEstimate)
+func TestComputeCost(t *testing.T) {
+	assert.Equal(t, int64(700), computeCost("aws", true).MonthlyEstimate)
+	assert.Equal(t, int64(0), computeCost("aws", false).MonthlyEstimate)
+	assert.Equal(t, int64(0), computeCost("oci", true).MonthlyEstimate)
+	assert.Equal(t, int64(0), computeCost("gcp", true).MonthlyEstimate)
 }
 
 func TestBuildAlerts_AllHealthy(t *testing.T) {

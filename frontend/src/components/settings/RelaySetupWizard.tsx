@@ -16,10 +16,16 @@ export function RelaySetupWizard({ onComplete }: { onComplete?: () => void }) {
     region: "us-ashburn-1",
   });
   const [gcpCreds, setGCPCreds] = useState({ serviceAccountJson: "" });
+  const [awsCreds, setAWSCreds] = useState({
+    trustAnchorId: "",
+    profileId: "",
+    roleArn: "",
+    region: "us-east-1",
+  });
   const [deployConfig, setDeployConfig] = useState({
     upstreamURL: "https://opencode.ai/zen/v1",
     routerEndpoint: "",
-    providers: { oci: true, gcp: true },
+    providers: { aws: true, oci: true, gcp: false },
   });
   const [deploying, setDeploying] = useState(false);
   const { toast } = useToast();
@@ -59,6 +65,16 @@ export function RelaySetupWizard({ onComplete }: { onComplete?: () => void }) {
       await load();
     } catch (e) {
       toast(e instanceof Error ? e.message : "Failed to save GCP credentials", "error");
+    }
+  };
+
+  const handleSaveAWS = async () => {
+    try {
+      await relayApi.saveAWSCreds(awsCreds);
+      toast("AWS credentials saved");
+      await load();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Failed to save AWS credentials", "error");
     }
   };
 
@@ -115,6 +131,20 @@ export function RelaySetupWizard({ onComplete }: { onComplete?: () => void }) {
       ),
     },
     {
+      title: "AWS Credentials",
+      icon: Cloud,
+      content: (
+        <div className="space-y-2">
+          <p className="text-sm text-muted-foreground">AWS is the paid primary provider (~$7/month, most reliable).</p>
+          <input className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm" placeholder="Trust Anchor ID (ta-xxxxx)" value={awsCreds.trustAnchorId} onChange={(e) => setAWSCreds({ ...awsCreds, trustAnchorId: e.target.value })} />
+          <input className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm" placeholder="Profile ID (p-xxxxx)" value={awsCreds.profileId} onChange={(e) => setAWSCreds({ ...awsCreds, profileId: e.target.value })} />
+          <input className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm" placeholder="Role ARN (arn:aws:iam::...)" value={awsCreds.roleArn} onChange={(e) => setAWSCreds({ ...awsCreds, roleArn: e.target.value })} />
+          <button onClick={handleSaveAWS} disabled={!awsCreds.trustAnchorId} className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50">Save</button>
+          {setup.awsConfigured && <span className="ml-2 text-sm text-green-500">AWS configured</span>}
+        </div>
+      ),
+    },
+    {
       title: "OCI Credentials",
       icon: Cloud,
       content: (
@@ -133,6 +163,7 @@ export function RelaySetupWizard({ onComplete }: { onComplete?: () => void }) {
       icon: Cloud,
       content: (
         <div className="space-y-2">
+          <p className="text-sm text-muted-foreground">GCP is optional (paid, IP diversity).</p>
           <textarea className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm font-mono" rows={8} placeholder="Service Account JSON" value={gcpCreds.serviceAccountJson} onChange={(e) => setGCPCreds({ serviceAccountJson: e.target.value })} />
           <button onClick={handleSaveGCP} disabled={!gcpCreds.serviceAccountJson} className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50">Save</button>
           {setup.gcpConfigured && <span className="ml-2 text-sm text-green-500">GCP configured</span>}
@@ -148,12 +179,16 @@ export function RelaySetupWizard({ onComplete }: { onComplete?: () => void }) {
           <input className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm" placeholder="Upstream URL" value={deployConfig.upstreamURL} onChange={(e) => setDeployConfig({ ...deployConfig, upstreamURL: e.target.value })} />
           <div className="space-y-1">
             <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={deployConfig.providers.aws} onChange={(e) => setDeployConfig({ ...deployConfig, providers: { ...deployConfig.providers, aws: e.target.checked } })} />
+              AWS (primary, ~$7/month — most reliable)
+            </label>
+            <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={deployConfig.providers.oci} onChange={(e) => setDeployConfig({ ...deployConfig, providers: { ...deployConfig.providers, oci: e.target.checked } })} />
-              OCI (primary, Always Free — 10 TB egress)
+              OCI (secondary, free — 10 TB egress)
             </label>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={deployConfig.providers.gcp} onChange={(e) => setDeployConfig({ ...deployConfig, providers: { ...deployConfig.providers, gcp: e.target.checked } })} />
-              GCP (failover, Always Free — 1 GB egress)
+              GCP (optional, paid — IP diversity)
             </label>
           </div>
           <button onClick={handleDeploy} disabled={deploying} className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50">
