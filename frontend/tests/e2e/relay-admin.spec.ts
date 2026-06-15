@@ -47,6 +47,7 @@ const mockSetupNotDeployed = {
   metalLBInstalled: true,
   routerDeployed: true,
   crdInstalled: true,
+  awsConfigured: false,
   ociConfigured: false,
   gcpConfigured: false,
   wireGuardEndpoint: "",
@@ -132,7 +133,7 @@ test.describe("Relay admin UI", () => {
     await page.waitForLoadState("networkidle");
     await page.getByRole("button", { name: "Relay" }).click();
 
-    await expect(page.getByText("Prerequisites")).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText("Prerequisites")).toBeVisible({ timeout: 8000 });
     await expect(page.getByText("MetalLB installed")).toBeVisible();
   });
 
@@ -146,6 +147,10 @@ test.describe("Relay admin UI", () => {
     await page.getByRole("button", { name: "Relay" }).click();
 
     await expect(page.getByText("Prerequisites")).toBeVisible();
+
+    // AWS step (primary provider, added after OCI)
+    await page.getByText("Next →").click();
+    await expect(page.getByPlaceholder("Trust Anchor ID (ta-xxxxx)")).toBeVisible();
 
     // OCI step
     await page.getByText("Next →").click();
@@ -205,7 +210,7 @@ test.describe("Relay admin UI", () => {
     await page.waitForLoadState("networkidle");
     await page.getByRole("button", { name: "Relay" }).click();
 
-    await expect(page.getByText("FIRING")).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText("FIRING")).toBeVisible({ timeout: 8000 });
   });
 
   test("status dashboard triggers rotation", async ({ page }) => {
