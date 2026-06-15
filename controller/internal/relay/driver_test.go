@@ -16,8 +16,8 @@ import (
 
 func TestRenderCloudInit_ValidConfig(t *testing.T) {
 	b64, err := RenderCloudInit(CloudInitConfig{
-		WgConfig:      "[Interface]\nPrivateKey = test123\n",
-		UpstreamURL:   "https://opencode.ai/zen/v1",
+		WgConfig:       "[Interface]\nPrivateKey = test123\n",
+		UpstreamURL:    "https://opencode.ai/zen/v1",
 		RouterEndpoint: "relay-gw.example.com:51820",
 	})
 	require.NoError(t, err)

@@ -15,8 +15,8 @@ import (
 // HealthChecker scrapes the relay-router's /metrics endpoint to determine
 // per-relay health and traffic metrics.
 type HealthChecker struct {
-	routerURL   string
-	httpClient  *http.Client
+	routerURL  string
+	httpClient *http.Client
 }
 
 // NewHealthChecker creates a HealthChecker targeting the given router URL.
@@ -30,13 +30,13 @@ func NewHealthChecker(routerURL string) *HealthChecker {
 // RelayHealth represents the observed health of a single relay VM
 // as reported by the router's /metrics endpoint.
 type RelayHealth struct {
-	ID           string
-	Provider     string
-	Healthy      bool
+	ID            string
+	Provider      string
+	Healthy       bool
 	ActiveStreams int64
-	Requests     int64
-	Requests429  int64
-	EgressBytes  int64
+	Requests      int64
+	Requests429   int64
+	EgressBytes   int64
 }
 
 // HealthReport aggregates health data for the entire fleet.
@@ -87,11 +87,6 @@ func parseHealthMetrics(raw string) *HealthReport {
 		id := extractMetricLabel(line, "id")
 		provider := extractMetricLabel(line, "provider")
 		value := extractMetricValue(line)
-
-		if strings.HasPrefix(line, "relay_router_relay_healthy") && !strings.Contains(line, "{") {
-			report.FallbackActive = false
-			continue
-		}
 
 		if strings.HasPrefix(line, "relay_router_fallback_active") {
 			report.FallbackActive = value > 0

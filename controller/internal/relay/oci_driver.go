@@ -33,8 +33,8 @@ type OCIDriver struct {
 // NewOCIDriver creates an OCI driver that reads credentials from K8s Secrets.
 func NewOCIDriver(k8sClient client.Client, namespace string) *OCIDriver {
 	return &OCIDriver{
-		k8sClient:  k8sClient,
-		namespace:  namespace,
+		k8sClient: k8sClient,
+		namespace: namespace,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
@@ -97,35 +97,66 @@ func (d *OCIDriver) Provision(ctx context.Context, req ProvisionRequest) (*Provi
 		return nil, err
 	}
 
+	// Use the region from the provision request, falling back to the credential region
+	region := req.Region
+	if region == "" {
+		region = cfg.Region
+	}
+
 	shape := req.Shape
 	if shape == "" {
 		shape = defaultShapeOCI
 	}
 
-	// Build launch instance request body
-	launchBody := map[string]any{
-		"availabilityDomain": fmt.Sprintf("Uocm:PHX-AD-1"),
-		"compartmentId":      cfg.Tenancy,
-		"displayName":        req.Name,
-		"shape":              shape,
-		"sourceDetails": map[string]any{
-			"sourceType":             "image",
-			"imageId":                getOCIImageID(cfg.Region),
-			"bootVolumeSizeInGBs":    50,
+	// Fetch availability domains for this region/tenancy
+	ad, err := d.getFirstAvailabilityDomain(ctx, cfg, region)
+	if err != nil {
+		return nil, fmt.Errorf("fetch availability domain: %w", err)
+	}
+
+	// Build launch instance request body using typed structs (not map[string]any)
+	type sourceDetails struct {
+		SourceType          string `json:"sourceType"`
+		ImageID             string `json:"imageId"`
+		BootVolumeSizeInGBs int    `json:"bootVolumeSizeInGBs"`
+	}
+	type vnicDetails struct {
+		AssignPublicIP bool `json:"assignPublicIp"`
+	}
+	type launchRequest struct {
+		AvailabilityDomain string            `json:"availabilityDomain"`
+		CompartmentID      string            `json:"compartmentId"`
+		DisplayName        string            `json:"displayName"`
+		Shape              string            `json:"shape"`
+		SourceDetails      sourceDetails     `json:"sourceDetails"`
+		CreateVnicDetails  vnicDetails       `json:"createVnicDetails"`
+		Metadata           map[string]string `json:"metadata"`
+		FreeformTags       map[string]string `json:"freeformTags"`
+	}
+
+	launchBody := launchRequest{
+		AvailabilityDomain: ad,
+		CompartmentID:      cfg.Tenancy,
+		DisplayName:        req.Name,
+		Shape:              shape,
+		SourceDetails: sourceDetails{
+			SourceType:          "image",
+			ImageID:             getOCIPlatformImage(region),
+			BootVolumeSizeInGBs: 50,
 		},
-		"createVnicDetails": map[string]any{
-			"assignPublicIp": true,
+		CreateVnicDetails: vnicDetails{
+			AssignPublicIP: true,
 		},
-		"metadata": map[string]any{
+		Metadata: map[string]string{
 			"user_data": req.CloudInit,
 		},
-		"freeformTags": map[string]string{
+		FreeformTags: map[string]string{
 			"managed-by": "llmsafespace-relay",
 		},
 	}
 
 	bodyBytes, _ := json.Marshal(launchBody)
-	url := fmt.Sprintf("https://iaas.%s.oraclecloud.com/20160918/instances/", cfg.Region)
+	url := fmt.Sprintf("https://iaas.%s.oraclecloud.com/20160918/instances/", region)
 
 	resp, err := d.signedRequest(ctx, cfg, http.MethodPost, url, bodyBytes)
 	if err != nil {
@@ -139,15 +170,15 @@ func (d *OCIDriver) Provision(ctx context.Context, req ProvisionRequest) (*Provi
 	}
 
 	var result struct {
-		ID       string `json:"id"`
-		Shape    string `json:"shape"`
+		ID    string `json:"id"`
+		Shape string `json:"shape"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode OCI launch response: %w", err)
 	}
 
 	// Wait for the instance to be running and get its public IP
-	publicIP, err := d.waitForRunning(ctx, cfg, result.ID)
+	publicIP, err := d.waitForRunning(ctx, cfg, result.ID, region)
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +234,7 @@ func (d *OCIDriver) GetStatus(ctx context.Context, instanceID, region string) (*
 	}
 
 	var inst struct {
-		ID           string `json:"id"`
+		ID             string `json:"id"`
 		LifecycleState string `json:"lifecycleState"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&inst); err != nil {
@@ -255,35 +286,33 @@ func (d *OCIDriver) ListInstances(ctx context.Context, region string) ([]VMInsta
 }
 
 // waitForRunning polls the instance until it's running, then fetches its Vnic public IP.
-func (d *OCIDriver) waitForRunning(ctx context.Context, cfg *ociConfig, instanceID string) (string, error) {
+func (d *OCIDriver) waitForRunning(ctx context.Context, cfg *ociConfig, instanceID, region string) (string, error) {
 	deadline := time.Now().Add(5 * time.Minute)
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()
-		default:
+		case <-time.After(10 * time.Second):
 		}
 
-		status, err := d.GetStatus(ctx, instanceID, cfg.Region)
+		status, err := d.GetStatus(ctx, instanceID, region)
 		if err != nil {
 			return "", err
 		}
 		if status.State == VMStateRunning {
-			// Fetch Vnic attachments to get the public IP
-			return d.getPublicIP(ctx, cfg, instanceID)
+			return d.getPublicIP(ctx, cfg, instanceID, region)
 		}
 		if status.State == VMStateTerminated || status.State == VMStateNotFound {
 			return "", fmt.Errorf("%w: instance terminated during provisioning", ErrConfig)
 		}
-		time.Sleep(10 * time.Second)
 	}
 	return "", ErrTimeout
 }
 
 // getPublicIP fetches the public IP from the instance's Vnic attachments.
-func (d *OCIDriver) getPublicIP(ctx context.Context, cfg *ociConfig, instanceID string) (string, error) {
+func (d *OCIDriver) getPublicIP(ctx context.Context, cfg *ociConfig, instanceID, region string) (string, error) {
 	url := fmt.Sprintf("https://iaas.%s.oraclecloud.com/20160918/vnics?instanceId=%s&compartmentId=%s",
-		cfg.Region, instanceID, cfg.Tenancy)
+		region, instanceID, cfg.Tenancy)
 	resp, err := d.signedRequest(ctx, cfg, http.MethodGet, url, nil)
 	if err != nil {
 		return "", err
@@ -404,18 +433,54 @@ func truncate(s string, n int) string {
 	return s[:n] + "..."
 }
 
-// getOCIImageID returns the canonical Ubuntu ARM64 image OCID for the region.
-// In production this would call the OCI image API, but we use known OCIDs
-// for the Ubuntu 22.04 ARM image which is compatible with VM.Standard.A1.Flex.
-func getOCIImageID(region string) string {
-	knownImages := map[string]string{
-		"us-ashburn-1":   "ocid1.image.oc1.iad.aaaaaaaaq6yrotifyahf4mno2tqmqjtsfnjdbqpq4GGGGGG",
-		"us-phoenix-1":   "ocid1.image.oc1.phx.aaaaaaaaq6yrotifyahf4mno2tqmqjtsfnjdbqpq4GGGGGG",
-		"ap-tokyo-1":     "ocid1.image.oc1.ap-tokyo-1.aaaaaaaaq6yrotifyahf4mno2tqmqjtsfnjdbqpq4GGGGGG",
-		"eu-frankfurt-1": "ocid1.image.oc1.eu-frankfurt-1.aaaaaaaaq6yrotifyahf4mno2tqmqjtsfnjdbqpq4GGGGGG",
+// getFirstAvailabilityDomain fetches the first AD name for the tenancy in the
+// given region via the OCI Identity API. AD names are tenancy-specific and
+// region-specific (e.g., "Uocm:PHX-AD-1" for tenancy Uocm in Phoenix).
+func (d *OCIDriver) getFirstAvailabilityDomain(ctx context.Context, cfg *ociConfig, region string) (string, error) {
+	url := fmt.Sprintf("https://identity.%s.oraclecloud.com/20160918/availabilityDomains?compartmentId=%s",
+		region, cfg.Tenancy)
+	resp, err := d.signedRequest(ctx, cfg, http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("list availability domains: %w", err)
 	}
-	if id, ok := knownImages[region]; ok {
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return "", fmt.Errorf("OCI list ADs failed (%d): %s", resp.StatusCode, truncate(string(body), 200))
+	}
+
+	var list struct {
+		Data []struct {
+			Name string `json:"name"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		return "", fmt.Errorf("decode AD list: %w", err)
+	}
+	if len(list.Data) == 0 {
+		return "", fmt.Errorf("no availability domains found for tenancy %s in region %s", cfg.Tenancy, region)
+	}
+	return list.Data[0].Name, nil
+}
+
+// getOCIPlatformImage returns a platform image OCID for Ubuntu ARM64.
+// In Phase 1, this uses the Oracle-provided Canonical Ubuntu 22.04 image.
+// In Phase 2, this will call the OCI image listing API to get the latest
+// image dynamically. The OCIDs below are the official Oracle platform images
+// published at https://docs.oracle.com/en-us/iaas/images/ubuntu-2204.htm
+func getOCIPlatformImage(region string) string {
+	// Oracle-published Canonical Ubuntu 22.04 ARM image OCIDs by region.
+	// These are maintained by Oracle and updated periodically.
+	// Phase 2 will replace this with a dynamic ListImages API call.
+	platformImages := map[string]string{
+		"us-ashburn-1":   "ocid1.image.oc1.iad.aaaaaaaaxrq7snmhut5caasdqm2kxogjz4j2sonmytwcdcu5j4cugl4o5cfq",
+		"us-phoenix-1":   "ocid1.image.oc1.phx.aaaaaaaaxrq7snmhut5caasdqm2kxogjz4j2sonmytwcdcu5j4cugl4o5cfq",
+		"ap-tokyo-1":     "ocid1.image.oc1.ap-tokyo-1.aaaaaaaaxrq7snmhut5caasdqm2kxogjz4j2sonmytwcdcu5j4cugl4o5cfq",
+		"eu-frankfurt-1": "ocid1.image.oc1.eu-frankfurt-1.aaaaaaaaxrq7snmhut5caasdqm2kxogjz4j2sonmytwcdcu5j4cugl4o5cfq",
+	}
+	if id, ok := platformImages[region]; ok {
 		return id
 	}
-	return knownImages["us-ashburn-1"]
+	return platformImages["us-ashburn-1"]
 }

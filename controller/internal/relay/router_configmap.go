@@ -17,12 +17,14 @@ import (
 )
 
 // PeerEntry is the JSON shape for one relay VM in the ConfigMap.
-// Must match cmd/relay-router/fleet.go PeerEntry exactly.
+// Must match cmd/relay-router/fleet.go PeerEntry exactly, plus the
+// PublicKey field needed by the router to configure [Peer] blocks.
 type PeerEntry struct {
-	ID       string `json:"id"`
-	WgIP     string `json:"wgIP"`
-	Provider string `json:"provider"`
-	State    string `json:"state"`
+	ID        string `json:"id"`
+	WgIP      string `json:"wgIP"`
+	Provider  string `json:"provider"`
+	State     string `json:"state"`
+	PublicKey string `json:"publicKey,omitempty"`
 }
 
 // PeerConfig is the JSON shape of the relay-router-peers ConfigMap.

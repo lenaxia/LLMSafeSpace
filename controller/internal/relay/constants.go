@@ -26,10 +26,10 @@ const (
 
 	// WG IP allocation map within the 10.42.42.0/24 mesh.
 	// Router is always .1. Relays are assigned by provider.
-	wgRouterIP  = "10.42.42.1"
-	wgAWSRelay  = "10.42.42.4"
-	wgOCIRelay  = "10.42.42.2"
-	wgGCPRelay  = "10.42.42.3"
+	wgRouterIP = "10.42.42.1"
+	wgAWSRelay = "10.42.42.4"
+	wgOCIRelay = "10.42.42.2"
+	wgGCPRelay = "10.42.42.3"
 
 	// Default shapes per provider.
 	defaultShapeAWS = "t4g.micro"

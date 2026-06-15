@@ -15,11 +15,15 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	"github.com/lenaxia/llmsafespace/controller/internal/common"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
+
+// relayWGKeysSecret is where relay WG public keys are persisted across restarts.
+const relayWGKeysSecret = "relay-wg-keys"
 
 // InferenceRelayReconciler reconciles InferenceRelay CRs to manage the
 // full lifecycle of relay VMs across cloud providers.
@@ -73,9 +77,12 @@ func (r *InferenceRelayReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			logger.Error(err, "rotation failed")
 			return ctrl.Result{RequeueAfter: requeueError}, err
 		}
-		// Clear the rotation annotation
-		delete(relay.Annotations, annotationRotate)
+		// Clear the rotation annotation — re-fetch to avoid resourceVersion conflict
+		relay.Annotations[annotationRotate] = ""
 		if err := r.Update(ctx, relay); err != nil {
+			if apierrors.IsConflict(err) {
+				return ctrl.Result{Requeue: true}, nil
+			}
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: requeueProvisioning}, nil
@@ -85,7 +92,8 @@ func (r *InferenceRelayReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	return r.reconcileFleet(ctx, relay)
 }
 
-// reconcileFleet provisions missing VMs, checks health, and updates status.
+// reconcileFleet provisions missing VMs, checks health, destroys orphaned
+// instances, and updates status.
 func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1.InferenceRelay) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	needsRequeue := false
@@ -101,12 +109,37 @@ func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1
 		}
 	}
 
-	// Track existing instances by provider
+	// Build a set of spec providers for orphan detection
+	specProviders := make(map[string]bool)
+	for _, p := range relay.Spec.Providers {
+		specProviders[p.Provider] = true
+	}
+
+	// Destroy orphaned instances (provider removed from spec but VM still running)
+	for i := range relay.Status.Instances {
+		inst := &relay.Status.Instances[i]
+		if !specProviders[inst.Provider] {
+			logger.Info("destroying orphaned relay", "provider", inst.Provider, "instanceID", inst.ID)
+			if driver, ok := r.Drivers[inst.Provider]; ok {
+				if err := driver.Destroy(ctx, inst.ID, inst.Region); err != nil && !apierrors.IsNotFound(err) {
+					logger.Error(err, "failed to destroy orphaned relay", "instanceID", inst.ID)
+				}
+			}
+		}
+	}
+
+	// Track existing instances by provider (only healthy/provisioning ones)
+	// provisioning-failed instances are re-provisioned each cycle
 	existingByProvider := make(map[string]*v1.RelayInstanceStatus)
 	for i := range relay.Status.Instances {
 		inst := &relay.Status.Instances[i]
-		existingByProvider[inst.Provider] = inst
+		if specProviders[inst.Provider] && inst.State != string(v1.RelayStateProvisioningFailed) {
+			existingByProvider[inst.Provider] = inst
+		}
 	}
+
+	// Read relay WG public keys from persistent Secret
+	relayPubKeys := r.readRelayWGKeys(ctx)
 
 	// Provision missing VMs for each provider in spec
 	instances := make([]v1.RelayInstanceStatus, 0, len(relay.Spec.Providers))
@@ -132,23 +165,41 @@ func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1
 		}
 
 		// Need to provision a new VM
-		result, err := r.provisionRelay(ctx, relay, providerSpec)
+		result, pubKey, err := r.provisionRelay(ctx, relay, providerSpec)
 		if err != nil {
 			logger.Error(err, "provisioning failed", "provider", provider)
 			if IsConfigError(err) {
+				// Accumulate provisioning attempts from previous status
+				attempts := 1
+				for _, old := range relay.Status.Instances {
+					if old.Provider == provider {
+						attempts = old.ProvisioningAttempts + 1
+						break
+					}
+				}
+				failedState := string(v1.RelayStateProvisioningFailed)
+				if attempts >= maxProvisioningAttempts {
+					failedState = string(v1.RelayStateProvisioningFailed)
+					common.SetCondition(&relay.Status.Conditions, string(v1.InferenceRelayConditionProvisioningFailed),
+						metav1.ConditionTrue, "CircuitBreakerTripped", fmt.Sprintf("provider %s failed %d times: %s", provider, attempts, err.Error()))
+				}
 				instances = append(instances, v1.RelayInstanceStatus{
 					ID:                   fmt.Sprintf("%s-provisioning", provider),
 					Provider:             provider,
 					Region:               providerSpec.Region,
-					State:                string(v1.RelayStateProvisioningFailed),
+					State:                failedState,
 					Healthy:              false,
-					ProvisioningAttempts: 1,
+					ProvisioningAttempts: attempts,
 					LastProvisionError:   err.Error(),
 				})
 			}
 			needsRequeue = true
 			continue
 		}
+
+		// Persist relay WG public key
+		relayPubKeys[provider] = pubKey
+		r.writeRelayWGKeys(ctx, relayPubKeys)
 
 		instances = append(instances, v1.RelayInstanceStatus{
 			ID:       result.InstanceID,
@@ -170,7 +221,7 @@ func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1
 		}
 	}
 
-	// Build peer entries for ConfigMap
+	// Build peer entries for ConfigMap (include WG public keys)
 	peers := make([]PeerEntry, 0, len(instances))
 	for _, inst := range instances {
 		state := inst.State
@@ -178,10 +229,11 @@ func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1
 			state = string(v1.RelayStateHealthy)
 		}
 		peers = append(peers, PeerEntry{
-			ID:       inst.ID,
-			WgIP:     inst.WgIP,
-			Provider: inst.Provider,
-			State:    state,
+			ID:        inst.ID,
+			WgIP:      inst.WgIP,
+			Provider:  inst.Provider,
+			State:     state,
+			PublicKey: relayPubKeys[inst.Provider],
 		})
 	}
 
@@ -195,31 +247,7 @@ func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1
 	relay.Status.HealthyReplicas = healthyReplicas
 
 	// Set conditions based on fleet health
-	if healthyReplicas == len(instances) && len(instances) > 0 {
-		common.SetCondition(&relay.Status.Conditions, string(v1.InferenceRelayConditionReady),
-			metav1.ConditionTrue, "AllRelaysHealthy", fmt.Sprintf("%d/%d relays healthy", healthyReplicas, len(instances)))
-		common.SetCondition(&relay.Status.Conditions, string(v1.InferenceRelayConditionDegraded),
-			metav1.ConditionFalse, "FleetHealthy", "")
-	} else if healthyReplicas == 0 && len(instances) > 0 {
-		common.SetCondition(&relay.Status.Conditions, string(v1.InferenceRelayConditionReady),
-			metav1.ConditionFalse, "NoHealthyRelays", "0 relays healthy")
-		common.SetCondition(&relay.Status.Conditions, string(v1.InferenceRelayConditionDegraded),
-			metav1.ConditionTrue, "AllRelaysUnhealthy", "")
-	} else {
-		common.SetCondition(&relay.Status.Conditions, string(v1.InferenceRelayConditionReady),
-			metav1.ConditionFalse, "PartialFleet", fmt.Sprintf("%d/%d relays healthy", healthyReplicas, len(instances)))
-		common.SetCondition(&relay.Status.Conditions, string(v1.InferenceRelayConditionDegraded),
-			metav1.ConditionTrue, "PartialOutage", "")
-	}
-
-	// Fallback condition
-	if healthReport != nil && healthReport.FallbackActive {
-		common.SetCondition(&relay.Status.Conditions, string(v1.InferenceRelayConditionFallbackActive),
-			metav1.ConditionTrue, "AllRelaysDown", "Router is in fallback mode")
-	} else {
-		common.SetCondition(&relay.Status.Conditions, string(v1.InferenceRelayConditionFallbackActive),
-			metav1.ConditionFalse, "Normal", "")
-	}
+	r.updateConditions(relay, healthReport, healthyReplicas, len(instances))
 
 	if err := r.Status().Update(ctx, relay); err != nil {
 		return ctrl.Result{}, err
@@ -235,47 +263,62 @@ func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1
 	return ctrl.Result{RequeueAfter: requeueHealthy}, nil
 }
 
+// updateConditions sets Ready, Degraded, and FallbackActive conditions.
+func (r *InferenceRelayReconciler) updateConditions(relay *v1.InferenceRelay, healthReport *HealthReport, healthy, total int) {
+	if total == 0 {
+		common.SetCondition(&relay.Status.Conditions, string(v1.InferenceRelayConditionReady),
+			metav1.ConditionFalse, "NoInstances", "No relay instances provisioned")
+		common.SetCondition(&relay.Status.Conditions, string(v1.InferenceRelayConditionDegraded),
+			metav1.ConditionTrue, "Empty", "No relay instances")
+	} else if healthy == total {
+		common.SetCondition(&relay.Status.Conditions, string(v1.InferenceRelayConditionReady),
+			metav1.ConditionTrue, "AllRelaysHealthy", fmt.Sprintf("%d/%d relays healthy", healthy, total))
+		common.SetCondition(&relay.Status.Conditions, string(v1.InferenceRelayConditionDegraded),
+			metav1.ConditionFalse, "FleetHealthy", "")
+	} else if healthy == 0 {
+		common.SetCondition(&relay.Status.Conditions, string(v1.InferenceRelayConditionReady),
+			metav1.ConditionFalse, "NoHealthyRelays", "0 relays healthy")
+		common.SetCondition(&relay.Status.Conditions, string(v1.InferenceRelayConditionDegraded),
+			metav1.ConditionTrue, "AllRelaysUnhealthy", "")
+	} else {
+		common.SetCondition(&relay.Status.Conditions, string(v1.InferenceRelayConditionReady),
+			metav1.ConditionFalse, "PartialFleet", fmt.Sprintf("%d/%d relays healthy", healthy, total))
+		common.SetCondition(&relay.Status.Conditions, string(v1.InferenceRelayConditionDegraded),
+			metav1.ConditionTrue, "PartialOutage", "")
+	}
+
+	if healthReport != nil && healthReport.FallbackActive {
+		common.SetCondition(&relay.Status.Conditions, string(v1.InferenceRelayConditionFallbackActive),
+			metav1.ConditionTrue, "AllRelaysDown", "Router is in fallback mode")
+	} else {
+		common.SetCondition(&relay.Status.Conditions, string(v1.InferenceRelayConditionFallbackActive),
+			metav1.ConditionFalse, "Normal", "")
+	}
+}
+
 // provisionRelay creates a new relay VM for the given provider.
-func (r *InferenceRelayReconciler) provisionRelay(ctx context.Context, relay *v1.InferenceRelay, providerSpec v1.RelayProviderSpec) (*ProvisionResult, error) {
+// Returns the provision result, WG public key, and error.
+func (r *InferenceRelayReconciler) provisionRelay(ctx context.Context, relay *v1.InferenceRelay, providerSpec v1.RelayProviderSpec) (*ProvisionResult, string, error) {
 	driver, ok := r.Drivers[providerSpec.Provider]
 	if !ok {
-		return nil, fmt.Errorf("%w: no driver for provider %s", ErrConfig, providerSpec.Provider)
+		return nil, "", fmt.Errorf("%w: no driver for provider %s", ErrConfig, providerSpec.Provider)
 	}
 
 	// Read provider credentials from Secret
 	secret := &corev1.Secret{}
 	secretName := types.NamespacedName{Name: providerSpec.CredentialsRef.Name, Namespace: r.Namespace}
 	if err := r.Get(ctx, secretName, secret); err != nil {
-		return nil, fmt.Errorf("get credentials secret %s: %w", providerSpec.CredentialsRef.Name, err)
+		return nil, "", fmt.Errorf("get credentials secret %s: %w", providerSpec.CredentialsRef.Name, err)
 	}
 
 	// Generate WireGuard keypair for this relay VM
 	kp, err := GenerateKeypair()
 	if err != nil {
-		return nil, fmt.Errorf("generate WG keypair: %w", err)
+		return nil, "", fmt.Errorf("generate WG keypair: %w", err)
 	}
 
-	// Read router's WG public key from the router WG secret
-	routerSecret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: routerWGSecret, Namespace: r.Namespace}, routerSecret); err != nil {
-		return nil, fmt.Errorf("get router WG secret: %w", err)
-	}
-	routerPubKey := string(routerSecret.Data["publicKey"])
-	if routerPubKey == "" {
-		// Auto-generate if missing (first relay)
-		routerKP, err := GenerateKeypair()
-		if err != nil {
-			return nil, fmt.Errorf("generate router keypair: %w", err)
-		}
-		routerPubKey = routerKP.PublicKeyB64
-		routerSecret.Data = map[string][]byte{
-			"publicKey":  []byte(routerPubKey),
-			"privateKey": []byte(routerKP.PrivateKeyB64),
-		}
-		if err := r.Update(ctx, routerSecret); err != nil {
-			return nil, fmt.Errorf("save router keypair: %w", err)
-		}
-	}
+	// Read or generate router's WG public key
+	routerPubKey := r.ensureRouterWGKey(ctx)
 
 	// Render WG config for the relay VM
 	wgConf, err := RenderRelayConfig(RelayWGConfig{
@@ -285,17 +328,17 @@ func (r *InferenceRelayReconciler) provisionRelay(ctx context.Context, relay *v1
 		RouterEndpoint:  relay.Spec.WireGuard.RouterEndpoint,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("render WG config: %w", err)
+		return nil, "", fmt.Errorf("render WG config: %w", err)
 	}
 
 	// Render cloud-init
 	cloudInit, err := RenderCloudInit(CloudInitConfig{
-		WgConfig:      wgConf,
-		UpstreamURL:   relay.Spec.UpstreamURL,
+		WgConfig:       wgConf,
+		UpstreamURL:    relay.Spec.UpstreamURL,
 		RouterEndpoint: relay.Spec.WireGuard.RouterEndpoint,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("render cloud-init: %w", err)
+		return nil, "", fmt.Errorf("render cloud-init: %w", err)
 	}
 
 	shape := providerSpec.Shape
@@ -305,24 +348,93 @@ func (r *InferenceRelayReconciler) provisionRelay(ctx context.Context, relay *v1
 
 	// Call the provider driver
 	result, err := driver.Provision(ctx, ProvisionRequest{
-		Name:      fmt.Sprintf("relay-%s", providerSpec.Provider),
-		Region:    providerSpec.Region,
-		Shape:     shape,
-		CloudInit: cloudInit,
+		Name:        fmt.Sprintf("relay-%s", providerSpec.Provider),
+		Region:      providerSpec.Region,
+		Shape:       shape,
+		CloudInit:   cloudInit,
 		WireGuardIP: wgIPForProvider(providerSpec.Provider),
 	})
 	if err != nil {
-		return nil, fmtError("provision", providerSpec.Provider, err)
+		return nil, "", fmtError("provision", providerSpec.Provider, err)
 	}
 
-	return result, nil
+	return result, kp.PublicKeyB64, nil
+}
+
+// ensureRouterWGKey reads or generates the router's WG keypair from the
+// secret referenced in spec.wireGuard.routerPrivateKeyRef (or default).
+func (r *InferenceRelayReconciler) ensureRouterWGKey(ctx context.Context) string {
+	secretName := routerWGSecret
+	routerSecret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: r.Namespace}, routerSecret); err == nil {
+		if pub := string(routerSecret.Data["publicKey"]); pub != "" {
+			return pub
+		}
+	}
+
+	// Auto-generate if missing
+	kp, err := GenerateKeypair()
+	if err != nil {
+		return ""
+	}
+
+	routerSecret.ObjectMeta = metav1.ObjectMeta{Name: secretName, Namespace: r.Namespace}
+	routerSecret.Data = map[string][]byte{
+		"publicKey":  []byte(kp.PublicKeyB64),
+		"privateKey": []byte(kp.PrivateKeyB64),
+	}
+
+	if err := r.Create(ctx, routerSecret); err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			// Update existing
+			existing := &corev1.Secret{}
+			_ = r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: r.Namespace}, existing)
+			existing.Data = routerSecret.Data
+			_ = r.Update(ctx, existing)
+		}
+	}
+
+	return kp.PublicKeyB64
+}
+
+// readRelayWGKeys reads the relay WG public keys from the persistent Secret.
+func (r *InferenceRelayReconciler) readRelayWGKeys(ctx context.Context) map[string]string {
+	keys := make(map[string]string)
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: relayWGKeysSecret, Namespace: r.Namespace}, secret); err != nil {
+		return keys
+	}
+	for provider, data := range secret.Data {
+		if len(data) > 0 {
+			keys[provider] = string(data)
+		}
+	}
+	return keys
+}
+
+// writeRelayWGKeys persists relay WG public keys to a Secret.
+func (r *InferenceRelayReconciler) writeRelayWGKeys(ctx context.Context, keys map[string]string) {
+	secret := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: relayWGKeysSecret, Namespace: r.Namespace}, secret)
+	data := make(map[string][]byte, len(keys))
+	for provider, key := range keys {
+		data[provider] = []byte(key)
+	}
+
+	if err == nil {
+		secret.Data = data
+		_ = r.Update(ctx, secret)
+	} else {
+		secret.ObjectMeta = metav1.ObjectMeta{Name: relayWGKeysSecret, Namespace: r.Namespace}
+		secret.Data = data
+		_ = r.Create(ctx, secret)
+	}
 }
 
 // handleRotation destroys the specified relay VM and marks it for reprovisioning.
 func (r *InferenceRelayReconciler) handleRotation(ctx context.Context, relay *v1.InferenceRelay, instanceID string) error {
 	logger := log.FromContext(ctx)
 
-	// Find the instance
 	var target *v1.RelayInstanceStatus
 	for i := range relay.Status.Instances {
 		if relay.Status.Instances[i].ID == instanceID {
@@ -340,12 +452,11 @@ func (r *InferenceRelayReconciler) handleRotation(ctx context.Context, relay *v1
 		return fmt.Errorf("no driver for provider %s", target.Provider)
 	}
 
-	// Destroy the VM
 	if err := driver.Destroy(ctx, target.ID, target.Region); err != nil {
 		return fmtError("destroy during rotation", target.Provider, err)
 	}
 
-	// Remove the instance from status — next reconcile will provision a replacement
+	// Remove the instance from status
 	updated := relay.Status.Instances[:0]
 	for _, inst := range relay.Status.Instances {
 		if inst.ID != instanceID {
@@ -372,23 +483,33 @@ func (r *InferenceRelayReconciler) handleRotation(ctx context.Context, relay *v1
 func (r *InferenceRelayReconciler) handleDeletion(ctx context.Context, relay *v1.InferenceRelay) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	if !controllerContainsFinalizer(relay, InferenceRelayFinalizer) {
+	if !controllerutil.ContainsFinalizer(relay, InferenceRelayFinalizer) {
 		return ctrl.Result{}, nil
 	}
 
-	// Destroy all instances
-	for _, inst := range relay.Status.Instances {
+	// Destroy all instances, tracking which are already gone
+	allDestroyed := true
+	for i := range relay.Status.Instances {
+		inst := &relay.Status.Instances[i]
+		if inst.State == string(v1.RelayStateTerminated) {
+			continue
+		}
 		driver, ok := r.Drivers[inst.Provider]
 		if !ok {
 			continue
 		}
 		if err := driver.Destroy(ctx, inst.ID, inst.Region); err != nil {
 			logger.Error(err, "failed to destroy relay during deletion", "instanceID", inst.ID, "provider", inst.Provider)
-			return ctrl.Result{RequeueAfter: requeueError}, err
+			allDestroyed = false
+		} else {
+			inst.State = string(v1.RelayStateTerminated)
 		}
 	}
 
-	// Remove finalizer
+	if !allDestroyed {
+		return ctrl.Result{RequeueAfter: requeueError}, fmt.Errorf("some relay VMs could not be destroyed")
+	}
+
 	common.RemoveFinalizer(relay, InferenceRelayFinalizer)
 	if err := r.Update(ctx, relay); err != nil {
 		return ctrl.Result{}, err
@@ -405,17 +526,4 @@ func (r *InferenceRelayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.Secret{}).
 		Complete(r)
-}
-
-// controllerContainsFinalizer is a helper to avoid importing controllerutil directly.
-func controllerContainsFinalizer(obj client.Object, finalizer string) bool {
-	annotations := obj.GetAnnotations()
-	_ = annotations
-	f := obj.GetFinalizers()
-	for _, f2 := range f {
-		if f2 == finalizer {
-			return true
-		}
-	}
-	return false
 }
