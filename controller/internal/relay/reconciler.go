@@ -199,7 +199,9 @@ func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1
 
 		// Persist relay WG public key
 		relayPubKeys[provider] = pubKey
-		r.writeRelayWGKeys(ctx, relayPubKeys)
+		if err := r.writeRelayWGKeys(ctx, relayPubKeys); err != nil {
+			logger.Error(err, "failed to persist relay WG key")
+		}
 
 		instances = append(instances, v1.RelayInstanceStatus{
 			ID:       result.InstanceID,
@@ -318,7 +320,10 @@ func (r *InferenceRelayReconciler) provisionRelay(ctx context.Context, relay *v1
 	}
 
 	// Read or generate router's WG public key
-	routerPubKey := r.ensureRouterWGKey(ctx, relay)
+	routerPubKey, err := r.ensureRouterWGKey(ctx, relay)
+	if err != nil {
+		return nil, "", fmt.Errorf("ensure router WG key: %w", err)
+	}
 
 	// Render WG config for the relay VM
 	wgConf, err := RenderRelayConfig(RelayWGConfig{
@@ -363,7 +368,8 @@ func (r *InferenceRelayReconciler) provisionRelay(ctx context.Context, relay *v1
 
 // ensureRouterWGKey reads or generates the router's WG keypair from the
 // secret referenced in spec.wireGuard.routerPrivateKeyRef (or default).
-func (r *InferenceRelayReconciler) ensureRouterWGKey(ctx context.Context, relay *v1.InferenceRelay) string {
+// Returns the public key and an error if the key could not be persisted.
+func (r *InferenceRelayReconciler) ensureRouterWGKey(ctx context.Context, relay *v1.InferenceRelay) (string, error) {
 	secretName := routerWGSecret
 	if relay.Spec.WireGuard.RouterPrivateKeyRef != "" {
 		secretName = relay.Spec.WireGuard.RouterPrivateKeyRef
@@ -371,14 +377,14 @@ func (r *InferenceRelayReconciler) ensureRouterWGKey(ctx context.Context, relay 
 	routerSecret := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: r.Namespace}, routerSecret); err == nil {
 		if pub := string(routerSecret.Data["publicKey"]); pub != "" {
-			return pub
+			return pub, nil
 		}
 	}
 
 	// Auto-generate if missing
 	kp, err := GenerateKeypair()
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("generate router WG keypair: %w", err)
 	}
 
 	routerSecret.ObjectMeta = metav1.ObjectMeta{Name: secretName, Namespace: r.Namespace}
@@ -389,15 +395,20 @@ func (r *InferenceRelayReconciler) ensureRouterWGKey(ctx context.Context, relay 
 
 	if err := r.Create(ctx, routerSecret); err != nil {
 		if apierrors.IsAlreadyExists(err) {
-			// Update existing
 			existing := &corev1.Secret{}
-			_ = r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: r.Namespace}, existing)
+			if getErr := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: r.Namespace}, existing); getErr != nil {
+				return "", fmt.Errorf("get existing router WG secret: %w", getErr)
+			}
 			existing.Data = routerSecret.Data
-			_ = r.Update(ctx, existing)
+			if updateErr := r.Update(ctx, existing); updateErr != nil {
+				return "", fmt.Errorf("update router WG secret: %w", updateErr)
+			}
+		} else {
+			return "", fmt.Errorf("create router WG secret: %w", err)
 		}
 	}
 
-	return kp.PublicKeyB64
+	return kp.PublicKeyB64, nil
 }
 
 // readRelayWGKeys reads the relay WG public keys from the persistent Secret.
@@ -416,7 +427,7 @@ func (r *InferenceRelayReconciler) readRelayWGKeys(ctx context.Context) map[stri
 }
 
 // writeRelayWGKeys persists relay WG public keys to a Secret.
-func (r *InferenceRelayReconciler) writeRelayWGKeys(ctx context.Context, keys map[string]string) {
+func (r *InferenceRelayReconciler) writeRelayWGKeys(ctx context.Context, keys map[string]string) error {
 	secret := &corev1.Secret{}
 	err := r.Get(ctx, types.NamespacedName{Name: relayWGKeysSecret, Namespace: r.Namespace}, secret)
 	data := make(map[string][]byte, len(keys))
@@ -426,12 +437,11 @@ func (r *InferenceRelayReconciler) writeRelayWGKeys(ctx context.Context, keys ma
 
 	if err == nil {
 		secret.Data = data
-		_ = r.Update(ctx, secret)
-	} else {
-		secret.ObjectMeta = metav1.ObjectMeta{Name: relayWGKeysSecret, Namespace: r.Namespace}
-		secret.Data = data
-		_ = r.Create(ctx, secret)
+		return r.Update(ctx, secret)
 	}
+	secret.ObjectMeta = metav1.ObjectMeta{Name: relayWGKeysSecret, Namespace: r.Namespace}
+	secret.Data = data
+	return r.Create(ctx, secret)
 }
 
 // handleRotation destroys the specified relay VM and marks it for reprovisioning.
@@ -499,6 +509,12 @@ func (r *InferenceRelayReconciler) handleDeletion(ctx context.Context, relay *v1
 		}
 		driver, ok := r.Drivers[inst.Provider]
 		if !ok {
+			// No driver — can't destroy the VM. Log and mark as un-destroyable
+			// so the operator can manually terminate it. Don't remove finalizer.
+			logger.Error(fmt.Errorf("no driver for %s", inst.Provider),
+				"cannot destroy relay VM — manual cleanup required",
+				"instanceID", inst.ID, "provider", inst.Provider)
+			allDestroyed = false
 			continue
 		}
 		if err := driver.Destroy(ctx, inst.ID, inst.Region); err != nil {

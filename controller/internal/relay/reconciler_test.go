@@ -499,12 +499,13 @@ func TestEnsureRouterWGKey_GeneratesIfMissing(t *testing.T) {
 		Namespace: "test-ns",
 	}
 
-	pubKey := r.ensureRouterWGKey(context.Background(), makeRelayCR())
+	pubKey, err := r.ensureRouterWGKey(context.Background(), makeRelayCR())
+	require.NoError(t, err)
 	assert.NotEmpty(t, pubKey)
 
 	// Verify the secret was created
 	secret := &corev1.Secret{}
-	err := fakeClient.Get(context.Background(), types.NamespacedName{Name: routerWGSecret, Namespace: "test-ns"}, secret)
+	err = fakeClient.Get(context.Background(), types.NamespacedName{Name: routerWGSecret, Namespace: "test-ns"}, secret)
 	require.NoError(t, err)
 	assert.Equal(t, pubKey, string(secret.Data["publicKey"]))
 }

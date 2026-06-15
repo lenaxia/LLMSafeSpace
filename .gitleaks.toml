@@ -94,6 +94,11 @@ paths = [
   # documentation placeholders — not real credentials and not valid
   # against any running instance (verified by inspection 2026-06-12).
   '''design/stories/epic-38-architectural-remediation/.*''',
+  # Relay reconciler RSA key parser uses the PEM header/footer strings
+  # ("-----BEGIN RSA PRIVATE KEY-----") as format templates when
+  # normalizing user-provided PEM input. No real key material is stored
+  # in this file — it's code that handles the PEM format, not a secret.
+  '''controller/internal/relay/rsa\.go''',
 ]
 
 # Allow specific regex patterns in any file. Use sparingly; prefer
