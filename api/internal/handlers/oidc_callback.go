@@ -170,11 +170,9 @@ func (h *OIDCCallbackHandler) Callback(c *gin.Context) {
 		}
 	}
 
-	// Ensure membership.
+	// Ensure membership (ignore errors — user may already be a member).
 	pendingKeyWrap := role == types.OrgRoleAdmin
-	if err := h.store.AddOrgMember(c.Request.Context(), cfg.OrgID, user.ID, role, pendingKeyWrap); err != nil {
-		// Ignore duplicate membership error (user may already be a member).
-	}
+	_ = h.store.AddOrgMember(c.Request.Context(), cfg.OrgID, user.ID, role, pendingKeyWrap)
 
 	// Redirect to chat with a success indicator. A full JWT issuance would
 	// happen here; for Phase 3 the redirect includes the email for the login
