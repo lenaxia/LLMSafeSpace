@@ -1,0 +1,5 @@
+BEGIN;
+
+DROP TABLE IF EXISTS org_sso_configs;
+
+COMMIT;

@@ -153,6 +153,8 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var policySvc *policy.Service
 	var policyHandler *handlers.PolicyHandler
 	var auditHandler *handlers.AuditHandler
+	var ssoHandler *handlers.SSOHandler
+	var oidcCallbackHandler *handlers.OIDCCallbackHandler
 	var asyncAudit *secrets.AsyncAuditLogger // populated when secrets are enabled; drained on Shutdown
 	var secretsPool *pgxpool.Pool            // closed on Shutdown
 	var dekCacheClient *redis.Client         // closed on Shutdown
@@ -483,6 +485,12 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		}
 		// US-43.13: Org audit handler.
 		auditHandler = handlers.NewAuditHandler(pgOrgStore)
+		// US-43.10: SSO config + OIDC callback handlers.
+		ssoHandler = handlers.NewSSOHandler(pgOrgStore, svc.GetAuth())
+		if dbSvc, ok := svc.Database.(*database.Service); ok {
+			oidcCallbackHandler = handlers.NewOIDCCallbackHandler(
+				&oidcStoreAdapter{orgStore: pgOrgStore, db: dbSvc}, cfg.Email.BaseURL)
+		}
 	}
 
 	// US-43.8: Wire policy checker into secrets handler for model filtering.
@@ -513,6 +521,8 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		InvitationsHandler:              invitationsHandler,
 		PolicyHandler:                   policyHandler,
 		AuditHandler:                    auditHandler,
+		SSOHandler:                      ssoHandler,
+		OIDCCallbackHandler:             oidcCallbackHandler,
 		CookieName:                      cfg.Auth.CookieName,
 	})
 
@@ -758,4 +768,32 @@ func validateMasterSecret(log *logger.Logger) error {
 			len(master))
 	}
 	return nil
+}
+
+// oidcStoreAdapter composes PgOrgStore and database.Service to satisfy
+// handlers.oidcConfigStore. User operations are on the DB service; org/SSO
+// operations are on the org store.
+type oidcStoreAdapter struct {
+	orgStore *database.PgOrgStore
+	db       *database.Service
+}
+
+func (a *oidcStoreAdapter) GetSSOConfigByOrgSlug(ctx context.Context, slug string) (*types.OrgSSOConfig, error) {
+	return a.orgStore.GetSSOConfigByOrgSlug(ctx, slug)
+}
+
+func (a *oidcStoreAdapter) GetOrg(ctx context.Context, orgID string) (*types.Organization, error) {
+	return a.orgStore.GetOrg(ctx, orgID)
+}
+
+func (a *oidcStoreAdapter) GetUserByEmail(ctx context.Context, email string) (*types.User, error) {
+	return a.db.GetUserByEmail(ctx, email)
+}
+
+func (a *oidcStoreAdapter) CreateUser(ctx context.Context, user *types.User) error {
+	return a.db.CreateUser(ctx, user)
+}
+
+func (a *oidcStoreAdapter) AddOrgMember(ctx context.Context, orgID, userID string, role types.OrgRole, pendingKeyWrap bool) error {
+	return a.orgStore.AddOrgMember(ctx, orgID, userID, role, pendingKeyWrap)
 }

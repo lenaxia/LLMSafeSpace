@@ -77,11 +77,13 @@ type RouterConfig struct {
 	// BulkReloadHandler handles POST /api/v1/users/me/agents/reload (optional)
 	BulkReloadHandler *handlers.BulkReloadHandler
 
-	UsageHandler       *handlers.UsageHandler
-	WebhookHandler     *handlers.StripeWebhookHandler
-	InvitationsHandler *handlers.InvitationsHandler
-	PolicyHandler      *handlers.PolicyHandler
-	AuditHandler       *handlers.AuditHandler
+	UsageHandler        *handlers.UsageHandler
+	WebhookHandler      *handlers.StripeWebhookHandler
+	InvitationsHandler  *handlers.InvitationsHandler
+	PolicyHandler       *handlers.PolicyHandler
+	AuditHandler        *handlers.AuditHandler
+	SSOHandler          *handlers.SSOHandler
+	OIDCCallbackHandler *handlers.OIDCCallbackHandler
 
 	CookieName string
 }
@@ -281,6 +283,12 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		router.POST("/api/v1/webhooks/stripe", cfg.WebhookHandler.HandleWebhook)
 	}
 
+	// US-43.10: OIDC SSO routes (public — state cookie provides CSRF protection).
+	if cfg.OIDCCallbackHandler != nil {
+		router.GET("/auth/oidc/:orgSlug/login", cfg.OIDCCallbackHandler.Initiate)
+		router.GET("/auth/oidc/:orgSlug/callback", cfg.OIDCCallbackHandler.Callback)
+	}
+
 	// Secret management routes (Epic 10)
 	if cfg.SecretsHandler != nil {
 		secretsGroup := router.Group("/api/v1/secrets")
@@ -315,7 +323,7 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 
 	// Org CRUD routes (Epic 11)
 	if cfg.OrgsHandler != nil {
-		registerOrgRoutes(router, services, cfg.OrgsHandler, cfg.OrgCredentialsHandler, cfg.InvitationsHandler, cfg.PolicyHandler, cfg.AuditHandler)
+		registerOrgRoutes(router, services, cfg.OrgsHandler, cfg.OrgCredentialsHandler, cfg.InvitationsHandler, cfg.PolicyHandler, cfg.AuditHandler, cfg.SSOHandler)
 	}
 
 	// Metrics endpoint.
@@ -956,7 +964,7 @@ func getMaxActiveSessions(ctx context.Context, instanceSettings *settings.Instan
 }
 
 // registerOrgRoutes adds all /api/v1/orgs routes.
-func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *handlers.OrgsHandler, credH *handlers.OrgCredentialsHandler, invH *handlers.InvitationsHandler, polH *handlers.PolicyHandler, audH *handlers.AuditHandler) {
+func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *handlers.OrgsHandler, credH *handlers.OrgCredentialsHandler, invH *handlers.InvitationsHandler, polH *handlers.PolicyHandler, audH *handlers.AuditHandler, ssoH *handlers.SSOHandler) {
 	authMW := services.GetAuth().AuthMiddleware()
 
 	orgGroup := router.Group("/api/v1/orgs")
@@ -1008,6 +1016,12 @@ func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *hand
 
 	if audH != nil {
 		orgAdminGroup.GET("/audit", audH.List)
+	}
+
+	if ssoH != nil {
+		orgAdminGroup.GET("/sso", ssoH.Get)
+		orgAdminGroup.PUT("/sso", ssoH.Put)
+		orgAdminGroup.DELETE("/sso", ssoH.Delete)
 	}
 
 	// Public invitation routes (token is the credential).

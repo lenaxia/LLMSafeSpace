@@ -906,3 +906,42 @@ type AuditEntry struct {
 	Metadata  map[string]any `json:"metadata,omitempty"`
 	CreatedAt time.Time      `json:"createdAt"`
 }
+
+// --- US-43.10: Org OIDC SSO ---
+
+// OrgSSOConfig is the API DTO for org SSO configuration. The EncryptedSecret
+// is opaque to the API layer — it's encrypted/decrypted by the OrgKeyService
+// using the org DEK (D17).
+type OrgSSOConfig struct {
+	OrgID            string    `json:"orgId"`
+	DiscoveryURL     string    `json:"discoveryUrl"`
+	ClientID         string    `json:"clientId"`
+	EncryptedSecret  []byte    `json:"-"`
+	GroupAdminClaim  string    `json:"groupAdminClaim"`
+	GroupMemberClaim string    `json:"groupMemberClaim"`
+	AutoProvision    bool      `json:"autoProvision"`
+	Enabled          bool      `json:"enabled"`
+	ConfiguredBy     string    `json:"configuredBy,omitempty"`
+	ConfiguredAt     time.Time `json:"configuredAt"`
+}
+
+// OrgSSOConfigResponse is the GET response — never includes the secret.
+type OrgSSOConfigResponse struct {
+	DiscoveryURL     string `json:"discoveryUrl"`
+	ClientID         string `json:"clientId"`
+	GroupAdminClaim  string `json:"groupAdminClaim"`
+	GroupMemberClaim string `json:"groupMemberClaim"`
+	AutoProvision    bool   `json:"autoProvision"`
+	Enabled          bool   `json:"enabled"`
+}
+
+// SetOrgSSOConfigRequest is the PUT /orgs/:id/sso request body.
+type SetOrgSSOConfigRequest struct {
+	DiscoveryURL     string `json:"discoveryUrl"     binding:"required,url"`
+	ClientID         string `json:"clientId"         binding:"required"`
+	ClientSecret     string `json:"clientSecret"     binding:"required" log:"-"`
+	GroupAdminClaim  string `json:"groupAdminClaim"  binding:"omitempty"`
+	GroupMemberClaim string `json:"groupMemberClaim" binding:"omitempty"`
+	AutoProvision    *bool  `json:"autoProvision"`
+	Enabled          *bool  `json:"enabled"`
+}

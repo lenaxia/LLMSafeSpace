@@ -53,6 +53,7 @@ export function OrgAdminLayout() {
     { to: "credentials", label: "Credentials", adminOnly: true },
     { to: "workspaces", label: "Workspaces", adminOnly: false },
     { to: "audit", label: "Audit", adminOnly: true },
+    { to: "sso", label: "SSO", adminOnly: true },
   ].filter((item) => !item.adminOnly || isAdmin);
 
   return (

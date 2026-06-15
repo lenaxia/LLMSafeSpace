@@ -98,6 +98,16 @@ export interface CreateInvitationsRequest {
   role: "admin" | "member";
 }
 
+export interface SetOrgSSOConfigRequest {
+  discoveryUrl: string;
+  clientId: string;
+  clientSecret: string;
+  groupAdminClaim?: string;
+  groupMemberClaim?: string;
+  autoProvision?: boolean;
+  enabled?: boolean;
+}
+
 export const orgsApi = {
   list: () => api.get<OrgResponse[]>("/orgs"),
   create: (req: CreateOrgRequest) =>
@@ -166,4 +176,8 @@ export const orgsApi = {
     api.post<{ url: string }>(`/orgs/${id}/billing/portal`),
   listAudit: (id: string) =>
     api.get<{ items: AuditEntry[] }>(`/orgs/${id}/audit`),
+  getSSO: (id: string) => api.get<{ configured: boolean }>(`/orgs/${id}/sso`),
+  updateSSO: (id: string, req: SetOrgSSOConfigRequest) =>
+    api.put<{ status: string }>(`/orgs/${id}/sso`, req),
+  deleteSSO: (id: string) => api.delete<void>(`/orgs/${id}/sso`),
 };

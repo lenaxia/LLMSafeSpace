@@ -82,6 +82,12 @@ type OrgStore interface {
 	// --- US-43.13: Org-scoped audit log ---
 	LogOrgEvent(ctx context.Context, orgID, actorID, action, targetID string, metadata map[string]any) error
 	ListOrgAudit(ctx context.Context, orgID string, limit, offset int) ([]*types.AuditEntry, *types.PaginationMetadata, error)
+
+	// --- US-43.10: Org OIDC SSO ---
+	GetSSOConfig(ctx context.Context, orgID string) (*types.OrgSSOConfig, error)
+	UpsertSSOConfig(ctx context.Context, cfg *types.OrgSSOConfig) error
+	DeleteSSOConfig(ctx context.Context, orgID string) error
+	GetSSOConfigByOrgSlug(ctx context.Context, slug string) (*types.OrgSSOConfig, error)
 }
 
 // PgOrgStore implements OrgStore using database/sql.
@@ -1168,4 +1174,73 @@ func (s *PgOrgStore) ListOrgAudit(ctx context.Context, orgID string, limit, offs
 		entries = []*types.AuditEntry{}
 	}
 	return entries, pagination, nil
+}
+
+// --- US-43.10: SSO config implementations ---
+
+func (s *PgOrgStore) GetSSOConfig(ctx context.Context, orgID string) (*types.OrgSSOConfig, error) {
+	return s.scanSSOConfig(ctx,
+		`SELECT org_id, discovery_url, client_id, encrypted_secret,
+		        group_admin_claim, group_member_claim, auto_provision, enabled, configured_by, configured_at
+		 FROM org_sso_configs WHERE org_id = $1`, orgID)
+}
+
+func (s *PgOrgStore) GetSSOConfigByOrgSlug(ctx context.Context, slug string) (*types.OrgSSOConfig, error) {
+	return s.scanSSOConfig(ctx,
+		`SELECT c.org_id, c.discovery_url, c.client_id, c.encrypted_secret,
+		        c.group_admin_claim, c.group_member_claim, c.auto_provision, c.enabled, c.configured_by, c.configured_at
+		 FROM org_sso_configs c
+		 JOIN organizations o ON o.id = c.org_id
+		 WHERE LOWER(o.slug) = LOWER($1) AND o.deleted_at IS NULL AND c.enabled = true`, slug)
+}
+
+func (s *PgOrgStore) scanSSOConfig(ctx context.Context, query string, args ...interface{}) (*types.OrgSSOConfig, error) {
+	var cfg types.OrgSSOConfig
+	var configuredBy sql.NullString
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(
+		&cfg.OrgID, &cfg.DiscoveryURL, &cfg.ClientID, &cfg.EncryptedSecret,
+		&cfg.GroupAdminClaim, &cfg.GroupMemberClaim, &cfg.AutoProvision, &cfg.Enabled,
+		&configuredBy, &cfg.ConfiguredAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("scan sso config: %w", err)
+	}
+	cfg.ConfiguredBy = configuredBy.String
+	return &cfg, nil
+}
+
+func (s *PgOrgStore) UpsertSSOConfig(ctx context.Context, cfg *types.OrgSSOConfig) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO org_sso_configs (org_id, discovery_url, client_id, encrypted_secret,
+		                              group_admin_claim, group_member_claim, auto_provision, enabled, configured_by, configured_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+		 ON CONFLICT (org_id) DO UPDATE SET
+		   discovery_url = EXCLUDED.discovery_url,
+		   client_id = EXCLUDED.client_id,
+		   encrypted_secret = EXCLUDED.encrypted_secret,
+		   group_admin_claim = EXCLUDED.group_admin_claim,
+		   group_member_claim = EXCLUDED.group_member_claim,
+		   auto_provision = EXCLUDED.auto_provision,
+		   enabled = EXCLUDED.enabled,
+		   configured_by = EXCLUDED.configured_by,
+		   configured_at = NOW()`,
+		cfg.OrgID, cfg.DiscoveryURL, cfg.ClientID, cfg.EncryptedSecret,
+		cfg.GroupAdminClaim, cfg.GroupMemberClaim, cfg.AutoProvision, cfg.Enabled, cfg.ConfiguredBy,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert sso config: %w", err)
+	}
+	return nil
+}
+
+func (s *PgOrgStore) DeleteSSOConfig(ctx context.Context, orgID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM org_sso_configs WHERE org_id = $1`, orgID)
+	if err != nil {
+		return fmt.Errorf("delete sso config: %w", err)
+	}
+	return nil
 }
