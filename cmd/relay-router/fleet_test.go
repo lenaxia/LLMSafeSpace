@@ -113,7 +113,22 @@ func TestRelayFleet_UpdatePeers_UpdatesState(t *testing.T) {
 // SelectRelay tests
 // ---------------------------------------------------------------------------
 
-func TestSelectRelay_OCIPrimaryWhenBothHealthy(t *testing.T) {
+func TestSelectRelay_AWSPrimaryWhenAllHealthy(t *testing.T) {
+	f := newRelayFleet(3, 5*time.Minute)
+	f.UpdatePeers([]PeerEntry{
+		{ID: "aws-1", WgIP: "10.42.42.4", Provider: "aws", State: "healthy"},
+		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "gcp-1", WgIP: "10.42.42.3", Provider: "gcp", State: "healthy"},
+	})
+
+	for i := 0; i < 100; i++ {
+		id, _, ok := f.SelectRelay()
+		require.True(t, ok)
+		assert.Equal(t, "aws-1", id, "AWS should receive 100%% of traffic when all healthy (iteration %d)", i)
+	}
+}
+
+func TestSelectRelay_OCIPrimaryWhenAWSAbsent(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
 		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
@@ -123,24 +138,43 @@ func TestSelectRelay_OCIPrimaryWhenBothHealthy(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		id, _, ok := f.SelectRelay()
 		require.True(t, ok)
-		assert.Equal(t, "oci-1", id, "OCI should receive 100%% of traffic when both healthy (iteration %d)", i)
+		assert.Equal(t, "oci-1", id, "OCI should receive 100%% of traffic when AWS absent (iteration %d)", i)
 	}
 }
 
-func TestSelectRelay_GCPFailoverWhenOCIUnhealthy(t *testing.T) {
+func TestSelectRelay_OCIFailoverWhenAWSUnhealthy(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
+		{ID: "aws-1", WgIP: "10.42.42.4", Provider: "aws", State: "healthy"},
 		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
 		{ID: "gcp-1", WgIP: "10.42.42.3", Provider: "gcp", State: "healthy"},
 	})
 
 	for i := 0; i < 3; i++ {
+		f.RecordHealthCheck("aws-1", false)
+	}
+
+	id, _, ok := f.SelectRelay()
+	require.True(t, ok)
+	assert.Equal(t, "oci-1", id, "OCI should receive traffic when AWS is unhealthy")
+}
+
+func TestSelectRelay_GCPFailoverWhenAWSAndOCIDown(t *testing.T) {
+	f := newRelayFleet(3, 5*time.Minute)
+	f.UpdatePeers([]PeerEntry{
+		{ID: "aws-1", WgIP: "10.42.42.4", Provider: "aws", State: "healthy"},
+		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "gcp-1", WgIP: "10.42.42.3", Provider: "gcp", State: "healthy"},
+	})
+
+	for i := 0; i < 3; i++ {
+		f.RecordHealthCheck("aws-1", false)
 		f.RecordHealthCheck("oci-1", false)
 	}
 
 	id, _, ok := f.SelectRelay()
 	require.True(t, ok)
-	assert.Equal(t, "gcp-1", id, "GCP should receive traffic when OCI is unhealthy")
+	assert.Equal(t, "gcp-1", id, "GCP should receive traffic when AWS and OCI are both unhealthy")
 }
 
 func TestSelectRelay_GCPFailoverWhenOCIDraining(t *testing.T) {
@@ -149,10 +183,41 @@ func TestSelectRelay_GCPFailoverWhenOCIDraining(t *testing.T) {
 		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "draining"},
 		{ID: "gcp-1", WgIP: "10.42.42.3", Provider: "gcp", State: "healthy"},
 	})
-
 	id, _, ok := f.SelectRelay()
 	require.True(t, ok)
 	assert.Equal(t, "gcp-1", id)
+}
+
+func TestSelectRelay_OCIFailoverWhenAWSDraining(t *testing.T) {
+	f := newRelayFleet(3, 5*time.Minute)
+	f.UpdatePeers([]PeerEntry{
+		{ID: "aws-1", WgIP: "10.42.42.4", Provider: "aws", State: "draining"},
+		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "gcp-1", WgIP: "10.42.42.3", Provider: "gcp", State: "healthy"},
+	})
+
+	for i := 0; i < 50; i++ {
+		id, _, ok := f.SelectRelay()
+		require.True(t, ok)
+		assert.Equal(t, "oci-1", id, "OCI should receive 100%% traffic when AWS is draining (iteration %d)", i)
+	}
+}
+
+func TestSelectRelay_OCIFailoverWhenAWS429Draining(t *testing.T) {
+	f := newRelayFleet(3, 5*time.Minute)
+	f.UpdatePeers([]PeerEntry{
+		{ID: "aws-1", WgIP: "10.42.42.4", Provider: "aws", State: "healthy"},
+		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "gcp-1", WgIP: "10.42.42.3", Provider: "gcp", State: "healthy"},
+	})
+
+	f.Mark429Draining("aws-1", "storm")
+
+	for i := 0; i < 50; i++ {
+		id, _, ok := f.SelectRelay()
+		require.True(t, ok)
+		assert.Equal(t, "oci-1", id, "OCI should receive traffic when AWS is 429-draining (iteration %d)", i)
+	}
 }
 
 func TestSelectRelay_NoHealthyRelays(t *testing.T) {
@@ -444,7 +509,11 @@ func TestGetWgIP_NonexistentRelay(t *testing.T) {
 // relayWeight tests
 // ---------------------------------------------------------------------------
 
-func TestRelayWeight_OCIPrimary(t *testing.T) {
+func TestRelayWeight_AWSPrimary(t *testing.T) {
+	assert.Equal(t, 1000.0, relayWeight("aws", "healthy", "healthy"))
+}
+
+func TestRelayWeight_OCISecondary(t *testing.T) {
 	assert.Equal(t, 100.0, relayWeight("oci", "healthy", "healthy"))
 }
 
@@ -453,11 +522,13 @@ func TestRelayWeight_GCPFailover(t *testing.T) {
 }
 
 func TestRelayWeight_UnhealthyIsZero(t *testing.T) {
+	assert.Equal(t, 0.0, relayWeight("aws", "healthy", "unhealthy"))
 	assert.Equal(t, 0.0, relayWeight("oci", "healthy", "unhealthy"))
 	assert.Equal(t, 0.0, relayWeight("gcp", "healthy", "unhealthy"))
 }
 
 func TestRelayWeight_SuspectReduced(t *testing.T) {
+	assert.Equal(t, 100.0, relayWeight("aws", "suspect", "healthy"))
 	assert.Equal(t, 10.0, relayWeight("oci", "suspect", "healthy"))
 	assert.Equal(t, 0.1, relayWeight("gcp", "suspect", "healthy"))
 }
