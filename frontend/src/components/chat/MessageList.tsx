@@ -28,15 +28,6 @@ export function MessageList({ messages, streaming, streamingBubble, onLoadEarlie
   const [showJumpButton, setShowJumpButton] = useState(false);
   const stickToBottom = useRef(true);
 
-  // Tick every 60s so relative timestamps ("Xm ago") stay current across all
-  // visible bubbles. MemoizedBubble receives `now` as a prop so React.memo
-  // invalidates on each tick and formatTimestamp re-runs with the current clock.
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 60_000);
-    return () => clearInterval(id);
-  }, []);
-
   const dividerIndex = useMemo(() => {
     if (!lastSeenAt) return -1;
     const threshold = new Date(lastSeenAt).getTime() - CLOCK_SKEW_BUFFER_MS;
@@ -156,7 +147,6 @@ export function MessageList({ messages, streaming, streamingBubble, onLoadEarlie
               )}
               <MemoizedBubble
                 message={msg}
-                now={now}
                 modelName={msg.modelID ? (modelMap.get(msg.modelID) || msg.modelID.split("/").pop()) : undefined}
               />
             </Fragment>
