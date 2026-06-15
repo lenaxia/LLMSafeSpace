@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -20,6 +19,7 @@ type policyStore interface {
 	GetOrgPolicies(ctx context.Context, orgID string) ([]*types.OrgPolicy, error)
 	SetOrgPolicy(ctx context.Context, orgID string, key types.OrgPolicyKey, value json.RawMessage, updatedBy string) error
 	DeleteOrgPolicy(ctx context.Context, orgID string, key types.OrgPolicyKey) error
+	LogOrgEvent(ctx context.Context, orgID, actorID, action, targetID string, metadata map[string]any) error
 }
 
 // PolicyHandler handles GET/PUT/DELETE /api/v1/orgs/:id/policies (admin-only).
@@ -27,12 +27,17 @@ type PolicyHandler struct {
 	store   policyStore
 	svc     *policy.Service
 	authSvc orgAuthService
+	logger  policyLogger
+}
+
+type policyLogger interface {
+	Warn(msg string, args ...any)
 }
 
 // NewPolicyHandler constructs the handler. svc is used for cache invalidation
-// after mutations.
-func NewPolicyHandler(store policyStore, svc *policy.Service, authSvc orgAuthService) *PolicyHandler {
-	return &PolicyHandler{store: store, svc: svc, authSvc: authSvc}
+// after mutations. logger is used to surface audit emission failures.
+func NewPolicyHandler(store policyStore, svc *policy.Service, authSvc orgAuthService, logger policyLogger) *PolicyHandler {
+	return &PolicyHandler{store: store, svc: svc, authSvc: authSvc, logger: logger}
 }
 
 // Get handles GET /api/v1/orgs/:id/policies. Returns all configured policies.
@@ -72,6 +77,9 @@ func (h *PolicyHandler) Put(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to set policy"})
 		return
 	}
+	if err := h.store.LogOrgEvent(c.Request.Context(), orgID, userID, "policy.set", string(key), map[string]any{"value": body}); err != nil && h.logger != nil {
+		h.logger.Warn("audit log emission failed", "action", "policy.set", "orgID", orgID, "error", err.Error())
+	}
 	if h.svc != nil {
 		h.svc.InvalidateCache(c.Request.Context(), orgID)
 	}
@@ -93,6 +101,10 @@ func (h *PolicyHandler) Delete(c *gin.Context) {
 	if err := h.store.DeleteOrgPolicy(c.Request.Context(), orgID, key); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete policy"})
 		return
+	}
+	actorID := h.authSvc.GetUserID(c)
+	if err := h.store.LogOrgEvent(c.Request.Context(), orgID, actorID, "policy.delete", string(key), nil); err != nil && h.logger != nil {
+		h.logger.Warn("audit log emission failed", "action", "policy.delete", "orgID", orgID, "error", err.Error())
 	}
 	if h.svc != nil {
 		h.svc.InvalidateCache(c.Request.Context(), orgID)
@@ -126,7 +138,3 @@ func isValidValue(key types.OrgPolicyKey, body json.RawMessage) bool {
 	}
 	return false
 }
-
-// policyTimestamp is a no-op reference to keep the time import if future
-// response enrichment needs it.
-var _ = time.Now

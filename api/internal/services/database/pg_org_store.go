@@ -78,6 +78,10 @@ type OrgStore interface {
 	GetOrgPolicies(ctx context.Context, orgID string) ([]*types.OrgPolicy, error)
 	SetOrgPolicy(ctx context.Context, orgID string, key types.OrgPolicyKey, value json.RawMessage, updatedBy string) error
 	DeleteOrgPolicy(ctx context.Context, orgID string, key types.OrgPolicyKey) error
+
+	// --- US-43.13: Org-scoped audit log ---
+	LogOrgEvent(ctx context.Context, orgID, actorID, action, targetID string, metadata map[string]any) error
+	ListOrgAudit(ctx context.Context, orgID string, limit, offset int) ([]*types.AuditEntry, *types.PaginationMetadata, error)
 }
 
 // PgOrgStore implements OrgStore using database/sql.
@@ -1086,4 +1090,82 @@ func (s *PgOrgStore) DeleteOrgPolicy(ctx context.Context, orgID string, key type
 		return fmt.Errorf("delete org policy: %w", err)
 	}
 	return nil
+}
+
+// --- US-43.13: Audit log implementations ---
+
+func (s *PgOrgStore) LogOrgEvent(ctx context.Context, orgID, actorID, action, targetID string, metadata map[string]any) error {
+	var metaBytes []byte
+	if metadata != nil {
+		var err error
+		metaBytes, err = json.Marshal(metadata)
+		if err != nil {
+			return fmt.Errorf("marshal audit metadata: %w", err)
+		}
+	} else {
+		metaBytes = []byte(`{}`)
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO audit_log (actor_id, domain, action, target_id, org_id, metadata, created_at)
+		 VALUES ($1, 'org', $2, NULLIF($3, ''), $4, $5, NOW())`,
+		actorID, action, targetID, orgID, metaBytes,
+	)
+	if err != nil {
+		return fmt.Errorf("insert audit log: %w", err)
+	}
+	return nil
+}
+
+func (s *PgOrgStore) ListOrgAudit(ctx context.Context, orgID string, limit, offset int) ([]*types.AuditEntry, *types.PaginationMetadata, error) {
+	var total int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM audit_log WHERE org_id = $1`,
+		orgID,
+	).Scan(&total); err != nil {
+		return nil, nil, fmt.Errorf("count org audit entries: %w", err)
+	}
+
+	pagination := &types.PaginationMetadata{
+		Total: total, Start: offset, End: offset + limit, Limit: limit, Offset: offset,
+	}
+	if pagination.End > total {
+		pagination.End = total
+	}
+	if total == 0 {
+		return []*types.AuditEntry{}, pagination, nil
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, actor_id, domain, action, COALESCE(target_id, ''), org_id::text, metadata, created_at
+		 FROM audit_log WHERE org_id = $1
+		 ORDER BY created_at DESC
+		 LIMIT $2 OFFSET $3`,
+		orgID, limit, offset,
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list org audit: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var entries []*types.AuditEntry
+	for rows.Next() {
+		var e types.AuditEntry
+		var metaBytes []byte
+		if err := rows.Scan(&e.ID, &e.ActorID, &e.Domain, &e.Action, &e.TargetID, &e.OrgID, &metaBytes, &e.CreatedAt); err != nil {
+			return nil, nil, fmt.Errorf("scan audit entry: %w", err)
+		}
+		if len(metaBytes) > 0 && string(metaBytes) != "{}" {
+			if err := json.Unmarshal(metaBytes, &e.Metadata); err != nil {
+				return nil, nil, fmt.Errorf("unmarshal audit metadata: %w", err)
+			}
+		}
+		entries = append(entries, &e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("iterate audit entries: %w", err)
+	}
+	if entries == nil {
+		entries = []*types.AuditEntry{}
+	}
+	return entries, pagination, nil
 }

@@ -67,6 +67,17 @@ export interface OrgInvitation {
   createdAt: string;
 }
 
+export interface AuditEntry {
+  id: number;
+  actorId: string;
+  domain: string;
+  action: string;
+  targetId?: string;
+  orgId?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+}
+
 export interface InvitationDetail {
   orgName: string;
   orgSlug: string;
@@ -153,4 +164,6 @@ export const orgsApi = {
     api.post<{ url: string }>(`/orgs/${id}/billing/checkout`, { planId }),
   portal: (id: string) =>
     api.post<{ url: string }>(`/orgs/${id}/billing/portal`),
+  listAudit: (id: string) =>
+    api.get<{ items: AuditEntry[] }>(`/orgs/${id}/audit`),
 };
