@@ -16,7 +16,7 @@ spec:
       labels:
         {{- include "llmsafespace.relayRouter.selectorLabels" . | nindent 8 }}
     spec:
-      serviceAccountName: {{ include "llmsafespace.api.serviceAccountName" . }}
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65534
