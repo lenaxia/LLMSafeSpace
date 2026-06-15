@@ -28,21 +28,25 @@ type OCIDriver struct {
 	k8sClient        client.Client
 	namespace        string
 	httpClient       *http.Client
-	credentialSecret string
+	credentialSecret string // set at construction time, not mutable during reconcile
 }
 
-// NewOCIDriver creates an OCI driver that reads credentials from K8s Secrets.
-func NewOCIDriver(k8sClient client.Client, namespace string) *OCIDriver {
+// NewOCIDriver creates an OCI driver that reads credentials from the
+// named K8s Secret (default: oci-credentials).
+func NewOCIDriver(k8sClient client.Client, namespace, credentialSecret string) *OCIDriver {
+	if credentialSecret == "" {
+		credentialSecret = "oci-credentials"
+	}
 	return &OCIDriver{
-		k8sClient: k8sClient,
-		namespace: namespace,
+		k8sClient:        k8sClient,
+		namespace:        namespace,
+		credentialSecret: credentialSecret,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
 			},
 		},
-		credentialSecret: "oci-credentials",
 	}
 }
 
@@ -94,15 +98,10 @@ func (d *OCIDriver) getConfig(ctx context.Context, secretName string) (*ociConfi
 
 // Provision creates an OCI compute instance with the given cloud-init userdata.
 func (d *OCIDriver) Provision(ctx context.Context, req ProvisionRequest) (*ProvisionResult, error) {
-	secretName := req.CredentialsSecretName
-	if secretName == "" {
-		secretName = "oci-credentials"
-	}
-	cfg, err := d.getConfig(ctx, secretName)
+	cfg, err := d.getConfig(ctx, d.credentialSecret)
 	if err != nil {
 		return nil, err
 	}
-	d.credentialSecret = secretName
 
 	// Use the region from the provision request, falling back to the credential region
 	region := req.Region

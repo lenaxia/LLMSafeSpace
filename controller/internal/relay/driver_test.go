@@ -142,7 +142,7 @@ func TestGCPDriver_NotImplemented(t *testing.T) {
 
 func TestOCIDriver_GetConfig_MissingSecret(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().Build()
-	d := NewOCIDriver(fakeClient, "test")
+	d := NewOCIDriver(fakeClient, "test", "oci-credentials")
 	_, err := d.getConfig(context.Background(), "missing")
 	assert.Error(t, err)
 }

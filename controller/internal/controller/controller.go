@@ -50,7 +50,7 @@ func SetupRelayController(mgr ctrl.Manager, namespace, routerURL string, enableR
 		HealthChecker: relay.NewHealthChecker(routerURL),
 		Drivers: map[string]relay.ProviderDriver{
 			"aws": &relay.AWSDriver{},
-			"oci": relay.NewOCIDriver(mgr.GetClient(), namespace),
+			"oci": relay.NewOCIDriver(mgr.GetClient(), namespace, "oci-credentials"),
 			"gcp": &relay.GCPDriver{},
 		},
 	}
