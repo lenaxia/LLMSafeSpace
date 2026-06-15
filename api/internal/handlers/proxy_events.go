@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 
 	"github.com/lenaxia/llmsafespace/api/internal/services/msgqueue"
 	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
+	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
@@ -492,4 +494,63 @@ func (h *ProxyHandler) publishQueueEvent(workspaceID, sessionID, event, messageI
 		SessionID: sessionID,
 		Data:      data,
 	})
+}
+
+// reconcileStrandedQueues is called by the SSE tracker's onReconnect callback
+// each time the tracker establishes a new connection to the workspace pod.
+// It queries /v1/statusz on the agentd admin port to get the current session
+// states. For any session that is currently idle and has messages in the Redis
+// queue, it calls onSessionIdle to trigger a drain.
+//
+// This handles the case where a session went idle while the SSE connection was
+// down: the session.status=idle event was never received, so drainQueuedMessage
+// was never called, leaving the queue stranded.
+func (h *ProxyHandler) reconcileStrandedQueues(workspaceID, podIP, password string) {
+	if h.queueSvc == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	url := fmt.Sprintf("http://%s:%d/v1/statusz", podIP, agentd.AgentdAdminPort) //nolint:gosec // G107: internal pod
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		h.logger.Debug("reconcileStrandedQueues: failed to build statusz request", "workspaceID", workspaceID, "error", err)
+		return
+	}
+	if password != "" {
+		req.Header.Set("Authorization", "Bearer "+password)
+	}
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		h.logger.Debug("reconcileStrandedQueues: statusz unavailable", "workspaceID", workspaceID, "error", err)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		h.logger.Debug("reconcileStrandedQueues: unexpected statusz status", "workspaceID", workspaceID, "status", resp.StatusCode)
+		return
+	}
+
+	var statusz agentd.StatuszResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 16*1024)).Decode(&statusz); err != nil {
+		h.logger.Debug("reconcileStrandedQueues: failed to decode statusz", "workspaceID", workspaceID, "error", err)
+		return
+	}
+
+	for _, sess := range statusz.Sessions {
+		if sess.Status != "idle" {
+			continue
+		}
+		n, err := h.queueSvc.Len(ctx, workspaceID, sess.ID)
+		if err != nil || n == 0 {
+			continue
+		}
+		h.logger.Info("reconcileStrandedQueues: found stranded queue, triggering drain",
+			"workspaceID", workspaceID, "sessionID", sess.ID, "queueLen", n)
+		h.onSessionIdle(workspaceID, sess.ID)
+	}
 }

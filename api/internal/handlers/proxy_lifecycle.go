@@ -39,6 +39,7 @@ func (h *ProxyHandler) Start() error {
 		h.sseTracker.SetPodIPResolver(h.getPodIPForSSE)
 		h.sseTracker.SetOnSessionActive(h.onSessionActive)
 		h.sseTracker.SetOnRawEvent(h.onRawEvent)
+		h.sseTracker.SetOnReconnect(h.reconcileStrandedQueues)
 
 		watcher, err := workspace.NewWatcher(h.k8sClient, h.logger, h.namespace, h.onPhaseChange)
 		if err != nil {
