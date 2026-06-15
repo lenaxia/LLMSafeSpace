@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -38,19 +39,32 @@ func (h *ProxyHandler) SendMessage(c *gin.Context) {
 		return
 	}
 	wid := c.Param("id")
-	h.proxyToWorkspace(c, "/session/"+sid+"/message", true, sid)
+
+	// US-27b.5: wire chat-error enrichment. The closure captures wid + the
+	// agent-state checker so doProxy can rewrite the response body on 4xx
+	// with agentNeedsRefresh / hint fields. On 2xx the closure is never
+	// invoked (doProxy only buffers on status >= 400).
+	var errBodyTransform func(statusCode int, body []byte) []byte
+	if h.agentStateChecker != nil {
+		errBodyTransform = func(_ int, body []byte) []byte {
+			changedAt, checkerErr := h.agentStateChecker.GetLastCredentialChangedAt(c.Request.Context(), wid)
+			if checkerErr != nil || changedAt.IsZero() {
+				// No pending credentials — pass body through the allowlist
+				// (EnrichChatErrorBody with needsRefresh=false just filters
+				// unknown fields; no hint added).
+				return EnrichChatErrorBody(body, false, time.Time{}, wid)
+			}
+			h.logger.Info("Chat error enriched with pending-credential hint",
+				"workspaceID", wid, "credentialsPendingSince", changedAt.Format("2006-01-02T15:04:05Z"))
+			return EnrichChatErrorBody(body, true, changedAt, wid)
+		}
+	}
+
+	h.proxyToWorkspaceWithErrBody(c, "/session/"+sid+"/message", true, sid, errBodyTransform)
 
 	status := c.Writer.Status()
 	if status < 300 && h.sessionIndex != nil {
 		go h.fetchAndPersistTitle(wid, sid)
-	}
-
-	if status >= 400 && h.agentStateChecker != nil {
-		changedAt, checkerErr := h.agentStateChecker.GetLastCredentialChangedAt(c.Request.Context(), wid)
-		if checkerErr == nil && !changedAt.IsZero() {
-			h.logger.Info("Proxied message failed with staged credentials — client should call agent/reload",
-				"workspaceID", wid, "credentialsPendingSince", changedAt.Format("2006-01-02T15:04:05Z"))
-		}
 	}
 }
 
