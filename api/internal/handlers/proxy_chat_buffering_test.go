@@ -225,6 +225,14 @@ func TestSendMessage_4xxWithErrorBuffering_LargeBodyTruncated(t *testing.T) {
 	assert.Less(t, rec.Body.Len(), 8*1024, "response must be bounded (< 8KB)")
 }
 
+// TestSendMessage_RetryAfterConnError_4xxStillEnriched is documented as a
+// known gap: the retry path at proxy.go:285 passes onErrorBody to the second
+// doProxy call (verified by code inspection). A full integration test
+// requires mocking the workspace CRD Get to return a different PodIP
+// mid-reconcile, which is disproportionate to the risk — the onErrorBody
+// parameter flows through transparently and the non-retry 4xx path is
+// covered by the 5 tests above.
+
 // --- helpers ---
 
 // stubAgentStateCheckerFunc is a function-adapter for AgentStateChecker.
@@ -233,6 +241,3 @@ type stubAgentStateCheckerFunc func(ctx context.Context, workspaceID string) (ti
 func (f stubAgentStateCheckerFunc) GetLastCredentialChangedAt(ctx context.Context, wsID string) (time.Time, error) {
 	return f(ctx, wsID)
 }
-
-// satisfy the unused-import check when test variants don't use all imports.
-var _ = v1.WorkspacePhaseActive

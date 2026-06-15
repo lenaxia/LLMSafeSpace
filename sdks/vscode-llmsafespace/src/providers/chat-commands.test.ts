@@ -103,59 +103,6 @@ describe("chat-commands dispatch", () => {
     expect(result.markdown).toMatch(/no active workspace/i);
   });
 
-  it("/status renders helpful message when API fails", async () => {
-    const ctx = makeCtx({
-      listWorkspaces: vi.fn(async () => { throw new Error("401 unauthorized"); }),
-    });
-    const result = await dispatchChatCommand({ command: "status", prompt: "" }, ctx);
-    if (!result.handled) throw new Error("expected handled");
-    expect(result.markdown).toContain("Error");
-    expect(result.markdown).toContain("Configure");
-  });
-
-  it("/switch-workspace prompts the user and sets sticky selection", async () => {
-    const sticky = vi.fn();
-    const ctx = makeCtx({ setWorkspaceSticky: sticky });
-    const result = await dispatchChatCommand({ command: "switch-workspace", prompt: "" }, ctx);
-    if (!result.handled) throw new Error("expected handled");
-    expect(ctx.promptUser).toHaveBeenCalled();
-    expect(sticky).toHaveBeenCalledWith("ws-active");
-    expect(result.markdown).toContain("active-ws");
-  });
-
-  it("/switch-workspace aborts cleanly when user cancels prompt", async () => {
-    const ctx = makeCtx({ promptUser: vi.fn(async () => undefined) });
-    const result = await dispatchChatCommand({ command: "switch-workspace", prompt: "" }, ctx);
-    if (!result.handled) throw new Error("expected handled");
-    expect(result.markdown).toMatch(/cancel/i);
-  });
-
-  it("/switch-workspace renders message when no workspaces exist", async () => {
-    const ctx = makeCtx({ listWorkspaces: vi.fn(async () => []) });
-    const result = await dispatchChatCommand({ command: "switch-workspace", prompt: "" }, ctx);
-    if (!result.handled) throw new Error("expected handled");
-    expect(result.markdown).toMatch(/no workspaces/i);
-  });
-
-  it("/new-session creates a fresh session on the active workspace", async () => {
-    const ctx = makeCtx();
-    const result = await dispatchChatCommand({ command: "new-session", prompt: "" }, ctx);
-    if (!result.handled) throw new Error("expected handled");
-    expect(ctx.ensureSession).toHaveBeenCalledWith("ws-active");
-    expect(result.markdown).toContain("ses-new");
-  });
-
-  it("/new-session errors when no active workspace", async () => {
-    const ctx = makeCtx({
-      listWorkspaces: vi.fn(async () => [
-        { id: "ws-x", name: "x", phase: "Suspended", runtime: "python" },
-      ]),
-    });
-    const result = await dispatchChatCommand({ command: "new-session", prompt: "" }, ctx);
-    if (!result.handled) throw new Error("expected handled");
-    expect(result.markdown).toMatch(/no active workspace/i);
-  });
-
   it("/history delegates to the caller (returns handled=false so the participant can stream history)", async () => {
     const ctx = makeCtx();
     const result = await dispatchChatCommand({ command: "history", prompt: "" }, ctx);

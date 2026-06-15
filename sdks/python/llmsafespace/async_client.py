@@ -71,6 +71,11 @@ class AsyncLLMSafeSpace:
     async def _request(
         self, method: str, path: str, *, json: Any = None, timeout: float | None = None
     ) -> Any:
+        return await self._request_with_retry(method, path, json=json, timeout=timeout, _retried_401=False)
+
+    async def _request_with_retry(
+        self, method: str, path: str, *, json: Any = None, timeout: float | None = None, _retried_401: bool = False
+    ) -> Any:
         url = f"{self._base_url}/api/v1{path}"
         headers = await self._auth_headers()
 
@@ -85,9 +90,9 @@ class AsyncLLMSafeSpace:
         except httpx.TimeoutException as e:
             raise TimeoutError(str(e)) from e
 
-        if resp.status_code == 401 and self._email and self._token:
+        if resp.status_code == 401 and self._email and self._token and not _retried_401:
             self._token = None
-            return await self._request(method, path, json=json, timeout=timeout)
+            return await self._request_with_retry(method, path, json=json, timeout=timeout, _retried_401=True)
 
         if resp.status_code >= 400:
             self._raise_for_status(resp)

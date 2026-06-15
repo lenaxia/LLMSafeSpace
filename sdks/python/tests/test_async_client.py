@@ -159,3 +159,23 @@ async def test_async_concurrent_requests_run_in_parallel(client: AsyncLLMSafeSpa
         return_value=httpx.Response(200, json={"items": [], "pagination": {}})
     )
     await asyncio.gather(*(client.workspaces.list() for _ in range(10)))
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_async_401_persistent_after_relogin_does_not_loop():
+    # Pathological server: accepts login (200 + token) but rejects every
+    # subsequent request with 401. Without the single-retry guard this would
+    # recurse until Python's stack limit. With the guard, the second 401
+    # surfaces as AuthError after exactly one re-login attempt.
+    login = respx.post(f"{BASE}/api/v1/auth/login").mock(
+        return_value=httpx.Response(200, json={"token": "jwt"})
+    )
+    respx.get(f"{BASE}/api/v1/workspaces").mock(
+        return_value=httpx.Response(401, json={"error": "still expired"})
+    )
+    async with AsyncLLMSafeSpace(BASE, email="u@x.com", password="pw") as c:
+        with pytest.raises(AuthError):
+            await c.workspaces.list()
+    # Exactly 2 login calls: initial + one retry. NOT unbounded.
+    assert login.call_count == 2
