@@ -161,6 +161,11 @@ var (
 )
 
 func collectors() []prometheus.Collector {
+	return AllCollectors()
+}
+
+// AllCollectors returns all registered metric collectors. Exported for testing.
+func AllCollectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		WorkspacesCreatedTotal, WorkspacesDeletedTotal, WorkspacesRunning, WorkspacesFailedTotal,
 		WorkspaceRecoveryAttemptsTotal, WorkspaceRecoverySuccessTotal,

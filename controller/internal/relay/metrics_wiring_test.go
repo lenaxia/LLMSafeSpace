@@ -13,13 +13,21 @@ import (
 	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
 )
 
-func registerTestMetrics(t *testing.T) prometheus.Gauge {
-	t.Helper()
-	g := prometheus.NewGauge(prometheus.GaugeOpts{Name: "test_relay_gauge"})
-	return g
+// ─── Helpers for isolated testing ───────────────────────────────────────────
+
+func newTestGauge(name string) prometheus.Gauge {
+	return prometheus.NewGauge(prometheus.GaugeOpts{Name: name})
 }
 
-func getGaugeValue(g prometheus.Gauge) float64 {
+func newTestGaugeVec(name, help string, labels ...string) *prometheus.GaugeVec {
+	return prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: name, Help: help}, labels)
+}
+
+func newTestCounterVec(name, help string, labels ...string) *prometheus.CounterVec {
+	return prometheus.NewCounterVec(prometheus.CounterOpts{Name: name, Help: help}, labels)
+}
+
+func gaugeValue(g prometheus.Gauge) float64 {
 	m := &dto.Metric{}
 	_ = g.(prometheus.Metric).Write(m)
 	if m.Gauge != nil {
@@ -28,79 +36,77 @@ func getGaugeValue(g prometheus.Gauge) float64 {
 	return -1
 }
 
-func TestSetRelayHealthyReplicas(t *testing.T) {
-	// Register metrics in a test registry to avoid global state pollution
-	registry := prometheus.NewRegistry()
-	_ = metrics.RegisterWith(registry)
-
-	// The package-level gauge is already registered globally; calling
-	// the function should not panic and should set the value.
-	setRelayHealthyReplicas(3)
-
-	m := &dto.Metric{}
-	_ = metrics.RelayHealthyReplicas.Write(m)
-	assert.Equal(t, float64(3), m.Gauge.GetValue())
-
-	setRelayHealthyReplicas(0)
-	_ = metrics.RelayHealthyReplicas.Write(m)
-	assert.Equal(t, float64(0), m.Gauge.GetValue())
+func gaugeVecValue(gv *prometheus.GaugeVec, labels ...string) float64 {
+	g, _ := gv.GetMetricWithLabelValues(labels...)
+	return gaugeValue(g)
 }
 
-func TestSetRelayProvisioningFailed(t *testing.T) {
-	setRelayProvisioningFailed("oci", true)
+func counterVecValue(cv *prometheus.CounterVec, labels ...string) float64 {
+	c, _ := cv.GetMetricWithLabelValues(labels...)
 	m := &dto.Metric{}
-	gauge, err := metrics.RelayProvisioningFailed.GetMetricWithLabelValues("oci")
-	assert.NoError(t, err)
-	_ = gauge.Write(m)
-	assert.Equal(t, float64(1), m.Gauge.GetValue())
-
-	setRelayProvisioningFailed("oci", false)
-	_ = gauge.Write(m)
-	assert.Equal(t, float64(0), m.Gauge.GetValue())
+	_ = c.(prometheus.Metric).Write(m)
+	if m.Counter != nil {
+		return m.Counter.GetValue()
+	}
+	return -1
 }
 
-func TestSetRelayDraining(t *testing.T) {
-	setRelayDraining("aws", true)
-	gauge, err := metrics.RelayDraining.GetMetricWithLabelValues("aws")
-	assert.NoError(t, err)
-	m := &dto.Metric{}
-	_ = gauge.Write(m)
-	assert.Equal(t, float64(1), m.Gauge.GetValue())
+// ─── Isolated unit tests using fresh collectors ─────────────────────────────
 
-	setRelayDraining("aws", false)
-	_ = gauge.Write(m)
-	assert.Equal(t, float64(0), m.Gauge.GetValue())
+func TestSetRelayHealthyReplicas_SetsValue(t *testing.T) {
+	g := newTestGauge("test_healthy")
+	setRelayHealthyReplicasInto(g, 3)
+	assert.Equal(t, 3.0, gaugeValue(g))
+
+	setRelayHealthyReplicasInto(g, 0)
+	assert.Equal(t, 0.0, gaugeValue(g))
 }
 
-func TestSetRelayQuotaExhausted(t *testing.T) {
-	setRelayQuotaExhausted("gcp", true)
-	gauge, err := metrics.RelayQuotaExhausted.GetMetricWithLabelValues("gcp")
-	assert.NoError(t, err)
-	m := &dto.Metric{}
-	_ = gauge.Write(m)
-	assert.Equal(t, float64(1), m.Gauge.GetValue())
+func TestSetRelayProvisioningFailed_TogglesGauge(t *testing.T) {
+	gv := newTestGaugeVec("test_prov_failed", "test", "provider")
+	setRelayProvisioningFailedInto(gv, "oci", true)
+	assert.Equal(t, 1.0, gaugeVecValue(gv, "oci"))
+
+	setRelayProvisioningFailedInto(gv, "oci", false)
+	assert.Equal(t, 0.0, gaugeVecValue(gv, "oci"))
 }
 
-func TestRecordRotation(t *testing.T) {
-	recordRotation("oci", "manual")
-	recordRotation("oci", "manual")
-	counter, err := metrics.RelayRotationTotal.GetMetricWithLabelValues("oci", "manual")
-	assert.NoError(t, err)
-	m := &dto.Metric{}
-	_ = counter.Write(m)
-	assert.Equal(t, float64(2), m.Counter.GetValue())
+func TestSetRelayDraining_TogglesGauge(t *testing.T) {
+	gv := newTestGaugeVec("test_draining", "test", "provider")
+	setRelayDrainingInto(gv, "aws", true)
+	assert.Equal(t, 1.0, gaugeVecValue(gv, "aws"))
 
-	recordRotation("aws", "429")
-	counter2, err := metrics.RelayRotationTotal.GetMetricWithLabelValues("aws", "429")
-	assert.NoError(t, err)
-	_ = counter2.Write(m)
-	assert.Equal(t, float64(1), m.Counter.GetValue())
+	setRelayDrainingInto(gv, "aws", false)
+	assert.Equal(t, 0.0, gaugeVecValue(gv, "aws"))
 }
 
-func TestObserveProvisionDuration(t *testing.T) {
-	observeProvisionDuration("oci", 42.5)
-	hist, err := metrics.RelayProvisionDurationSeconds.GetMetricWithLabelValues("oci")
-	assert.NoError(t, err)
+func TestSetRelayQuotaExhausted_TogglesGauge(t *testing.T) {
+	gv := newTestGaugeVec("test_quota", "test", "provider")
+	setRelayQuotaExhaustedInto(gv, "gcp", true)
+	assert.Equal(t, 1.0, gaugeVecValue(gv, "gcp"))
+
+	setRelayQuotaExhaustedInto(gv, "gcp", false)
+	assert.Equal(t, 0.0, gaugeVecValue(gv, "gcp"))
+}
+
+func TestRecordRotation_AccumulatesCounter(t *testing.T) {
+	cv := newTestCounterVec("test_rotation", "test", "provider", "reason")
+	recordRotationInto(cv, "oci", "manual")
+	recordRotationInto(cv, "oci", "manual")
+	assert.Equal(t, 2.0, counterVecValue(cv, "oci", "manual"))
+
+	recordRotationInto(cv, "aws", "429")
+	assert.Equal(t, 1.0, counterVecValue(cv, "aws", "429"))
+	assert.Equal(t, 2.0, counterVecValue(cv, "oci", "manual"), "oci counter should be unaffected")
+}
+
+func TestObserveProvisionDuration_RecordsHistogram(t *testing.T) {
+	hv := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "test_provision_seconds",
+	}, []string{"provider"})
+	observeProvisionDurationInto(hv, "oci", 42.5)
+
+	hist, _ := hv.GetMetricWithLabelValues("oci")
 	m := &dto.Metric{}
 	_ = hist.(prometheus.Metric).Write(m)
 	assert.NotNil(t, m.Histogram)
@@ -108,8 +114,54 @@ func TestObserveProvisionDuration(t *testing.T) {
 	assert.InDelta(t, 42.5, m.Histogram.GetSampleSum(), 0.01)
 }
 
-func TestGaugeValueHelper(t *testing.T) {
-	g := prometheus.NewGauge(prometheus.GaugeOpts{Name: "test"})
-	g.Set(99.0)
-	assert.Equal(t, 99.0, getGaugeValue(g))
+// ─── Integration test: verify global metrics are registered ─────────────────
+
+func TestMetricsRegisteredInCollectors(t *testing.T) {
+	// Verify all relay metrics are in collectors() (they must be to appear at /metrics)
+	allCollectors := metrics.AllCollectors()
+	names := make(map[string]bool)
+	for _, c := range allCollectors {
+		// Each collector can describe itself
+		descCh := make(chan *prometheus.Desc, 10)
+		c.Describe(descCh)
+		close(descCh)
+		for desc := range descCh {
+			names[desc.String()] = true
+		}
+	}
+
+	expectedMetrics := []string{
+		"llmsafespace_relay_healthy_replicas",
+		"llmsafespace_relay_provisioning_failed",
+		"llmsafespace_relay_draining",
+		"llmsafespace_relay_quota_exhausted",
+		"llmsafespace_relay_provision_duration_seconds",
+		"llmsafespace_relay_rotation_total",
+	}
+
+	for _, name := range expectedMetrics {
+		found := false
+		for k := range names {
+			if containsSubstring(k, name) {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "metric %q should be registered in collectors", name)
+	}
+}
+
+func containsSubstring(haystack, needle string) bool {
+	return len(haystack) >= len(needle) && (haystack == needle ||
+		(len(haystack) > 0 && len(needle) > 0 &&
+			(indexOf(haystack, needle) >= 0)))
+}
+
+func indexOf(s, sub string) int {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
 }
