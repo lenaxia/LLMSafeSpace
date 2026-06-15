@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from "react";
-import { ApiClientError } from "../../api/client";
 import {
   relayApi,
   type RelayStatus,
@@ -28,11 +27,7 @@ export function RelayStatusDashboard() {
       const data = await relayApi.getStatus();
       setStatus(data);
     } catch (e) {
-      if (e instanceof ApiClientError && e.status === 404) {
-        setStatus(null);
-      } else {
-        toast(e instanceof Error ? e.message : "Failed to load status", "error");
-      }
+      toast(e instanceof Error ? e.message : "Failed to load status", "error");
     } finally {
       setLoading(false);
     }
