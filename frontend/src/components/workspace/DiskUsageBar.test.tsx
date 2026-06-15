@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { screen, fireEvent } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { render } from "../../test/utils";
 import { DiskUsageBar } from "./DiskUsageBar";
 
@@ -52,38 +53,40 @@ describe("DiskUsageBar — context unknown (contextTotal=0)", () => {
     expect(screen.queryByText(/%/)).not.toBeInTheDocument();
   });
 
-  // ── Tooltip on unknown ───────────────────────────────────────────────────
+  // ── Tooltip on unknown (Radix UI — async hover with delayDuration=0) ──────
 
-  it("shows tooltip on hover of Unknown badge explaining auto-compaction is disabled", () => {
+  it("shows tooltip on hover of Unknown badge explaining auto-compaction is disabled", async () => {
+    const user = userEvent.setup();
     render(<DiskUsageBar contextUsed={150000} contextTotal={0} />);
     const badge = screen.getAllByRole("button", { name: /context limit unknown/i })[0]!;
-    fireEvent.mouseEnter(badge);
-    expect(screen.getByText(/auto-compaction is disabled/i)).toBeInTheDocument();
+    await user.hover(badge);
+    await waitFor(() => {
+      expect(screen.getAllByText(/auto-compaction is disabled/i).length).toBeGreaterThan(0);
+    });
   });
 
-  it("hides tooltip when mouse leaves Unknown badge", () => {
+  it("hides tooltip when mouse leaves Unknown badge", async () => {
+    const user = userEvent.setup();
     render(<DiskUsageBar contextUsed={150000} contextTotal={0} />);
     const badge = screen.getAllByRole("button", { name: /context limit unknown/i })[0]!;
-    fireEvent.mouseEnter(badge);
-    expect(screen.getByText(/auto-compaction is disabled/i)).toBeInTheDocument();
-    fireEvent.mouseLeave(badge);
-    expect(screen.queryByText(/auto-compaction is disabled/i)).not.toBeInTheDocument();
+    await user.hover(badge);
+    await waitFor(() => {
+      expect(screen.getAllByText(/auto-compaction is disabled/i).length).toBeGreaterThan(0);
+    });
+    await user.keyboard("{Escape}");
+    await waitFor(() => {
+      expect(screen.queryByText(/auto-compaction is disabled/i)).not.toBeInTheDocument();
+    });
   });
 
-  it("toggles tooltip on click of Unknown badge", () => {
+  it("tooltip mentions max_input_tokens as the fix", async () => {
+    const user = userEvent.setup();
     render(<DiskUsageBar contextUsed={150000} contextTotal={0} />);
     const badge = screen.getAllByRole("button", { name: /context limit unknown/i })[0]!;
-    fireEvent.click(badge);
-    expect(screen.getByText(/auto-compaction is disabled/i)).toBeInTheDocument();
-    fireEvent.click(badge);
-    expect(screen.queryByText(/auto-compaction is disabled/i)).not.toBeInTheDocument();
-  });
-
-  it("tooltip mentions max_input_tokens as the fix", () => {
-    render(<DiskUsageBar contextUsed={150000} contextTotal={0} />);
-    const badge = screen.getAllByRole("button", { name: /context limit unknown/i })[0]!;
-    fireEvent.mouseEnter(badge);
-    expect(screen.getByText(/max_input_tokens/i)).toBeInTheDocument();
+    await user.hover(badge);
+    await waitFor(() => {
+      expect(screen.getAllByText(/max_input_tokens/i).length).toBeGreaterThan(0);
+    });
   });
 
   // ── Edge cases ────────────────────────────────────────────────────────────

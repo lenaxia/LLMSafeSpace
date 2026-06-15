@@ -13,6 +13,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "../providers/ThemeProvider";
 import { ChatPage } from "./ChatPage";
+import { TooltipProvider } from "../components/ui";
 
 vi.mock("../api/workspaces", () => ({
   workspacesApi: {
@@ -72,11 +73,13 @@ function renderChat(qc: QueryClient, path: string) {
   return render(
     <QueryClientProvider client={qc}>
       <ThemeProvider>
-        <MemoryRouter initialEntries={[path]}>
-          <Routes>
-            <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
-          </Routes>
-        </MemoryRouter>
+        <TooltipProvider delayDuration={0}>
+          <MemoryRouter initialEntries={[path]}>
+            <Routes>
+              <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
+            </Routes>
+          </MemoryRouter>
+        </TooltipProvider>
       </ThemeProvider>
     </QueryClientProvider>,
   );

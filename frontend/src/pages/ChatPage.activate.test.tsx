@@ -5,6 +5,7 @@ import { render } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ChatPage } from "./ChatPage";
+import { TooltipProvider } from "../components/ui";
 
 vi.mock("../api/workspaces", () => ({
   workspacesApi: {
@@ -40,10 +41,12 @@ function renderChat(path: string) {
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[path]}>
-        <Routes>
-          <Route path="/chat/:workspaceId" element={<ChatPage />} />
-          <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
-        </Routes>
+        <TooltipProvider delayDuration={0}>
+          <Routes>
+            <Route path="/chat/:workspaceId" element={<ChatPage />} />
+            <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
+          </Routes>
+        </TooltipProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   );

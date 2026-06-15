@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { Tooltip } from "../ui/Tooltip";
 
 interface MetricProps {
   label: string;
@@ -46,52 +47,41 @@ function MetricItem({ label, used, total, formatValue, warningThreshold = 85 }: 
 }
 
 // ContextUnknownItem renders when context limit is unknown (contextTotal=0).
-// Shows used tokens with "Unknown" total and a tooltip explaining the impact.
+// Shows used tokens with "Unknown" total and a position-aware tooltip.
 function ContextUnknownItem({ used, formatValue }: { used: number; formatValue?: (v: number) => string }) {
-  const [tooltipVisible, setTooltipVisible] = useState(false);
-  const tooltipRef = useRef<HTMLDivElement>(null);
   const fmt = formatValue ?? ((v: number) => `${v}`);
 
-  // Close tooltip on outside click
-  useEffect(() => {
-    if (!tooltipVisible) return;
-    const handler = (e: MouseEvent) => {
-      if (tooltipRef.current && !tooltipRef.current.contains(e.target as Node)) {
-        setTooltipVisible(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [tooltipVisible]);
-
   return (
-    <div className="flex items-center gap-1.5 min-w-0 relative" ref={tooltipRef}>
+    <div className="flex items-center gap-1.5 min-w-0">
       <span className="shrink-0 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">Context</span>
       {/* No progress bar — limit is unknown */}
       <span className="text-[11px] text-muted-foreground whitespace-nowrap tabular-nums">
         {fmt(used)}
         <span className="text-muted-foreground/50"> / </span>
       </span>
-      {/* "Unknown" badge — hover or click reveals tooltip */}
-      <button
-        className="text-[10px] font-medium text-yellow-500 hover:text-yellow-400 underline decoration-dotted cursor-help"
-        onMouseEnter={() => setTooltipVisible(true)}
-        onMouseLeave={() => setTooltipVisible(false)}
-        onClick={() => setTooltipVisible((v) => !v)}
-        aria-label="Context limit unknown — click for details"
+      <Tooltip
+        side="top"
+        align="start"
+        maxWidth="sm"
+        content={
+          <>
+            <p className="font-semibold mb-1">Context limit not reported by provider</p>
+            <p className="text-muted-foreground">
+              The model did not return a context window size. Auto-compaction is disabled —
+              the session may stall when the context fills up without warning.
+              Set <code className="font-mono">max_input_tokens</code> in the provider model
+              config to fix this.
+            </p>
+          </>
+        }
       >
-        Unknown
-      </button>
-      {tooltipVisible && (
-        <div className="absolute bottom-full left-0 mb-1.5 z-50 w-64 rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md">
-          <p className="font-semibold mb-1">Context limit not reported by provider</p>
-          <p className="text-muted-foreground">
-            The model did not return a context window size. Auto-compaction is disabled —
-            the session may stall when the context fills up without warning.
-            Set <code className="font-mono">max_input_tokens</code> in the LiteLLM model config to fix this.
-          </p>
-        </div>
-      )}
+        <button
+          className="text-[10px] font-medium text-yellow-500 hover:text-yellow-400 underline decoration-dotted cursor-help"
+          aria-label="Context limit unknown — hover for details"
+        >
+          Unknown
+        </button>
+      </Tooltip>
     </div>
   );
 }

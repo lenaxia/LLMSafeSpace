@@ -7,6 +7,7 @@ import { render, waitFor, act, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ChatPage } from "./ChatPage";
+import { TooltipProvider } from "../components/ui";
 import type { WorkspaceStreamEvent, SessionStatusEvent } from "../api/types";
 
 // --- Mocks ---
@@ -98,9 +99,11 @@ function renderChat(qc: QueryClient, path: string) {
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[path]}>
-        <Routes>
-          <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
-        </Routes>
+        <TooltipProvider delayDuration={0}>
+          <Routes>
+            <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
+          </Routes>
+        </TooltipProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -713,9 +716,11 @@ describe("ChatPage auto-abort stuck input sessions", () => {
     render(
       <QueryClientProvider client={qc}>
         <MemoryRouter initialEntries={["/chat/ws-1/sess-stuck"]}>
-          <Routes>
-            <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
-          </Routes>
+          <TooltipProvider delayDuration={0}>
+            <Routes>
+              <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
+            </Routes>
+          </TooltipProvider>
         </MemoryRouter>
       </QueryClientProvider>,
     );
@@ -762,9 +767,11 @@ describe("ChatPage auto-abort stuck input sessions", () => {
     render(
       <QueryClientProvider client={qc}>
         <MemoryRouter initialEntries={["/chat/ws-1/sess-perm"]}>
-          <Routes>
-            <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
-          </Routes>
+          <TooltipProvider delayDuration={0}>
+            <Routes>
+              <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
+            </Routes>
+          </TooltipProvider>
         </MemoryRouter>
       </QueryClientProvider>,
     );
@@ -807,9 +814,11 @@ describe("ChatPage auto-abort stuck input sessions", () => {
     render(
       <QueryClientProvider client={qc}>
         <MemoryRouter initialEntries={["/chat/ws-1/sess-abort-fail"]}>
-          <Routes>
-            <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
-          </Routes>
+          <TooltipProvider delayDuration={0}>
+            <Routes>
+              <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
+            </Routes>
+          </TooltipProvider>
         </MemoryRouter>
       </QueryClientProvider>,
     );
@@ -850,9 +859,11 @@ describe("ChatPage auto-abort stuck input sessions", () => {
     render(
       <QueryClientProvider client={qc}>
         <MemoryRouter initialEntries={["/chat/ws-1/sess-live-q"]}>
-          <Routes>
-            <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
-          </Routes>
+          <TooltipProvider delayDuration={0}>
+            <Routes>
+              <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
+            </Routes>
+          </TooltipProvider>
         </MemoryRouter>
       </QueryClientProvider>,
     );

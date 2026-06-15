@@ -6,3 +6,4 @@ export { Spinner } from "./Spinner";
 export { KebabMenu } from "./KebabMenu";
 export type { KebabMenuItem } from "./KebabMenu";
 export { LazyDetails } from "./LazyDetails";
+export { Tooltip, TooltipProvider } from "./Tooltip";

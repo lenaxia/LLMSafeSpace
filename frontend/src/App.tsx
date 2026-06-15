@@ -5,6 +5,7 @@ import { ToastProvider } from "./providers/ToastProvider";
 import { QueryClientProvider } from "./providers/QueryClientProvider";
 import { ErrorBoundary } from "./components/layout/ErrorBoundary";
 import { UpdateAvailableToast } from "./components/layout/UpdateAvailableToast";
+import { TooltipProvider } from "./components/ui";
 import { usePWA } from "./hooks/usePWA";
 import { router } from "./router";
 
@@ -21,8 +22,12 @@ export function App() {
         <ToastProvider>
           <QueryClientProvider>
             <AuthProvider>
-              <RouterProvider router={router} />
-              <PWAUpdater />
+              {/* TooltipProvider must wrap the entire app so Radix tooltips
+                  rendered inside portals can find the provider context. */}
+              <TooltipProvider delayDuration={300}>
+                <RouterProvider router={router} />
+                <PWAUpdater />
+              </TooltipProvider>
             </AuthProvider>
           </QueryClientProvider>
         </ToastProvider>
