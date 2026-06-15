@@ -202,14 +202,18 @@ func (h *OIDCCallbackHandler) Callback(c *gin.Context) {
 		}
 	}
 
-	// Ensure membership (ignore duplicate — user may already be a member).
+	// Ensure membership (log but don't fail — user may already be a member).
 	pendingKeyWrap := role == types.OrgRoleAdmin
-	_ = h.store.AddOrgMember(ctx, cfg.OrgID, user.ID, role, pendingKeyWrap)
+	if err := h.store.AddOrgMember(ctx, cfg.OrgID, user.ID, role, pendingKeyWrap); err != nil {
+		// Not fatal: duplicate membership or concurrent provision.
+		fmt.Fprintf(gin.DefaultErrorWriter, "oidc: add member failed for user %s org %s: %v\n", user.ID, cfg.OrgID, err)
+	}
 
-	// Set a short-lived signed cookie with the user ID for the login page to
-	// complete session issuance. Does NOT leak PII in the URL.
-	c.SetCookie("oidc_complete", user.ID, 60, "/", "", false, true)
-	c.Redirect(http.StatusFound, "/login?sso=complete")
+	// Redirect to the login page with a generic SSO flag. The actual session
+	// issuance requires integration with the auth service (JWT signing), which
+	// is a Phase 3b follow-up. For now, the user is provisioned and can log
+	// in normally.
+	c.Redirect(http.StatusFound, "/login?sso=ok")
 }
 
 func generateRandomString(n int) (string, error) {

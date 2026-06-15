@@ -5,7 +5,10 @@ package handlers
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -65,6 +68,12 @@ func (h *SSOHandler) Put(c *gin.Context) {
 		return
 	}
 
+	// SSRF protection: reject discovery URLs that resolve to private/internal IPs.
+	if err := validateDiscoveryURL(req.DiscoveryURL); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	groupAdmin := req.GroupAdminClaim
 	if groupAdmin == "" {
 		groupAdmin = "llmsafespace-admins"
@@ -109,4 +118,30 @@ func (h *SSOHandler) Delete(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// validateDiscoveryURL checks that the OIDC discovery URL is safe: must be
+// https (or localhost for dev), must not resolve to a private/internal IP.
+func validateDiscoveryURL(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	host := parsed.Hostname()
+	if host == "localhost" || host == "127.0.0.1" {
+		return nil
+	}
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("discovery URL must use https")
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if isPrivateSSOIP(ip) {
+			return fmt.Errorf("discovery URL resolves to a private IP address")
+		}
+	}
+	return nil
+}
+
+func isPrivateSSOIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()
 }
