@@ -306,13 +306,6 @@ func (r *InferenceRelayReconciler) provisionRelay(ctx context.Context, relay *v1
 		return nil, "", fmt.Errorf("%w: no driver for provider %s", ErrConfig, providerSpec.Provider)
 	}
 
-	// Read provider credentials from Secret
-	secret := &corev1.Secret{}
-	secretName := types.NamespacedName{Name: providerSpec.CredentialsRef.Name, Namespace: r.Namespace}
-	if err := r.Get(ctx, secretName, secret); err != nil {
-		return nil, "", fmt.Errorf("get credentials secret %s: %w", providerSpec.CredentialsRef.Name, err)
-	}
-
 	// Generate WireGuard keypair for this relay VM
 	kp, err := GenerateKeypair()
 	if err != nil {
@@ -353,12 +346,11 @@ func (r *InferenceRelayReconciler) provisionRelay(ctx context.Context, relay *v1
 
 	// Call the provider driver
 	result, err := driver.Provision(ctx, ProvisionRequest{
-		Name:                  fmt.Sprintf("relay-%s", providerSpec.Provider),
-		Region:                providerSpec.Region,
-		Shape:                 shape,
-		CloudInit:             cloudInit,
-		WireGuardIP:           wgIPForProvider(providerSpec.Provider),
-		CredentialsSecretName: providerSpec.CredentialsRef.Name,
+		Name:        fmt.Sprintf("relay-%s", providerSpec.Provider),
+		Region:      providerSpec.Region,
+		Shape:       shape,
+		CloudInit:   cloudInit,
+		WireGuardIP: wgIPForProvider(providerSpec.Provider),
 	})
 	if err != nil {
 		return nil, "", fmtError("provision", providerSpec.Provider, err)

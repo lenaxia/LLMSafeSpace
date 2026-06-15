@@ -6,6 +6,8 @@ package relay
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -508,4 +510,53 @@ func TestEnsureRouterWGKey_GeneratesIfMissing(t *testing.T) {
 	err = fakeClient.Get(context.Background(), types.NamespacedName{Name: routerWGSecret, Namespace: "test-ns"}, secret)
 	require.NoError(t, err)
 	assert.Equal(t, pubKey, string(secret.Data["publicKey"]))
+}
+
+// TestReconcileFleet_HealthReportApplied verifies that health data from
+// the router /metrics endpoint is applied to instance status.
+func TestReconcileFleet_HealthReportApplied(t *testing.T) {
+	relay := makeRelayCRWithInstance("oci")
+	common.AddFinalizer(relay, InferenceRelayFinalizer)
+
+	scheme := testScheme(t)
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithRuntimeObjects(relay).
+		WithStatusSubresource(&v1.InferenceRelay{}).
+		Build()
+
+	// Create a health checker pointing at a mock server
+	metricsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte(`relay_router_relay_healthy{id="existing-vm",provider="oci"} 1
+relay_router_active_streams{id="existing-vm",provider="oci"} 5
+relay_router_requests_total{id="existing-vm",provider="oci"} 9999
+relay_router_requests_429_total{id="existing-vm",provider="oci"} 7
+relay_router_relay_egress_bytes{id="existing-vm",provider="oci"} 123456789
+relay_router_fallback_active 0
+`))
+	}))
+	defer metricsServer.Close()
+
+	r := &InferenceRelayReconciler{
+		Client:        fakeClient,
+		Scheme:        scheme,
+		Namespace:     "test-ns",
+		HealthChecker: NewHealthChecker(metricsServer.URL),
+		Drivers:       map[string]ProviderDriver{"oci": &stubDriver{}},
+	}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "relay-fleet"},
+	})
+	require.NoError(t, err)
+
+	updated := &v1.InferenceRelay{}
+	_ = r.Get(context.Background(), types.NamespacedName{Name: "relay-fleet"}, updated)
+	require.NotEmpty(t, updated.Status.Instances)
+	inst := updated.Status.Instances[0]
+	assert.True(t, inst.Healthy, "health report should mark instance healthy")
+	assert.Equal(t, 7, inst.Requests429, "429 count should come from health report")
+	assert.Equal(t, 9999, inst.TotalRequests, "request count should come from health report")
+	assert.Equal(t, int64(123456789), inst.EgressBytes, "egress bytes should come from health report")
 }
