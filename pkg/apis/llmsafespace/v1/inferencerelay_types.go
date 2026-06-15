@@ -66,7 +66,7 @@ type RelayProviderSpec struct {
 	// CredentialsRef references a K8s Secret containing provider credentials.
 	// Must be in the controller's namespace. The validating webhook checks
 	// that the Secret exists and contains the required keys:
-	//   aws: access-key-id, secret-access-key
+	//   aws: trustAnchorId, profileId, roleArn, region
 	//   oci: tenancy, user, fingerprint, key, region
 	//   gcp: service-account-json
 	// +kubebuilder:validation:MinLength=1

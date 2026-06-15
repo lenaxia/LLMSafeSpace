@@ -60,6 +60,24 @@ describe("relayApi", () => {
     });
   });
 
+  describe("saveAWSCreds", () => {
+    it("calls POST /admin/relay/aws-creds with IAM Roles Anywhere config", async () => {
+      vi.mocked(api.post).mockResolvedValue({ configured: true });
+      await relayApi.saveAWSCreds({
+        trustAnchorId: "ta-abc",
+        profileId: "p-xyz",
+        roleArn: "arn:aws:iam::123:role/relay",
+        region: "us-east-1",
+      });
+      expect(api.post).toHaveBeenCalledWith("/admin/relay/aws-creds", {
+        trustAnchorId: "ta-abc",
+        profileId: "p-xyz",
+        roleArn: "arn:aws:iam::123:role/relay",
+        region: "us-east-1",
+      });
+    });
+  });
+
   describe("deploy", () => {
     it("calls POST /admin/relay/deploy with fleet config", async () => {
       vi.mocked(api.post).mockResolvedValue({ deployed: true });
