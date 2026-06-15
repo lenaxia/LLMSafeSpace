@@ -10,6 +10,7 @@ vi.mock("../../api/relay", () => ({
     getSetup: vi.fn(),
     saveOCICreds: vi.fn(),
     saveGCPCreds: vi.fn(),
+    saveAWSCreds: vi.fn(),
     deploy: vi.fn(),
   },
 }));

@@ -52,6 +52,7 @@ func setupRelayRouter(t *testing.T, clientset *fake.Clientset) (*gin.Engine, *Re
 	g.GET("/status", h.GetStatus)
 	g.POST("/oci-creds", h.SaveOCICreds)
 	g.POST("/gcp-creds", h.SaveGCPCreds)
+	g.POST("/aws-creds", h.SaveAWSCreds)
 	g.POST("/deploy", h.Deploy)
 	g.POST("/rotate/:id", h.Rotate)
 	g.POST("/pause", h.Pause)
@@ -400,6 +401,59 @@ func TestRelayGCPCreds_MissingFields_400(t *testing.T) {
 
 	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/gcp-creds", `{}`)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ─── AWS credentials tests ──────────────────────────────────────────────────
+
+func TestRelayAWSCreds_Create_Success(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	r, _, _ := setupRelayRouter(t, clientset)
+
+	body := `{"trustAnchorId":"ta-abc","profileId":"p-xyz","roleArn":"arn:aws:iam::123:role/relay","region":"us-east-1"}`
+	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/aws-creds", body)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	secret, err := clientset.CoreV1().Secrets(testNamespace).Get(context.Background(), "aws-relay-irwa", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "ta-abc", string(secret.Data["trustAnchorId"]))
+	assert.Equal(t, "p-xyz", string(secret.Data["profileId"]))
+	assert.Equal(t, "arn:aws:iam::123:role/relay", string(secret.Data["roleArn"]))
+	assert.Equal(t, "us-east-1", string(secret.Data["region"]))
+}
+
+func TestRelayAWSCreds_MissingFields_400(t *testing.T) {
+	r, _, _ := setupRelayRouter(t, fake.NewSimpleClientset())
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"missing trustAnchorId", `{"profileId":"p","roleArn":"r","region":"us-east-1"}`},
+		{"missing roleArn", `{"trustAnchorId":"t","profileId":"p","region":"us-east-1"}`},
+		{"empty body", `{}`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			w := doRelayRequest(r, "POST", "/api/v1/admin/relay/aws-creds", tc.body)
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+		})
+	}
+}
+
+func TestRelaySetup_AWSSecretExists_Configured(t *testing.T) {
+	clientset := fake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "aws-relay-irwa", Namespace: testNamespace},
+	})
+	r, _, _ := setupRelayRouter(t, clientset)
+
+	w := doRelayRequest(r, "GET", "/api/v1/admin/relay/setup")
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp setupResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.True(t, resp.AWSConfigured)
 }
 
 // ─── US-43.6: Deploy tests ──────────────────────────────────────────────────

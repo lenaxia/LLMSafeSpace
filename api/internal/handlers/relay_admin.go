@@ -21,8 +21,8 @@ import (
 )
 
 // RelayAdminHandler serves the relay admin setup wizard and status dashboard endpoints.
-// The relay fleet uses OCI (Always Free, primary) and GCP (Always Free, failover)
-// providers — matching the InferenceRelay CRD enum `oci;gcp`.
+// The relay fleet supports AWS (paid primary), OCI (free secondary), and GCP (optional)
+// providers — matching the InferenceRelay CRD enum `aws;oci;gcp`.
 type RelayAdminHandler struct {
 	clientset    kubernetes.Interface
 	llmClient    interfaces.LLMSafespaceV1Interface
@@ -449,7 +449,7 @@ type deployRequest struct {
 }
 
 // Deploy creates or updates the InferenceRelay CR.
-// Valid providers are "oci" and "gcp" — matching the CRD enum validation.
+// Valid providers are "aws", "oci", and "gcp" — matching the CRD enum validation.
 func (h *RelayAdminHandler) Deploy(c *gin.Context) {
 	ctx := c.Request.Context()
 

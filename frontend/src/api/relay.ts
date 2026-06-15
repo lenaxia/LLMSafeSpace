@@ -3,7 +3,7 @@ import { api } from "./client";
 // ---------------------------------------------------------------------------
 // Relay Admin API (Epic 43)
 // Routes: /api/v1/admin/relay
-// Providers: OCI (Always Free, primary) + GCP (Always Free, failover)
+// Providers: AWS (paid primary) + OCI (free secondary) + GCP (optional)
 // ---------------------------------------------------------------------------
 
 export interface RelaySetup {
