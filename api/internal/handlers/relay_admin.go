@@ -89,14 +89,14 @@ func (h *RelayAdminHandler) GetSetup(c *gin.Context) {
 }
 
 func (h *RelayAdminHandler) checkMetalLB(ctx context.Context, resp *setupResponse) error {
-	pods, err := h.clientset.CoreV1().Pods("metallb-system").List(ctx, metav1.ListOptions{
-		LabelSelector: "component=speaker",
-		Limit:         1,
-	})
+	resources, err := h.clientset.Discovery().ServerResourcesForGroupVersion("metallb.io/v1beta1")
 	if err != nil {
+		if apierrors.IsNotFound(err) || strings.Contains(err.Error(), "empty response") {
+			return nil
+		}
 		return err
 	}
-	if len(pods.Items) > 0 {
+	if len(resources.APIResources) > 0 {
 		resp.MetalLBInstalled = true
 	}
 	return nil

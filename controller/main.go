@@ -86,6 +86,12 @@ func main() {
 	flag.StringVar(&inferenceRelaySecret, "inference-relay-secret", "",
 		"Path-segment secret for the inference relay Worker (Epic 26). "+
 			"Appended to --inference-relay-url as the first path segment; the Worker validates and strips it.")
+	var enableRelayController bool
+	flag.BoolVar(&enableRelayController, "enable-inference-relay", false,
+		"Enable the InferenceRelay controller (Epic 42). When true, the controller reconciles InferenceRelay CRs and manages relay VMs.")
+	var relayRouterURL string
+	flag.StringVar(&relayRouterURL, "relay-router-url", "http://relay-router:8080",
+		"URL of the in-cluster relay-router for /metrics scraping (Epic 42).")
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
@@ -167,6 +173,16 @@ func main() {
 	// Set up controllers
 	if err := controller.SetupControllers(mgr, inferenceRelayURL, inferenceRelaySecret); err != nil {
 		setupLog.Error(err, "unable to set up controllers")
+		os.Exit(1)
+	}
+
+	// Set up InferenceRelay controller (feature-gated)
+	relayNamespace := os.Getenv("POD_NAMESPACE")
+	if relayNamespace == "" {
+		relayNamespace = "llmsafespace"
+	}
+	if err := controller.SetupRelayController(mgr, relayNamespace, relayRouterURL, enableRelayController); err != nil {
+		setupLog.Error(err, "unable to set up InferenceRelay controller")
 		os.Exit(1)
 	}
 
