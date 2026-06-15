@@ -1,0 +1,203 @@
+# Epic 43: Relay Admin UX
+
+**Status:** Implemented
+**Created:** 2026-06-14
+**Depends on:** Epic 42 (Multi-Cloud Inference Relay — relay binary, router, CRD types, controller)
+
+---
+
+## Problem Statement
+
+Epic 42 delivers relay infrastructure (relay binary, router, CRD types, WireGuard
+utilities) but provides no operator-facing UI. To configure and monitor the relay
+fleet, an operator must manually run CLI commands across OCI and GCP, create
+Kubernetes Secrets by hand, and monitor relay health by reading CR conditions.
+
+There is no visibility into relay status, egress usage, or health from the
+existing admin UI.
+
+## Solution
+
+A **Setup Wizard** (one-time, then hidden) that walks the operator through OCI
+and GCP credential configuration with copy-paste commands, prerequisite checks,
+and validation.
+
+A **Status Dashboard** (ongoing) that shows real-time fleet health, per-relay
+metrics, and recent events.
+
+The relay fleet uses **OCI** (Always Free, primary, 10 TB egress) and **GCP**
+(Always Free, failover, 1 GB egress) — matching the InferenceRelay CRD enum
+`Enum=oci;gcp`. Both providers are free-tier, so cost tracking is $0.
+
+Epic 42 uses **WireGuard** as the security boundary — no PKI, no cert-manager,
+no TLS certificates to manage.
+
+---
+
+## Architecture
+
+```
+Frontend (React)
+  SettingsPage.tsx → "Relay" tab (admin only)
+    ├── RelaySetupWizard.tsx     (one-time setup)
+    └── RelayStatusDashboard.tsx  (ongoing monitoring)
+
+API Server (Go/Gin)
+  /api/v1/admin/relay/
+    ├── GET    setup          → prerequisite checklist state
+    ├── GET    status         → fleet health, per-relay state, metrics
+    ├── POST   oci-creds      → save OCI credentials (writes K8s Secret)
+    ├── POST   gcp-creds      → save GCP service account JSON (writes K8s Secret)
+    ├── POST   deploy         → create/update InferenceRelay CR
+    ├── POST   rotate/:id     → trigger manual relay rotation
+    ├── POST   pause          → pause relay fleet
+    └── POST   resume         → resume relay fleet
+```
+
+The API server is a read aggregator: it fetches the InferenceRelay CR from K8s
+and scrapes the relay-router's `/metrics` endpoint, then returns unified JSON.
+No relay data is stored in PostgreSQL — the CRD status and router metrics are
+the source of truth.
+
+---
+
+## API Design
+
+### `GET /api/v1/admin/relay/setup`
+
+Returns prerequisite checklist state.
+
+**Response:**
+```json
+{
+  "deployed": false,
+  "metalLBInstalled": true,
+  "routerDeployed": true,
+  "crdInstalled": true,
+  "ociConfigured": false,
+  "gcpConfigured": false,
+  "wireGuardEndpoint": ""
+}
+```
+
+### `GET /api/v1/admin/relay/status`
+
+Returns fleet status aggregating CR status + router metrics. When deployed:
+
+```json
+{
+  "deployed": true,
+  "overall": "healthy",
+  "healthyReplicas": 2,
+  "totalReplicas": 2,
+  "fallbackActive": false,
+  "activeStreams": 3,
+  "instances": [
+    {
+      "id": "oci-1",
+      "provider": "oci",
+      "region": "us-ashburn-1",
+      "shape": "VM.Standard.A1.Flex",
+      "wgIP": "10.42.42.2",
+      "publicIP": "150.230.67.89",
+      "state": "healthy",
+      "healthy": true,
+      "metrics": {
+        "requestsToday": 12847,
+        "requests429Today": 0,
+        "totalRequests": 450000,
+        "egressBytes": 149546362,
+        "egressLimitBytes": 10995116277760,
+        "activeStreams": 3
+      },
+      "cost": { "monthlyEstimate": 0, "spentThisMonth": 0 }
+    }
+  ],
+  "conditions": [],
+  "recentEvents": [],
+  "alerts": []
+}
+```
+
+### `POST /api/v1/admin/relay/oci-creds`
+
+Saves OCI credentials to K8s Secret `oci-credentials`. Body limited to 1 MiB.
+
+**Request:** `{ "tenancy", "user", "fingerprint", "key", "region" }`
+
+### `POST /api/v1/admin/relay/gcp-creds`
+
+Saves GCP service account JSON to K8s Secret `gcp-credentials`. Body limited to 1 MiB.
+
+**Request:** `{ "serviceAccountJson": "..." }`
+
+### `POST /api/v1/admin/relay/deploy`
+
+Creates or updates the InferenceRelay CR. Providers must be `oci` and/or `gcp`
+(matching CRD enum validation).
+
+**Request:**
+```json
+{
+  "upstreamURL": "https://opencode.ai/zen/v1",
+  "routerEndpoint": "relay-gw.example.com:51820",
+  "providers": ["oci", "gcp"]
+}
+```
+
+### `POST /api/v1/admin/relay/rotate/:id`
+
+Triggers manual rotation of a specific relay instance via annotation.
+
+### `POST /api/v1/admin/relay/pause` / `POST /api/v1/admin/relay/resume`
+
+Sets/removes the `relay.llmsafespace.dev/paused` annotation on the InferenceRelay CR.
+
+---
+
+## Cost Tracking
+
+Both providers are Always Free tier — cost is always $0. No billing API calls
+needed.
+
+| Provider | Egress Limit | Cost |
+|----------|-------------|------|
+| OCI | 10 TB/month | $0 (Always Free) |
+| GCP | 1 GB/month | $0 (Always Free) |
+
+---
+
+## Security
+
+1. **Secrets are write-only from the UI.** POST accepts credential values but
+   GET never returns them — the status endpoint shows "configured: true/false".
+
+2. **WireGuard is the security boundary.** No PKI, no cert-manager, no TLS
+   certificates. WireGuard private keys are generated by the controller, stored
+   in K8s Secrets, and never exposed in the UI.
+
+3. **All endpoints are admin-only** behind `AuthMiddleware()` + `AdminGuard()`.
+
+4. **Body size limits** on credential endpoints (1 MiB) to prevent abuse.
+
+5. **`apierrors.IsNotFound`** used consistently to distinguish "not found" (404)
+   from real errors (500) in all K8s API interactions.
+
+---
+
+## Story Breakdown
+
+| Story | Title | Status |
+|-------|-------|--------|
+| US-43.1 | API: relay status endpoint | Done |
+| US-43.2 | API: setup checklist | Done |
+| US-43.3 | API: ~~CA cert download~~ (not needed — WireGuard, no PKI) | N/A |
+| US-43.4 | API: ~~AWS config~~ → GCP credentials | Done |
+| US-43.5 | API: OCI credentials | Done |
+| US-43.6 | API: deploy CR | Done |
+| US-43.7 | API: rotate/pause/resume actions | Done |
+| US-43.8 | FE: setup wizard | Done |
+| US-43.9 | FE: status dashboard | Done |
+| US-43.10 | FE: error states | Done |
+| US-43.11 | FE: alert status | Done |
+| US-43.12 | E2E tests | Done |

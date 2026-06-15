@@ -69,6 +69,10 @@ func (m *MockLLMSafespaceV1Interface) Workspaces(ns string) interfaces.Workspace
 	return m.Called(ns).Get(0).(interfaces.WorkspaceInterface)
 }
 
+func (m *MockLLMSafespaceV1Interface) InferenceRelays() interfaces.InferenceRelayInterface {
+	return m.Called().Get(0).(interfaces.InferenceRelayInterface)
+}
+
 // MockRuntimeEnvironmentInterface mocks interfaces.RuntimeEnvironmentInterface.
 type MockRuntimeEnvironmentInterface struct{ mock.Mock }
 
@@ -202,4 +206,65 @@ func (m *MockWatch) ResultChan() <-chan watch.Event {
 
 func (m *MockWatch) SendEvent(t watch.EventType, obj runtime.Object) {
 	m.ch <- watch.Event{Type: t, Object: obj}
+}
+
+// MockInferenceRelayInterface mocks interfaces.InferenceRelayInterface.
+type MockInferenceRelayInterface struct{ mock.Mock }
+
+var _ interfaces.InferenceRelayInterface = (*MockInferenceRelayInterface)(nil)
+
+func NewMockInferenceRelayInterface() *MockInferenceRelayInterface {
+	return &MockInferenceRelayInterface{}
+}
+
+func (m *MockInferenceRelayInterface) Create(ctx context.Context, r *v1.InferenceRelay) (*v1.InferenceRelay, error) {
+	args := m.Called(ctx, r)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*v1.InferenceRelay), args.Error(1)
+}
+
+func (m *MockInferenceRelayInterface) Update(ctx context.Context, r *v1.InferenceRelay) (*v1.InferenceRelay, error) {
+	args := m.Called(ctx, r)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*v1.InferenceRelay), args.Error(1)
+}
+
+func (m *MockInferenceRelayInterface) UpdateStatus(ctx context.Context, r *v1.InferenceRelay) (*v1.InferenceRelay, error) {
+	args := m.Called(ctx, r)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*v1.InferenceRelay), args.Error(1)
+}
+
+func (m *MockInferenceRelayInterface) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
+	return m.Called(ctx, name, opts).Error(0)
+}
+
+func (m *MockInferenceRelayInterface) Get(ctx context.Context, name string, opts metav1.GetOptions) (*v1.InferenceRelay, error) {
+	args := m.Called(ctx, name, opts)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*v1.InferenceRelay), args.Error(1)
+}
+
+func (m *MockInferenceRelayInterface) List(ctx context.Context, opts metav1.ListOptions) (*v1.InferenceRelayList, error) {
+	args := m.Called(ctx, opts)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*v1.InferenceRelayList), args.Error(1)
+}
+
+func (m *MockInferenceRelayInterface) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
+	args := m.Called(ctx, opts)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(watch.Interface), args.Error(1)
 }

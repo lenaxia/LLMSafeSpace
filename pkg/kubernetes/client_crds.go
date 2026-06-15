@@ -27,6 +27,8 @@ func init() {
 				&v1.RuntimeEnvironmentList{},
 				&v1.Workspace{},
 				&v1.WorkspaceList{},
+				&v1.InferenceRelay{},
+				&v1.InferenceRelayList{},
 			)
 			metav1.AddToGroupVersion(scheme, schema.GroupVersion{Group: "llmsafespace.dev", Version: "v1"})
 			return nil
@@ -77,6 +79,10 @@ func (c *LLMSafespaceV1Client) RuntimeEnvironments() interfaces.RuntimeEnvironme
 
 func (c *LLMSafespaceV1Client) Workspaces(namespace string) interfaces.WorkspaceInterface {
 	return &workspaces{client: c.restClient, ns: namespace}
+}
+
+func (c *LLMSafespaceV1Client) InferenceRelays() interfaces.InferenceRelayInterface {
+	return &inferenceRelays{client: c.restClient}
 }
 
 type runtimeEnvironments struct {
@@ -233,6 +239,81 @@ func (w *workspaces) Watch(ctx context.Context, opts metav1.ListOptions) (watch.
 	return w.client.Get().
 		Namespace(w.ns).
 		Resource("workspaces").
+		VersionedParams(&opts, scheme.ParameterCodec).
+		Watch(ctx)
+}
+
+type inferenceRelays struct {
+	client rest.Interface
+}
+
+func (r *inferenceRelays) Create(ctx context.Context, obj *v1.InferenceRelay) (*v1.InferenceRelay, error) {
+	result := &v1.InferenceRelay{}
+	err := r.client.Post().
+		Resource("inferencerelays").
+		Body(obj).
+		Do(ctx).
+		Into(result)
+	return result, err
+}
+
+func (r *inferenceRelays) Update(ctx context.Context, obj *v1.InferenceRelay) (*v1.InferenceRelay, error) {
+	result := &v1.InferenceRelay{}
+	err := r.client.Put().
+		Resource("inferencerelays").
+		Name(obj.Name).
+		Body(obj).
+		Do(ctx).
+		Into(result)
+	return result, err
+}
+
+func (r *inferenceRelays) UpdateStatus(ctx context.Context, obj *v1.InferenceRelay) (*v1.InferenceRelay, error) {
+	result := &v1.InferenceRelay{}
+	err := r.client.Put().
+		Resource("inferencerelays").
+		Name(obj.Name).
+		SubResource("status").
+		Body(obj).
+		Do(ctx).
+		Into(result)
+	return result, err
+}
+
+func (r *inferenceRelays) Delete(ctx context.Context, name string, options metav1.DeleteOptions) error {
+	return r.client.Delete().
+		Resource("inferencerelays").
+		Name(name).
+		Body(&options).
+		Do(ctx).
+		Error()
+}
+
+func (r *inferenceRelays) Get(ctx context.Context, name string, options metav1.GetOptions) (*v1.InferenceRelay, error) {
+	result := &v1.InferenceRelay{}
+	err := r.client.Get().
+		Resource("inferencerelays").
+		Name(name).
+		VersionedParams(&options, scheme.ParameterCodec).
+		Do(ctx).
+		Into(result)
+	return result, err
+}
+
+func (r *inferenceRelays) List(ctx context.Context, opts metav1.ListOptions) (*v1.InferenceRelayList, error) {
+	result := &v1.InferenceRelayList{}
+	err := r.client.Get().
+		Resource("inferencerelays").
+		VersionedParams(&opts, scheme.ParameterCodec).
+		Do(ctx).
+		Into(result)
+	return result, err
+}
+
+func (r *inferenceRelays) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
+	opts.Watch = true
+	return r.client.Get().
+		Resource("inferencerelays").
 		VersionedParams(&opts, scheme.ParameterCodec).
 		Watch(ctx)
 }

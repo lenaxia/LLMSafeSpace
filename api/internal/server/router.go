@@ -85,6 +85,9 @@ type RouterConfig struct {
 	SSOHandler          *handlers.SSOHandler
 	OIDCCallbackHandler *handlers.OIDCCallbackHandler
 
+	// RelayAdminHandler handles relay admin setup + status endpoints (optional)
+	RelayAdminHandler *handlers.RelayAdminHandler
+
 	CookieName string
 }
 
@@ -287,6 +290,21 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 	if cfg.OIDCCallbackHandler != nil {
 		router.GET("/auth/oidc/:orgSlug/login", cfg.OIDCCallbackHandler.Initiate)
 		router.GET("/auth/oidc/:orgSlug/callback", cfg.OIDCCallbackHandler.Callback)
+	}
+
+	// Relay admin routes (Epic 43)
+	if cfg.RelayAdminHandler != nil {
+		relayAdmin := router.Group("/api/v1/admin/relay")
+		relayAdmin.Use(services.GetAuth().AuthMiddleware())
+		relayAdmin.Use(middleware.AdminGuard())
+		relayAdmin.GET("/setup", cfg.RelayAdminHandler.GetSetup)
+		relayAdmin.GET("/status", cfg.RelayAdminHandler.GetStatus)
+		relayAdmin.POST("/oci-creds", cfg.RelayAdminHandler.SaveOCICreds)
+		relayAdmin.POST("/gcp-creds", cfg.RelayAdminHandler.SaveGCPCreds)
+		relayAdmin.POST("/deploy", cfg.RelayAdminHandler.Deploy)
+		relayAdmin.POST("/rotate/:id", cfg.RelayAdminHandler.Rotate)
+		relayAdmin.POST("/pause", cfg.RelayAdminHandler.Pause)
+		relayAdmin.POST("/resume", cfg.RelayAdminHandler.Resume)
 	}
 
 	// Secret management routes (Epic 10)

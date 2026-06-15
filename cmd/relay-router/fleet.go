@@ -14,6 +14,7 @@ import (
 )
 
 const (
+	relayProviderAWS = "aws"
 	relayProviderOCI = "oci"
 	relayProviderGCP = "gcp"
 
@@ -121,9 +122,10 @@ func (f *relayFleet) UpdatePeers(peers []PeerEntry) {
 }
 
 // SelectRelay picks a relay using weighted random selection.
-// OCI receives 100% of traffic when healthy. GCP receives traffic only
-// when OCI is unavailable. Returns the selected relay ID and WG IP,
-// or empty strings if no healthy relay is available.
+// AWS receives 100% of traffic when healthy. OCI receives traffic only
+// when AWS is unavailable or draining. GCP receives traffic only when
+// both AWS and OCI are unavailable. Returns the selected relay ID and
+// WG IP, or empty strings if no healthy relay is available.
 func (f *relayFleet) SelectRelay() (id, wgIP string, ok bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -133,10 +135,10 @@ func (f *relayFleet) SelectRelay() (id, wgIP string, ok bool) {
 		return "", "", false
 	}
 
-	hasOCI := false
+	hasAWS := false
 	for _, e := range eligible {
-		if e.peer.Provider == relayProviderOCI {
-			hasOCI = true
+		if e.peer.Provider == relayProviderAWS {
+			hasAWS = true
 			break
 		}
 	}
@@ -146,11 +148,23 @@ func (f *relayFleet) SelectRelay() (id, wgIP string, ok bool) {
 		weight float64
 	}
 
+	hasOCI := false
+	if !hasAWS {
+		for _, e := range eligible {
+			if e.peer.Provider == relayProviderOCI {
+				hasOCI = true
+				break
+			}
+		}
+	}
+
 	var total float64
 	candidates := make([]candidate, 0, len(eligible))
 	for _, e := range eligible {
 		w := relayWeight(e.peer.Provider, e.peer.State, f.healthStateLocked(e))
-		if hasOCI && e.peer.Provider == relayProviderGCP {
+		if hasAWS && e.peer.Provider != relayProviderAWS {
+			w = 0
+		} else if hasOCI && e.peer.Provider == relayProviderGCP {
 			w = 0
 		}
 		if w > 0 {
@@ -210,14 +224,18 @@ func (f *relayFleet) is429DrainingLocked(e *relayEntry) bool {
 }
 
 // relayWeight assigns traffic weights by provider and health state.
-// OCI primary (weight 100), GCP failover (weight 1). Suspect relays
-// get reduced weight. This encodes Design Principle 4 (OCI-primary).
+// AWS primary (weight 1000), OCI secondary (weight 100), GCP tertiary (weight 1).
+// Suspect relays get reduced weight. This encodes Design Principle 4
+// (AWS-primary, OCI-secondary). GCP is optional (operator can add as paid).
 func relayWeight(provider, peerState, healthState string) float64 {
 	if healthState == relayStateUnhealthy {
 		return 0
 	}
 	w := 1.0
-	if provider == relayProviderOCI {
+	switch provider {
+	case relayProviderAWS:
+		w = 1000
+	case relayProviderOCI:
 		w = 100
 	}
 	if peerState == relayStateSuspect || healthState == relayStateSuspect {
