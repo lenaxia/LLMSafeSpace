@@ -499,7 +499,7 @@ func TestEnsureRouterWGKey_GeneratesIfMissing(t *testing.T) {
 		Namespace: "test-ns",
 	}
 
-	pubKey := r.ensureRouterWGKey(context.Background())
+	pubKey := r.ensureRouterWGKey(context.Background(), makeRelayCR())
 	assert.NotEmpty(t, pubKey)
 
 	// Verify the secret was created

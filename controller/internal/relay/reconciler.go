@@ -318,7 +318,7 @@ func (r *InferenceRelayReconciler) provisionRelay(ctx context.Context, relay *v1
 	}
 
 	// Read or generate router's WG public key
-	routerPubKey := r.ensureRouterWGKey(ctx)
+	routerPubKey := r.ensureRouterWGKey(ctx, relay)
 
 	// Render WG config for the relay VM
 	wgConf, err := RenderRelayConfig(RelayWGConfig{
@@ -363,8 +363,11 @@ func (r *InferenceRelayReconciler) provisionRelay(ctx context.Context, relay *v1
 
 // ensureRouterWGKey reads or generates the router's WG keypair from the
 // secret referenced in spec.wireGuard.routerPrivateKeyRef (or default).
-func (r *InferenceRelayReconciler) ensureRouterWGKey(ctx context.Context) string {
+func (r *InferenceRelayReconciler) ensureRouterWGKey(ctx context.Context, relay *v1.InferenceRelay) string {
 	secretName := routerWGSecret
+	if relay.Spec.WireGuard.RouterPrivateKeyRef != "" {
+		secretName = relay.Spec.WireGuard.RouterPrivateKeyRef
+	}
 	routerSecret := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: r.Namespace}, routerSecret); err == nil {
 		if pub := string(routerSecret.Data["publicKey"]); pub != "" {

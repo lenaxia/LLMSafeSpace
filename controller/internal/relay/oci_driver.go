@@ -196,7 +196,13 @@ func (d *OCIDriver) Destroy(ctx context.Context, instanceID, region string) erro
 		return err
 	}
 
-	url := fmt.Sprintf("https://iaas.%s.oraclecloud.com/20160918/instances/%s", cfg.Region, instanceID)
+	// Use the region parameter, falling back to credential region
+	destroyRegion := region
+	if destroyRegion == "" {
+		destroyRegion = cfg.Region
+	}
+
+	url := fmt.Sprintf("https://iaas.%s.oraclecloud.com/20160918/instances/%s", destroyRegion, instanceID)
 	resp, err := d.signedRequest(ctx, cfg, http.MethodDelete, url, nil)
 	if err != nil {
 		return err
@@ -218,7 +224,13 @@ func (d *OCIDriver) GetStatus(ctx context.Context, instanceID, region string) (*
 		return nil, err
 	}
 
-	url := fmt.Sprintf("https://iaas.%s.oraclecloud.com/20160918/instances/%s", cfg.Region, instanceID)
+	// Use the region parameter, falling back to credential region
+	statusRegion := region
+	if statusRegion == "" {
+		statusRegion = cfg.Region
+	}
+
+	url := fmt.Sprintf("https://iaas.%s.oraclecloud.com/20160918/instances/%s", statusRegion, instanceID)
 	resp, err := d.signedRequest(ctx, cfg, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -369,7 +381,7 @@ func (d *OCIDriver) signedRequest(ctx context.Context, cfg *ociConfig, method, u
 		headersToSign = append(headersToSign, "content-length", "content-type", "x-content-sha256")
 		signingParts = append(signingParts,
 			fmt.Sprintf("content-length: %d", len(body)),
-			fmt.Sprintf("content-type: application/json"),
+			"content-type: application/json",
 			fmt.Sprintf("x-content-sha256: %s", bodyB64),
 		)
 		req.Header.Set("x-content-sha256", bodyB64)
@@ -412,14 +424,14 @@ func ociStateToVMState(state string) VMState {
 
 // classifyOCIError maps HTTP status codes to typed errors for circuit breaker logic.
 func classifyOCIError(statusCode int, body string) error {
-	switch {
-	case statusCode == 500 || statusCode == 503:
+	switch statusCode {
+	case 500, 503:
 		return fmt.Errorf("%w: OCI service unavailable (%d): %s", ErrCapacity, statusCode, truncate(body, 200))
-	case statusCode == 429:
+	case 429:
 		return fmt.Errorf("%w: OCI rate limited", ErrCapacity)
-	case statusCode == 400 || statusCode == 422:
+	case 400, 422:
 		return fmt.Errorf("%w: OCI rejected request (%d): %s", ErrConfig, statusCode, truncate(body, 200))
-	case statusCode == 401 || statusCode == 403:
+	case 401, 403:
 		return fmt.Errorf("%w: OCI auth failed (%d)", ErrConfig, statusCode)
 	default:
 		return fmt.Errorf("OCI API error (%d): %s", statusCode, truncate(body, 200))

@@ -16,13 +16,9 @@ const (
 	requeuePaused       = 5 * time.Minute  // paused fleet, occasional check
 	requeueError        = 30 * time.Second // after error, retry soon
 
-	// Circuit breaker: max consecutive config-error provisioning attempts
-	// before setting ProvisioningFailed condition and stopping retries.
+	// maxProvisioningAttempts is the max consecutive config-error provisioning
+	// attempts before setting ProvisioningFailed condition and stopping retries.
 	maxProvisioningAttempts = 3
-
-	// ReplacementTimeout is how long a relay can stay unhealthy before
-	// the controller destroys and reprovisions it.
-	replacementTimeout = 15 * time.Minute
 
 	// WG IP allocation map within the 10.42.42.0/24 mesh.
 	// Router is always .1. Relays are assigned by provider.
