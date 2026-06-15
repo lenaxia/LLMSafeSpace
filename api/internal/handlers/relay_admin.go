@@ -294,7 +294,7 @@ func (h *RelayAdminHandler) GetStatus(c *gin.Context) {
 	resp.RecentEvents = []eventInfo{}
 	if relay.Status.LastRotation != nil {
 		resp.RecentEvents = append(resp.RecentEvents, eventInfo{
-			Timestamp: relay.Status.LastRotation.Time.Format(time.RFC3339),
+			Timestamp: relay.Status.LastRotation.Format(time.RFC3339),
 			Type:      "Rotated",
 			Message:   "Last rotation of relay fleet",
 			Severity:  "info",
@@ -583,7 +583,7 @@ func (h *RelayAdminHandler) scrapeRouterMetrics(ctx context.Context) routerMetri
 	if err != nil {
 		return data
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return data
