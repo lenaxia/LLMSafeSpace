@@ -98,7 +98,14 @@ Zero real findings.
 
 ## Tests Run
 
-- `go test -run 'Relay|Setup' ./api/internal/handlers/` → `ok` (0.235s)
+- `go test -run 'Relay|Setup' ./api/internal/handlers/` → `ok` (0.256s)
+- `go test -run 'RouterNamespace' ./api/internal/handlers/` → `ok` (0.018s)
+  - `TestRelaySetup_RouterNamespaceQueriesCorrectNS` — seeds deployment in
+    `router-ns`, handler has `workspace=ws-ns` + `routerNS=router-ns`; proves
+    `routerDeployed=true` (correct namespace queried)
+  - `TestRelaySetup_RouterNamespaceIgnoresWorkspaceNS` — seeds in `ws-ns`,
+    `routerNS=router-ns`; proves `routerDeployed=false` (does not fall back to
+    workspace ns)
 - `go build ./api/internal/handlers/` → EXIT 0
 - `gofmt -l` on the 3 Go files → clean
 - `npm run typecheck` → EXIT 0
