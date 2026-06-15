@@ -7,11 +7,14 @@
 
 BEGIN;
 
--- Drop any existing domain check constraint (handles both auto-named and
--- explicitly-named from a prior migration run) via ALTER TYPE which implicitly
--- drops inline CHECK constraints, then re-add with IF NOT EXISTS-safe pattern.
-ALTER TABLE audit_log ALTER COLUMN domain TYPE TEXT;
+-- Drop the auto-generated inline CHECK constraint from migration 028.
+-- PostgreSQL auto-names it `audit_log_domain_check` (table_column_check).
+-- ALTER COLUMN TYPE does NOT drop CHECK constraints, so we must drop explicitly.
+ALTER TABLE audit_log DROP CONSTRAINT IF EXISTS audit_log_domain_check;
 ALTER TABLE audit_log DROP CONSTRAINT IF EXISTS audit_log_domain_chk;
+
+-- Add the new constraint allowing 'org' as a domain value. Use a DO block for
+-- idempotency so the migration can be re-applied without error.
 DO $$
 BEGIN
     IF NOT EXISTS (
