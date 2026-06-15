@@ -41,8 +41,6 @@ func newMockOrgStore() *mockOrgStore {
 	}
 }
 
-func memberKey(orgID, userID string) string { return orgID + ":" + userID }
-
 func (m *mockOrgStore) CreateOrgWithAdmin(_ context.Context, org *types.Organization, adminUserID string) (*types.Organization, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
