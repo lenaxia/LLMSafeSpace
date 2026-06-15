@@ -62,6 +62,7 @@ func (r *WorkspaceReconciler) handleTerminating(ctx context.Context, workspace *
 	workspace.Status.DiskUsedBytes = 0
 	workspace.Status.DiskTotalBytes = 0
 	if err := r.Status().Update(ctx, workspace); err != nil {
+		recordStatusUpdateConflictOnError("handleTerminating_clear_status", err)
 		return ctrl.Result{}, err
 	}
 

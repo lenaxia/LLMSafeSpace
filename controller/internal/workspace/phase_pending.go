@@ -63,6 +63,7 @@ func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *v1.W
 		}
 		workspace.Status.PVCName = pvcName
 		if err := r.Status().Update(ctx, workspace); err != nil {
+			recordStatusUpdateConflictOnError("handlePending_pvc_created", err)
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: requeueCreating}, nil
@@ -75,7 +76,11 @@ func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *v1.W
 			// Transition to Creating so pod gets created.
 			workspace.Status.PVCName = pvcName
 			workspace.Status.Phase = v1.WorkspacePhaseCreating
-			return ctrl.Result{}, r.Status().Update(ctx, workspace)
+			if err := r.Status().Update(ctx, workspace); err != nil {
+				recordStatusUpdateConflictOnError("handlePending_wait_for_first_consumer", err)
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, nil
 		}
 		if r.pendingTimedOut(workspace) {
 			return r.enterRecovery(ctx, workspace, FailureClassInfrastructure)
@@ -105,5 +110,9 @@ func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *v1.W
 
 	workspace.Status.PVCName = pvcName
 	workspace.Status.Phase = v1.WorkspacePhaseCreating
-	return ctrl.Result{}, r.Status().Update(ctx, workspace)
+	if err := r.Status().Update(ctx, workspace); err != nil {
+		recordStatusUpdateConflictOnError("handlePending_pvc_bound", err)
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{}, nil
 }

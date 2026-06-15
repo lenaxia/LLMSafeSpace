@@ -1,6 +1,7 @@
 """LLMSafeSpace Python SDK."""
 
 from .client import LLMSafeSpace
+from .async_client import AsyncLLMSafeSpace
 from .errors import (
     AuthError,
     ConflictError,
@@ -23,6 +24,7 @@ from .types import (
 
 __all__ = [
     "LLMSafeSpace",
+    "AsyncLLMSafeSpace",
     "LLMSafeSpaceError",
     "AuthError",
     "NotFoundError",

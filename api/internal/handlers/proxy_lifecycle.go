@@ -12,6 +12,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
+	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
 )
 
 func (h *ProxyHandler) EnableSessionParentResolution() {
@@ -117,6 +118,20 @@ func (h *ProxyHandler) GetWorkspaceOwner(workspaceID string) string {
 		return ""
 	}
 	return h.userBroker.WorkspaceOwner(workspaceID)
+}
+
+// publishWorkspaceEvent fans out a workspace-scoped SSE event to subscribers.
+// During the S28.5 broker migration it bridges both the legacy
+// WorkspaceEventBroker and the new UserEventBroker so subscribers on either
+// path receive the event. Once the migration completes (all callers and
+// tests moved to userBroker.SubscribeWorkspace) the legacy branch deletes.
+func (h *ProxyHandler) publishWorkspaceEvent(workspaceID string, evt apitypes.WorkspaceSSEEvent) {
+	if h.broker != nil {
+		h.broker.Publish(workspaceID, evt)
+	}
+	if h.userBroker != nil {
+		h.userBroker.PublishToWorkspace(workspaceID, evt)
+	}
 }
 
 func (h *ProxyHandler) GetAllKnownPhases() map[string]string {

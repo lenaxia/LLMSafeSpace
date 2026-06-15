@@ -143,6 +143,23 @@ func NewProxyHandler(
 }
 
 func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWriteOp bool, sessionID string) {
+	h.proxyToWorkspaceWithErrBody(c, targetPath, isWriteOp, sessionID, nil)
+}
+
+// proxyToWorkspaceWithErrBody behaves like proxyToWorkspace but optionally
+// rewrites the response body on 4xx/5xx. When onErrorBody is non-nil and the
+// upstream returns status >= 400, the response body is buffered (up to
+// chatErrorBufferCap bytes), passed through onErrorBody, and the transformed
+// bytes are written to the client. Used by SendMessage (US-27b.5) to inject
+// the agentNeedsRefresh / hint fields when the agent fails with staged
+// credentials pending. 2xx responses stream as before (no buffering).
+func (h *ProxyHandler) proxyToWorkspaceWithErrBody(
+	c *gin.Context,
+	targetPath string,
+	isWriteOp bool,
+	sessionID string,
+	onErrorBody func(statusCode int, body []byte) []byte,
+) {
 	workspaceID := c.Param("id")
 	if workspaceID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "workspace ID required"})
@@ -253,7 +270,7 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 		}
 	}
 
-	proxyErr := h.doProxy(c, podIP, targetPath, password, bodyBytes)
+	proxyErr := h.doProxy(c, podIP, targetPath, password, bodyBytes, onErrorBody)
 
 	if proxyErr != nil && isConnectionError(proxyErr) && !c.Writer.Written() {
 		freshWS, getErr := func() (*v1.Workspace, error) {
@@ -265,7 +282,7 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 		}()
 		if getErr == nil && freshWS.Status.PodIP != "" && freshWS.Status.PodIP != podIP && freshWS.Status.Phase == phaseActive {
 			h.logger.Info("Retrying proxy with fresh pod IP", "workspaceID", workspaceID, "oldIP", podIP, "newIP", freshWS.Status.PodIP)
-			proxyErr = h.doProxy(c, freshWS.Status.PodIP, targetPath, password, bodyBytes)
+			proxyErr = h.doProxy(c, freshWS.Status.PodIP, targetPath, password, bodyBytes, onErrorBody)
 		}
 	}
 
@@ -315,10 +332,23 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 	}
 }
 
+// chatErrorBufferCap bounds the amount of upstream body buffered when an
+// onErrorBody transform is supplied. Chat error responses are small JSON
+// payloads (~1 KB); a runaway upstream must not consume unbounded memory.
+// Truncation is handled by EnrichChatErrorBody (non-JSON wraps to a 1024-byte
+// "message" field), so anything above this cap is dropped on the floor.
+const chatErrorBufferCap = 64 * 1024
+
 // doProxy sends the request to the sandbox and writes the response back to
 // the client. Streaming endpoints (events, prompt_async) are streamed
 // directly to the client with flushed writes.
-func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password string, body []byte) error {
+//
+// When onErrorBody is non-nil and the upstream returns status >= 400, the
+// response body is buffered (up to chatErrorBufferCap), passed through
+// onErrorBody, and the transformed bytes are written. This is the US-27b.5
+// path that lets SendMessage enrich chat errors with agentNeedsRefresh / hint
+// fields. 2xx responses always stream chunk-by-chunk.
+func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password string, body []byte, onErrorBody func(int, []byte) []byte) error {
 	targetURL := fmt.Sprintf("http://%s:%d%s", podIP, opencodePort, targetPath)
 	if forwardedQuery := stripVerboseQuery(c.Request.URL.RawQuery); forwardedQuery != "" {
 		targetURL += "?" + forwardedQuery
@@ -362,6 +392,38 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 
 	copyResponseHeaders(resp.Header, c.Writer.Header())
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
+
+	// US-27b.5: when an error-body transform is supplied AND the upstream
+	// returned an error status, buffer the body (bounded), transform, write.
+	// 2xx / 3xx always stream chunk-by-chunk regardless of onErrorBody.
+	if onErrorBody != nil && resp.StatusCode >= 400 {
+		buf := make([]byte, 0, 4*1024)
+		tmp := make([]byte, 32*1024)
+		for {
+			n, readErr := resp.Body.Read(tmp)
+			if n > 0 {
+				if len(buf)+n > chatErrorBufferCap {
+					buf = append(buf, tmp[:chatErrorBufferCap-len(buf)]...)
+				} else {
+					buf = append(buf, tmp[:n]...)
+				}
+			}
+			if readErr != nil {
+				break
+			}
+			if len(buf) >= chatErrorBufferCap {
+				break
+			}
+		}
+		transformed := onErrorBody(resp.StatusCode, buf)
+		// Content-Length is now potentially wrong; drop it and let the writer
+		// send chunked encoding or fixate on the new length.
+		c.Writer.Header().Del("Content-Length")
+		c.Writer.WriteHeader(resp.StatusCode)
+		_, _ = c.Writer.Write(transformed)
+		return nil
+	}
+
 	c.Writer.WriteHeader(resp.StatusCode)
 
 	flusher, canFlush := c.Writer.(http.Flusher)

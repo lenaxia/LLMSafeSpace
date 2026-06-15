@@ -43,6 +43,7 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 		workspace.Status.RestartCount++
 		workspace.Status.ObservedRestartGeneration = workspace.Spec.RestartGeneration
 		if err := r.Status().Update(ctx, workspace); err != nil {
+			recordStatusUpdateConflictOnError("handleActive_restart_gen", err)
 			metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Inc()
 			return ctrl.Result{}, err
 		}
@@ -64,6 +65,7 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 			workspace.Status.Endpoint = ""
 			workspace.Status.RestartCount++
 			if err := r.Status().Update(ctx, workspace); err != nil {
+				recordStatusUpdateConflictOnError("handleActive_pw_missing", err)
 				metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Inc()
 				return ctrl.Result{}, err
 			}
@@ -101,6 +103,7 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 		workspace.Status.PodIP = ""
 		workspace.Status.Endpoint = ""
 		if err := r.Status().Update(ctx, workspace); err != nil {
+			recordStatusUpdateConflictOnError("handleActive_pod_terminating", err)
 			metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Inc()
 			return ctrl.Result{}, err
 		}
@@ -138,6 +141,7 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 		workspace.Status.PodIP = ""
 		workspace.Status.Endpoint = ""
 		if err := r.Status().Update(ctx, workspace); err != nil {
+			recordStatusUpdateConflictOnError("handleActive_arch_drift", err)
 			metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Inc()
 			return ctrl.Result{}, err
 		}
@@ -168,7 +172,11 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 		if elapsed > time.Duration(workspace.Spec.Timeout)*time.Second {
 			logger.Info("Pod timeout exceeded; suspending")
 			workspace.Status.Phase = v1.WorkspacePhaseSuspending
-			return ctrl.Result{}, r.Status().Update(ctx, workspace)
+			if err := r.Status().Update(ctx, workspace); err != nil {
+				recordStatusUpdateConflictOnError("handleActive_timeout", err)
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, nil
 		}
 	}
 
@@ -191,7 +199,11 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 				logger.Info("Workspace idle timeout exceeded; suspending",
 					"lastActivity", workspace.Status.LastActivityAt, "idle", idle, "timeout", time.Duration(timeout)*time.Second)
 				workspace.Status.Phase = v1.WorkspacePhaseSuspending
-				return ctrl.Result{}, r.Status().Update(ctx, workspace)
+				if err := r.Status().Update(ctx, workspace); err != nil {
+					recordStatusUpdateConflictOnError("handleActive_idle", err)
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{}, nil
 			}
 		}
 	}
@@ -207,6 +219,7 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 	r.maybeEnrichAgentStatus(ctx, workspace)
 
 	if err := r.Status().Update(ctx, workspace); err != nil {
+		recordStatusUpdateConflictOnError("handleActive_health", err)
 		if phaseBefore == v1.WorkspacePhaseActive && workspace.Status.Phase == v1.WorkspacePhaseCreating {
 			metrics.WorkspacesRunning.WithLabelValues(workspace.Spec.Runtime, string(workspace.Spec.SecurityLevel)).Inc()
 		}

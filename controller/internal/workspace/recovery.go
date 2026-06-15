@@ -40,7 +40,11 @@ func (r *WorkspaceReconciler) handleFailed(ctx context.Context, workspace *v1.Wo
 		workspace.Status.NextRetryAt = nil
 		workspace.Status.RestartCount++
 		workspace.Status.ObservedRestartGeneration = workspace.Spec.RestartGeneration
-		return ctrl.Result{}, r.Status().Update(ctx, workspace)
+		if err := r.Status().Update(ctx, workspace); err != nil {
+			recordStatusUpdateConflictOnError("handleFailed_gen_bump", err)
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
 	}
 
 	uid := string(workspace.UID)
@@ -61,7 +65,11 @@ func (r *WorkspaceReconciler) handleFailed(ctx context.Context, workspace *v1.Wo
 		workspace.Status.NextRetryAt = nil
 		workspace.Status.Message = ""
 		workspace.Status.FailureReason = v1.FailureReasonNone
-		return ctrl.Result{}, r.Status().Update(ctx, workspace)
+		if err := r.Status().Update(ctx, workspace); err != nil {
+			recordStatusUpdateConflictOnError("handleFailed_no_pod", err)
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
 	}
 
 	if pod.Status.Phase == corev1.PodRunning && pod.Status.PodIP != "" {
@@ -91,6 +99,7 @@ func (r *WorkspaceReconciler) handleFailed(ctx context.Context, workspace *v1.Wo
 			workspace.Status.Message = ""
 			workspace.Status.FailureReason = v1.FailureReasonNone
 			if err := r.Status().Update(ctx, workspace); err != nil {
+				recordStatusUpdateConflictOnError("handleFailed_self_heal", err)
 				metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Dec()
 				return ctrl.Result{}, err
 			}
@@ -108,7 +117,11 @@ func (r *WorkspaceReconciler) handleFailed(ctx context.Context, workspace *v1.Wo
 	workspace.Status.NextRetryAt = nil
 	workspace.Status.Message = ""
 	workspace.Status.FailureReason = v1.FailureReasonNone
-	return ctrl.Result{}, r.Status().Update(ctx, workspace)
+	if err := r.Status().Update(ctx, workspace); err != nil {
+		recordStatusUpdateConflictOnError("handleFailed_retry", err)
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{}, nil
 }
 
 // --- Pod management helpers ---

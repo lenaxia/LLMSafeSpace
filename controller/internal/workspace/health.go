@@ -240,6 +240,9 @@ func (r *WorkspaceReconciler) enrichAgentStatus(ctx context.Context, ws *v1.Work
 		r.setCondition(ws, v1.WorkspaceConditionAgentHealthy, "False",
 			v1.ReasonAgentDegraded, fmt.Sprintf("no providers connected (configured=%d, connected=%v)",
 				status.ProvidersConfigured, status.Connected))
+		r.setCondition(ws, v1.WorkspaceConditionProviderReady, "False",
+			v1.ReasonProvidersNotConnected, fmt.Sprintf("no providers connected (configured=%d, connected=%v)",
+				status.ProvidersConfigured, status.Connected))
 		// Degraded: don't populate session/disk metadata — providers aren't
 		// connected so session data is meaningless.
 		return
@@ -266,6 +269,21 @@ func (r *WorkspaceReconciler) enrichAgentStatus(ctx context.Context, ws *v1.Work
 		metrics.WorkspaceDiskUsedBytesSecondsTotal.WithLabelValues(ws.Name, userID).Add(byteSecs)
 		metrics.UserDiskBytesSecondsTotal.WithLabelValues(userID).Add(byteSecs)
 		metrics.WorkspaceDiskUsedBytes.WithLabelValues(ws.Name, userID).Set(float64(status.Disk.UsedBytes))
+		// US-24.17: PVC DiskPressure detection. Threshold matches design
+		// doc US-24.17-degraded-detection.md: ratio > 0.95 sets condition;
+		// below 95% auto-clears. Never restarts the pod — degraded is a
+		// signal, not a recoverable failure.
+		if status.Disk.TotalBytes > 0 {
+			ratio := float64(status.Disk.UsedBytes) / float64(status.Disk.TotalBytes)
+			if ratio > 0.95 {
+				r.setCondition(ws, v1.WorkspaceConditionDiskPressure, "True",
+					v1.ReasonDiskPressure,
+					fmt.Sprintf("disk %.0f%% full (%d/%d bytes)",
+						ratio*100, status.Disk.UsedBytes, status.Disk.TotalBytes))
+			} else {
+				r.removeCondition(ws, v1.WorkspaceConditionDiskPressure)
+			}
+		}
 	}
 	if status.Memory != nil {
 		ws.Status.MemoryUsedBytes = status.Memory.UsedBytes
@@ -292,6 +310,11 @@ func (r *WorkspaceReconciler) enrichAgentStatus(ctx context.Context, ws *v1.Work
 	r.setCondition(ws, v1.WorkspaceConditionAgentHealthy, "True",
 		v1.ReasonAgentHealthy, fmt.Sprintf("connected=%v sessions=%d version=%s",
 			status.Connected, status.SessionsActive, status.AgentVersion))
+	// S18.11: Surface provider connectivity as a dedicated condition so
+	// operators can `kubectl wait --for=condition=ProviderReady` without
+	// regex-parsing the AgentHealthy message.
+	r.setCondition(ws, v1.WorkspaceConditionProviderReady, "True",
+		v1.ReasonProvidersReady, fmt.Sprintf("connected=%v", status.Connected))
 }
 
 // ptrQuantity is a small helper that parses a Kubernetes quantity

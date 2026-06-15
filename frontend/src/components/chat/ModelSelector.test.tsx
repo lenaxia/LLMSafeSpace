@@ -20,7 +20,12 @@ vi.mock("../../api/workspaces", () => ({
   },
 }));
 
+vi.mock("../../hooks/useUserSettings", () => ({
+  useUserSetting: vi.fn((_key: string, defaultValue: unknown) => defaultValue),
+}));
+
 import { workspacesApi } from "../../api/workspaces";
+import { useUserSetting } from "../../hooks/useUserSettings";
 
 function wrapper({ children }: { children: React.ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -30,6 +35,7 @@ function wrapper({ children }: { children: React.ReactNode }) {
 describe("ModelSelector", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(useUserSetting).mockReturnValue("");
   });
 
   it("renders current model name when loaded", async () => {
@@ -172,5 +178,69 @@ describe("ModelSelector", () => {
     // Resolve the pending refetch — button still there.
     await act(async () => { resolveRefetch(mockModels); });
     await waitFor(() => expect(screen.getByText("Claude Sonnet")).toBeInTheDocument());
+  });
+
+  // --- US-9.16: preferredModel seeding ---
+
+  describe("US-9.16 preferredModel seeding", () => {
+    const noCurrent = {
+      models: [
+        { id: "anthropic/claude-sonnet-4-5", providerID: "anthropic", name: "Claude Sonnet", tier: "paid", freeTier: false, selected: false, enabled: true },
+        { id: "openai/gpt-4o", providerID: "openai", name: "GPT-4o", tier: "paid", freeTier: false, selected: false, enabled: true },
+      ],
+      currentModel: "",
+    };
+
+    it("seeds from preferredModel when currentModel is empty and preferred is available", async () => {
+      vi.mocked(workspacesApi.listModels).mockResolvedValue(noCurrent);
+      vi.mocked(useUserSetting).mockReturnValue("openai/gpt-4o");
+      vi.mocked(workspacesApi.setModel).mockResolvedValue({ model: "openai/gpt-4o", applied: true });
+
+      render(<ModelSelector workspaceId="ws-new" />, { wrapper });
+      await waitFor(() => expect(workspacesApi.setModel).toHaveBeenCalledWith("ws-new", "openai/gpt-4o"));
+    });
+
+    it("does NOT seed when currentModel is already set (server value wins)", async () => {
+      vi.mocked(workspacesApi.listModels).mockResolvedValue(mockModels); // currentModel: claude
+      vi.mocked(useUserSetting).mockReturnValue("openai/gpt-4o");
+      vi.mocked(workspacesApi.setModel).mockResolvedValue({ model: "openai/gpt-4o", applied: true });
+
+      render(<ModelSelector workspaceId="ws-1" />, { wrapper });
+      await waitFor(() => screen.getByText("Claude Sonnet"));
+      // Give any stray effect a chance to fire
+      await waitFor(() => expect(workspacesApi.setModel).not.toHaveBeenCalled(), { timeout: 500 });
+    });
+
+    it("does NOT seed when preferredModel is set but not in available models", async () => {
+      vi.mocked(workspacesApi.listModels).mockResolvedValue(noCurrent);
+      vi.mocked(useUserSetting).mockReturnValue("google/gemini-pro");
+      vi.mocked(workspacesApi.setModel).mockResolvedValue({ model: "google/gemini-pro", applied: true });
+
+      render(<ModelSelector workspaceId="ws-new" />, { wrapper });
+      await waitFor(() => screen.getByText("Select model"));
+      await waitFor(() => expect(workspacesApi.setModel).not.toHaveBeenCalled(), { timeout: 500 });
+    });
+
+    it("does NOT seed when preferredModel is empty", async () => {
+      vi.mocked(workspacesApi.listModels).mockResolvedValue(noCurrent);
+      vi.mocked(useUserSetting).mockReturnValue("");
+      vi.mocked(workspacesApi.setModel).mockResolvedValue({ model: "x", applied: true });
+
+      render(<ModelSelector workspaceId="ws-new" />, { wrapper });
+      await waitFor(() => screen.getByText("Select model"));
+      await waitFor(() => expect(workspacesApi.setModel).not.toHaveBeenCalled(), { timeout: 500 });
+    });
+
+    it("does NOT loop: seed runs at most once per workspace", async () => {
+      vi.mocked(workspacesApi.listModels).mockResolvedValue(noCurrent);
+      vi.mocked(useUserSetting).mockReturnValue("openai/gpt-4o");
+      vi.mocked(workspacesApi.setModel).mockResolvedValue({ model: "openai/gpt-4o", applied: true });
+
+      render(<ModelSelector workspaceId="ws-once" />, { wrapper });
+      await waitFor(() => expect(workspacesApi.setModel).toHaveBeenCalledTimes(1));
+      // Wait another tick to ensure no duplicate call
+      await new Promise((r) => setTimeout(r, 50));
+      expect(workspacesApi.setModel).toHaveBeenCalledTimes(1);
+    });
   });
 });

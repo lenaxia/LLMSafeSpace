@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
@@ -124,4 +125,43 @@ func setStorageBytesInto(ws *v1.Workspace, storageVec *prometheus.GaugeVec) {
 // setStorageBytes sets into the package-level metric.
 func setStorageBytes(ws *v1.Workspace) {
 	setStorageBytesInto(ws, metrics.WorkspaceStorageBytes)
+}
+
+// recordStatusUpdateConflictInto increments the per-site conflict counter on
+// the injected CounterVec. Site is the calling function name (e.g.
+// "phase_active", "phase_suspend") — used to identify which controller code
+// path is hitting conflicts most often. Epic 23 ships the metric so the
+// >10-conflicts/day deferral condition for US-23.3 (single-writer migration)
+// becomes observable; the retry helper itself is US-23.2.
+//
+// Nil ctr is a no-op (production callers always pass the package-level metric,
+// bound at import time; the nil-guard lets unit tests skip setup).
+func recordStatusUpdateConflictInto(ctr *prometheus.CounterVec, site string) {
+	if ctr == nil {
+		return
+	}
+	ctr.WithLabelValues(site).Inc()
+}
+
+// recordStatusUpdateConflictOnErrorInto inspects err and increments the
+// per-site conflict counter only when err satisfies apierrors.IsConflict.
+// Non-conflict errors (Forbidden, NotFound, internal) are silently ignored —
+// the metric is exclusively about optimistic-lock conflicts.
+//
+// This is the helper used inline at the 18 r.Status().Update() call sites
+// that have not been migrated to the updateStatusWithRetry helper (which is
+// gated on US-23.3 per design). The 3 LastActivityAt writers also use this
+// helper for the same metric coverage.
+func recordStatusUpdateConflictOnErrorInto(ctr *prometheus.CounterVec, site string, err error) {
+	if ctr == nil || err == nil {
+		return
+	}
+	if apierrors.IsConflict(err) {
+		ctr.WithLabelValues(site).Inc()
+	}
+}
+
+// recordStatusUpdateConflictOnError records into the package-level metric.
+func recordStatusUpdateConflictOnError(site string, err error) {
+	recordStatusUpdateConflictOnErrorInto(metrics.WorkspaceStatusUpdateConflictsTotal, site, err)
 }
