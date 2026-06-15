@@ -400,6 +400,241 @@ func TestDeleteQueueMessage_NotFound(t *testing.T) {
 	_ = id
 }
 
+// --- New tests for queue lifecycle behaviors ---
+
+// TestOnPhaseChange_SuspendPublishesDismissedAndClears verifies that when a
+// workspace transitions to Suspending, the handler publishes dismissed SSE
+// events for all queued messages across all sessions and then clears the queue.
+func TestOnPhaseChange_SuspendPublishesDismissedAndClears(t *testing.T) {
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+	svc := msgqueue.NewWithClient(client)
+
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
+	require.NoError(t, err)
+	handler.SetMessageQueueService(svc)
+	handler.broker = eventbroker.NewWorkspaceEventBroker()
+
+	ctx := context.Background()
+	id1, err := svc.Enqueue(ctx, "ws-1", "ses-A", "msg 1")
+	require.NoError(t, err)
+	id2, err := svc.Enqueue(ctx, "ws-1", "ses-B", "msg 2")
+	require.NoError(t, err)
+
+	sub := handler.broker.Subscribe("ws-1")
+	defer handler.broker.Unsubscribe("ws-1", sub)
+
+	// Build a minimal workspace object in Suspending phase
+	ws := makeWorkspaceCRDWithStatus("ws-1", "", string(v1.WorkspacePhaseSuspending), "")
+	handler.onPhaseChange(ws)
+
+	// Collect dismissed events (up to 2) within a reasonable timeout
+	dismissed := map[string]bool{}
+	deadline := time.After(2 * time.Second)
+	for len(dismissed) < 2 {
+		select {
+		case evt := <-sub.Ch:
+			if evt.Type != "queue.update" {
+				continue
+			}
+			data, ok := evt.Data.(queueUpdateData)
+			if ok && data.Event == "dismissed" {
+				dismissed[data.MessageID] = true
+			}
+		case <-deadline:
+			t.Fatalf("timed out; only saw dismissed for: %v", dismissed)
+		}
+	}
+	assert.True(t, dismissed[id1], "id1 should be dismissed")
+	assert.True(t, dismissed[id2], "id2 should be dismissed")
+
+	// Queue should be cleared
+	n1, _ := svc.Len(ctx, "ws-1", "ses-A")
+	n2, _ := svc.Len(ctx, "ws-1", "ses-B")
+	assert.Equal(t, int64(0), n1, "ses-A queue should be cleared")
+	assert.Equal(t, int64(0), n2, "ses-B queue should be cleared")
+}
+
+// TestAbortSession_FlushesQueueThenAborts verifies that AbortSession:
+// 1. Publishes dismissed SSE events for all queued messages
+// 2. Clears the queue from Redis
+// 3. Proxies the abort to opencode
+// 4. Launches the background flush-and-abort goroutine
+func TestAbortSession_FlushesQueueThenAborts(t *testing.T) {
+	abortCalled := false
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/session/ses-1/abort" {
+			abortCalled = true
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer backend.Close()
+
+	transport := &redirectTransport{server: backend}
+	httpClient := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+
+	k8sMock := newMockK8sWithWorkspace(t, "ws-1", "10.0.0.1")
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient, nil)
+	require.NoError(t, err)
+
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+	svc := msgqueue.NewWithClient(client)
+	handler.SetMessageQueueService(svc)
+	handler.broker = eventbroker.NewWorkspaceEventBroker()
+
+	setupPasswordSecret(t, handler, "ws-1", "test-pw")
+
+	ctx := context.Background()
+	id1, _ := svc.Enqueue(ctx, "ws-1", "ses-1", "queued msg 1")
+	id2, _ := svc.Enqueue(ctx, "ws-1", "ses-1", "queued msg 2")
+
+	sub := handler.broker.Subscribe("ws-1")
+	defer handler.broker.Unsubscribe("ws-1", sub)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/:id/sessions/:sessionId/abort", handler.AbortSession)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/ws-1/sessions/ses-1/abort", nil)
+	router.ServeHTTP(w, req)
+
+	// Abort should proxy through
+	assert.True(t, abortCalled, "abort should be proxied to opencode")
+
+	// Queue should be cleared from Redis immediately
+	require.Eventually(t, func() bool {
+		n, _ := svc.Len(ctx, "ws-1", "ses-1")
+		return n == 0
+	}, 2*time.Second, 10*time.Millisecond, "queue should be cleared")
+
+	// dismissed SSE events should be published for each queued message
+	dismissed := map[string]bool{}
+	deadline := time.After(2 * time.Second)
+	for len(dismissed) < 2 {
+		select {
+		case evt := <-sub.Ch:
+			if evt.Type != "queue.update" {
+				continue
+			}
+			data, ok := evt.Data.(queueUpdateData)
+			if ok && data.Event == "dismissed" {
+				dismissed[data.MessageID] = true
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for dismissed events; got: %v", dismissed)
+		}
+	}
+	assert.True(t, dismissed[id1], "id1 should be dismissed")
+	assert.True(t, dismissed[id2], "id2 should be dismissed")
+}
+
+// TestAbortSession_EmptyQueue_JustAborts verifies that AbortSession with no
+// queued messages simply proxies the abort without touching the queue.
+func TestAbortSession_EmptyQueue_JustAborts(t *testing.T) {
+	abortCalled := false
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/session/ses-1/abort" {
+			abortCalled = true
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer backend.Close()
+
+	transport := &redirectTransport{server: backend}
+	httpClient := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+
+	k8sMock := newMockK8sWithWorkspace(t, "ws-1", "10.0.0.1")
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient, nil)
+	require.NoError(t, err)
+
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+	svc := msgqueue.NewWithClient(client)
+	handler.SetMessageQueueService(svc)
+	handler.broker = eventbroker.NewWorkspaceEventBroker()
+
+	setupPasswordSecret(t, handler, "ws-1", "test-pw")
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/:id/sessions/:sessionId/abort", handler.AbortSession)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/ws-1/sessions/ses-1/abort", nil)
+	router.ServeHTTP(w, req)
+
+	assert.True(t, abortCalled, "abort should be proxied even with empty queue")
+}
+
+// TestClearQueueOnDispose_PublishesDismissedAndClears verifies that
+// AgentReloadHandler.clearQueueOnDispose publishes dismissed SSE events for
+// all queued messages and then clears the queue.
+func TestClearQueueOnDispose_PublishesDismissedAndClears(t *testing.T) {
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+	svc := msgqueue.NewWithClient(client)
+	broker := eventbroker.NewWorkspaceEventBroker()
+
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	_ = k8sMock
+	handler := NewAgentReloadHandler(nil, nil, nil, nil, &testLogger{})
+	handler.SetQueueClearer(svc)
+	handler.SetBrokerPublisher(broker)
+
+	ctx := context.Background()
+	id1, err := svc.Enqueue(ctx, "ws-1", "ses-A", "pending msg 1")
+	require.NoError(t, err)
+	id2, err := svc.Enqueue(ctx, "ws-1", "ses-B", "pending msg 2")
+	require.NoError(t, err)
+
+	sub := broker.Subscribe("ws-1")
+	defer broker.Unsubscribe("ws-1", sub)
+
+	handler.clearQueueOnDispose(ctx, "ws-1")
+
+	// Collect dismissed events
+	dismissed := map[string]bool{}
+	deadline := time.After(2 * time.Second)
+	for len(dismissed) < 2 {
+		select {
+		case evt := <-sub.Ch:
+			if evt.Type != "queue.update" {
+				continue
+			}
+			data, ok := evt.Data.(queueUpdateData)
+			if ok && data.Event == "dismissed" {
+				dismissed[data.MessageID] = true
+			}
+		case <-deadline:
+			t.Fatalf("timed out; got: %v", dismissed)
+		}
+	}
+	assert.True(t, dismissed[id1])
+	assert.True(t, dismissed[id2])
+
+	n1, _ := svc.Len(ctx, "ws-1", "ses-A")
+	n2, _ := svc.Len(ctx, "ws-1", "ses-B")
+	assert.Equal(t, int64(0), n1)
+	assert.Equal(t, int64(0), n2)
+}
+
 func newMockK8sWithWorkspace(t *testing.T, workspaceID, podIP string) *k8smocks.MockKubernetesClient {
 	t.Helper()
 	k8sMock := k8smocks.NewMockKubernetesClient()

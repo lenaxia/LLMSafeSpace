@@ -590,6 +590,19 @@ func (a *App) Run() error {
 				a.bulkReloadHandler.SetSSETracker(tracker)
 			}
 		}
+		// Wire queue clearer and broker so dispose clears pending queue messages.
+		if qs := a.proxyHandler.GetMessageQueueService(); qs != nil {
+			a.agentReloadHandler.SetQueueClearer(qs)
+			if a.bulkReloadHandler != nil {
+				a.bulkReloadHandler.SetQueueClearer(qs)
+			}
+		}
+		if b := a.proxyHandler.GetBroker(); b != nil {
+			a.agentReloadHandler.SetBrokerPublisher(b)
+			if a.bulkReloadHandler != nil {
+				a.bulkReloadHandler.SetBrokerPublisher(b)
+			}
+		}
 	}
 
 	// Epic 26 / billing: wire inference callback and session metrics unconditionally.

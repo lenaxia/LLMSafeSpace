@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -96,7 +97,104 @@ func (h *ProxyHandler) AbortSession(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sessionId: " + err.Error()})
 		return
 	}
+	wid := c.Param("id")
+
+	// Flush-then-abort: peek all queued messages for this session before
+	// sending the abort, so we can inject them after the session goes idle.
+	// The messages are removed from Redis now — they will be sent once opencode
+	// signals idle (after the abort), and then the session is aborted again so
+	// they appear in the transcript but are not processed further.
+	var flushed []msgqueue.QueuedMessage
+	if h.queueSvc != nil {
+		if msgs, err := h.queueSvc.PeekAll(c.Request.Context(), wid, sid); err == nil {
+			flushed = msgs
+		}
+		if len(flushed) > 0 {
+			// Clear from Redis immediately — we own them now.
+			if err := h.queueSvc.Clear(c.Request.Context(), wid, sid); err != nil {
+				h.logger.Error("AbortSession: failed to clear queue before flush", err, "workspaceID", wid, "sessionID", sid)
+			}
+			// Publish dismissed SSE for each message so UIs remove the pills now.
+			for _, msg := range flushed {
+				h.publishQueueEvent(wid, sid, "dismissed", msg.ID, "")
+			}
+		}
+	}
+
+	// Proxy the abort to opencode.
 	h.proxyToWorkspace(c, "/session/"+sid+"/abort", false, sid)
+
+	if len(flushed) == 0 {
+		return
+	}
+	if c.Writer.Status() >= 400 {
+		return
+	}
+
+	// After abort proxied successfully: in the background, wait for the session
+	// to become idle (the abort causes opencode to emit session.status idle),
+	// then send all flushed messages directly to opencode and immediately abort
+	// again so they are recorded in the transcript but not processed further.
+	go h.flushAndAbortAfterIdle(wid, sid, flushed)
+}
+
+// flushAndAbortAfterIdle waits for the session to become idle (after an abort),
+// sends all flushed messages to opencode via prompt_async, then aborts again.
+// This ensures aborted queue messages appear in the session transcript.
+func (h *ProxyHandler) flushAndAbortAfterIdle(workspaceID, sessionID string, msgs []msgqueue.QueuedMessage) {
+	if h.sseTracker == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Wait for session idle via the drain subscription.
+	idleCh := make(chan struct{}, 1)
+	unsub := h.sseTracker.SubscribeDrain(workspaceID,
+		func(_, sid string) {
+			if sid == sessionID {
+				select {
+				case idleCh <- struct{}{}:
+				default:
+				}
+			}
+		},
+		func(_, _ string) {},
+	)
+	defer unsub()
+
+	select {
+	case <-idleCh:
+	case <-ctx.Done():
+		h.logger.Warn("flushAndAbortAfterIdle: timed out waiting for idle", "workspaceID", workspaceID, "sessionID", sessionID)
+		return
+	}
+
+	// Send all flushed messages. Best-effort: skip on error.
+	for _, msg := range msgs {
+		if err := h.sendQueuedToOpencode(ctx, workspaceID, sessionID, &msg); err != nil {
+			h.logger.Warn("flushAndAbortAfterIdle: failed to send flushed message", "workspaceID", workspaceID, "sessionID", sessionID, "messageID", msg.ID, "error", err)
+		}
+	}
+
+	// Abort again to stop processing the flushed messages.
+	podIP, password, err := h.getPodIPAndPassword(ctx, workspaceID)
+	if err != nil {
+		return
+	}
+	abortURL := fmt.Sprintf("http://%s:%d/session/%s/abort", podIP, opencodePort, sessionID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, abortURL, nil)
+	if err != nil {
+		return
+	}
+	req.SetBasicAuth(agentd.AuthUsername, password)
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		h.logger.Warn("flushAndAbortAfterIdle: second abort failed", "workspaceID", workspaceID, "sessionID", sessionID, "error", err)
+		return
+	}
+	_ = resp.Body.Close()
 }
 
 func (h *ProxyHandler) DeleteSession(c *gin.Context) {
@@ -258,6 +356,27 @@ func validateSessionID(s string) error {
 		return errors.New("sessionId contains characters outside [a-zA-Z0-9._-]")
 	}
 	return nil
+}
+
+// getPodIPAndPassword returns the pod IP and opencode password for the given
+// workspace. It is a convenience helper shared by several background goroutines.
+func (h *ProxyHandler) getPodIPAndPassword(ctx context.Context, workspaceID string) (podIP, password string, err error) {
+	v1Client, err := h.k8sClient.LlmsafespaceV1()
+	if err != nil {
+		return "", "", fmt.Errorf("getting v1 client: %w", err)
+	}
+	ws, err := v1Client.Workspaces(h.namespace).Get(ctx, workspaceID, metav1.GetOptions{})
+	if err != nil {
+		return "", "", fmt.Errorf("getting workspace: %w", err)
+	}
+	if ws.Status.Phase != phaseActive || ws.Status.PodIP == "" {
+		return "", "", fmt.Errorf("workspace not active")
+	}
+	pw, err := h.getPassword(ctx, workspaceID)
+	if err != nil {
+		return "", "", fmt.Errorf("getting password: %w", err)
+	}
+	return ws.Status.PodIP, pw, nil
 }
 
 type enqueueRequest struct {
