@@ -114,7 +114,7 @@ func (h *ProxyHandler) emitPendingInputRequests(workspaceID string) {
 			} else {
 				req.RootSessionID = req.SessionID
 			}
-			h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{Type: "agent.question", Data: req})
+			h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{Type: "agent.question", Data: req})
 		}
 	}
 
@@ -127,7 +127,7 @@ func (h *ProxyHandler) emitPendingInputRequests(workspaceID string) {
 				} else {
 					req.RootSessionID = req.SessionID
 				}
-				h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{Type: "agent.permission", Data: req})
+				h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{Type: "agent.permission", Data: req})
 			}
 		}
 	}

@@ -115,7 +115,7 @@ func (h *ProxyHandler) onSessionIdle(workspaceID, sessionID string) {
 	h.removeActiveSession(workspaceID, sessionID)
 
 	if h.broker != nil {
-		h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
+		h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
 			Type:      "session.status",
 			SessionID: sessionID,
 			Status:    "idle",
@@ -156,7 +156,7 @@ func (h *ProxyHandler) onSessionActive(workspaceID, sessionID string) {
 	h.checkAndAddActiveSession(workspaceID, sessionID, maxSessions)
 
 	if h.broker != nil {
-		h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
+		h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
 			Type:      "session.status",
 			SessionID: sessionID,
 			Status:    "busy",
@@ -179,7 +179,7 @@ func (h *ProxyHandler) onRawEvent(workspaceID, eventType, rawData string) {
 	if h.broker != nil {
 		var parsed interface{}
 		_ = json.Unmarshal([]byte(rawData), &parsed)
-		h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
+		h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
 			Type:      "opencode.event",
 			EventType: eventType,
 			Data:      parsed,
@@ -218,7 +218,7 @@ func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData 
 			return
 		}
 		req.RootSessionID = h.resolveRootSessionID(workspaceID, req.SessionID)
-		h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
+		h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
 			Type: "agent.question",
 			Data: req,
 		})
@@ -228,7 +228,7 @@ func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData 
 			SessionID string `json:"sessionID"`
 		}
 		_ = json.Unmarshal(properties, &resolution)
-		h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
+		h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
 			Type: "agent.question.resolved",
 			Data: map[string]string{
 				"request_id": resolution.ID,
@@ -248,7 +248,7 @@ func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData 
 		}
 
 		req.RootSessionID = h.resolveRootSessionID(workspaceID, req.SessionID)
-		h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
+		h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
 			Type: "agent.permission",
 			Data: req,
 		})
@@ -259,7 +259,7 @@ func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData 
 			Reply     string `json:"reply"`
 		}
 		_ = json.Unmarshal(properties, &resolution)
-		h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
+		h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
 			Type: "agent.permission.resolved",
 			Data: map[string]string{
 				"request_id": resolution.ID,
@@ -472,7 +472,7 @@ func (h *ProxyHandler) publishQueueEvent(workspaceID, sessionID, event, messageI
 	if errMsg != "" {
 		data.Error = errMsg
 	}
-	h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
+	h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
 		Type:      "queue.update",
 		SessionID: sessionID,
 		Data:      data,
