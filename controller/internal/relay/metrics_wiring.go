@@ -4,8 +4,6 @@
 package relay
 
 import (
-	"github.com/prometheus/client_golang/prometheus"
-
 	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
 )
 
@@ -40,14 +38,4 @@ func recordRotation(provider, reason string) {
 // observeProvisionDuration records provisioning time for a provider.
 func observeProvisionDuration(provider string, seconds float64) {
 	metrics.RelayProvisionDurationSeconds.WithLabelValues(provider).Observe(seconds)
-}
-
-// Injected variants for testing.
-
-func setRelayHealthyReplicasInto(g prometheus.Gauge, n int) {
-	g.Set(float64(n))
-}
-
-func recordRotationInto(ctr *prometheus.CounterVec, provider, reason string) {
-	ctr.WithLabelValues(provider, reason).Inc()
 }
