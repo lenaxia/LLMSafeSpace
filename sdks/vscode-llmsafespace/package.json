@@ -162,7 +162,13 @@
         "name": "llmsafespace",
         "fullName": "LLMSafeSpace Agent",
         "description": "Route prompts to your LLMSafeSpace sandbox agent",
-        "isSticky": false
+        "isSticky": false,
+        "commands": [
+          { "name": "new-session", "description": "Start a fresh chat session on the active workspace" },
+          { "name": "switch-workspace", "description": "Pick which workspace subsequent prompts route to" },
+          { "name": "history", "description": "Stream the current session's prior messages" },
+          { "name": "status", "description": "List workspaces and their current phase" }
+        ]
       }
     ]
   },
@@ -171,6 +177,7 @@
     "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
     "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --watch",
     "lint": "tsc --noEmit",
+    "test": "vitest run",
     "package": "vsce package --no-dependencies"
   },
   "devDependencies": {
@@ -178,7 +185,8 @@
     "@types/ws": "^8.5.13",
     "@vscode/vsce": "^3.2.1",
     "esbuild": "^0.24.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.9"
   },
   "dependencies": {
     "@llmsafespace/sdk": "file:../typescript",
