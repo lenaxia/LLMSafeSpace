@@ -301,6 +301,39 @@ subjects:
     name: {{ include "llmsafespace.api.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 ---
+# API — release-namespace Role for relay-router Deployment read (Epic 43).
+# The relay setup wizard's checkRouter probe reads the Deployment to verify
+# the router is deployed. This Role is scoped to the exact Deployment name
+# (no wildcards) as defense-in-depth.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-api-relay-router
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmsafespace.api.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["relay-router"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-api-relay-router
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmsafespace.api.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "llmsafespace.fullname" . }}-api-relay-router
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "llmsafespace.api.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
 # Lease for API leader election (release namespace).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
