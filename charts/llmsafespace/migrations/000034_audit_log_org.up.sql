@@ -7,12 +7,21 @@
 
 BEGIN;
 
--- Drop the auto-generated inline CHECK constraint by altering the column type.
--- PostgreSQL's auto-name is audit_log_domain_check (not _chk); the ALTER TYPE
--- implicitly drops the unnamed check without needing the exact name.
+-- Drop any existing domain check constraint (handles both auto-named and
+-- explicitly-named from a prior migration run) via ALTER TYPE which implicitly
+-- drops inline CHECK constraints, then re-add with IF NOT EXISTS-safe pattern.
 ALTER TABLE audit_log ALTER COLUMN domain TYPE TEXT;
-ALTER TABLE audit_log ADD CONSTRAINT audit_log_domain_chk
-    CHECK (domain IN ('billing', 'secrets', 'admin', 'org'));
+ALTER TABLE audit_log DROP CONSTRAINT IF EXISTS audit_log_domain_chk;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'audit_log_domain_chk' AND conrelid = 'audit_log'::regclass
+    ) THEN
+        ALTER TABLE audit_log ADD CONSTRAINT audit_log_domain_chk
+            CHECK (domain IN ('billing', 'secrets', 'admin', 'org'));
+    END IF;
+END $$;
 
 -- Nullable org_id: org-scoped events set it; non-org events leave it NULL.
 ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS org_id UUID REFERENCES organizations(id);
