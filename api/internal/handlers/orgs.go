@@ -87,6 +87,12 @@ func (h *OrgsHandler) SetBilling(b OrgBilling, successURL, cancelURL, portalURL 
 	h.portalURL = portalURL
 }
 
+// GetOrg exposes orgStore.GetOrg so middleware.FeatureGuard can read the org's
+// plan without depending on the store directly. Satisfies orgPlanReader.
+func (h *OrgsHandler) GetOrg(ctx context.Context, orgID string) (*types.Organization, error) {
+	return h.orgStore.GetOrg(ctx, orgID)
+}
+
 // Create handles POST /api/v1/orgs.
 //
 // Self-service flow: the org is created with status='pending_activation' (the DB

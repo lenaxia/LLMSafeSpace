@@ -7,11 +7,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	stripe "github.com/stripe/stripe-go/v76"
-	"github.com/stripe/stripe-go/v76/billingportal/session"
+	portal "github.com/stripe/stripe-go/v76/billingportal/session"
 	checkout "github.com/stripe/stripe-go/v76/checkout/session"
 	"github.com/stripe/stripe-go/v76/customer"
+	"github.com/stripe/stripe-go/v76/usagerecord"
 	"github.com/stripe/stripe-go/v76/webhook"
 )
 
@@ -30,12 +32,14 @@ type StripeConfig struct {
 	SecretKey     string
 	WebhookSecret string
 	// PlanPrices maps an internal plan id (e.g. "team") to a Stripe Price id.
-	// Populated from instance settings / config; empty entries cause
-	// CreateCheckoutSession to return an error so misconfiguration fails loudly.
 	PlanPrices map[string]string
+	// Meters maps a usage event type (e.g. "llm_tokens", "compute_seconds")
+	// to a Stripe subscription item id for Metered Billing.
+	Meters map[string]string
 }
 
-// StripeProvider implements CheckoutProvider against the live Stripe API.
+// StripeProvider implements CheckoutProvider and BillingProvider against the
+// live Stripe API.
 type StripeProvider struct {
 	cfg StripeConfig
 }
@@ -91,7 +95,7 @@ func (s *StripeProvider) CreatePortalSession(ctx context.Context, customerID, re
 		ReturnURL: stripe.String(returnURL),
 	}
 	params.Context = ctx
-	sess, err := session.New(params)
+	sess, err := portal.New(params)
 	if err != nil {
 		return "", fmt.Errorf("create stripe portal session: %w", err)
 	}
@@ -111,6 +115,51 @@ func (s *StripeProvider) ConstructWebhookEvent(payload []byte, signature string)
 		return stripe.Event{}, fmt.Errorf("verify stripe signature: %w", err)
 	}
 	return ev, nil
+}
+
+// ReportUsage reports usage events to Stripe Metered Billing. Each event maps
+// to a Stripe usage record on the subscription item for the corresponding
+// meter (llm_tokens or compute_seconds).
+func (s *StripeProvider) ReportUsage(_ context.Context, events []UsageExportEvent) ([]int64, error) {
+	ids := make([]int64, len(events))
+	for i, event := range events {
+		meterID, ok := s.cfg.Meters[event.EventType]
+		if !ok || meterID == "" {
+			ids[i] = 0
+			continue
+		}
+		params := &stripe.UsageRecordParams{
+			SubscriptionItem: stripe.String(meterID),
+			Quantity:         stripe.Int64(event.Quantity),
+			Timestamp:        stripe.Int64(parseUnixTimestamp(event.Timestamp)),
+		}
+		if event.IdempotencyKey != "" {
+			params.SetIdempotencyKey(event.IdempotencyKey)
+		}
+		if _, err := usagerecord.New(params); err != nil {
+			return ids[:i], fmt.Errorf("report usage for %s: %w", event.EventType, err)
+		}
+		ids[i] = 1
+	}
+	return ids, nil
+}
+
+// SuspendCustomer marks the Stripe customer as suspended (preserves data).
+func (s *StripeProvider) SuspendCustomer(_ context.Context, externalID string) error {
+	params := &stripe.CustomerParams{}
+	params.AddMetadata("suspended", "true")
+	if _, err := customer.Update(externalID, params); err != nil {
+		return fmt.Errorf("mark customer %s suspended: %w", externalID, err)
+	}
+	return nil
+}
+
+func parseUnixTimestamp(s string) int64 {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Now().Unix()
+	}
+	return t.Unix()
 }
 
 // NoopCheckoutProvider is the dev/test CheckoutProvider. It never calls Stripe

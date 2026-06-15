@@ -1021,12 +1021,17 @@ func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *hand
 
 	if polH != nil {
 		orgAdminGroup.GET("/policies", polH.Get)
-		orgAdminGroup.PUT("/policies/:key", polH.Put)
-		orgAdminGroup.DELETE("/policies/:key", polH.Delete)
+		// Feature-gated policy mutations (Business+ per billing.PlanTiers).
+		// Reads remain open so members can see what's enforced; writes
+		// require the plan to include the policy feature.
+		featurePolicy := orgAdminGroup.Group("", middleware.FeatureGuard(h, "policies"))
+		featurePolicy.PUT("/policies/:key", polH.Put)
+		featurePolicy.DELETE("/policies/:key", polH.Delete)
 	}
 
 	if audH != nil {
-		orgAdminGroup.GET("/audit", audH.List)
+		// Audit log access requires Business+ plan (per billing.PlanTiers).
+		orgAdminGroup.GET("/audit", middleware.FeatureGuard(h, "audit"), audH.List)
 	}
 
 	// Public invitation routes (token is the credential).

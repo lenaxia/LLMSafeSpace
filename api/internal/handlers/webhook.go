@@ -28,6 +28,7 @@ type stripeEventStore interface {
 	DeleteStripeEvent(ctx context.Context, eventID string) error
 	GetOrgIDByStripeCustomer(ctx context.Context, stripeCustomerID string) (string, error)
 	UpdateOrgStatus(ctx context.Context, orgID string, status *types.OrgStatus, subStatus *types.OrgSubscriptionStatus, planID *types.OrgPlan) error
+	SetBillingAccountSubscription(ctx context.Context, ownerID, ownerType, provider, subscriptionID string) error
 }
 
 // StripeWebhookHandler receives and processes Stripe webhook deliveries. It
@@ -149,6 +150,12 @@ func (h *StripeWebhookHandler) onCheckoutCompleted(ctx context.Context, event st
 	activeStatus := types.OrgStatusActive
 	if err := h.store.UpdateOrgStatus(ctx, orgID, &activeStatus, &active, nil); err != nil {
 		return fmt.Errorf("activate org %s: %w", orgID, err)
+	}
+
+	if obj.Subscription != "" {
+		if err := h.store.SetBillingAccountSubscription(ctx, orgID, string(types.OwnerTypeOrg), "stripe", obj.Subscription); err != nil {
+			h.logger.Error("stripe webhook: failed to persist subscription id", err, "orgID", orgID, "subID", obj.Subscription)
+		}
 	}
 	return nil
 }

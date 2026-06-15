@@ -65,6 +65,10 @@ func (f *fakeStripeEventStore) DeleteStripeEvent(_ context.Context, eventID stri
 	return nil
 }
 
+func (f *fakeStripeEventStore) SetBillingAccountSubscription(_ context.Context, _, _, _, _ string) error {
+	return nil
+}
+
 func (f *fakeStripeEventStore) GetOrgIDByStripeCustomer(_ context.Context, customerID string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

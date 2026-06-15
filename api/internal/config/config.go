@@ -107,6 +107,7 @@ type Config struct {
 		CheckoutCancelURL  string            `mapstructure:"checkoutCancelUrl"`
 		PortalReturnURL    string            `mapstructure:"portalReturnUrl"`
 		PlanPrices         map[string]string `mapstructure:"planPrices"`
+		Meters             map[string]string `mapstructure:"meters"`
 	} `mapstructure:"billing"`
 
 	// Email holds outbound email configuration (US-43.2 invitations). When
@@ -282,6 +283,18 @@ func Load(path string) (*Config, error) {
 				config.Billing.PlanPrices = make(map[string]string)
 			}
 			config.Billing.PlanPrices[plan] = v
+		}
+	}
+	for _, envKey := range []string{
+		"LLMSAFESPACE_BILLING_METERS_LLM_TOKENS",
+		"LLMSAFESPACE_BILLING_METERS_COMPUTE_SECONDS",
+	} {
+		if v := os.Getenv(envKey); v != "" {
+			meter := strings.ToLower(strings.TrimPrefix(envKey, "LLMSAFESPACE_BILLING_METERS_"))
+			if config.Billing.Meters == nil {
+				config.Billing.Meters = make(map[string]string)
+			}
+			config.Billing.Meters[meter] = v
 		}
 	}
 
