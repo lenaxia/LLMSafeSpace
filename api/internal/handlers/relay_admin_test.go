@@ -183,6 +183,63 @@ func TestRelaySetup_RouterDeploymentExists_Deployed(t *testing.T) {
 	assert.True(t, resp.RouterDeployed)
 }
 
+func TestRelaySetup_RouterNamespaceQueriesCorrectNS(t *testing.T) {
+	// checkRouter must use routerNamespace (not h.namespace/workspace ns).
+	// This test seeds the relay-router in "router-ns" and verifies the
+	// handler finds it when routerNamespace="router-ns", while ignoring
+	// deployments in the workspace namespace ("ws-ns").
+	gin.SetMode(gin.TestMode)
+
+	clientset := fake.NewSimpleClientset(&appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "relay-router", Namespace: "router-ns"},
+	})
+	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	relayMock := k8smocks.NewMockInferenceRelayInterface()
+	llmMock.On("InferenceRelays").Return(relayMock).Maybe()
+	relayMock.On("List", mock.Anything, mock.Anything).Return(&v1.InferenceRelayList{}, nil).Maybe()
+
+	// workspace ns != router ns
+	h := NewRelayAdminHandler(clientset, llmMock, "ws-ns", "router-ns", "http://relay-router.test:8080")
+
+	r := gin.New()
+	r.Use(func(c *gin.Context) { c.Set("userID", "admin-1"); c.Set("userRole", "admin"); c.Next() })
+	r.GET("/setup", h.GetSetup)
+
+	w := doRelayRequest(r, "GET", "/setup")
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp setupResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.True(t, resp.RouterDeployed, "deployment in router-ns should be found")
+}
+
+func TestRelaySetup_RouterNamespaceIgnoresWorkspaceNS(t *testing.T) {
+	// Companion test: deployment in workspace namespace must NOT be found
+	// when routerNamespace points elsewhere.
+	gin.SetMode(gin.TestMode)
+
+	clientset := fake.NewSimpleClientset(&appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "relay-router", Namespace: "ws-ns"},
+	})
+	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	relayMock := k8smocks.NewMockInferenceRelayInterface()
+	llmMock.On("InferenceRelays").Return(relayMock).Maybe()
+	relayMock.On("List", mock.Anything, mock.Anything).Return(&v1.InferenceRelayList{}, nil).Maybe()
+
+	h := NewRelayAdminHandler(clientset, llmMock, "ws-ns", "router-ns", "http://relay-router.test:8080")
+
+	r := gin.New()
+	r.Use(func(c *gin.Context) { c.Set("userID", "admin-1"); c.Set("userRole", "admin"); c.Next() })
+	r.GET("/setup", h.GetSetup)
+
+	w := doRelayRequest(r, "GET", "/setup")
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp setupResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.False(t, resp.RouterDeployed, "deployment in ws-ns must not be found when routerNS is router-ns")
+}
+
 func TestRelaySetup_FleetDeployed_WireGuardEndpoint(t *testing.T) {
 	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
 	overrideList(relayMock, &v1.InferenceRelayList{Items: []v1.InferenceRelay{*makeRelayCR("relay-fleet", nil, 0)}}, nil)
