@@ -12,14 +12,16 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -117,6 +119,10 @@ type simpleError struct{ msg string }
 func (e simpleError) Error() string { return e.msg }
 
 func testError(msg string) error { return simpleError{msg: msg} }
+
+func notFoundError() error {
+	return apierrors.NewNotFound(schema.GroupResource{Group: "llmsafespace.dev", Resource: "inferencerelays"}, "relay-fleet")
+}
 
 // ─── US-43.2: GetSetup tests ────────────────────────────────────────────────
 
@@ -400,7 +406,7 @@ func TestRelayGCPCreds_MissingFields_400(t *testing.T) {
 
 func TestRelayDeploy_Create_Success(t *testing.T) {
 	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
-	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, testError("not found")).Maybe()
+	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, notFoundError()).Maybe()
 	relayMock.On("Create", mock.Anything, mock.Anything).Return(makeRelayCR("relay-fleet", nil, 0), nil).Maybe()
 
 	body := `{"upstreamURL":"https://opencode.ai/zen/v1","routerEndpoint":"relay-gw.example.com:51820","providers":["oci","gcp"]}`
@@ -458,7 +464,7 @@ func TestRelayDeploy_MissingFields_400(t *testing.T) {
 
 func TestRelayDeploy_OCIOnly_Success(t *testing.T) {
 	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
-	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, testError("not found")).Maybe()
+	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, notFoundError()).Maybe()
 	relayMock.On("Create", mock.Anything, mock.Anything).Return(makeRelayCR("relay-fleet", nil, 0), nil).Maybe()
 
 	body := `{"upstreamURL":"https://opencode.ai/zen/v1","routerEndpoint":"relay-gw.example.com:51820","providers":["oci"]}`
@@ -469,7 +475,7 @@ func TestRelayDeploy_OCIOnly_Success(t *testing.T) {
 
 func TestRelayDeploy_GCPOnly_Success(t *testing.T) {
 	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
-	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, testError("not found")).Maybe()
+	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, notFoundError()).Maybe()
 	relayMock.On("Create", mock.Anything, mock.Anything).Return(makeRelayCR("relay-fleet", nil, 0), nil).Maybe()
 
 	body := `{"upstreamURL":"https://opencode.ai/zen/v1","routerEndpoint":"relay-gw.example.com:51820","providers":["gcp"]}`
@@ -496,7 +502,7 @@ func TestRelayRotate_Success(t *testing.T) {
 
 func TestRelayRotate_NotFound_404(t *testing.T) {
 	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
-	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, testError("not found")).Maybe()
+	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, notFoundError()).Maybe()
 
 	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/rotate/oci-1")
 
@@ -521,7 +527,7 @@ func TestRelayPause_Success(t *testing.T) {
 
 func TestRelayPause_NotFound_404(t *testing.T) {
 	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
-	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, testError("not found")).Maybe()
+	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, notFoundError()).Maybe()
 
 	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/pause")
 
@@ -545,7 +551,7 @@ func TestRelayResume_Success(t *testing.T) {
 
 func TestRelayResume_NotFound_404(t *testing.T) {
 	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
-	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, testError("not found")).Maybe()
+	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, notFoundError()).Maybe()
 
 	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/resume")
 

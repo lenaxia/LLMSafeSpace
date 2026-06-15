@@ -15,6 +15,7 @@ import (
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	"github.com/lenaxia/llmsafespace/pkg/interfaces"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -102,7 +103,10 @@ func (h *RelayAdminHandler) checkMetalLB(ctx context.Context, resp *setupRespons
 func (h *RelayAdminHandler) checkRouter(ctx context.Context, resp *setupResponse) error {
 	_, err := h.clientset.AppsV1().Deployments(h.namespace).Get(ctx, "relay-router", metav1.GetOptions{})
 	if err != nil {
-		return nil
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return err
 	}
 	resp.RouterDeployed = true
 	return nil
@@ -111,7 +115,10 @@ func (h *RelayAdminHandler) checkRouter(ctx context.Context, resp *setupResponse
 func (h *RelayAdminHandler) checkCRD(ctx context.Context, resp *setupResponse) error {
 	resources, err := h.clientset.Discovery().ServerResourcesForGroupVersion("llmsafespace.dev/v1")
 	if err != nil {
-		return nil
+		if apierrors.IsNotFound(err) || strings.Contains(err.Error(), "empty response") {
+			return nil
+		}
+		return err
 	}
 	for _, r := range resources.APIResources {
 		if r.Name == "inferencerelays" {
@@ -455,7 +462,11 @@ func (h *RelayAdminHandler) Deploy(c *gin.Context) {
 	}
 
 	existing, err := h.llmClient.InferenceRelays().Get(ctx, "relay-fleet", metav1.GetOptions{})
-	if err == nil && existing != nil {
+	if err != nil && !apierrors.IsNotFound(err) {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check existing relay: " + err.Error()})
+		return
+	}
+	if existing != nil {
 		relay.ResourceVersion = existing.ResourceVersion
 		_, err = h.llmClient.InferenceRelays().Update(ctx, relay)
 	} else {

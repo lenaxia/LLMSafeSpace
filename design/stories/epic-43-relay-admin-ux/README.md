@@ -1,8 +1,15 @@
 # Epic 43: Relay Admin UX
 
-**Status:** Planning
+**Status:** Implemented
 **Created:** 2026-06-14
 **Depends on:** Epic 42 (Multi-Cloud Inference Relay — relay binary, router, CRD types, controller)
+
+> **Correction note:** The original design referenced AWS as a provider. The
+> implementation aligns with the InferenceRelay CRD which defines
+> `+kubebuilder:validation:Enum=oci;gcp`. AWS is NOT a supported provider —
+> the fleet uses OCI (Always Free, primary, 10 TB egress) and GCP (Always Free,
+> failover, 1 GB egress). All cost tracking is $0. There is no PKI/cert-manager
+> dependency (Epic 42 uses WireGuard as the security boundary).
 **Supersedes:** None
 
 ---
