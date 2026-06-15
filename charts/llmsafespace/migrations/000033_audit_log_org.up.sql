@@ -7,8 +7,10 @@
 
 BEGIN;
 
--- Drop the old CHECK constraint and add a new one that includes 'org'.
-ALTER TABLE audit_log DROP CONSTRAINT IF EXISTS audit_log_domain_chk;
+-- Drop the auto-generated inline CHECK constraint by altering the column type.
+-- PostgreSQL's auto-name is audit_log_domain_check (not _chk); the ALTER TYPE
+-- implicitly drops the unnamed check without needing the exact name.
+ALTER TABLE audit_log ALTER COLUMN domain TYPE TEXT;
 ALTER TABLE audit_log ADD CONSTRAINT audit_log_domain_chk
     CHECK (domain IN ('billing', 'secrets', 'admin', 'org'));
 

@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -130,7 +129,3 @@ func isValidValue(key types.OrgPolicyKey, body json.RawMessage) bool {
 	}
 	return false
 }
-
-// policyTimestamp is a no-op reference to keep the time import if future
-// response enrichment needs it.
-var _ = time.Now
