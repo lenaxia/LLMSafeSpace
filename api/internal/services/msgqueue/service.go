@@ -161,3 +161,33 @@ func (s *Service) ClearWorkspace(ctx context.Context, workspaceID string) error 
 	}
 	return nil
 }
+
+// PeekAllWorkspace returns all queued messages across every session for the
+// given workspace. It scans Redis for all queue keys belonging to the workspace
+// and peeks each one. The order of messages across sessions is undefined.
+func (s *Service) PeekAllWorkspace(ctx context.Context, workspaceID string) ([]QueuedMessage, error) {
+	pattern := fmt.Sprintf("%s%s:*", keyPrefix, workspaceID)
+	iter := s.client.Scan(ctx, 0, pattern, 100).Iterator()
+	var keys []string
+	for iter.Next(ctx) {
+		keys = append(keys, iter.Val())
+	}
+	if err := iter.Err(); err != nil {
+		return nil, fmt.Errorf("scanning workspace queue keys: %w", err)
+	}
+	var all []QueuedMessage
+	for _, key := range keys {
+		data, err := s.client.LRange(ctx, key, 0, -1).Result()
+		if err != nil {
+			return nil, fmt.Errorf("peeking key %s: %w", key, err)
+		}
+		for _, d := range data {
+			var msg QueuedMessage
+			if err := json.Unmarshal([]byte(d), &msg); err != nil {
+				continue // skip malformed entries
+			}
+			all = append(all, msg)
+		}
+	}
+	return all, nil
+}

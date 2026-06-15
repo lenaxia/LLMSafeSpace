@@ -424,12 +424,17 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			SecretKey:     cfg.Billing.SecretKey,
 			WebhookSecret: cfg.Billing.WebhookSecret,
 			PlanPrices:    cfg.Billing.PlanPrices,
+			Meters:        cfg.Billing.Meters,
 		})
 		if err != nil {
 			cancel()
 			return nil, fmt.Errorf("init stripe provider: %w", err)
 		}
 		checkoutProvider = sp
+		// US-43.17: Wire StripeProvider as usage reporter for metered billing.
+		if mSvc, ok := svc.Metering.(*metering.Service); ok {
+			mSvc.SetUsageReporter(sp)
+		}
 		if orgsHandler != nil && cfg.Billing.WebhookSecret != "" && pgOrgStore != nil {
 			webhookHandler = handlers.NewStripeWebhookHandler(sp, pgOrgStore, log)
 		}
@@ -609,6 +614,19 @@ func (a *App) Run() error {
 			a.agentReloadHandler.SetSSETracker(tracker)
 			if a.bulkReloadHandler != nil {
 				a.bulkReloadHandler.SetSSETracker(tracker)
+			}
+		}
+		// Wire queue clearer and broker so dispose clears pending queue messages.
+		if qs := a.proxyHandler.GetMessageQueueService(); qs != nil {
+			a.agentReloadHandler.SetQueueClearer(qs)
+			if a.bulkReloadHandler != nil {
+				a.bulkReloadHandler.SetQueueClearer(qs)
+			}
+		}
+		if b := a.proxyHandler.GetBroker(); b != nil {
+			a.agentReloadHandler.SetBrokerPublisher(b)
+			if a.bulkReloadHandler != nil {
+				a.bulkReloadHandler.SetBrokerPublisher(b)
 			}
 		}
 	}

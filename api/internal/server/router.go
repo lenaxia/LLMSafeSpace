@@ -293,6 +293,7 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		relayAdmin.GET("/status", cfg.RelayAdminHandler.GetStatus)
 		relayAdmin.POST("/oci-creds", cfg.RelayAdminHandler.SaveOCICreds)
 		relayAdmin.POST("/gcp-creds", cfg.RelayAdminHandler.SaveGCPCreds)
+		relayAdmin.POST("/aws-creds", cfg.RelayAdminHandler.SaveAWSCreds)
 		relayAdmin.POST("/deploy", cfg.RelayAdminHandler.Deploy)
 		relayAdmin.POST("/rotate/:id", cfg.RelayAdminHandler.Rotate)
 		relayAdmin.POST("/pause", cfg.RelayAdminHandler.Pause)
@@ -1020,12 +1021,17 @@ func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *hand
 
 	if polH != nil {
 		orgAdminGroup.GET("/policies", polH.Get)
-		orgAdminGroup.PUT("/policies/:key", polH.Put)
-		orgAdminGroup.DELETE("/policies/:key", polH.Delete)
+		// Feature-gated policy mutations (Business+ per billing.PlanTiers).
+		// Reads remain open so members can see what's enforced; writes
+		// require the plan to include the policy feature.
+		featurePolicy := orgAdminGroup.Group("", middleware.FeatureGuard(h, "policies"))
+		featurePolicy.PUT("/policies/:key", polH.Put)
+		featurePolicy.DELETE("/policies/:key", polH.Delete)
 	}
 
 	if audH != nil {
-		orgAdminGroup.GET("/audit", audH.List)
+		// Audit log access requires Business+ plan (per billing.PlanTiers).
+		orgAdminGroup.GET("/audit", middleware.FeatureGuard(h, "audit"), audH.List)
 	}
 
 	// Public invitation routes (token is the credential).

@@ -18,12 +18,25 @@ import (
 	"go.uber.org/zap"
 
 	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
+	"github.com/lenaxia/llmsafespace/api/internal/services/msgqueue"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
+	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
 	opencode "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
+
+// QueueClearer is the minimal queue interface needed by the reload handler.
+type QueueClearer interface {
+	PeekAllWorkspace(ctx context.Context, workspaceID string) ([]msgqueue.QueuedMessage, error)
+	ClearWorkspace(ctx context.Context, workspaceID string) error
+}
+
+// BrokerPublisher is the minimal SSE broker interface needed by the reload handler.
+type BrokerPublisher interface {
+	Publish(workspaceID string, event apitypes.WorkspaceSSEEvent)
+}
 
 // respondWithAPIError maps API errors to HTTP responses.
 // Local helper for package handlers (same logic as server.respondWithError).
@@ -62,6 +75,8 @@ type AgentReloadHandler struct {
 	sseTracker     *sse.Tracker
 	getPassword    func(ctx context.Context, workspaceID string) (string, error)
 	metricsService MetricsRecorder
+	queueSvc       QueueClearer
+	broker         BrokerPublisher
 }
 
 // MetricsRecorder is the minimal metrics interface for reload handlers.
@@ -98,6 +113,50 @@ func (h *AgentReloadHandler) SetPasswordGetter(getter func(ctx context.Context, 
 
 // SetMetrics injects the metrics recorder.
 func (h *AgentReloadHandler) SetMetrics(m MetricsRecorder) { h.metricsService = m }
+
+// SetQueueClearer injects the queue service for clearing queued messages on dispose.
+func (h *AgentReloadHandler) SetQueueClearer(q QueueClearer) { h.queueSvc = q }
+
+// SetBrokerPublisher injects the SSE broker for publishing dismissed events on dispose.
+func (h *AgentReloadHandler) SetBrokerPublisher(b BrokerPublisher) { h.broker = b }
+
+// clearQueueForWorkspace peeks all queued messages for the workspace, publishes
+// a dismissed SSE event for each, then clears the queue. Called after a
+// successful dispose so UIs remove pending pills and messages are not drained
+// to a freshly-reloaded opencode with no session context.
+func clearQueueForWorkspace(ctx context.Context, workspaceID string, q QueueClearer, b BrokerPublisher, logger pkginterfaces.LoggerInterface) {
+	if q == nil {
+		return
+	}
+	msgs, err := q.PeekAllWorkspace(ctx, workspaceID)
+	if err != nil {
+		if logger != nil {
+			logger.Error("clearQueueForWorkspace: peek failed", err, "workspaceID", workspaceID)
+		}
+		return
+	}
+	if b != nil {
+		for _, msg := range msgs {
+			b.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
+				Type:      "queue.update",
+				SessionID: msg.SessionID,
+				Data: queueUpdateData{
+					Event:     "dismissed",
+					MessageID: msg.ID,
+				},
+			})
+		}
+	}
+	if err := q.ClearWorkspace(ctx, workspaceID); err != nil {
+		if logger != nil {
+			logger.Error("clearQueueForWorkspace: clear failed", err, "workspaceID", workspaceID)
+		}
+	}
+}
+
+func (h *AgentReloadHandler) clearQueueOnDispose(ctx context.Context, workspaceID string) {
+	clearQueueForWorkspace(ctx, workspaceID, h.queueSvc, h.broker, h.logger)
+}
 
 // Reload handles POST /api/v1/workspaces/:id/agent/reload.
 func (h *AgentReloadHandler) Reload(c *gin.Context) {
@@ -209,7 +268,14 @@ func (h *AgentReloadHandler) Reload(c *gin.Context) {
 		return
 	}
 
-	// Dispose succeeded. Update agent state.
+	// Dispose succeeded. Clear any queued messages for this workspace — they
+	// would otherwise be drained to a freshly-loaded opencode that has no context
+	// of the previous session state. Publish dismissed SSE so UIs remove pills.
+	// Use context.Background() so a client disconnect after dispose doesn't
+	// silently skip the cleanup.
+	h.clearQueueOnDispose(context.Background(), workspaceID)
+
+	// Update agent state.
 	tx, err := h.db.BeginTx(c.Request.Context(), nil)
 	if err != nil {
 		if h.logger != nil {
@@ -280,6 +346,8 @@ type BulkReloadHandler struct {
 	sseTracker     *sse.Tracker
 	getPassword    func(ctx context.Context, workspaceID string) (string, error)
 	metricsService MetricsRecorder
+	queueSvc       QueueClearer
+	broker         BrokerPublisher
 }
 
 // NewBulkReloadHandler constructs the bulk reload handler.
@@ -310,6 +378,18 @@ func (h *BulkReloadHandler) SetMetrics(m MetricsRecorder) { h.metricsService = m
 // SetPasswordGetter injects the password getter for drain mode.
 func (h *BulkReloadHandler) SetPasswordGetter(getter func(ctx context.Context, workspaceID string) (string, error)) {
 	h.getPassword = getter
+}
+
+// SetQueueClearer injects the queue service for clearing queued messages on dispose.
+func (h *BulkReloadHandler) SetQueueClearer(q QueueClearer) { h.queueSvc = q }
+
+// SetBrokerPublisher injects the SSE broker for publishing dismissed events on dispose.
+func (h *BulkReloadHandler) SetBrokerPublisher(b BrokerPublisher) { h.broker = b }
+
+// clearQueueOnDispose peeks all queued messages for the workspace, publishes
+// a dismissed SSE event for each, then clears the queue.
+func (h *BulkReloadHandler) clearQueueOnDispose(ctx context.Context, workspaceID string) {
+	clearQueueForWorkspace(ctx, workspaceID, h.queueSvc, h.broker, h.logger)
 }
 
 // BulkReload streams per-workspace reload results as NDJSON.
@@ -447,6 +527,8 @@ func (h *BulkReloadHandler) reloadOne(ctx context.Context, userID, workspaceID s
 	}
 
 	// Dispose succeeded — update state.
+	// Use context.Background() so a client disconnect doesn't skip queue cleanup.
+	h.clearQueueOnDispose(context.Background(), workspaceID) //nolint:contextcheck
 	tx, err := h.db.BeginTx(ctx, nil)
 	if err != nil {
 		return map[string]any{"workspaceId": workspaceID, "disposed": true, "warning": "state could not be updated"}

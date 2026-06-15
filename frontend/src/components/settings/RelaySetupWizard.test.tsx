@@ -10,6 +10,7 @@ vi.mock("../../api/relay", () => ({
     getSetup: vi.fn(),
     saveOCICreds: vi.fn(),
     saveGCPCreds: vi.fn(),
+    saveAWSCreds: vi.fn(),
     deploy: vi.fn(),
   },
 }));
@@ -27,6 +28,7 @@ const mockSetup = {
   metalLBInstalled: true,
   routerDeployed: true,
   crdInstalled: true,
+  awsConfigured: false,
   ociConfigured: false,
   gcpConfigured: false,
   wireGuardEndpoint: "",
@@ -52,7 +54,7 @@ describe("RelaySetupWizard", () => {
     expect(screen.getByText("Relay router deployed")).toBeInTheDocument();
   });
 
-  it("navigates to OCI step on Next", async () => {
+  it("navigates to AWS step on Next", async () => {
     vi.mocked(relayApi.getSetup).mockResolvedValue(mockSetup);
     renderWizard();
 
@@ -60,7 +62,7 @@ describe("RelaySetupWizard", () => {
     fireEvent.click(screen.getByText("Next →"));
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText("Tenancy OCID")).toBeInTheDocument();
+      expect(screen.getByPlaceholderText("Trust Anchor ID (ta-xxxxx)")).toBeInTheDocument();
     });
   });
 
@@ -70,6 +72,7 @@ describe("RelaySetupWizard", () => {
     renderWizard();
 
     await waitFor(() => expect(screen.getByText("Next →")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Next →"));
     fireEvent.click(screen.getByText("Next →"));
 
     await waitFor(() => expect(screen.getByPlaceholderText("Tenancy OCID")).toBeInTheDocument());
@@ -82,25 +85,13 @@ describe("RelaySetupWizard", () => {
     });
   });
 
-  it("navigates to GCP step", async () => {
-    vi.mocked(relayApi.getSetup).mockResolvedValue(mockSetup);
-    renderWizard();
-
-    await waitFor(() => expect(screen.getByText("Next →")).toBeInTheDocument());
-    fireEvent.click(screen.getByText("Next →"));
-    fireEvent.click(screen.getByText("Next →"));
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText("Service Account JSON")).toBeInTheDocument();
-    });
-  });
-
   it("saves GCP credentials", async () => {
     vi.mocked(relayApi.getSetup).mockResolvedValue(mockSetup);
     vi.mocked(relayApi.saveGCPCreds).mockResolvedValue({ configured: true });
     renderWizard();
 
     await waitFor(() => expect(screen.getByText("Next →")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Next →"));
     fireEvent.click(screen.getByText("Next →"));
     fireEvent.click(screen.getByText("Next →"));
 
@@ -125,6 +116,7 @@ describe("RelaySetupWizard", () => {
     fireEvent.click(screen.getByText("Next →"));
     fireEvent.click(screen.getByText("Next →"));
     fireEvent.click(screen.getByText("Next →"));
+    fireEvent.click(screen.getByText("Next →"));
 
     await waitFor(() => {
       expect(screen.getByPlaceholderText("WireGuard endpoint (relay-gw.example.com:51820)")).toBeInTheDocument();
@@ -141,7 +133,7 @@ describe("RelaySetupWizard", () => {
       expect(relayApi.deploy).toHaveBeenCalledWith(
         expect.objectContaining({
           routerEndpoint: "gw.example.com:51820",
-          providers: expect.arrayContaining(["oci", "gcp"]),
+          providers: expect.arrayContaining(["aws", "oci"]),
         }),
       );
     });

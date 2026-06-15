@@ -67,9 +67,10 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 		if h.sseTracker != nil {
 			h.sseTracker.StopWatching(workspace.Name)
 		}
-		if h.queueSvc != nil && (phase == phaseTerminated || phase == phaseTerminating) {
+		if h.queueSvc != nil {
+			h.publishDismissedForWorkspace(context.Background(), workspace.Name)
 			if err := h.queueSvc.ClearWorkspace(context.Background(), workspace.Name); err != nil {
-				h.logger.Error("Failed to clear message queue on terminate", err, "workspaceID", workspace.Name)
+				h.logger.Error("Failed to clear message queue on terminate/suspend", err, "workspaceID", workspace.Name)
 			}
 		}
 		if phase == phaseTerminated || phase == phaseTerminating {
@@ -354,6 +355,31 @@ func (h *ProxyHandler) getPodIPForSSE(workspaceID string) string {
 	return workspace.Status.PodIP
 }
 
+// publishDismissedForWorkspace publishes a queue.update dismissed SSE event for
+// every message currently in the queue for the given workspace. It is called
+// before clearing the queue so that connected UIs can remove pending pills.
+// Errors are logged and silently swallowed — the clear proceeds regardless.
+func (h *ProxyHandler) publishDismissedForWorkspace(ctx context.Context, workspaceID string) {
+	if h.queueSvc == nil || h.broker == nil {
+		return
+	}
+	msgs, err := h.queueSvc.PeekAllWorkspace(ctx, workspaceID)
+	if err != nil {
+		h.logger.Error("Failed to peek workspace queue before dismiss publish", err, "workspaceID", workspaceID)
+		return
+	}
+	for _, msg := range msgs {
+		h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
+			Type:      "queue.update",
+			SessionID: msg.SessionID,
+			Data: queueUpdateData{
+				Event:     "dismissed",
+				MessageID: msg.ID,
+			},
+		})
+	}
+}
+
 const maxQueueRetries = 5
 
 type queueUpdateData struct {
@@ -413,20 +439,9 @@ type promptPart struct {
 }
 
 func (h *ProxyHandler) sendQueuedToOpencode(ctx context.Context, workspaceID, sessionID string, msg *msgqueue.QueuedMessage) error {
-	v1Client, v1Err := h.k8sClient.LlmsafespaceV1()
-	if v1Err != nil {
-		return fmt.Errorf("getting v1 client: %w", v1Err)
-	}
-	workspace, err := v1Client.Workspaces(h.namespace).Get(ctx, workspaceID, metav1.GetOptions{})
+	podIP, password, err := h.getPodIPAndPassword(ctx, workspaceID)
 	if err != nil {
-		return fmt.Errorf("getting workspace: %w", err)
-	}
-	if workspace.Status.Phase != phaseActive || workspace.Status.PodIP == "" {
-		return fmt.Errorf("workspace not active")
-	}
-	password, err := h.getPassword(ctx, workspaceID)
-	if err != nil {
-		return fmt.Errorf("getting password: %w", err)
+		return err
 	}
 
 	body := promptRequestBody{
@@ -438,7 +453,7 @@ func (h *ProxyHandler) sendQueuedToOpencode(ctx context.Context, workspaceID, se
 		return fmt.Errorf("marshaling body: %w", err)
 	}
 
-	targetURL := fmt.Sprintf("http://%s:%d/session/%s/prompt_async", workspace.Status.PodIP, opencodePort, sessionID)
+	targetURL := fmt.Sprintf("http://%s:%d/session/%s/prompt_async", podIP, opencodePort, sessionID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)

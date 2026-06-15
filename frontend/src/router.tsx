@@ -13,6 +13,7 @@ import { OrgMembersTab } from "./components/org-admin/OrgMembersTab";
 import { OrgCredentialsTab } from "./components/org-admin/OrgCredentialsTab";
 import { OrgWorkspacesTab } from "./components/org-admin/OrgWorkspacesTab";
 import { OrgAuditTab } from "./components/org-admin/OrgAuditTab";
+import { OrgBillingTab } from "./components/org-admin/OrgBillingTab";
 
 function RequireAuth() {
   const { user, loading } = useAuth();
@@ -58,6 +59,7 @@ export const router = createBrowserRouter([
           { path: "credentials", element: <OrgCredentialsTab /> },
           { path: "workspaces", element: <OrgWorkspacesTab /> },
           { path: "audit", element: <OrgAuditTab /> },
+          { path: "billing", element: <OrgBillingTab /> },
         ],
       },
     ],

@@ -5,6 +5,12 @@ import { render } from "../../test/utils";
 import { MessageBubble, extractMessageText } from "./MessageBubble";
 import type { Message } from "../../api/types";
 
+const FIXED_NOW = new Date("2024-06-15T12:00:00Z").getTime();
+
+vi.mock("../../hooks/useNow", () => ({
+  useNow: () => FIXED_NOW,
+}));
+
 describe("MessageBubble", () => {
   it("renders user message with primary background", () => {
     const msg: Message = { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] };
@@ -163,47 +169,54 @@ describe("MessageBubble", () => {
   });
 
   describe("timestamp", () => {
-    it("displays relative time for recent messages", () => {
-      const now = new Date();
+    it("displays 'just now' for a message created at FIXED_NOW", () => {
       const msg: Message = {
         id: "t1",
         role: "user",
         parts: [{ type: "text", text: "Timestamped" }],
-        createdAt: now.toISOString(),
+        createdAt: new Date(FIXED_NOW).toISOString(),
       };
       render(<MessageBubble message={msg} />);
-      expect(screen.getByText(/just now/i)).toBeInTheDocument();
+      expect(screen.getByText("just now")).toBeInTheDocument();
+    });
+
+    it("displays minutes ago for a message created 5 minutes before FIXED_NOW", () => {
+      const msg: Message = {
+        id: "t2",
+        role: "user",
+        parts: [{ type: "text", text: "Five min" }],
+        createdAt: new Date(FIXED_NOW - 5 * 60_000).toISOString(),
+      };
+      render(<MessageBubble message={msg} />);
+      expect(screen.getByTestId("message-timestamp").textContent).toBe("5m ago");
     });
 
     it("does not render timestamp when createdAt is absent", () => {
-      const msg: Message = { id: "t2", role: "user", parts: [{ type: "text", text: "No time" }] };
+      const msg: Message = { id: "t3", role: "user", parts: [{ type: "text", text: "No time" }] };
       const { container } = render(<MessageBubble message={msg} />);
-      const timeEls = container.querySelectorAll("[data-testid='message-timestamp']");
-      expect(timeEls).toHaveLength(0);
+      expect(container.querySelectorAll("[data-testid='message-timestamp']")).toHaveLength(0);
     });
 
-    it("displays clock time for older messages from the same day", () => {
-      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    it("displays clock time for messages older than 60 minutes", () => {
       const msg: Message = {
-        id: "t3",
+        id: "t4",
         role: "assistant",
         parts: [{ type: "text", text: "Older" }],
-        createdAt: twoHoursAgo.toISOString(),
+        createdAt: new Date(FIXED_NOW - 2 * 60 * 60 * 1000).toISOString(),
       };
       render(<MessageBubble message={msg} />);
-      expect(screen.getByTestId("message-timestamp")).toBeInTheDocument();
+      // Older than 60m on same day → locale time string e.g. "10:00 AM"
       expect(screen.getByTestId("message-timestamp").textContent).toMatch(/\d{1,2}:\d{2}/);
     });
   });
 
   describe("model name", () => {
     it("displays model name for assistant messages when provided", () => {
-      const now = new Date();
       const msg: Message = {
         id: "m1",
         role: "assistant",
         parts: [{ type: "text", text: "Response" }],
-        createdAt: now.toISOString(),
+        createdAt: new Date(FIXED_NOW).toISOString(),
         modelID: "gpt-4o",
       };
       render(<MessageBubble message={msg} modelName="GPT-4o" />);
@@ -217,8 +230,7 @@ describe("MessageBubble", () => {
         parts: [{ type: "text", text: "No model" }],
       };
       const { container } = render(<MessageBubble message={msg} />);
-      const modelEls = container.querySelectorAll("[data-testid='message-model']");
-      expect(modelEls).toHaveLength(0);
+      expect(container.querySelectorAll("[data-testid='message-model']")).toHaveLength(0);
     });
 
     it("does not display model name for user messages", () => {
@@ -228,8 +240,7 @@ describe("MessageBubble", () => {
         parts: [{ type: "text", text: "User msg" }],
       };
       const { container } = render(<MessageBubble message={msg} modelName="GPT-4o" />);
-      const modelEls = container.querySelectorAll("[data-testid='message-model']");
-      expect(modelEls).toHaveLength(0);
+      expect(container.querySelectorAll("[data-testid='message-model']")).toHaveLength(0);
     });
   });
 });

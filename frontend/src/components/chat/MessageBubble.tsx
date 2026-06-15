@@ -3,6 +3,7 @@ import type { Message, MessagePart } from "../../api/types";
 import { cn } from "../../lib/utils";
 import { MessagePart as MessagePartComponent } from "./MessagePart";
 import { Copy, Check } from "lucide-react";
+import { useNow } from "../../hooks/useNow";
 
 interface Props {
   message: Message;
@@ -26,19 +27,19 @@ export function extractMessageText(parts: MessagePart[]): string {
     .join("\n\n");
 }
 
-function formatTimestamp(iso: string): string {
+function formatTimestamp(iso: string, now: number): string {
   const date = new Date(iso);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
+  const diffMs = now - date.getTime();
   const diffMinutes = Math.floor(diffMs / 60000);
 
   if (diffMinutes < 1) return "just now";
   if (diffMinutes < 60) return `${diffMinutes}m ago`;
 
+  const nowDate = new Date(now);
   const isToday =
-    date.getDate() === now.getDate() &&
-    date.getMonth() === now.getMonth() &&
-    date.getFullYear() === now.getFullYear();
+    date.getDate() === nowDate.getDate() &&
+    date.getMonth() === nowDate.getMonth() &&
+    date.getFullYear() === nowDate.getFullYear();
 
   const timeStr = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
   if (isToday) return timeStr;
@@ -50,6 +51,7 @@ export function MessageBubble({ message, isStreaming, modelName }: Props) {
   const isUser = message.role === "user";
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const now = useNow();
 
   const handleCopy = useCallback(async () => {
     const text = extractMessageText(message.parts);
@@ -96,7 +98,7 @@ export function MessageBubble({ message, isStreaming, modelName }: Props) {
             )}
           >
             {showTimestamp && (
-              <span data-testid="message-timestamp">{formatTimestamp(message.createdAt!)}</span>
+              <span data-testid="message-timestamp">{formatTimestamp(message.createdAt!, now)}</span>
             )}
             {showTimestamp && showModel && " · "}
             {showModel && (

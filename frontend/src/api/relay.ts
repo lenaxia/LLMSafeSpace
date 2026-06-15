@@ -3,7 +3,7 @@ import { api } from "./client";
 // ---------------------------------------------------------------------------
 // Relay Admin API (Epic 43)
 // Routes: /api/v1/admin/relay
-// Providers: OCI (Always Free, primary) + GCP (Always Free, failover)
+// Providers: AWS (paid primary) + OCI (free secondary) + GCP (optional)
 // ---------------------------------------------------------------------------
 
 export interface RelaySetup {
@@ -11,6 +11,7 @@ export interface RelaySetup {
   metalLBInstalled: boolean;
   routerDeployed: boolean;
   crdInstalled: boolean;
+  awsConfigured: boolean;
   ociConfigured: boolean;
   gcpConfigured: boolean;
   wireGuardEndpoint: string;
@@ -85,6 +86,13 @@ export interface GCPCredsRequest {
   serviceAccountJson: string;
 }
 
+export interface AWSCredsRequest {
+  trustAnchorId: string;
+  profileId: string;
+  roleArn: string;
+  region: string;
+}
+
 export interface DeployRequest {
   upstreamURL: string;
   routerEndpoint: string;
@@ -99,6 +107,8 @@ export const relayApi = {
     api.post<{ configured: boolean }>("/admin/relay/oci-creds", req),
   saveGCPCreds: (req: GCPCredsRequest) =>
     api.post<{ configured: boolean }>("/admin/relay/gcp-creds", req),
+  saveAWSCreds: (req: AWSCredsRequest) =>
+    api.post<{ configured: boolean }>("/admin/relay/aws-creds", req),
   deploy: (req: DeployRequest) =>
     api.post<{ deployed: boolean }>("/admin/relay/deploy", req),
   rotate: (id: string) =>
