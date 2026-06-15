@@ -8,7 +8,7 @@
 
 ## Objective
 
-Complete the remaining Phase 4 (Billing Integration) work identified in worklog 0289's "Next Steps": write tests for `ReportUsage`/`exportToStripe`/`SetUsageReporter`/`StripeProvider`, add feature-gating middleware, wire it into the router, build/lint/test, and commit on the existing `feat/epic43-phase4-billing` branch.
+Complete the remaining Phase 4 (Billing Integration) work identified in worklog 0290's "Next Steps": write tests for `ReportUsage`/`exportToStripe`/`SetUsageReporter`/`StripeProvider`, add feature-gating middleware, wire it into the router, build/lint/test, and commit on the existing `feat/epic43-phase4-billing` branch.
 
 ---
 
@@ -162,7 +162,7 @@ golangci-lint: not installed in this environment; pre-commit hook will run it on
 1. **Commit + push** the branch `feat/epic43-phase4-billing` (this session's scope per user choice).
 2. **Open PR** and iterate through the automated review-approve-merge cycle.
 3. **Phase 5 reconciliation job**: recover missed Stripe usage windows by diffing `billing_export_cursor` against `usage_events` (per D4).
-4. **US-43.10 OIDC follow-up**: KEK encryption, JWT issuance, idempotent membership, comprehensive tests (still deferred from worklog 0289).
+4. **US-43.10 OIDC follow-up**: KEK encryption, JWT issuance, idempotent membership, comprehensive tests (still deferred from worklog 0290).
 5. **Phase 5 Platform operations** (US-43.18-43.20): admin dashboard, org/user suspension, cross-org audit.
 
 ---
@@ -174,7 +174,7 @@ golangci-lint: not installed in this environment; pre-commit hook will run it on
 - `api/internal/services/metering/export_test.go` — 8 export tests
 - `api/internal/middleware/feature_guard.go` — FeatureGuard middleware
 - `api/internal/middleware/tests/feature_guard_test.go` — 9 FeatureGuard tests
-- `worklogs/0290_2026-06-15_epic43-phase4-billing-completion.md` — this worklog
+- `worklogs/0291_2026-06-15_epic43-phase4-billing-completion.md` — this worklog
 
 ### Modified files
 - `api/internal/middleware/feature_guard.go` — new middleware (file was new, listed above)
@@ -182,7 +182,7 @@ golangci-lint: not installed in this environment; pre-commit hook will run it on
 - `api/internal/server/router.go` — wired FeatureGuard on policy mutations + audit read
 - `api/internal/services/metering/metering.go` — fixed GROUP BY bug, added aggregation key generation, documented cursor-advancement trade-off
 
-### Previously uncommitted (from worklog 0289, still on this branch)
+### Previously uncommitted (from worklog 0290, still on this branch)
 - `api/internal/app/app.go` — wire StripeProvider as usage reporter
 - `api/internal/config/config.go` — `Meters` config + env var loading
 - `api/internal/handlers/webhook.go` — persist subscription ID on checkout
