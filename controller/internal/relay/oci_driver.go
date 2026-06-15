@@ -46,20 +46,6 @@ func NewOCIDriver(k8sClient client.Client, namespace string) *OCIDriver {
 	}
 }
 
-// NewOCIDriver creates an OCI driver that reads credentials from K8s Secrets.
-func NewOCIDriver(k8sClient client.Client, namespace string) *OCIDriver {
-	return &OCIDriver{
-		k8sClient: k8sClient,
-		namespace: namespace,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
-			},
-		},
-	}
-}
-
 // ociConfig holds the OCI credentials parsed from the K8s Secret.
 type ociConfig struct {
 	Tenancy     string
