@@ -3,12 +3,12 @@ import type { Message, MessagePart } from "../../api/types";
 import { cn } from "../../lib/utils";
 import { MessagePart as MessagePartComponent } from "./MessagePart";
 import { Copy, Check } from "lucide-react";
+import { useNow } from "../../hooks/useNow";
 
 interface Props {
   message: Message;
   isStreaming?: boolean;
   modelName?: string;
-  now?: number; // Unix ms — passed from MessageList's 60s tick to keep relative timestamps current
 }
 
 export function extractMessageText(parts: MessagePart[]): string {
@@ -47,10 +47,11 @@ function formatTimestamp(iso: string, now: number): string {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + ", " + timeStr;
 }
 
-export function MessageBubble({ message, isStreaming, modelName, now = Date.now() }: Props) {
+export function MessageBubble({ message, isStreaming, modelName }: Props) {
   const isUser = message.role === "user";
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const now = useNow();
 
   const handleCopy = useCallback(async () => {
     const text = extractMessageText(message.parts);

@@ -3,6 +3,7 @@ import type { SessionListItem } from "../../api/types";
 import { cn } from "../../lib/utils";
 import { sessionDisplayTitle } from "../../lib/names";
 import { formatRelativeTime } from "../../lib/time";
+import { useNow } from "../../hooks/useNow";
 
 interface Props {
   session: SessionListItem;
@@ -12,6 +13,7 @@ interface Props {
 
 export function SessionItem({ session, selected, onSelect }: Props) {
   const title = sessionDisplayTitle(session.title, session.lastMessageAt);
+  const now = useNow();
 
   return (
     <button
@@ -29,7 +31,7 @@ export function SessionItem({ session, selected, onSelect }: Props) {
       )}
       {session.lastMessageAt && (
         <span className="text-xs text-muted-foreground">
-          {formatRelativeTime(session.lastMessageAt)}
+          {formatRelativeTime(session.lastMessageAt, now)}
         </span>
       )}
     </button>
