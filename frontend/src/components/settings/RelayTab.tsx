@@ -1,18 +1,16 @@
 import { useState, useEffect, useCallback } from "react";
-import { relayApi, type RelaySetup } from "../../api/relay";
+import { relayApi } from "../../api/relay";
 import { Spinner } from "../ui/Spinner";
 import { RelaySetupWizard } from "./RelaySetupWizard";
 import { RelayStatusDashboard } from "./RelayStatusDashboard";
 
 export function RelayTab() {
-  const [setup, setSetup] = useState<RelaySetup | null>(null);
   const [loading, setLoading] = useState(true);
   const [showWizard, setShowWizard] = useState(false);
 
   const load = useCallback(async () => {
     try {
       const data = await relayApi.getSetup();
-      setSetup(data);
       setShowWizard(!data.deployed);
     } catch {
       setShowWizard(true);

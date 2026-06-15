@@ -476,10 +476,10 @@ func (h *RelayAdminHandler) SaveOCICreds(c *gin.Context) {
 // ─── US-43.6: Deploy relay fleet ────────────────────────────────────────────
 
 type deployRequest struct {
-	UpstreamURL      string   `json:"upstreamURL" binding:"required"`
-	WireGuardPort    int      `json:"wireGuardPort,omitempty"`
-	RouterEndpoint   string   `json:"routerEndpoint" binding:"required"`
-	Providers        []string `json:"providers" binding:"required"`
+	UpstreamURL    string   `json:"upstreamURL" binding:"required"`
+	WireGuardPort  int      `json:"wireGuardPort,omitempty"`
+	RouterEndpoint string   `json:"routerEndpoint" binding:"required"`
+	Providers      []string `json:"providers" binding:"required"`
 }
 
 // Deploy creates or updates the InferenceRelay CR.

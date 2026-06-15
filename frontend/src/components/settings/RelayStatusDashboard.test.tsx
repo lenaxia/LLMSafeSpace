@@ -150,16 +150,15 @@ describe("RelayStatusDashboard", () => {
   });
 
   it("shows provisioning error in red banner (US-43.10)", async () => {
+    const failedInstance = {
+      ...mockStatus.instances[0]!,
+      state: "provisioning-failed",
+      healthy: false,
+      lastProvisionError: "InvalidParameterValue: Invalid AMI id",
+    };
     vi.mocked(relayApi.getStatus).mockResolvedValue({
       ...mockStatus,
-      instances: [
-        {
-          ...mockStatus.instances[0],
-          state: "provisioning-failed",
-          healthy: false,
-          lastProvisionError: "InvalidParameterValue: Invalid AMI id",
-        },
-      ],
+      instances: [failedInstance],
     });
     renderDashboard();
 
@@ -224,7 +223,8 @@ describe("RelayStatusDashboard", () => {
       expect(screen.getAllByText("Rotate")).toHaveLength(2);
     });
 
-    fireEvent.click(screen.getAllByText("Rotate")[0]);
+    const rotateButtons = screen.getAllByText("Rotate");
+    fireEvent.click(rotateButtons[0]!);
 
     await waitFor(() => {
       expect(relayApi.rotate).toHaveBeenCalledWith("aws-1");

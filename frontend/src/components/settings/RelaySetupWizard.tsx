@@ -1,9 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
-import { ApiClientError } from "../../api/client";
 import { relayApi, type RelaySetup } from "../../api/relay";
 import { useToast } from "../../providers/ToastProvider";
 import { Spinner } from "../ui/Spinner";
-import { Check, X, Copy, Download, Cloud, Server, Wifi } from "lucide-react";
+import { Check, X, Download, Cloud, Server, Wifi } from "lucide-react";
 
 export function RelaySetupWizard({ onComplete }: { onComplete?: () => void }) {
   const [setup, setSetup] = useState<RelaySetup | null>(null);
@@ -48,11 +47,6 @@ export function RelaySetupWizard({ onComplete }: { onComplete?: () => void }) {
   useEffect(() => {
     load();
   }, [load]);
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    toast("Copied to clipboard");
-  };
 
   const handleSaveAWS = async () => {
     try {
@@ -242,7 +236,8 @@ export function RelaySetupWizard({ onComplete }: { onComplete?: () => void }) {
     },
   ];
 
-  const StepIcon = steps[step].icon;
+  const currentStep = steps[step];
+  const StepIcon = currentStep?.icon;
 
   return (
     <div className="space-y-4">
@@ -269,10 +264,10 @@ export function RelaySetupWizard({ onComplete }: { onComplete?: () => void }) {
 
       <div className="rounded-lg border border-border p-4">
         <div className="mb-3 flex items-center gap-2">
-          <StepIcon className="h-5 w-5" />
-          <h3 className="font-semibold">{steps[step].title}</h3>
+          {StepIcon && <StepIcon className="h-5 w-5" />}
+          <h3 className="font-semibold">{currentStep?.title}</h3>
         </div>
-        {steps[step].content}
+        {currentStep?.content}
       </div>
 
       <div className="flex justify-between">
