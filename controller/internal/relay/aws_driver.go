@@ -127,6 +127,10 @@ func (d *AWSDriver) Provision(ctx context.Context, req ProvisionRequest) (*Provi
 	// Wait for the instance to be running
 	publicIP, err := d.waitForRunning(ctx, client, instanceID)
 	if err != nil {
+		// Clean up the orphaned instance to avoid unbounded charges
+		_, _ = client.TerminateInstances(ctx, &ec2.TerminateInstancesInput{
+			InstanceIds: []string{instanceID},
+		})
 		return nil, err
 	}
 
