@@ -101,6 +101,7 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 		workspace.Status.PodName = pod.Name
 		workspace.Status.PodNamespace = pod.Namespace
 		if err := r.Status().Update(ctx, workspace); err != nil {
+			recordStatusUpdateConflictOnError("handleCreating_pod_built", err)
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: requeueCreating}, nil
@@ -148,6 +149,7 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 		workspace.Status.StartTime = &now
 		workspace.Status.Message = ""
 		if err := r.Status().Update(ctx, workspace); err != nil {
+			recordStatusUpdateConflictOnError("handleCreating_active", err)
 			metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Dec()
 			return ctrl.Result{}, err
 		}

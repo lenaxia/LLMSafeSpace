@@ -37,6 +37,7 @@ func (r *WorkspaceReconciler) handleSuspending(ctx context.Context, workspace *v
 	workspace.Status.Sessions = nil
 	workspace.Status.ActiveSessions = 0
 	if err := r.Status().Update(ctx, workspace); err != nil {
+		recordStatusUpdateConflictOnError("handleSuspending_suspended", err)
 		metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Inc()
 		return ctrl.Result{}, err
 	}
@@ -52,7 +53,11 @@ func (r *WorkspaceReconciler) handleSuspended(ctx context.Context, workspace *v1
 	if elapsed >= ttl {
 		workspacePhaseTransitions.WithLabelValues(string(v1.WorkspacePhaseSuspended), string(v1.WorkspacePhaseTerminating)).Inc()
 		workspace.Status.Phase = v1.WorkspacePhaseTerminating
-		return ctrl.Result{}, r.Status().Update(ctx, workspace)
+		if err := r.Status().Update(ctx, workspace); err != nil {
+			recordStatusUpdateConflictOnError("handleSuspended_ttl_expired", err)
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
 	}
 	return ctrl.Result{RequeueAfter: ttl - elapsed}, nil
 }
@@ -73,5 +78,9 @@ func (r *WorkspaceReconciler) handleResuming(ctx context.Context, workspace *v1.
 	// Set the resume anchor so handleCreating can measure end-to-end
 	// resume latency via WorkspaceResumeDurationSeconds.
 	workspace.Status.ResumedAt = &now
-	return ctrl.Result{}, r.Status().Update(ctx, workspace)
+	if err := r.Status().Update(ctx, workspace); err != nil {
+		recordStatusUpdateConflictOnError("handleResuming_creating", err)
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{}, nil
 }

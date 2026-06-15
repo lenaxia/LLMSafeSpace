@@ -250,9 +250,12 @@ func TestAllCollectorsGatherableAfterRegisterWith(t *testing.T) {
 	// Labeled metrics (CounterVec/GaugeVec) only appear after their first
 	// WithLabelValues().Inc()/Set() call, so we don't assert them here —
 	// that's tested by the individual metric tests above.
+	// Note: llmsafespace_workspace_status_update_conflicts_total is a
+	// CounterVec with a "site" label (Epic 23) so it lives in the labeled
+	// bucket; conflict-iteration coverage is asserted in
+	// controller/internal/workspace/status_update_retry_test.go.
 	expected := []string{
 		"llmsafespace_workspace_consecutive_failures_max",
-		"llmsafespace_workspace_status_update_conflicts_total",
 		"llmsafespace_api_key_legacy_total",
 		"llmsafespace_workspace_init_container_duration_seconds",
 	}

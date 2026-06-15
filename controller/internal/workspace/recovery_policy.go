@@ -115,6 +115,7 @@ func (r *WorkspaceReconciler) enterRecovery(ctx context.Context, ws *v1.Workspac
 
 	result := ctrl.Result{RequeueAfter: backoff}
 	if err := r.Status().Update(ctx, ws); err != nil {
+		recordStatusUpdateConflictOnError("enterRecovery", err)
 		return result, err
 	}
 	// Record metrics after successful status persist so transient update

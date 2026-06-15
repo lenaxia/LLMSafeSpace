@@ -49,8 +49,12 @@ var (
 		prometheus.GaugeOpts{Name: "llmsafespace_workspace_safe_mode_active", Help: "Workspaces currently in SafeMode"},
 		[]string{"workspace_id"},
 	)
-	WorkspaceStatusUpdateConflictsTotal = prometheus.NewCounter(
-		prometheus.CounterOpts{Name: "llmsafespace_workspace_status_update_conflicts_total", Help: "Optimistic-lock conflicts on workspace status updates"},
+	WorkspaceStatusUpdateConflictsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "llmsafespace_workspace_status_update_conflicts_total",
+			Help: "Optimistic-lock conflicts on workspace status updates, labelled by the calling site",
+		},
+		[]string{"site"},
 	)
 	WorkspaceCreateDurationSeconds = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{Name: "llmsafespace_workspace_create_duration_seconds", Help: "Wall-clock time from creation request to Active", Buckets: startupBuckets},
