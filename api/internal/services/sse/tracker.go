@@ -25,6 +25,14 @@ type RawEventCallback func(workspaceID, eventType, rawData string)
 
 type InferenceCallback func(workspaceID, modelID, providerID string, inputTokens, outputTokens int64, costDollars float64)
 
+// ReconnectCallback is called at the start of each connection attempt, after
+// the pod IP and password are resolved but before the SSE stream is opened.
+// podIP is the raw IP (no port). password is the workspace password (used as
+// Bearer token on the agentd admin port).
+// Intended use: query /v1/statusz to reconcile any sessions that went idle
+// while the SSE connection was down, and drain their queues.
+type ReconnectCallback func(workspaceID, podIP, password string)
+
 type SessionMetricsRecorder interface {
 	RecordSessionCompleted(workspaceID string, durationSeconds float64)
 }
@@ -49,6 +57,7 @@ type Tracker struct {
 	onSessionActive  SessionIdleCallback
 	onRawEvent       RawEventCallback
 	onInference      InferenceCallback
+	onReconnect      ReconnectCallback
 	tokensMu         sync.Mutex
 	sessionTokenSeen map[string]int64
 	sessionCostSeen  map[string]float64
@@ -95,6 +104,10 @@ func (t *Tracker) SetPodIPResolver(resolver func(workspaceID string) string) {
 
 func (t *Tracker) SetOnSessionActive(callback SessionIdleCallback) {
 	t.onSessionActive = callback
+}
+
+func (t *Tracker) SetOnReconnect(callback ReconnectCallback) {
+	t.onReconnect = callback
 }
 
 func (t *Tracker) SetOnInference(cb InferenceCallback) {
@@ -224,6 +237,13 @@ func (t *Tracker) connectAndRead(ctx context.Context, workspaceID string) error 
 	password, err := t.passwordGetter(ctx, workspaceID)
 	if err != nil {
 		return fmt.Errorf("getting password for SSE: %w", err)
+	}
+
+	// Reconcile any sessions that went idle while this connection was down.
+	// Must happen before opening the SSE stream so that if the stream
+	// immediately delivers a busy event, we don't double-drain.
+	if t.onReconnect != nil {
+		t.onReconnect(workspaceID, podIP, password)
 	}
 
 	idleCtx, cancelIdle := context.WithCancel(ctx)

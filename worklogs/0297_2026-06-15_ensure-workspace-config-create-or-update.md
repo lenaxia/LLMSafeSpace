@@ -58,7 +58,7 @@ The abstraction level is correct: this is fixed in `EnsureWorkspaceConfig` at th
 
 ### Tests written
 
-Six new tests in `workspace_service_test.go` (all TDD — written before the fix, confirmed failing, then fixed):
+Nine new tests in `workspace_service_test.go` (all TDD — written before the fix, confirmed failing, then fixed):
 
 | Test | What it proves |
 |---|---|
@@ -67,7 +67,10 @@ Six new tests in `workspace_service_test.go` (all TDD — written before the fix
 | `TestEnsureWorkspaceConfig_OverwritesExistingConfig` | Second call replaces first — not an append |
 | `TestEnsureWorkspaceConfig_EmptyWorkspaceID` | Input validation guard |
 | `TestEnsureWorkspaceConfig_PreservesLabels` | Created secret carries standard labels |
-| `TestSetModel_PersistsConfigWhenSecretAbsent` | End-to-end regression: zero-credential path calls EnsureWorkspaceConfig, Secret must exist after |
+| `TestEnsureWorkspaceConfig_NonNotFoundGetError` | Non-NotFound errors propagate instead of silently succeeding |
+| `TestEnsureWorkspaceConfig_ZeroCredentialUserSelectsModel` | End-to-end regression: zero-credential path calls EnsureWorkspaceConfig, Secret must exist after |
+| `TestEnsureSecretsManifest_PreservesWorkspaceConfig` | Credential bind does not clobber workspace-config.json |
+| `TestEnsureSecretsManifest_PreservesWorkspaceConfig_BindFirst` | workspace-config.json written after bind is also preserved |
 
 ---
 
@@ -93,8 +96,8 @@ None.
 ## Tests Run
 
 ```
-go test -timeout 30s -run "TestEnsureWorkspaceConfig|TestSetModel_PersistsConfig" ./api/internal/services/workspace/ -v
-# → 6 PASS
+go test -timeout 30s -run "TestEnsureWorkspaceConfig|TestEnsureSecretsManifest" ./api/internal/services/workspace/ -v
+# → 9 PASS
 
 go test -timeout 60s -race ./api/internal/services/workspace/
 # → PASS (all tests, race detector clean)
@@ -120,8 +123,10 @@ The `cmd/workspace-agentd` timeout failure under `-race -timeout 60s` is pre-exi
 ## Files Modified
 
 - `api/internal/services/workspace/workspace_service.go` — `EnsureWorkspaceConfig`: create-or-update pattern instead of update-only no-op on NotFound; `EnsureSecretsManifest`: merge `secrets.json` key instead of replacing entire Data map (preserves `workspace-config.json` on credential bind)
-- `api/internal/services/workspace/workspace_service_test.go` — 10 new TDD tests: 7 for `EnsureWorkspaceConfig` (including non-NotFound error path and zero-credential regression) + 2 for `EnsureSecretsManifest` clobber regression + 1 end-to-end zero-credential scenario
+- `api/internal/services/workspace/workspace_service_test.go` — 9 new TDD tests: 7 for `EnsureWorkspaceConfig` (including non-NotFound error path and zero-credential regression) + 2 for `EnsureSecretsManifest` clobber regression
 - `controller/internal/workspace/pod_builder.go` — `credScript`: add conditional `cp` for `workspace-config.json` from mounted Secret to `/sandbox-cfg/`
 - `controller/internal/workspace/health_test.go` — add `workspace-config.json` copy assertion to existing init container test; add `TestInitContainerScript_CopiesWorkspaceConfig` regression test
 - `api/internal/handlers/models.go` — `SetModel`: surface `EnsureWorkspaceConfig` error as Warn log instead of silently discarding with `_ =`
+- `cmd/workspace-agentd/secrets.go` — `applyWorkspaceConfig`: called on zero-credential boot path where `workspace-config.json` is absent; function already handles missing file gracefully via `os.ReadFile` early return
+- `cmd/workspace-agentd/secrets_test.go` — `TestMaterializeSubcommand_MissingSecretsFile_AppliesWorkspaceConfig`: regression test for zero-credential boot path
 - `worklogs/0297_2026-06-15_ensure-workspace-config-create-or-update.md` — this worklog
