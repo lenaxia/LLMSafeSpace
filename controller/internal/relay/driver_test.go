@@ -125,13 +125,10 @@ func TestErrorClassification(t *testing.T) {
 	assert.False(t, IsCapacityError(cfgErr))
 }
 
-func TestAWSDriver_NotImplemented(t *testing.T) {
-	d := &AWSDriver{}
-	_, err := d.Provision(context.Background(), ProvisionRequest{})
-	assert.ErrorIs(t, err, ErrNotImplemented)
-
-	err = d.Destroy(context.Background(), "i-123", "us-east-1")
-	assert.ErrorIs(t, err, ErrNotImplemented)
+func TestAWSDriver_ConstructsWithCorrectSecret(t *testing.T) {
+	d := NewAWSDriver(nil, "test-ns", "aws-relay-irwa")
+	assert.Equal(t, "aws-relay-irwa", d.credentialSecret)
+	assert.Equal(t, "test-ns", d.namespace)
 }
 
 func TestGCPDriver_NotImplemented(t *testing.T) {

@@ -152,12 +152,10 @@ func TestMetricsRegisteredInCollectors(t *testing.T) {
 }
 
 func containsSubstring(haystack, needle string) bool {
-	return len(haystack) >= len(needle) && (haystack == needle ||
-		(len(haystack) > 0 && len(needle) > 0 &&
-			(indexOf(haystack, needle) >= 0)))
+	return len(haystack) >= len(needle) && substringIndex(haystack, needle) >= 0
 }
 
-func indexOf(s, sub string) int {
+func substringIndex(s, sub string) int {
 	for i := 0; i <= len(s)-len(sub); i++ {
 		if s[i:i+len(sub)] == sub {
 			return i
