@@ -7,6 +7,15 @@ import (
 	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
 )
 
+// resetRelayGauges resets all provider-labeled relay gauges. Called at
+// the start of each reconcile cycle to prevent stale values when a
+// provider is removed from the spec.
+func resetRelayGauges() {
+	metrics.RelayProvisioningFailed.Reset()
+	metrics.RelayDraining.Reset()
+	metrics.RelayQuotaExhausted.Reset()
+}
+
 // setRelayHealthyReplicas sets the gauge for the current count of healthy relays.
 func setRelayHealthyReplicas(n int) {
 	metrics.RelayHealthyReplicas.Set(float64(n))

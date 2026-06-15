@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/lenaxia/llmsafespace/controller/internal/common"
+	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
@@ -228,7 +229,9 @@ func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1
 		}
 	}
 
-	// Emit relay metrics
+	metrics.RelayProvisioningFailed.Reset()
+	metrics.RelayDraining.Reset()
+	metrics.RelayQuotaExhausted.Reset()
 	setRelayHealthyReplicas(healthyReplicas)
 	for _, inst := range instances {
 		setRelayProvisioningFailed(inst.Provider, inst.State == string(v1.RelayStateProvisioningFailed))
