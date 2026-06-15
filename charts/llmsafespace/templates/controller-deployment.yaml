@@ -85,6 +85,10 @@ spec:
             {{- /* Fallback for operators not using the managed Secret. */ -}}
             - --inference-relay-secret={{ .Values.inferenceRelaySecret }}
             {{- end }}
+            {{- if .Values.controller.inferenceRelay.enabled }}
+            - --enable-inference-relay=true
+            - --relay-router-url={{ .Values.controller.inferenceRelay.routerURL | default "http://relay-router:8080" }}
+            {{- end }}
           ports:
             - name: metrics
               containerPort: {{ $metricsAddr | regexFind "[0-9]+$" | atoi }}
