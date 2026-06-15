@@ -343,7 +343,7 @@ jobs:
         working-directory: sdks/python
         run: |
           pip install -e ".[dev]" -q
-          pytest tests/test_client.py -q
+          pytest tests/test_client.py tests/test_async_client.py -q
 
       - name: VS Code extension — install, typecheck, build
         working-directory: sdks/vscode-llmsafespace
