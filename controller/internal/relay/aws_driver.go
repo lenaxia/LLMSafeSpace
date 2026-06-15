@@ -346,6 +346,9 @@ func classifyAWSError(err error) error {
 		return nil
 	}
 	msg := err.Error()
+	if len(msg) > 200 {
+		msg = msg[:200] + "..."
+	}
 	if strings.Contains(msg, "InsufficientInstanceCapacity") || strings.Contains(msg, "InstanceLimitExceeded") {
 		return fmt.Errorf("%w: %s", ErrCapacity, msg)
 	}

@@ -54,9 +54,12 @@ func TestClassifyAWSError_NilError(t *testing.T) {
 func TestAWSDriver_GetConfig_FallsBackToDefaultChain(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().Build()
 	d := NewAWSDriver(fakeClient, "test-ns", "aws-relay-irwa")
-	_, err := d.loadAWSConfig(context.Background(), "us-east-1")
-	// Expected to fail in test env without AWS creds — just verify no panic
-	_ = err
+	cfg, err := d.loadAWSConfig(context.Background(), "us-east-1")
+	// Expected to succeed (falls back to default chain) or fail (no AWS creds in test)
+	// but should NOT panic. If it succeeds, region should match.
+	if err == nil {
+		assert.Equal(t, "us-east-1", cfg.Region)
+	}
 }
 
 func TestNewAWSDriver_DefaultCredentialSecret(t *testing.T) {
