@@ -7,15 +7,6 @@ import (
 	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
 )
 
-// resetRelayGauges resets all provider-labeled relay gauges. Called at
-// the start of each reconcile cycle to prevent stale values when a
-// provider is removed from the spec.
-func resetRelayGauges() {
-	metrics.RelayProvisioningFailed.Reset()
-	metrics.RelayDraining.Reset()
-	metrics.RelayQuotaExhausted.Reset()
-}
-
 // setRelayHealthyReplicas sets the gauge for the current count of healthy relays.
 func setRelayHealthyReplicas(n int) {
 	metrics.RelayHealthyReplicas.Set(float64(n))
@@ -37,6 +28,15 @@ func setRelayDraining(provider string, draining bool) {
 		val = 1.0
 	}
 	metrics.RelayDraining.WithLabelValues(provider).Set(val)
+}
+
+// setRelayQuotaExhausted sets the egress quota exhausted gauge for a provider.
+func setRelayQuotaExhausted(provider string, exhausted bool) {
+	val := 0.0
+	if exhausted {
+		val = 1.0
+	}
+	metrics.RelayQuotaExhausted.WithLabelValues(provider).Set(val)
 }
 
 // recordRotation increments the rotation counter.

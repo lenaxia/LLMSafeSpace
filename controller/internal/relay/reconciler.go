@@ -236,6 +236,7 @@ func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1
 	for _, inst := range instances {
 		setRelayProvisioningFailed(inst.Provider, inst.State == string(v1.RelayStateProvisioningFailed))
 		setRelayDraining(inst.Provider, inst.State == string(v1.RelayStateDraining))
+		setRelayQuotaExhausted(inst.Provider, inst.State == string(v1.RelayStateQuotaExhausted))
 	}
 
 	// Build peer entries for ConfigMap (include WG public keys)
