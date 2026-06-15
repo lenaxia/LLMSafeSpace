@@ -6,6 +6,7 @@ package relay
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -69,6 +70,14 @@ func (d *AWSDriver) loadAWSConfig(ctx context.Context, region string) (aws.Confi
 		)
 	}
 
+	// Check if IRWA config is present (trustAnchorId, profileId, roleArn).
+	// Phase 2 will implement IAM Roles Anywhere credential exchange.
+	// For now, log that the admin-saved IRWA config is not yet supported.
+	if string(secret.Data["trustAnchorId"]) != "" {
+		slog.Warn("AWS Secret contains IRWA config but driver does not yet support it; falling back to default credential chain (IRSA). Phase 2 will add IRWA support.",
+			"secret", d.credentialSecret)
+	}
+
 	// IRWA or other credential types fall back to default chain (IRSA, etc.)
 	return awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
 }
@@ -127,10 +136,14 @@ func (d *AWSDriver) Provision(ctx context.Context, req ProvisionRequest) (*Provi
 	// Wait for the instance to be running
 	publicIP, err := d.waitForRunning(ctx, client, instanceID)
 	if err != nil {
-		// Clean up the orphaned instance to avoid unbounded charges
-		_, _ = client.TerminateInstances(ctx, &ec2.TerminateInstancesInput{
+		// Clean up the orphaned instance to avoid unbounded charges.
+		// Log termination failure but don't mask the original error.
+		_, termErr := client.TerminateInstances(ctx, &ec2.TerminateInstancesInput{
 			InstanceIds: []string{instanceID},
 		})
+		if termErr != nil {
+			return nil, fmt.Errorf("%w (orphan cleanup failed for %s: %v)", err, instanceID, termErr)
+		}
 		return nil, err
 	}
 
