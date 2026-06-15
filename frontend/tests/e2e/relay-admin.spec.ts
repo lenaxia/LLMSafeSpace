@@ -129,9 +129,10 @@ test.describe("Relay admin UI", () => {
     });
 
     await page.goto("/settings");
-    await page.getByText("Relay").click();
+    await page.waitForLoadState("networkidle");
+    await page.getByRole("button", { name: "Relay" }).click();
 
-    await expect(page.getByText("Prerequisites")).toBeVisible();
+    await expect(page.getByText("Prerequisites")).toBeVisible({ timeout: 5000 });
     await expect(page.getByText("MetalLB installed")).toBeVisible();
   });
 
@@ -141,7 +142,8 @@ test.describe("Relay admin UI", () => {
     });
 
     await page.goto("/settings");
-    await page.getByText("Relay").click();
+    await page.waitForLoadState("networkidle");
+    await page.getByRole("button", { name: "Relay" }).click();
 
     await expect(page.getByText("Prerequisites")).toBeVisible();
 
@@ -167,7 +169,8 @@ test.describe("Relay admin UI", () => {
     });
 
     await page.goto("/settings");
-    await page.getByText("Relay").click();
+    await page.waitForLoadState("networkidle");
+    await page.getByRole("button", { name: "Relay" }).click();
 
     await expect(page.getByText("2/2 relays active")).toBeVisible({ timeout: 5000 });
     await expect(page.getByText("150.230.67.89")).toBeVisible();
@@ -183,7 +186,8 @@ test.describe("Relay admin UI", () => {
     });
 
     await page.goto("/settings");
-    await page.getByText("Relay").click();
+    await page.waitForLoadState("networkidle");
+    await page.getByRole("button", { name: "Relay" }).click();
 
     await expect(page.getByText("Provisioning failed")).toBeVisible({ timeout: 5000 });
     await expect(page.getByText(/Out of host capacity/)).toBeVisible();
@@ -198,7 +202,8 @@ test.describe("Relay admin UI", () => {
     });
 
     await page.goto("/settings");
-    await page.getByText("Relay").click();
+    await page.waitForLoadState("networkidle");
+    await page.getByRole("button", { name: "Relay" }).click();
 
     await expect(page.getByText("FIRING")).toBeVisible({ timeout: 5000 });
   });
@@ -217,7 +222,8 @@ test.describe("Relay admin UI", () => {
     });
 
     await page.goto("/settings");
-    await page.getByText("Relay").click();
+    await page.waitForLoadState("networkidle");
+    await page.getByRole("button", { name: "Relay" }).click();
 
     await expect(page.getByText("2/2 relays active")).toBeVisible({ timeout: 5000 });
     await page.getByText("Rotate").first().click();
