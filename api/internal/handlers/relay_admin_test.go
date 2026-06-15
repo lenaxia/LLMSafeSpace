@@ -38,7 +38,7 @@ func setupRelayRouter(t *testing.T, clientset *fake.Clientset) (*gin.Engine, *Re
 	llmMock.On("InferenceRelays").Return(relayMock).Maybe()
 	relayMock.On("List", mock.Anything, mock.Anything).Return(&v1.InferenceRelayList{}, nil).Maybe()
 
-	h := NewRelayAdminHandler(clientset, llmMock, testNamespace, "http://relay-router.test:8080")
+	h := NewRelayAdminHandler(clientset, llmMock, testNamespace, testNamespace, "http://relay-router.test:8080")
 
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -779,7 +779,7 @@ func TestRelayStatus_ScrapesRouterMetrics(t *testing.T) {
 			[]v1.RelayInstanceStatus{{ID: "oci-1", Provider: "oci", State: "healthy", Healthy: true}}, 1)}}, nil,
 	).Maybe()
 
-	h := NewRelayAdminHandler(clientset, llmMock, testNamespace, metricsServer.URL)
+	h := NewRelayAdminHandler(clientset, llmMock, testNamespace, testNamespace, metricsServer.URL)
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -807,7 +807,7 @@ func TestRelayStatus_RouterUnreachable_GracefulDegrade(t *testing.T) {
 			[]v1.RelayInstanceStatus{{ID: "oci-1", Provider: "oci", State: "healthy", Healthy: true}}, 1)}}, nil,
 	).Maybe()
 
-	h := NewRelayAdminHandler(clientset, llmMock, testNamespace, "http://127.0.0.1:1")
+	h := NewRelayAdminHandler(clientset, llmMock, testNamespace, testNamespace, "http://127.0.0.1:1")
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -843,7 +843,7 @@ func TestRelayAdmin_E2E_FullLifecycle(t *testing.T) {
 	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(deployedCR, nil).Maybe()
 	relayMock.On("Update", mock.Anything, mock.Anything).Return(deployedCR, nil).Maybe()
 
-	h := NewRelayAdminHandler(clientset, llmMock, testNamespace, "http://relay-router.test:8080")
+	h := NewRelayAdminHandler(clientset, llmMock, testNamespace, testNamespace, "http://relay-router.test:8080")
 
 	r := gin.New()
 	r.Use(func(c *gin.Context) {

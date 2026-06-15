@@ -199,6 +199,31 @@ controller:
     # URL of the in-cluster relay-router for /metrics scraping.
     routerURL: "http://relay-router:8080"
 
+    # Relay-router Deployment + Service. The relay-router is a
+    # lightweight Go proxy (cmd/relay-router/) that distributes
+    # inference traffic across healthy relay VMs. It is deployed
+    # in the release namespace and runs as a single replica.
+    # The controller syncs the relay-router-peers ConfigMap which
+    # the router mounts at /etc/relay-router/peers.json.
+    router:
+      image:
+        repository: ghcr.io/lenaxia/llmsafespace/relay-router
+        tag: ""
+        pullPolicy: IfNotPresent
+      service:
+        type: ClusterIP
+        port: 8080
+      resources:
+        requests:
+          cpu: 50m
+          memory: 32Mi
+        limits:
+          cpu: 200m
+          memory: 128Mi
+      nodeSelector: {}
+      tolerations: []
+      affinity: {}
+
   resources:
     requests:
       cpu: 100m

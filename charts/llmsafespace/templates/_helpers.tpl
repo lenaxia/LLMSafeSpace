@@ -125,3 +125,18 @@ component: workspace
 {{- $tag := default .Chart.AppVersion .Values.controller.image.tag -}}
 {{- printf "%s:%s" .Values.controller.image.repository $tag -}}
 {{- end }}
+
+{{- define "llmsafespace.relayRouter.labels" -}}
+{{ include "llmsafespace.labels" . }}
+app.kubernetes.io/component: relay-router
+{{- end }}
+
+{{- define "llmsafespace.relayRouter.selectorLabels" -}}
+{{ include "llmsafespace.selectorLabels" . }}
+app.kubernetes.io/component: relay-router
+{{- end }}
+
+{{- define "llmsafespace.relayRouter.image" -}}
+{{- $tag := default .Chart.AppVersion .Values.controller.inferenceRelay.router.image.tag -}}
+{{- printf "%s:%s" .Values.controller.inferenceRelay.router.image.repository $tag -}}
+{{- end }}

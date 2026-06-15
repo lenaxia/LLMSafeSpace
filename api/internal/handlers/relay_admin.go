@@ -24,21 +24,25 @@ import (
 // The relay fleet supports AWS (paid primary), OCI (free secondary), and GCP (optional)
 // providers — matching the InferenceRelay CRD enum `aws;oci;gcp`.
 type RelayAdminHandler struct {
-	clientset    kubernetes.Interface
-	llmClient    interfaces.LLMSafespaceV1Interface
-	namespace    string
-	routerSvcURL string
-	httpClient   *http.Client
+	clientset       kubernetes.Interface
+	llmClient       interfaces.LLMSafespaceV1Interface
+	namespace       string
+	routerNamespace string
+	routerSvcURL    string
+	httpClient      *http.Client
 }
 
 // NewRelayAdminHandler creates a new relay admin handler.
-func NewRelayAdminHandler(clientset kubernetes.Interface, llmClient interfaces.LLMSafespaceV1Interface, namespace, routerSvcURL string) *RelayAdminHandler {
+// namespace is the workspace namespace (for Secrets, CRDs).
+// routerNamespace is the namespace where the relay-router Deployment lives.
+func NewRelayAdminHandler(clientset kubernetes.Interface, llmClient interfaces.LLMSafespaceV1Interface, namespace, routerNamespace, routerSvcURL string) *RelayAdminHandler {
 	return &RelayAdminHandler{
-		clientset:    clientset,
-		llmClient:    llmClient,
-		namespace:    namespace,
-		routerSvcURL: routerSvcURL,
-		httpClient:   &http.Client{Timeout: 5 * time.Second},
+		clientset:       clientset,
+		llmClient:       llmClient,
+		namespace:       namespace,
+		routerNamespace: routerNamespace,
+		routerSvcURL:    routerSvcURL,
+		httpClient:      &http.Client{Timeout: 5 * time.Second},
 	}
 }
 
@@ -93,7 +97,7 @@ func (h *RelayAdminHandler) GetSetup(c *gin.Context) {
 }
 
 func (h *RelayAdminHandler) checkRouter(ctx context.Context, resp *setupResponse) error {
-	_, err := h.clientset.AppsV1().Deployments(h.namespace).Get(ctx, "relay-router", metav1.GetOptions{})
+	_, err := h.clientset.AppsV1().Deployments(h.routerNamespace).Get(ctx, "relay-router", metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil

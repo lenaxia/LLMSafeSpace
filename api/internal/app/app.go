@@ -499,12 +499,17 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	if relayRouterSvcURL == "" {
 		relayRouterSvcURL = "http://relay-router." + cfg.Kubernetes.Namespace + ".svc.cluster.local:8080"
 	}
+	routerNamespace := os.Getenv("LLMSAFESPACE_KUBERNETES_PODNAMESPACE")
+	if routerNamespace == "" {
+		routerNamespace = cfg.Kubernetes.Namespace
+	}
 	var relayAdminHandler *handlers.RelayAdminHandler
 	if llmClient, err := k8sClient.LlmsafespaceV1(); err == nil {
 		relayAdminHandler = handlers.NewRelayAdminHandler(
 			k8sClient.Clientset(),
 			llmClient,
 			cfg.Kubernetes.Namespace,
+			routerNamespace,
 			relayRouterSvcURL,
 		)
 	} else {
