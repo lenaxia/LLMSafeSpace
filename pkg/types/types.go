@@ -892,3 +892,17 @@ func (p *OrgPolicyValues) MaxActive() int {
 	}
 	return *p.MaxActiveWorkspacesPerMem
 }
+
+// --- US-43.13: Org-scoped audit log ---
+
+// AuditEntry is one row of the audit_log, scoped to an org when OrgID is non-empty.
+type AuditEntry struct {
+	ID        int64          `json:"id"`
+	ActorID   string         `json:"actorId"`
+	Domain    string         `json:"domain"`
+	Action    string         `json:"action"`
+	TargetID  string         `json:"targetId,omitempty"`
+	OrgID     string         `json:"orgId,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+	CreatedAt time.Time      `json:"createdAt"`
+}

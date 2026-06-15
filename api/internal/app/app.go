@@ -152,6 +152,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var invitationsHandler *handlers.InvitationsHandler
 	var policySvc *policy.Service
 	var policyHandler *handlers.PolicyHandler
+	var auditHandler *handlers.AuditHandler
 	var asyncAudit *secrets.AsyncAuditLogger // populated when secrets are enabled; drained on Shutdown
 	var secretsPool *pgxpool.Pool            // closed on Shutdown
 	var dekCacheClient *redis.Client         // closed on Shutdown
@@ -480,6 +481,8 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
 			wsSvc.SetPolicyChecker(policySvc)
 		}
+		// US-43.13: Org audit handler.
+		auditHandler = handlers.NewAuditHandler(pgOrgStore)
 	}
 
 	// US-43.8: Wire policy checker into secrets handler for model filtering.
@@ -509,6 +512,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		WebhookHandler:                  webhookHandler,
 		InvitationsHandler:              invitationsHandler,
 		PolicyHandler:                   policyHandler,
+		AuditHandler:                    auditHandler,
 		CookieName:                      cfg.Auth.CookieName,
 	})
 

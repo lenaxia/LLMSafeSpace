@@ -61,6 +61,10 @@ func (m *mockPolicyStore) DeleteOrgPolicy(_ context.Context, orgID string, key t
 	return nil
 }
 
+func (m *mockPolicyStore) LogOrgEvent(_ context.Context, _, _, _, _ string, _ map[string]any) error {
+	return nil
+}
+
 func setupPolicyRouter(t *testing.T, store *mockPolicyStore) *PolicyHandler {
 	t.Helper()
 	return NewPolicyHandler(store, nil, &mockOrgAuthService{userID: "admin-1"})

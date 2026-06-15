@@ -20,6 +20,7 @@ type policyStore interface {
 	GetOrgPolicies(ctx context.Context, orgID string) ([]*types.OrgPolicy, error)
 	SetOrgPolicy(ctx context.Context, orgID string, key types.OrgPolicyKey, value json.RawMessage, updatedBy string) error
 	DeleteOrgPolicy(ctx context.Context, orgID string, key types.OrgPolicyKey) error
+	LogOrgEvent(ctx context.Context, orgID, actorID, action, targetID string, metadata map[string]any) error
 }
 
 // PolicyHandler handles GET/PUT/DELETE /api/v1/orgs/:id/policies (admin-only).
@@ -72,6 +73,7 @@ func (h *PolicyHandler) Put(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to set policy"})
 		return
 	}
+	_ = h.store.LogOrgEvent(c.Request.Context(), orgID, userID, "policy.set", string(key), map[string]any{"value": body})
 	if h.svc != nil {
 		h.svc.InvalidateCache(c.Request.Context(), orgID)
 	}
@@ -94,6 +96,8 @@ func (h *PolicyHandler) Delete(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete policy"})
 		return
 	}
+	actorID := h.authSvc.GetUserID(c)
+	_ = h.store.LogOrgEvent(c.Request.Context(), orgID, actorID, "policy.delete", string(key), nil)
 	if h.svc != nil {
 		h.svc.InvalidateCache(c.Request.Context(), orgID)
 	}
