@@ -1155,7 +1155,9 @@ func (s *PgOrgStore) ListOrgAudit(ctx context.Context, orgID string, limit, offs
 			return nil, nil, fmt.Errorf("scan audit entry: %w", err)
 		}
 		if len(metaBytes) > 0 && string(metaBytes) != "{}" {
-			_ = json.Unmarshal(metaBytes, &e.Metadata)
+			if err := json.Unmarshal(metaBytes, &e.Metadata); err != nil {
+				return nil, nil, fmt.Errorf("unmarshal audit metadata: %w", err)
+			}
 		}
 		entries = append(entries, &e)
 	}

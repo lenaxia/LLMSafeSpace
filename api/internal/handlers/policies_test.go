@@ -16,9 +16,17 @@ import (
 )
 
 type mockPolicyStore struct {
-	mu       sync.Mutex
-	policies map[string]map[types.OrgPolicyKey]json.RawMessage
-	setErr   error
+	mu         sync.Mutex
+	policies   map[string]map[types.OrgPolicyKey]json.RawMessage
+	setErr     error
+	auditCalls []auditCall
+}
+
+type auditCall struct {
+	orgID    string
+	actorID  string
+	action   string
+	targetID string
 }
 
 func newMockPolicyStore() *mockPolicyStore {
@@ -61,7 +69,10 @@ func (m *mockPolicyStore) DeleteOrgPolicy(_ context.Context, orgID string, key t
 	return nil
 }
 
-func (m *mockPolicyStore) LogOrgEvent(_ context.Context, _, _, _, _ string, _ map[string]any) error {
+func (m *mockPolicyStore) LogOrgEvent(_ context.Context, orgID, actorID, action, targetID string, _ map[string]any) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.auditCalls = append(m.auditCalls, auditCall{orgID: orgID, actorID: actorID, action: action, targetID: targetID})
 	return nil
 }
 
@@ -162,6 +173,49 @@ func TestPolicyHandler_Delete(t *testing.T) {
 	store.mu.Unlock()
 	if ok {
 		t.Error("policy should be deleted")
+	}
+}
+
+func TestPolicyHandler_Put_EmitsAuditEvent(t *testing.T) {
+	store := newMockPolicyStore()
+	h := setupPolicyRouter(t, store)
+
+	w := doRequest(setupPolicyTestRouter(h), "PUT", "/api/v1/orgs/org-1/policies/allowed_models", `["gpt-4o"]`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.auditCalls) != 1 {
+		t.Fatalf("expected 1 audit call, got %d", len(store.auditCalls))
+	}
+	call := store.auditCalls[0]
+	if call.action != "policy.set" {
+		t.Errorf("expected action policy.set, got %q", call.action)
+	}
+	if call.targetID != "allowed_models" {
+		t.Errorf("expected target allowed_models, got %q", call.targetID)
+	}
+}
+
+func TestPolicyHandler_Delete_EmitsAuditEvent(t *testing.T) {
+	store := newMockPolicyStore()
+	store.policies["org-1"] = map[types.OrgPolicyKey]json.RawMessage{
+		types.PolicyAllowedModels: json.RawMessage(`["gpt-4o"]`),
+	}
+	h := setupPolicyRouter(t, store)
+
+	w := doRequest(setupPolicyTestRouter(h), "DELETE", "/api/v1/orgs/org-1/policies/allowed_models", "")
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", w.Code)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.auditCalls) != 1 {
+		t.Fatalf("expected 1 audit call, got %d", len(store.auditCalls))
+	}
+	if store.auditCalls[0].action != "policy.delete" {
+		t.Errorf("expected action policy.delete, got %q", store.auditCalls[0].action)
 	}
 }
 
