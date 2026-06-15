@@ -1398,8 +1398,20 @@ func (s *Service) EnsureSecretsManifest(ctx context.Context, workspaceID string,
 }
 
 // EnsureWorkspaceConfig writes workspace-level configuration (non-sensitive
-// metadata like default model) to the same K8s Secret used for secrets.
-// This is read by the agentd at boot to configure the agent.
+// metadata like default model) into the workspace-secrets-<id> K8s Secret.
+// This is read by the agentd init container at pod boot to configure the agent.
+//
+// The Secret is created if it does not exist. This is necessary because users
+// with zero LLM credentials never have the secret created by seedEphemeralSecrets
+// (which guards on an empty secrets payload and skips writing). workspace-config.json
+// is independent of secrets.json — it must be writable regardless of whether the
+// workspace has any credentials.
+//
+// The create path sets the same labels as EnsureSecretsManifest so the secret
+// is discoverable by operators and the controller lifecycle. secrets.json is not
+// written on the create path — the init container handles a missing secrets.json
+// gracefully (optional mount). On the update path, secrets.json is preserved
+// unmodified; only workspace-config.json is touched.
 func (s *Service) EnsureWorkspaceConfig(ctx context.Context, workspaceID string, config WorkspaceConfig) error {
 	if workspaceID == "" {
 		return fmt.Errorf("workspaceID is required")
@@ -1413,17 +1425,50 @@ func (s *Service) EnsureWorkspaceConfig(ctx context.Context, workspaceID string,
 	clientset := s.k8sClient.Clientset()
 	secretClient := clientset.CoreV1().Secrets(s.config.Namespace)
 
+	labels := map[string]string{
+		"app":                        "llmsafespace",
+		"llmsafespace.dev/workspace": workspaceID,
+		"llmsafespace.dev/ephemeral": "true",
+	}
+
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		existing, err := secretClient.Get(ctx, secretName, metav1.GetOptions{})
-		if err != nil {
-			// Secret doesn't exist yet — no-op; it'll be created on next bind.
-			return nil
+		if err == nil {
+			// Secret exists — merge workspace-config.json, preserve all other keys.
+			if existing.Data == nil {
+				existing.Data = map[string][]byte{}
+			}
+			existing.Data["workspace-config.json"] = configJSON
+			if existing.Labels == nil {
+				existing.Labels = map[string]string{}
+			}
+			for k, v := range labels {
+				existing.Labels[k] = v
+			}
+			_, updateErr := secretClient.Update(ctx, existing, metav1.UpdateOptions{})
+			return updateErr
 		}
-		if existing.Data == nil {
-			existing.Data = map[string][]byte{}
+		if !k8serrors.IsNotFound(err) {
+			return fmt.Errorf("get workspace config secret: %w", err)
 		}
-		existing.Data["workspace-config.json"] = configJSON
-		_, err = secretClient.Update(ctx, existing, metav1.UpdateOptions{})
-		return err
+		// Secret does not exist — create it with workspace-config.json only.
+		// secrets.json is intentionally absent: the init container mounts the
+		// secret as optional:true and guards with `if [ -f ... ]`, so a missing
+		// secrets.json is safe. It will be written by the next credential bind.
+		desired := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      secretName,
+				Namespace: s.config.Namespace,
+				Labels:    labels,
+			},
+			Data: map[string][]byte{"workspace-config.json": configJSON},
+		}
+		if _, createErr := secretClient.Create(ctx, desired, metav1.CreateOptions{}); createErr != nil {
+			if k8serrors.IsAlreadyExists(createErr) {
+				return k8serrors.NewConflict(corev1.Resource("secrets"), secretName, createErr)
+			}
+			return fmt.Errorf("create workspace config secret: %w", createErr)
+		}
+		return nil
 	})
 }
