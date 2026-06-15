@@ -593,28 +593,30 @@ func TestRelayDeploy_NetworkError_500(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-func TestRelaySetup_RouterCheckError_500(t *testing.T) {
-	// The fake clientset won't have RBAC issues, but we verify that when
-	// checkRouter gets an unexpected error, the handler returns 500.
-	// With the fake clientset, Get on a non-existent deployment returns
-	// NotFound which is handled gracefully (not an error).
-	// This test verifies the happy path still works.
+func TestRelaySetup_NoRouter_StillOK(t *testing.T) {
+	// When router deployment doesn't exist, setup should return 200 with
+	// routerDeployed=false (not a 500 error).
 	r, _, _ := setupRelayRouter(t, fake.NewSimpleClientset())
 	w := doRelayRequest(r, "GET", "/api/v1/admin/relay/setup")
 	assert.Equal(t, http.StatusOK, w.Code)
+	var resp setupResponse
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.False(t, resp.RouterDeployed)
 }
 
-func TestRelayOCICreds_UpdateNetworkError_500(t *testing.T) {
-	// Verify that upsertSecret distinguishes NotFound (create) from other errors.
-	// The fake clientset always works correctly, so this tests the create path.
+func TestRelayOCICreds_CreateThenUpdate_Success(t *testing.T) {
+	// Verify that upsertSecret handles both create (first call) and
+	// update (second call) correctly.
 	clientset := fake.NewSimpleClientset()
 	r, _, _ := setupRelayRouter(t, clientset)
 
 	body := `{"tenancy":"t","user":"u","fingerprint":"f","key":"k","region":"us-ashburn-1"}`
+
+	// First call: creates the secret
 	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/oci-creds", body)
 	require.Equal(t, http.StatusOK, w.Code)
 
-	// Second call should update (not create)
+	// Second call: updates the existing secret
 	w = doRelayRequest(r, "POST", "/api/v1/admin/relay/oci-creds", body)
 	require.Equal(t, http.StatusOK, w.Code)
 }
