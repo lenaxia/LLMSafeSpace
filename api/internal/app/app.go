@@ -424,12 +424,17 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			SecretKey:     cfg.Billing.SecretKey,
 			WebhookSecret: cfg.Billing.WebhookSecret,
 			PlanPrices:    cfg.Billing.PlanPrices,
+			Meters:        cfg.Billing.Meters,
 		})
 		if err != nil {
 			cancel()
 			return nil, fmt.Errorf("init stripe provider: %w", err)
 		}
 		checkoutProvider = sp
+		// US-43.17: Wire StripeProvider as usage reporter for metered billing.
+		if mSvc, ok := svc.Metering.(*metering.Service); ok {
+			mSvc.SetUsageReporter(sp)
+		}
 		if orgsHandler != nil && cfg.Billing.WebhookSecret != "" && pgOrgStore != nil {
 			webhookHandler = handlers.NewStripeWebhookHandler(sp, pgOrgStore, log)
 		}

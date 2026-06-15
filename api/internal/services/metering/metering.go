@@ -15,6 +15,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/config"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/services/database"
+	"github.com/lenaxia/llmsafespace/pkg/billing"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -95,12 +96,19 @@ type WorkspaceBillingProvider interface {
 	ListAllWorkspacesForBilling(ctx context.Context) ([]database.WorkspaceBillingRecord, error)
 }
 
+// UsageReporter reports metered usage to an external billing provider (e.g.
+// Stripe). nil means usage is not reported externally (dev/noop mode).
+type UsageReporter interface {
+	ReportUsage(ctx context.Context, events []billing.UsageExportEvent) ([]int64, error)
+}
+
 type Service struct {
 	logger     pkginterfaces.LoggerInterface
 	config     *config.Config
 	db         *sql.DB
 	dbSvc      interfaces.DatabaseService
 	billingSvc WorkspaceBillingProvider
+	usageRpt   UsageReporter
 
 	ch       chan UsageEvent
 	done     chan struct{}
@@ -138,6 +146,10 @@ func (s *Service) SetDatabaseService(dbSvc interfaces.DatabaseService) {
 
 func (s *Service) SetBillingProvider(p WorkspaceBillingProvider) {
 	s.billingSvc = p
+}
+
+func (s *Service) SetUsageReporter(r UsageReporter) {
+	s.usageRpt = r
 }
 
 func (s *Service) Start() error {
@@ -421,6 +433,21 @@ func (s *Service) ExportUsage(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 
+	// US-43.17: If a usage reporter is configured (StripeProvider), aggregate
+	// usage events by customer + event type and report to Stripe Metered.
+	//
+	// Design note: a reporter failure is logged but does NOT block cursor
+	// advancement. Rationale: a persistent Stripe outage would otherwise stall
+	// the cursor forever, causing usage_events to grow unbounded. The
+	// trade-off is that the failed window's usage is not reported to Stripe.
+	// A future reconciliation job can recover missed windows by diffing the
+	// cursor against usage_events (tracked as Phase 5 follow-up).
+	if s.usageRpt != nil {
+		if err := s.exportToStripe(ctx, lastID, maxID); err != nil {
+			s.logger.Error("Stripe usage export failed", err)
+		}
+	}
+
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO billing_export_cursor (provider, last_exported_id, last_exported_at)
 		VALUES ('noop', $1, NOW())
@@ -431,6 +458,72 @@ func (s *Service) ExportUsage(ctx context.Context) (int, error) {
 
 	exported := int(maxID - lastID)
 	return exported, nil
+}
+
+// exportToStripe aggregates usage events between lastID and maxID by customer +
+// event type, resolves the Stripe customer id from billing_accounts, and
+// reports the totals to Stripe Metered Billing. Each aggregation group gets a
+// deterministic idempotency key scoped to the export window so retries (e.g.
+// from a transient Stripe error followed by cursor re-processing) do not
+// double-report.
+//
+// Usage events are recorded per-user (owner_type='user'); billing accounts are
+// per-org (owner_type='org'). The JOIN resolves user → org via org_memberships,
+// picking the user's earliest membership deterministically (a user in multiple
+// orgs is billed to their first-joined org). Users without an org membership
+// produce no billing rows (external_customer_id=”) and are skipped.
+func (s *Service) exportToStripe(ctx context.Context, lastID, maxID int64) error {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT ue.event_type, SUM(ue.quantity), MAX(ue.event_time),
+		       COALESCE(ba.external_customer_id, '')
+		FROM usage_events ue
+		LEFT JOIN LATERAL (
+			SELECT om.org_id
+			FROM org_memberships om
+			WHERE om.user_id = ue.owner_id
+			ORDER BY om.created_at ASC
+			LIMIT 1
+		) primary_org ON true
+		LEFT JOIN billing_accounts ba
+		  ON ba.owner_id = primary_org.org_id
+		 AND ba.owner_type = 'org'
+		 AND ba.provider = 'stripe'
+		WHERE ue.id > $1 AND ue.id <= $2
+		GROUP BY ue.event_type, ba.external_customer_id
+	`, lastID, maxID)
+	if err != nil {
+		return fmt.Errorf("query usage events for export: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var events []billing.UsageExportEvent
+	for rows.Next() {
+		var e billing.UsageExportEvent
+		var timestamp string
+		if err := rows.Scan(&e.EventType, &e.Quantity, &timestamp, &e.ExternalCustomerID); err != nil {
+			return fmt.Errorf("scan usage event for export: %w", err)
+		}
+		e.Timestamp = timestamp
+		if e.ExternalCustomerID == "" {
+			continue
+		}
+		// Deterministic per customer+type+window: stable across retries of
+		// the same [lastID, maxID] range, distinct across windows.
+		e.IdempotencyKey = fmt.Sprintf("meter-%s-%s-%d", e.ExternalCustomerID, e.EventType, maxID)
+		events = append(events, e)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate usage events for export: %w", err)
+	}
+
+	if len(events) == 0 {
+		return nil
+	}
+
+	if _, err := s.usageRpt.ReportUsage(ctx, events); err != nil {
+		return fmt.Errorf("report usage to billing provider: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) run() {
