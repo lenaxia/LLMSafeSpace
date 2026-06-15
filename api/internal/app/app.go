@@ -490,6 +490,22 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		secretsHandler.SetPolicyChecker(policySvc)
 	}
 
+	relayRouterSvcURL := os.Getenv("RELAY_ROUTER_SVC_URL")
+	if relayRouterSvcURL == "" {
+		relayRouterSvcURL = "http://relay-router." + cfg.Kubernetes.Namespace + ".svc.cluster.local:8080"
+	}
+	var relayAdminHandler *handlers.RelayAdminHandler
+	if llmClient, err := k8sClient.LlmsafespaceV1(); err == nil {
+		relayAdminHandler = handlers.NewRelayAdminHandler(
+			k8sClient.Clientset(),
+			llmClient,
+			cfg.Kubernetes.Namespace,
+			relayRouterSvcURL,
+		)
+	} else {
+		log.Warn("failed to construct LlmsafespaceV1 client, relay admin routes will not be available", "error", err.Error())
+	}
+
 	router := server.NewRouter(svc, log, proxyHandler, server.RouterConfig{
 		Debug:                           cfg.Logging.Development,
 		LoggingConfig:                   server.DefaultRouterConfig().LoggingConfig,
@@ -513,6 +529,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		InvitationsHandler:              invitationsHandler,
 		PolicyHandler:                   policyHandler,
 		AuditHandler:                    auditHandler,
+		RelayAdminHandler:               relayAdminHandler,
 		CookieName:                      cfg.Auth.CookieName,
 	})
 
