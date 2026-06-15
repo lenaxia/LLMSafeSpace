@@ -495,7 +495,11 @@ func (h *RelayAdminHandler) Rotate(c *gin.Context) {
 
 	existing, err := h.llmClient.InferenceRelays().Get(ctx, "relay-fleet", metav1.GetOptions{})
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "relay fleet not found"})
+		if apierrors.IsNotFound(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "relay fleet not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get relay fleet: " + err.Error()})
+		}
 		return
 	}
 
@@ -515,7 +519,11 @@ func (h *RelayAdminHandler) Pause(c *gin.Context) {
 
 	existing, err := h.llmClient.InferenceRelays().Get(ctx, "relay-fleet", metav1.GetOptions{})
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "relay fleet not found"})
+		if apierrors.IsNotFound(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "relay fleet not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get relay fleet: " + err.Error()})
+		}
 		return
 	}
 
@@ -535,7 +543,11 @@ func (h *RelayAdminHandler) Resume(c *gin.Context) {
 
 	existing, err := h.llmClient.InferenceRelays().Get(ctx, "relay-fleet", metav1.GetOptions{})
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "relay fleet not found"})
+		if apierrors.IsNotFound(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "relay fleet not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get relay fleet: " + err.Error()})
+		}
 		return
 	}
 
@@ -563,12 +575,15 @@ func applyAnnotation(relay *v1.InferenceRelay, key, value string) {
 
 func (h *RelayAdminHandler) upsertSecret(ctx context.Context, desired *corev1.Secret) error {
 	existing, err := h.clientset.CoreV1().Secrets(h.namespace).Get(ctx, desired.Name, metav1.GetOptions{})
-	if err == nil {
-		desired.ResourceVersion = existing.ResourceVersion
-		_, err = h.clientset.CoreV1().Secrets(h.namespace).Update(ctx, desired, metav1.UpdateOptions{})
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return err
+		}
+		_, err = h.clientset.CoreV1().Secrets(h.namespace).Create(ctx, desired, metav1.CreateOptions{})
 		return err
 	}
-	_, err = h.clientset.CoreV1().Secrets(h.namespace).Create(ctx, desired, metav1.CreateOptions{})
+	desired.ResourceVersion = existing.ResourceVersion
+	_, err = h.clientset.CoreV1().Secrets(h.namespace).Update(ctx, desired, metav1.UpdateOptions{})
 	return err
 }
 

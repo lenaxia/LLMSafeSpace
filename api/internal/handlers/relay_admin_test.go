@@ -12,8 +12,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
