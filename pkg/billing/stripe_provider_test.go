@@ -5,7 +5,6 @@ package billing
 
 import (
 	"context"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -47,15 +46,6 @@ func newProviderTestServer(t *testing.T, fn func(w http.ResponseWriter, r *http.
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
-}
-
-func readBody(t *testing.T, r *http.Request) string {
-	t.Helper()
-	b, err := io.ReadAll(r.Body)
-	if err != nil {
-		t.Fatalf("read body: %v", err)
-	}
-	return string(b)
 }
 
 func TestStripeProvider_CreateCustomer_Success(t *testing.T) {
