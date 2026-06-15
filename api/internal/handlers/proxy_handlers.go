@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -96,7 +97,125 @@ func (h *ProxyHandler) AbortSession(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sessionId: " + err.Error()})
 		return
 	}
+	wid := c.Param("id")
+
+	// Proxy the abort to opencode first. Only if that succeeds do we take
+	// ownership of queued messages — this avoids clearing the queue when the
+	// abort itself fails (network error, workspace not active, etc.).
 	h.proxyToWorkspace(c, "/session/"+sid+"/abort", false, sid)
+
+	if h.queueSvc == nil || c.Writer.Status() >= 400 {
+		return
+	}
+
+	// Abort succeeded. Peek then clear the session queue. Note: PeekAll and
+	// Clear are separate Redis commands — a message enqueued between them will
+	// be cleared without a dismissed SSE event. This is acceptable: the message
+	// is still discarded (the intent of abort), just silently.
+	flushed, err := h.queueSvc.PeekAll(c.Request.Context(), wid, sid)
+	if err != nil {
+		h.logger.Error("AbortSession: failed to peek queue after abort", err, "workspaceID", wid, "sessionID", sid)
+		return
+	}
+	if len(flushed) == 0 {
+		return
+	}
+	if err := h.queueSvc.Clear(c.Request.Context(), wid, sid); err != nil {
+		h.logger.Error("AbortSession: failed to clear queue after abort", err, "workspaceID", wid, "sessionID", sid)
+		return
+	}
+	// Publish dismissed SSE so UIs remove the pills immediately.
+	for _, msg := range flushed {
+		h.publishQueueEvent(wid, sid, "dismissed", msg.ID, "")
+	}
+
+	// In the background: wait for idle, then send each flushed message one at a
+	// time (with an idle-wait between each) and abort again at the end. This
+	// ensures messages appear in the transcript without being processed.
+	go h.flushAndAbortAfterIdle(wid, sid, flushed)
+}
+
+// flushAndAbortAfterIdle waits for the session to become idle (after an abort),
+// then sends each flushed message one at a time to opencode. Between each send
+// it waits for the session to go idle again before sending the next, ensuring
+// no 409 "session busy" errors. After all messages are sent it aborts once more
+// so they appear in the transcript but are not processed further.
+func (h *ProxyHandler) flushAndAbortAfterIdle(workspaceID, sessionID string, msgs []msgqueue.QueuedMessage) {
+	if h.sseTracker == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	// waitIdle subscribes to the SSE drain and returns once this session signals idle,
+	// or when ctx is done.
+	waitIdle := func() bool {
+		idleCh := make(chan struct{}, 1)
+		unsub := h.sseTracker.SubscribeDrain(workspaceID,
+			func(_, sid string) {
+				if sid == sessionID {
+					select {
+					case idleCh <- struct{}{}:
+					default:
+					}
+				}
+			},
+			func(_, _ string) {},
+		)
+		defer unsub()
+		select {
+		case <-idleCh:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+
+	// Wait for idle from the initial abort before sending anything.
+	if !waitIdle() {
+		h.logger.Warn("flushAndAbortAfterIdle: timed out waiting for initial idle",
+			"workspaceID", workspaceID, "sessionID", sessionID)
+		return
+	}
+
+	// Send each message one at a time, waiting for idle after each send.
+	for i, msg := range msgs {
+		if err := h.sendQueuedToOpencode(ctx, workspaceID, sessionID, &msg); err != nil {
+			h.logger.Warn("flushAndAbortAfterIdle: failed to send flushed message",
+				"workspaceID", workspaceID, "sessionID", sessionID,
+				"messageID", msg.ID, "index", i, "error", err)
+			// Stop on first error — remaining messages would also fail.
+			break
+		}
+		// Wait for this message's turn to complete before sending the next.
+		if i < len(msgs)-1 {
+			if !waitIdle() {
+				h.logger.Warn("flushAndAbortAfterIdle: timed out waiting for idle between messages",
+					"workspaceID", workspaceID, "sessionID", sessionID, "sentSoFar", i+1)
+				break
+			}
+		}
+	}
+
+	// Abort again to stop processing the flushed messages.
+	podIP, password, err := h.getPodIPAndPassword(ctx, workspaceID)
+	if err != nil {
+		return
+	}
+	abortURL := fmt.Sprintf("http://%s:%d/session/%s/abort", podIP, opencodePort, sessionID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, abortURL, nil)
+	if err != nil {
+		return
+	}
+	req.SetBasicAuth(agentd.AuthUsername, password)
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		h.logger.Warn("flushAndAbortAfterIdle: second abort failed",
+			"workspaceID", workspaceID, "sessionID", sessionID, "error", err)
+		return
+	}
+	_ = resp.Body.Close()
 }
 
 func (h *ProxyHandler) DeleteSession(c *gin.Context) {
@@ -258,6 +377,27 @@ func validateSessionID(s string) error {
 		return errors.New("sessionId contains characters outside [a-zA-Z0-9._-]")
 	}
 	return nil
+}
+
+// getPodIPAndPassword returns the pod IP and opencode password for the given
+// workspace. It is a convenience helper shared by several background goroutines.
+func (h *ProxyHandler) getPodIPAndPassword(ctx context.Context, workspaceID string) (podIP, password string, err error) {
+	v1Client, err := h.k8sClient.LlmsafespaceV1()
+	if err != nil {
+		return "", "", fmt.Errorf("getting v1 client: %w", err)
+	}
+	ws, err := v1Client.Workspaces(h.namespace).Get(ctx, workspaceID, metav1.GetOptions{})
+	if err != nil {
+		return "", "", fmt.Errorf("getting workspace: %w", err)
+	}
+	if ws.Status.Phase != phaseActive || ws.Status.PodIP == "" {
+		return "", "", fmt.Errorf("workspace not active")
+	}
+	pw, err := h.getPassword(ctx, workspaceID)
+	if err != nil {
+		return "", "", fmt.Errorf("getting password: %w", err)
+	}
+	return ws.Status.PodIP, pw, nil
 }
 
 type enqueueRequest struct {

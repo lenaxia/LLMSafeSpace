@@ -165,6 +165,7 @@ type MessageQueueService interface {
 	Remove(ctx context.Context, workspaceID, sessionID, messageID string) error
 	Clear(ctx context.Context, workspaceID, sessionID string) error
 	ClearWorkspace(ctx context.Context, workspaceID string) error
+	PeekAllWorkspace(ctx context.Context, workspaceID string) ([]msgqueue.QueuedMessage, error)
 }
 
 type MeteringService interface {

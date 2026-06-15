@@ -101,6 +101,17 @@ func (h *ProxyHandler) SetMessageQueueService(svc interfaces.MessageQueueService
 	h.queueSvc = svc
 }
 
+func (h *ProxyHandler) GetMessageQueueService() interfaces.MessageQueueService {
+	return h.queueSvc
+}
+
+func (h *ProxyHandler) GetBroker() BrokerPublisher {
+	if h.broker == nil {
+		return nil
+	}
+	return h.broker
+}
+
 func (h *ProxyHandler) GetWorkspaceOwner(workspaceID string) string {
 	if h.userBroker == nil {
 		return ""
