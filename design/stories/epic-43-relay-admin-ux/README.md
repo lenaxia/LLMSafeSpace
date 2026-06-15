@@ -65,15 +65,20 @@ the source of truth.
 
 ### `GET /api/v1/admin/relay/setup`
 
-Returns prerequisite checklist state.
+Returns prerequisite checklist state. The checklist is network-stack agnostic:
+it verifies LLMSafeSpace-owned prerequisites (relay-router Deployment,
+InferenceRelay CRD, provider credentials) but does NOT probe the load-balancer
+implementation. WireGuard endpoint reachability is an operator responsibility,
+supplied in the Deploy step and verified downstream via instance health in
+`/admin/relay/status`.
 
 **Response:**
 ```json
 {
   "deployed": false,
-  "metalLBInstalled": true,
   "routerDeployed": true,
   "crdInstalled": true,
+  "awsConfigured": false,
   "ociConfigured": false,
   "gcpConfigured": false,
   "wireGuardEndpoint": ""

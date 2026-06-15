@@ -25,7 +25,6 @@ function renderWizard() {
 
 const mockSetup = {
   deployed: false,
-  metalLBInstalled: true,
   routerDeployed: true,
   crdInstalled: true,
   awsConfigured: false,
@@ -50,7 +49,6 @@ describe("RelaySetupWizard", () => {
     await waitFor(() => {
       expect(screen.getAllByText("Prerequisites").length).toBeGreaterThan(0);
     });
-    expect(screen.getByText("MetalLB installed")).toBeInTheDocument();
     expect(screen.getByText("Relay router deployed")).toBeInTheDocument();
   });
 

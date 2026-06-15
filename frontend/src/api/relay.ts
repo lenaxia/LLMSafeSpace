@@ -8,7 +8,6 @@ import { api } from "./client";
 
 export interface RelaySetup {
   deployed: boolean;
-  metalLBInstalled: boolean;
   routerDeployed: boolean;
   crdInstalled: boolean;
   awsConfigured: boolean;

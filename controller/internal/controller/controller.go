@@ -7,6 +7,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/lenaxia/llmsafespace/controller/internal/relay"
 	"github.com/lenaxia/llmsafespace/controller/internal/workspace"
 	"github.com/lenaxia/llmsafespace/pkg/agent/opencode"
 )
@@ -26,6 +27,41 @@ func SetupControllers(mgr ctrl.Manager, inferenceRelayURL, inferenceRelaySecret 
 		InferenceRelaySecret: inferenceRelaySecret,
 	}).SetupWithManager(mgr); err != nil {
 		logger.Error(err, "unable to create Workspace controller")
+		return err
+	}
+
+	return nil
+}
+
+// SetupRelayController registers the InferenceRelay reconciler.
+// It is feature-gated and only activated when enableRelay is true.
+func SetupRelayController(mgr ctrl.Manager, namespace, routerURL string, enableRelay bool) error {
+	if !enableRelay {
+		return nil
+	}
+
+	logger := log.Log.WithName("controller")
+	logger.Info("Setting up InferenceRelay controller")
+
+	relayReconciler := &relay.InferenceRelayReconciler{
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		Namespace:     namespace,
+		HealthChecker: relay.NewHealthChecker(routerURL),
+		Drivers: map[string]relay.ProviderDriver{
+			"aws": &relay.AWSDriver{},
+			"oci": relay.NewOCIDriver(mgr.GetClient(), namespace, "oci-credentials"),
+			"gcp": &relay.GCPDriver{},
+		},
+		ExpectedCredentialSecrets: map[string]string{
+			"aws": "aws-relay-irwa",
+			"oci": "oci-credentials",
+			"gcp": "gcp-credentials",
+		},
+	}
+
+	if err := relayReconciler.SetupWithManager(mgr); err != nil {
+		logger.Error(err, "unable to create InferenceRelay controller")
 		return err
 	}
 

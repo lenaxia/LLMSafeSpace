@@ -110,7 +110,6 @@ export function RelaySetupWizard({ onComplete }: { onComplete?: () => void }) {
   if (!setup) return <div className="text-muted-foreground">Failed to load setup state.</div>;
 
   const prerequisites = [
-    { label: "MetalLB installed", ok: setup.metalLBInstalled },
     { label: "Relay router deployed", ok: setup.routerDeployed },
     { label: "InferenceRelay CRD installed", ok: setup.crdInstalled },
   ];

@@ -185,6 +185,20 @@ controller:
   probeAddr: ":8081"
   webhookPort: 9443
 
+  # InferenceRelay controller (Epic 42). When enabled, the controller
+  # reconciles InferenceRelay CRs and manages relay VMs across cloud
+  # providers. Requires the InferenceRelay CRD to be installed and
+  # provider credentials (Secrets) to be present in the release namespace.
+  #
+  # NOTE: InferenceRelay is a cluster-scoped CRD, so enabling this feature
+  # requires rbac.scope=cluster for the controller to watch/manage CRs.
+  # The RBAC rules for inferencerelays + configmaps are conditionally
+  # added to the cluster-scoped ClusterRole when this is enabled.
+  inferenceRelay:
+    enabled: false
+    # URL of the in-cluster relay-router for /metrics scraping.
+    routerURL: "http://relay-router:8080"
+
   resources:
     requests:
       cpu: 100m

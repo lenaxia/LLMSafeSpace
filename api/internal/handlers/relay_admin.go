@@ -53,7 +53,6 @@ func (h *RelayAdminHandler) SetHTTPClient(client *http.Client) {
 
 type setupResponse struct {
 	Deployed          bool   `json:"deployed"`
-	MetalLBInstalled  bool   `json:"metalLBInstalled"`
 	RouterDeployed    bool   `json:"routerDeployed"`
 	CRDInstalled      bool   `json:"crdInstalled"`
 	AWSConfigured     bool   `json:"awsConfigured"`
@@ -63,14 +62,19 @@ type setupResponse struct {
 }
 
 // GetSetup returns the prerequisite checklist state for the relay setup wizard.
+//
+// The checklist is network-stack agnostic: it verifies LLMSafeSpace-owned
+// prerequisites (relay-router Deployment, InferenceRelay CRD, provider
+// credentials) but does NOT probe the load-balancer implementation. The WireGuard
+// endpoint's reachability is an operator responsibility — supplied as
+// routerEndpoint in the Deploy step and verified downstream via instance health
+// in GetStatus. Coupling a specific LB (MetalLB, kube-vip, cloud LB, hostNetwork)
+// here would break the documented hostNetwork fallback and any non-MetalLB
+// cluster.
 func (h *RelayAdminHandler) GetSetup(c *gin.Context) {
 	ctx := c.Request.Context()
 	resp := setupResponse{}
 
-	if err := h.checkMetalLB(ctx, &resp); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "MetalLB check failed: " + err.Error()})
-		return
-	}
 	if err := h.checkRouter(ctx, &resp); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "router check failed: " + err.Error()})
 		return
@@ -86,20 +90,6 @@ func (h *RelayAdminHandler) GetSetup(c *gin.Context) {
 	resp.Deployed = h.isFleetDeployed(ctx)
 
 	c.JSON(http.StatusOK, resp)
-}
-
-func (h *RelayAdminHandler) checkMetalLB(ctx context.Context, resp *setupResponse) error {
-	pods, err := h.clientset.CoreV1().Pods("metallb-system").List(ctx, metav1.ListOptions{
-		LabelSelector: "component=speaker",
-		Limit:         1,
-	})
-	if err != nil {
-		return err
-	}
-	if len(pods.Items) > 0 {
-		resp.MetalLBInstalled = true
-	}
-	return nil
 }
 
 func (h *RelayAdminHandler) checkRouter(ctx context.Context, resp *setupResponse) error {
