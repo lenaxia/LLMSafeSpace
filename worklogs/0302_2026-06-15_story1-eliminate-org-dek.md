@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-15
 **Session:** Implement Story 1 from design 0031 — eliminate org DEK, commit, push, PR, iterate CI
-**Status:** In Progress — PR #188 open, CI cycle 3 running after lint/idempotency fixes
+**Status:** Blocked — GitHub token expired, merge commit unpushed. All code complete and committed locally.
 
 ---
 
@@ -61,7 +61,7 @@ Implement Story 1 from `design/0031_2026-06-15_org-access-control-portal-archite
 ## Test fixes completed
 
 All 7 test files updated and passing:
-1. **`api/internal/handlers/orgs_test.go`** — removed `PendingKeyWrap` field references, `secrets.NewPgOrgKeyStore`/`NewOrgKeyService`, updated `NewOrgsHandler` to 2-arg signature, removed `accept-key`/`rotate-key` routes, removed `SetPendingKeyWrap`/`DeleteOrgKeyMember` mock methods, removed `pendingKeyWrap` param from `AddOrgMember`, removed `keyMembers`/`pendingKeyWrap` maps from mock store, updated `CreateOrgWithAdmin` mock signature, renamed tests that tested deleted behavior
+1. **`api/internal/handlers/orgs_test.go`** — removed `PendingKeyWrap` field references, `secrets.NewPgOrgKeyStore`/`NewOrgKeyService`, updated `NewOrgsHandler` to 2-arg signature, removed `accept-key`/`rotate-key` routes, removed `SetPendingKeyWrap`/`DeleteOrgKeyMember` mock methods, removed `pendingKeyWrap` param from `AddOrgMember`, removed `keyMembers`/`pendingKeyWrap` maps from mock store, updated `CreateOrgWithAdmin` mock signature, renamed tests that tested deleted behavior, removed unused `memberKey` helper
 2. **`api/internal/handlers/org_create_billing_test.go`** — updated `NewOrgsHandler` call, removed unused `secrets` import
 3. **`api/internal/handlers/invitations_test.go`** — removed `PendingKeyWrap` from mock and assertions
 4. **`api/internal/services/auth/auth_e2e_all_test.go`** — removed `UnlockAllOrgDEKs` from `capturingKeyService`
@@ -69,10 +69,19 @@ All 7 test files updated and passing:
 6. **`api/internal/services/auth/auth_sessionid_test.go`** — removed `UnlockAllOrgDEKs` from `trackingKeyService`
 7. **`api/internal/services/auth/auth_apikey_dek_test.go`** — removed `UnlockAllOrgDEKs` from `dekJKeyService`
 
-### CI fixes (3 iterations):
+### Frontend fixes (CI cycle 5):
+- `frontend/src/components/org-admin/OrgMembersTab.tsx` — removed `pendingKeyWrap` badge and "Awaiting key setup" label
+- `frontend/src/components/org-admin/OrgOverviewTab.tsx` — removed "Key setup required" banner, removed unused `isAdmin` destructuring
+- `frontend/src/components/settings/OrgSettingsTab.tsx` — removed "Key setup pending" block and `acceptKey` call
+- `frontend/src/api/orgs.ts` — removed `acceptKey` and `rotateKey` methods (done in earlier commit)
+
+### CI iterations (6 cycles):
 - **Iteration 1:** Chart migration mirror missing migration 035; migration 029 idempotency failure (CREATE INDEX on dropped `pending_key_wrap` column)
 - **Iteration 2:** Chart mirror 029 content drift after idempotency fix; worklog 298 collision (pre-existing on main from parallel merges)
 - **Iteration 3:** Synced migration 029 to chart mirror; renumbered worklog 0299→0300; migration 029 guarded with DO block for column existence check
+- **Iteration 4:** Worklog collision persisted (main advanced: new 0299 and 0300 from parallel merges collided with renames). golangci-lint caught unused `memberKey` helper.
+- **Iteration 5:** Fixed `memberKey`, restored accidentally deleted `CreateOrgWithAdmin` mock. Frontend typecheck failures (pendingKeyWrap in 3 components, acceptKey call). Fixed all frontend references.
+- **Iteration 6:** Merged latest main (Epic 42 AWS EC2 driver, relay router, queue-drain rename). Worklog numbering fixed (0300→0302 to avoid collision with main's new 0300 epic42-aws-ec2-driver). **Merge commit committed locally but not pushed — GitHub token expired.**
 
 ---
 
@@ -86,7 +95,15 @@ All 7 test files updated and passing:
 
 ## Blockers
 
-None. CI cycle 3 running after fixing lint (chart mirror sync, migration 029 idempotency guard, worklog renumber). Pre-existing worklog 0298 collision on main (two files from parallel merges) — not actionable from this branch.
+**GitHub token expired.** The `GH_TOKEN` environment variable was cleared mid-session. Cannot push the merge commit (`6210d0a4`) that fixes worklog numbering and merges latest main. PR #188 is open with the previous push (commit `8c8eeea7`) which has lint failures due to worklog collisions that the local merge commit resolves.
+
+**Resolution:** Restore GitHub auth (`export GH_TOKEN=...` or `gh auth login`), then:
+```bash
+cd /workspace/llmsafespace
+git push origin feat/org-access-control-story1-eliminate-org-dek
+```
+
+This pushes the merge commit with the fixed worklog numbering. CI should then pass cleanly.
 
 ---
 
@@ -95,22 +112,23 @@ None. CI cycle 3 running after fixing lint (chart mirror sync, migration 029 ide
 - `go build ./...` — **PASS**
 - `go vet ./...` — **PASS**
 - `go test -timeout 60s -race ./pkg/secrets/...` — **PASS** (29.9s)
-- `go test -timeout 60s -race ./api/internal/handlers/...` — **PASS** (29.2s)
+- `go test -timeout 60s -race ./api/internal/handlers/...` — **PASS** (23.6s)
 - `go test -timeout 60s -race ./api/internal/services/auth/...` — **PASS** (17.0s)
 - `go test -timeout 60s ./api/internal/server/... ./api/internal/app/...` — **PASS**
+- `npx tsc --noEmit` (frontend typecheck) — **PASS**
 - `gofmt` — clean
-- CI cycle 1: Lint FAIL (chart mirror missing migration 035), Migration idempotency FAIL (migration 029 CREATE INDEX on dropped column), Frontend FAIL (downstream of Lint)
-- CI cycle 2: Lint FAIL (chart mirror 029 content drift after idempotency fix), worklog 298 collision on main
-- CI cycle 3: Running (fixed both issues — synced 029 to chart mirror, renumbered worklog to 0300)
+- CI cycles 1-5: various lint/idempotency/frontend failures (all resolved locally)
+- CI cycle 6: **BLOCKED** — merge commit not pushed (token expired)
 
 ---
 
 ## Next Steps
 
-1. Monitor CI cycle 3 — should pass all checks
-2. Monitor automated reviewer — iterate on findings
-3. Merge PR #188 when approved
-4. Start Story 2 (restrict org creation + email resolution) or Story 3 (single-org enforcement) — both unblocked by Story 1
+1. **Restore GitHub auth** and push the merge commit (the only unpushed commit — `6210d0a4`)
+2. Monitor CI — should pass cleanly (all previous failures resolved)
+3. Monitor automated reviewer — iterate on findings
+4. Merge PR #188 when approved
+5. Start Story 2 (restrict org creation + email resolution) or Story 3 (single-org enforcement) — both unblocked by Story 1
 
 ---
 
@@ -143,5 +161,17 @@ None. CI cycle 3 running after fixing lint (chart mirror sync, migration 029 ide
 - `pkg/types/types.go`
 - `api/internal/middleware/org_guard.go` (comment only)
 
+### Frontend fixes (CI cycle 5, 3 files):
+- `frontend/src/components/org-admin/OrgMembersTab.tsx`
+- `frontend/src/components/org-admin/OrgOverviewTab.tsx`
+- `frontend/src/components/settings/OrgSettingsTab.tsx`
+
+### Migration mirror:
+- `charts/llmsafespace/migrations/000035_drop_org_dek.up.sql`
+- `charts/llmsafespace/migrations/000035_drop_org_dek.down.sql`
+- `charts/llmsafespace/migrations/000029_organizations.up.sql` (synced with canonical)
+
 ### Branch
-`feat/org-access-control-story1-eliminate-org-dek` (uncommitted — all changes in working tree)
+`feat/org-access-control-story1-eliminate-org-dek`
+
+**Unpushed commit:** `6210d0a4` (merge latest main + fix worklog numbering 0300→0302). PR #188 has the previous push but CI fails on worklog collisions that this commit resolves.
