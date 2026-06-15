@@ -89,7 +89,7 @@ if err := store.MigrateWorkspacesToOrg(ctx, userID, orgID); err != nil {
 
 ```sql
 -- MigrateWorkspacesToOrg
-UPDATE workspace_metadata
+UPDATE workspaces
 SET org_id = $2
 WHERE user_id = $1 AND org_id IS NULL
 ```
@@ -359,7 +359,7 @@ The user said: "once an account is part of an org, we should not allow accounts 
 
 ### What this means in the current system
 
-Today `RemoveOrgMember` (`pg_org_store.go`) deletes the membership row but does NOT touch `workspace_metadata`. The offboarded user's `user_id` stays on their org-attributed workspaces.
+Today `RemoveOrgMember` (`pg_org_store.go`) deletes the membership row but does NOT touch `workspaces`. The offboarded user's `user_id` stays on their org-attributed workspaces.
 
 `verifyOwner` (`workspace_service.go:738`) grants access if `meta.UserID == userID` — **the creator always has access, regardless of org membership.** So today, an offboarded user can still access their org workspaces. This contradicts the enterprise requirement.
 
@@ -419,7 +419,7 @@ When admin A removes member B, B's org workspaces get `user_id = A`. Admin A bec
 
 #### Option 4: Ownership becomes "unassigned" (nullable user_id)
 
-`workspace_metadata.user_id` becomes nullable. When a member is offboarded, `user_id` is set to NULL. Org admins can manage NULL-owned workspaces via `IsOrgAdmin` check.
+`workspaces.user_id` becomes nullable. When a member is offboarded, `user_id` is set to NULL. Org admins can manage NULL-owned workspaces via `IsOrgAdmin` check.
 
 | Pros | Cons |
 |------|------|
@@ -537,7 +537,7 @@ This is a **one-check addition** to the existing creator branch. For personal wo
 | "Can't leave orgs" | Settled | No self-removal. Admin-only offboarding. |
 | Departed user workspace access | Settled | Membership-gated creator access (creator must be current org member) |
 | Workspace ownership after departure | Deferred | Frozen until workspace transfer is built (future) |
-| Org DEK | Settled | Eliminate entirely — server KEK for org credentials (D8 in 0031) |
-| Bulk email infrastructure | Settled | Current synchronous loop sufficient. Fire-and-forget goroutine when batch >50. Redis queue at enterprise scale. (D11 in 0031) |
+| Org DEK | Settled | Eliminate entirely — server KEK for org credentials (D7 in 0031) |
+| Bulk email infrastructure | Settled | Current synchronous loop sufficient. Fire-and-forget goroutine when batch >50. Redis queue at enterprise scale. (D10 in 0031) |
 
 **All items resolved.** No open questions remain. See `0031_2026-06-15_org-access-control-portal-architecture.md` for the complete design.

@@ -219,8 +219,8 @@ Structure:
 3. POST /api/v1/orgs { name, slug, ownerEmail, planId }
    - Backend resolves ownerEmail → userId (404 if user doesn't exist)
    - Creates org (status=active, selected plan, sub=active)
-   - Adds owner as admin (no pendingKeyWrap — D8 eliminated it)
-   - No password needed (no org DEK — D8)
+   - Adds owner as admin (no pendingKeyWrap — D7 eliminated it)
+   - No password needed (no org DEK — D7)
 4. Org created. Owner receives email notification.
 
 Owner accesses org:
@@ -253,7 +253,7 @@ Owner accesses org:
 6. On accept:
    - Membership created
    - Personal workspaces migrated to org-attributed (D4)
-   - Org credentials immediately available (server KEK — D8)
+   - Org credentials immediately available (server KEK — D7)
 7. New admin sees sidebar org button
 ```
 

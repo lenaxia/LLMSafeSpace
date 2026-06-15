@@ -10,7 +10,7 @@
 
 > **See also:**
 > - [`DECISIONS.md`](./DECISIONS.md) — Phase 1-4 decisions (D1–D20).
-> - [`../../0031_2026-06-15_org-access-control-portal-architecture.md`](../../0031_2026-06-15_org-access-control-portal-architecture.md) — **Access control redesign (D1-D14)**. Supersedes W1 self-service flow. Eliminates org DEK. Adds entitlement model, portal pattern, workspace attribution rules.
+> - [`../../0031_2026-06-15_org-access-control-portal-architecture.md`](../../0031_2026-06-15_org-access-control-portal-architecture.md) — **Access control redesign (D1-D13)**. Supersedes W1 self-service flow. Eliminates org DEK, restricts org creation to platform admins, enforces single-org, always org-attributed workspaces, membership-gated access, portal pattern, workspace attribution rules.
 > - [`../../0032_2026-06-15_org-access-open-questions-analysis.md`](../../0032_2026-06-15_org-access-open-questions-analysis.md) — Analysis of open questions resolved in the redesign.
 
 ---
@@ -1156,7 +1156,7 @@ What you cannot do:
 API: `POST /api/v1/workspaces/:id/transfer` — body: `{ orgID: "..." }`
 
 What happens under the hood:
-1. `workspace_metadata.org_id` updated from NULL → target org ID
+1. `workspaces.org_id` updated from NULL → target org ID
 2. `Workspace CRD spec.owner.orgID` updated
 3. All existing `workspace_credential_bindings` for this workspace are re-evaluated:
    - User-scoped explicit bindings: **removed** (personal credentials should not follow the workspace into the org)
