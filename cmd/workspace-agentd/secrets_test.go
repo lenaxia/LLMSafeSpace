@@ -133,6 +133,55 @@ func TestMaterializeSubcommand_MissingSecretsFile_NoOp(t *testing.T) {
 	require.Equal(t, 0, exit, "missing file must be a no-op; stderr=%q stdout=%q", stderr, stdout)
 }
 
+// TestMaterializeSubcommand_MissingSecretsFile_AppliesWorkspaceConfig is the
+// regression test for the bug where a zero-credential user's model selection
+// was never written to agent-config.json. When secrets.json is absent but
+// workspace-config.json is present, runMaterializeCommand must still call
+// applyWorkspaceConfig so the model key is written to agent-config.json.
+func TestMaterializeSubcommand_MissingSecretsFile_AppliesWorkspaceConfig(t *testing.T) {
+	bin := buildAgentdBinary(t)
+	dir := t.TempDir()
+
+	// secrets.json is absent (zero-credential user).
+	secretsPath := filepath.Join(dir, "does-not-exist.json")
+
+	// workspace-config.json is present (user selected a model via SetModel).
+	wsCfgPath := filepath.Join(dir, "workspace-config.json")
+	require.NoError(t, os.WriteFile(wsCfgPath, []byte(`{"defaultModel":"north-mini-code-free"}`), 0o600))
+
+	// agent-config.json has relay provider (as FlushProviders would have written).
+	agentCfgPath := filepath.Join(dir, "agent-config.json")
+	agentCfgContent := `{
+		"$schema": "https://opencode.ai/config.json",
+		"provider": {
+			"opencode-relay": {
+				"models": {"north-mini-code-free": {}}
+			}
+		}
+	}`
+	require.NoError(t, os.WriteFile(agentCfgPath, []byte(agentCfgContent), 0o600))
+
+	exit, stdout, stderr := runMaterializeSubcommand(t, bin, secretsPath,
+		filepath.Join(dir, "secrets"),
+		filepath.Join(dir, ".ssh"),
+		agentCfgPath,
+		filepath.Join(dir, "env"),
+		filepath.Join(dir, ".git-credentials"))
+	require.Equal(t, 0, exit, "absent secrets.json must not fail boot; stderr=%q stdout=%q", stderr, stdout)
+
+	// agent-config.json must now have the model key.
+	raw, err := os.ReadFile(agentCfgPath)
+	require.NoError(t, err)
+	var cfg map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &cfg))
+	require.Contains(t, cfg, "model",
+		"agent-config.json must contain a model key even when secrets.json is absent")
+	var model string
+	require.NoError(t, json.Unmarshal(cfg["model"], &model))
+	assert.Equal(t, "opencode-relay/north-mini-code-free", model,
+		"model must be written as providerID/modelID even on the zero-credential path")
+}
+
 // TestMaterializeSubcommand_BadJSON_ReturnsExit2 verifies that a malformed
 // secrets file fails loudly rather than silently boot-looping.
 func TestMaterializeSubcommand_BadJSON_ReturnsExit2(t *testing.T) {
