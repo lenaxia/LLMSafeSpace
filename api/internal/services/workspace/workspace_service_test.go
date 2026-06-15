@@ -1733,28 +1733,42 @@ func TestEnsureSecretsManifest_PreservesWorkspaceConfig_BindFirst(t *testing.T) 
 // was unavailable to decrypt them). User credentials survive a DEK-absent activate.
 
 // TestSeedEphemeralSecrets_PreservesUserCredentials is the primary regression test.
-// Sequence: user binds credentials while DEK is live (full set written) → DEK expires
-// → workspace is restarted → seedEphemeralSecrets runs with admin-only payload →
-// user credentials must still be in the secret.
+// It calls seedEphemeralSecrets directly — the exact function whose wiring was changed —
+// so any regression that reverts the change back to createEphemeralSecretsSecret would
+// cause this test to fail.
+//
+// Sequence: DEK was available → full credential set written via EnsureSecretsManifest
+// → DEK expires → workspace restarts → seedEphemeralSecrets runs (admin-only, no DEK)
+// → user credentials must survive in the K8s Secret.
 func TestSeedEphemeralSecrets_PreservesUserCredentials(t *testing.T) {
 	f := newFixtureWithFakeClientset(t)
 	ctx := context.Background()
 
-	// Step 1: Full credential set written when DEK was available.
+	// Step 1: Prior full-DEK inject wrote thekao cloud + opencode.
 	fullPayload := []byte(`[
 		{"type":"llm-provider","name":"opencode","metadata":null,"plaintext":"{\"provider\":\"opencode\",\"apiKey\":\"public\"}"},
 		{"type":"llm-provider","name":"thekao cloud","metadata":null,"plaintext":"{\"provider\":\"thekao cloud\",\"apiKey\":\"sk-user-secret\"}"}
 	]`)
-	require.NoError(t, f.svc.EnsureSecretsManifest(ctx, "ws-merge-test", fullPayload))
+	require.NoError(t, f.svc.EnsureSecretsManifest(ctx, "ws-dek-absent", fullPayload))
 
-	// Step 2: DEK expires; activate runs seedEphemeralSecrets with admin-only payload.
+	// Step 2: DEK expires. seedEphemeralSecrets is called with sessionID="" which
+	// means PrepareSecretsForInjection can only decrypt admin credentials.
 	adminOnlyPayload := []byte(`[
 		{"type":"llm-provider","name":"opencode","metadata":null,"plaintext":"{\"provider\":\"opencode\",\"apiKey\":\"public\"}"}
 	]`)
-	require.NoError(t, f.svc.MergeSecretsManifest(ctx, "ws-merge-test", adminOnlyPayload))
+	inj := &fakeSecretInjector{
+		prepare: func(_ context.Context, _, _, _ string) ([]byte, error) {
+			return adminOnlyPayload, nil
+		},
+	}
+	f.svc.SetSecretInjector(inj)
 
-	// User credentials must survive.
-	secret, err := f.fakeCS.CoreV1().Secrets("default").Get(ctx, "workspace-secrets-ws-merge-test", metav1.GetOptions{})
+	// This is the function under test — the call site that was previously
+	// calling createEphemeralSecretsSecret (full overwrite).
+	f.svc.seedEphemeralSecrets(ctx, "user1", "ws-dek-absent")
+
+	// User credential must still be present — not overwritten by the admin-only payload.
+	secret, err := f.fakeCS.CoreV1().Secrets("default").Get(ctx, "workspace-secrets-ws-dek-absent", metav1.GetOptions{})
 	require.NoError(t, err)
 
 	var got []map[string]interface{}
@@ -1764,9 +1778,9 @@ func TestSeedEphemeralSecrets_PreservesUserCredentials(t *testing.T) {
 	for _, entry := range got {
 		names[entry["name"].(string)] = true
 	}
-	assert.True(t, names["opencode"], "admin credential must be present")
+	assert.True(t, names["opencode"], "admin credential must be present after seedEphemeralSecrets")
 	assert.True(t, names["thekao cloud"],
-		"user credential must survive a DEK-absent merge — not be overwritten")
+		"user credential must survive a DEK-absent seedEphemeralSecrets — would fail if wired to createEphemeralSecretsSecret")
 }
 
 // TestSeedEphemeralSecrets_IncomingWinsForExistingName verifies that when the
