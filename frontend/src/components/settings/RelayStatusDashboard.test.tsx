@@ -216,7 +216,7 @@ describe("RelayStatusDashboard", () => {
 
   it("triggers rotation on button click", async () => {
     vi.mocked(relayApi.getStatus).mockResolvedValue(mockStatus);
-    vi.mocked(relayApi.rotate).mockResolvedValue({ rotating: "aws-1" });
+    vi.mocked(relayApi.rotate).mockResolvedValue({ rotating: "oci-1" });
     renderDashboard();
 
     await waitFor(() => {
@@ -262,7 +262,7 @@ describe("RelayStatusDashboard", () => {
     vi.mocked(relayApi.getStatus).mockResolvedValue({
       ...mockStatus,
       recentEvents: [
-        { timestamp: "2026-06-14T08:00:00Z", type: "Rotated", message: "AWS relay rotated", severity: "info" },
+        { timestamp: "2026-06-14T08:00:00Z", type: "Rotated", message: "OCI relay rotated", severity: "info" },
       ],
     });
     renderDashboard();
@@ -270,6 +270,6 @@ describe("RelayStatusDashboard", () => {
     await waitFor(() => {
       expect(screen.getByText("Recent Events")).toBeInTheDocument();
     });
-    expect(screen.getByText("AWS relay rotated")).toBeInTheDocument();
+    expect(screen.getByText("OCI relay rotated")).toBeInTheDocument();
   });
 });
