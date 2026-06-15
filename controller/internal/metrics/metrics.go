@@ -52,7 +52,7 @@ var (
 	WorkspaceStatusUpdateConflictsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "llmsafespace_workspace_status_update_conflicts_total",
-			Help: "Optimistic-lock conflicts on workspace status updates, labelled by the calling site",
+			Help: "Optimistic-lock conflicts on workspace status updates, labeled by the calling site",
 		},
 		[]string{"site"},
 	)

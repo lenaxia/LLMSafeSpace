@@ -14,7 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-// fakeConflictErr returns an error recognised by apierrors.IsConflict.
+// fakeConflictErr returns an error recognized by apierrors.IsConflict.
 func fakeConflictErr() error {
 	return apierrors.NewConflict(
 		schema.GroupResource{Group: "llmsafespace.dev", Resource: "workspaces"},
@@ -23,7 +23,7 @@ func fakeConflictErr() error {
 	)
 }
 
-// fakeNotFoundErr returns an error recognised by apierrors.IsNotFound.
+// fakeNotFoundErr returns an error recognized by apierrors.IsNotFound.
 func fakeNotFoundErr() error {
 	return apierrors.NewNotFound(
 		schema.GroupResource{Group: "llmsafespace.dev", Resource: "workspaces"},

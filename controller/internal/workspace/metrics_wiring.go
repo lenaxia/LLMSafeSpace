@@ -161,11 +161,6 @@ func recordStatusUpdateConflictOnErrorInto(ctr *prometheus.CounterVec, site stri
 	}
 }
 
-// recordStatusUpdateConflict records into the package-level metric.
-func recordStatusUpdateConflict(site string) {
-	recordStatusUpdateConflictInto(metrics.WorkspaceStatusUpdateConflictsTotal, site)
-}
-
 // recordStatusUpdateConflictOnError records into the package-level metric.
 func recordStatusUpdateConflictOnError(site string, err error) {
 	recordStatusUpdateConflictOnErrorInto(metrics.WorkspaceStatusUpdateConflictsTotal, site, err)
