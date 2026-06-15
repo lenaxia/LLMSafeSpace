@@ -354,7 +354,7 @@ jobs:
 
       - name: Install Hurl
         run: |
-          curl -L https://github.com/Orange-OpenSource/hurl/releases/download/5.0.1/hurl-5.0.1-x86_64-linux.tar.gz | tar xz -C /tmp
+          curl -sL https://github.com/Orange-OpenSource/hurl/releases/download/5.0.1/hurl-5.0.1-x86_64-linux-gnu.tar.gz | tar xz -C /tmp
           echo "/tmp/hurl-5.0.1" >> "$GITHUB_PATH"
 
       - name: Hurl contract tests against Prism mock
