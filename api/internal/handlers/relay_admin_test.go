@@ -431,14 +431,15 @@ func TestRelayDeploy_Update_Existing(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 }
 
-func TestRelayDeploy_RejectAWS_400(t *testing.T) {
-	r, _, _ := setupRelayRouter(t, fake.NewSimpleClientset())
+func TestRelayDeploy_AcceptsAWS_Success(t *testing.T) {
+	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
+	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, notFoundError()).Maybe()
+	relayMock.On("Create", mock.Anything, mock.Anything).Return(makeRelayCR("relay-fleet", nil, 0), nil).Maybe()
 
-	body := `{"upstreamURL":"https://example.com","routerEndpoint":"gw:51820","providers":["aws"]}`
+	body := `{"upstreamURL":"https://example.com","routerEndpoint":"gw:51820","providers":["aws","oci"]}`
 	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/deploy", body)
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "unknown provider")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 }
 
 func TestRelayDeploy_MissingFields_400(t *testing.T) {
@@ -658,14 +659,17 @@ func TestParseRouterMetrics_EmptyInput(t *testing.T) {
 }
 
 func TestEgressLimitForProvider(t *testing.T) {
+	assert.Equal(t, int64(100*1024*1024*1024), egressLimitForProvider("aws"))
 	assert.Equal(t, int64(10*1024*1024*1024*1024), egressLimitForProvider("oci"))
 	assert.Equal(t, int64(1*1024*1024*1024), egressLimitForProvider("gcp"))
 	assert.Equal(t, int64(1*1024*1024*1024), egressLimitForProvider("unknown"))
 }
 
-func TestComputeCost_AllFreeTier(t *testing.T) {
-	assert.Equal(t, int64(0), computeCost("oci").MonthlyEstimate)
-	assert.Equal(t, int64(0), computeCost("gcp").MonthlyEstimate)
+func TestComputeCost(t *testing.T) {
+	assert.Equal(t, int64(700), computeCost("aws", true).MonthlyEstimate)
+	assert.Equal(t, int64(0), computeCost("aws", false).MonthlyEstimate)
+	assert.Equal(t, int64(0), computeCost("oci", true).MonthlyEstimate)
+	assert.Equal(t, int64(0), computeCost("gcp", true).MonthlyEstimate)
 }
 
 func TestBuildAlerts_AllHealthy(t *testing.T) {
