@@ -13,6 +13,8 @@ env:
   CONTROLLER_IMAGE: lenaxia/llmsafespace/controller
   RUNTIME_IMAGE: lenaxia/llmsafespace/base
   FRONTEND_IMAGE: lenaxia/llmsafespace/frontend
+  RELAY_ROUTER_IMAGE: lenaxia/llmsafespace/relay-router
+  RELAY_PROXY_IMAGE: lenaxia/llmsafespace/relay-proxy
 
 jobs:
   lint:
@@ -891,6 +893,108 @@ jobs:
         run: |
           docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf '${{ env.REGISTRY }}/${{ env.CONTROLLER_IMAGE }}@sha256:%s ' *)
+
+  build-relay-router:
+    name: Build Relay Router (${{ matrix.platform }})
+    needs: [test, test-full, prepare]
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v6
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.RELAY_ROUTER_IMAGE }}
+
+      - uses: docker/build-push-action@v7
+        id: build
+        with:
+          context: .
+          file: cmd/relay-router/Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: ${{ github.event_name != 'pull_request' }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.RELAY_ROUTER_IMAGE }},push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' }}
+          cache-from: type=gha,scope=relay-router-${{ matrix.platform }}
+          cache-to: type=gha,scope=relay-router-${{ matrix.platform }},mode=max
+
+      - name: Export digest
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: relay-router-digests-${{ matrix.runner }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-relay-router:
+    name: Merge Relay Router Manifest
+    needs: [build-relay-router, prepare]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v8
+        with:
+          path: /tmp/digests
+          pattern: relay-router-digests-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v6
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.RELAY_ROUTER_IMAGE }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=ts-${{ needs.prepare.outputs.timestamp }}
+            type=raw,value=dev,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.REGISTRY }}/${{ env.RELAY_ROUTER_IMAGE }}@sha256:%s ' *)
 
   build-runtime:
     name: Build Runtime Base (${{ matrix.platform }})
