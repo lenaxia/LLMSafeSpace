@@ -108,7 +108,10 @@ func (h *ProxyHandler) AbortSession(c *gin.Context) {
 		return
 	}
 
-	// Abort succeeded. Peek and atomically clear the session queue.
+	// Abort succeeded. Peek then clear the session queue. Note: PeekAll and
+	// Clear are separate Redis commands — a message enqueued between them will
+	// be cleared without a dismissed SSE event. This is acceptable: the message
+	// is still discarded (the intent of abort), just silently.
 	flushed, err := h.queueSvc.PeekAll(c.Request.Context(), wid, sid)
 	if err != nil {
 		h.logger.Error("AbortSession: failed to peek queue after abort", err, "workspaceID", wid, "sessionID", sid)

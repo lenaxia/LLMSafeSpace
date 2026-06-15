@@ -527,7 +527,8 @@ func (h *BulkReloadHandler) reloadOne(ctx context.Context, userID, workspaceID s
 	}
 
 	// Dispose succeeded — update state.
-	h.clearQueueOnDispose(ctx, workspaceID)
+	// Use context.Background() so a client disconnect doesn't skip queue cleanup.
+	h.clearQueueOnDispose(context.Background(), workspaceID)
 	tx, err := h.db.BeginTx(ctx, nil)
 	if err != nil {
 		return map[string]any{"workspaceId": workspaceID, "disposed": true, "warning": "state could not be updated"}
