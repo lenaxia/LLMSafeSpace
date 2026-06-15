@@ -547,6 +547,8 @@ func TestInitContainerScript_NoElseBranch(t *testing.T) {
 	script := credInit.Command[2]
 	assert.NotContains(t, script, "echo '{}'", "init script should NOT write empty JSON when no creds exist")
 	assert.Contains(t, script, "cp /mnt/secrets/password/password /sandbox-cfg/password", "password should always be copied")
+	assert.Contains(t, script, "cp /mnt/secrets/user-secrets/workspace-config.json /sandbox-cfg/workspace-config.json",
+		"workspace-config.json must be copied so applyWorkspaceConfig in agentd finds the default model at boot")
 	assert.NotContains(t, script, "workspace-creds-", "legacy credential secret should not be referenced")
 
 	// Verify the credential-setup init container mounts user-secrets.
@@ -562,6 +564,45 @@ func TestInitContainerScript_NoElseBranch(t *testing.T) {
 	require.NotNil(t, userSecretsMount, "credential-setup init container must mount user-secrets")
 	assert.Equal(t, "/mnt/secrets/user-secrets", userSecretsMount.MountPath, "user-secrets must be mounted at /mnt/secrets/user-secrets")
 	assert.True(t, userSecretsMount.ReadOnly, "user-secrets mount must be read-only")
+}
+
+// TestInitContainerScript_CopiesWorkspaceConfig is the regression test for the
+// bug where workspace-config.json was never copied to /sandbox-cfg/, causing
+// applyWorkspaceConfig in agentd to return early (ENOENT) and never write the
+// model key to agent-config.json. This test ensures the fix at pod_builder.go
+// and EnsureWorkspaceConfig (workspace_service.go) are both necessary: the
+// Secret must be written *and* the init container must copy it.
+func TestInitContainerScript_CopiesWorkspaceConfig(t *testing.T) {
+	opencode.Register()
+	ws := makeWorkspace("ws-wscfg", "default", v1.WorkspacePhaseCreating)
+	ws.Status.PVCName = "workspace-ws-wscfg"
+	pvc := makeBoundPVC("workspace-ws-wscfg", "default", ws.UID)
+	pwSecret := makePasswordSecret("ws-wscfg", "default")
+	rte := makeRuntimeEnv("python-3.11")
+	r := reconcilerFor(t, ws, pvc, pwSecret, rte)
+
+	pod, err := r.buildPod(context.Background(), ws)
+	require.NoError(t, err)
+
+	var credInit *corev1.Container
+	for i := range pod.Spec.InitContainers {
+		if pod.Spec.InitContainers[i].Name == "credential-setup" {
+			credInit = &pod.Spec.InitContainers[i]
+			break
+		}
+	}
+	require.NotNil(t, credInit, "credential-setup init container must exist")
+	script := credInit.Command[2]
+
+	// workspace-config.json must be copied conditionally (same pattern as
+	// secrets.json) so the init container does not fail when no model has
+	// been selected yet.
+	assert.Contains(t, script,
+		"if [ -f /mnt/secrets/user-secrets/workspace-config.json ]",
+		"workspace-config.json copy must be conditional — file may not exist on first boot")
+	assert.Contains(t, script,
+		"cp /mnt/secrets/user-secrets/workspace-config.json /sandbox-cfg/workspace-config.json",
+		"workspace-config.json must be copied to /sandbox-cfg/ so applyWorkspaceConfig can read it")
 }
 
 func makeRuntimeEnv(name string) *v1.RuntimeEnvironment {

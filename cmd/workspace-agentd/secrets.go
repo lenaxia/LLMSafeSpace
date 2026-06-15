@@ -138,7 +138,10 @@ func runMaterializeCommand(args []string, stdout, stderr io.Writer) int {
 	secretsList, err := secrets.LoadSecretsFile(*from)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) || strings.Contains(err.Error(), "no such file") {
-			// Missing file is a no-op, not a failure.
+			// secrets.json is absent (zero-credential user or pre-first-bind).
+			// Still apply workspace-config.json so the default model is written
+			// to agent-config.json even when no LLM credentials are configured.
+			applyWorkspaceConfig(cfg.toPaths().AgentConfigPath, *from)
 			return 0
 		}
 		_, _ = fmt.Fprintf(stderr, "materialize: %v\n", err)
