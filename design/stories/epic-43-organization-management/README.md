@@ -1,14 +1,17 @@
 # Epic 43: Organization Management & Multi-Tenant Product
 
-**Status:** Planning
+**Status:** In Progress — Phases 1-4 complete (merged). Access control redesign pending (see below).
 **Created:** 2026-06-14
-**Last Updated:** 2026-06-14
+**Last Updated:** 2026-06-15
 **Depends On:** Epic 11 (Organizations — foundation complete), Epic 12 (Usage Metering & Billing — metering infrastructure complete), Epic 30 (Unified Credential Model — complete, PR #39)
 **Priority:** High
 
 **Motivation:** Epic 11 built the org crypto primitives, membership tables, and credential injection. Epic 30 delivered the unified credential model (`owner_type='user'|'admin'|'org'`). Epic 12 built the metering infrastructure. But the product layer is missing: any user can create unlimited orgs with no gating, there's no admin portal, no email invitations, no SSO, no policy engine, and no way to charge for the service. This epic turns the technical foundation into a real multi-tenant product.
 
-> **See also:** [`DECISIONS.md`](./DECISIONS.md) — all decisions confirmed (D1–D20).
+> **See also:**
+> - [`DECISIONS.md`](./DECISIONS.md) — Phase 1-4 decisions (D1–D20).
+> - [`../../0031_2026-06-15_org-access-control-portal-architecture.md`](../../0031_2026-06-15_org-access-control-portal-architecture.md) — **Access control redesign (D1-D14)**. Supersedes W1 self-service flow. Eliminates org DEK. Adds entitlement model, portal pattern, workspace attribution rules.
+> - [`../../0032_2026-06-15_org-access-open-questions-analysis.md`](../../0032_2026-06-15_org-access-open-questions-analysis.md) — Analysis of open questions resolved in the redesign.
 
 ---
 
