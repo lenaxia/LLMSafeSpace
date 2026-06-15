@@ -25,9 +25,25 @@ import (
 // It uses the OCI REST API directly (no SDK dependency) with request signing
 // via the user's API key (RSA private key + fingerprint).
 type OCIDriver struct {
-	k8sClient  client.Client
-	namespace  string
-	httpClient *http.Client
+	k8sClient        client.Client
+	namespace        string
+	httpClient       *http.Client
+	credentialSecret string
+}
+
+// NewOCIDriver creates an OCI driver that reads credentials from K8s Secrets.
+func NewOCIDriver(k8sClient client.Client, namespace string) *OCIDriver {
+	return &OCIDriver{
+		k8sClient: k8sClient,
+		namespace: namespace,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12},
+			},
+		},
+		credentialSecret: "oci-credentials",
+	}
 }
 
 // NewOCIDriver creates an OCI driver that reads credentials from K8s Secrets.
@@ -100,6 +116,7 @@ func (d *OCIDriver) Provision(ctx context.Context, req ProvisionRequest) (*Provi
 	if err != nil {
 		return nil, err
 	}
+	d.credentialSecret = secretName
 
 	// Use the region from the provision request, falling back to the credential region
 	region := req.Region
@@ -195,7 +212,7 @@ func (d *OCIDriver) Provision(ctx context.Context, req ProvisionRequest) (*Provi
 
 // Destroy terminates an OCI compute instance.
 func (d *OCIDriver) Destroy(ctx context.Context, instanceID, region string) error {
-	cfg, err := d.getConfig(ctx, "oci-credentials")
+	cfg, err := d.getConfig(ctx, d.credentialSecret)
 	if err != nil {
 		return err
 	}
@@ -223,7 +240,7 @@ func (d *OCIDriver) Destroy(ctx context.Context, instanceID, region string) erro
 
 // GetStatus returns the current state of an OCI compute instance.
 func (d *OCIDriver) GetStatus(ctx context.Context, instanceID, region string) (*VMStatus, error) {
-	cfg, err := d.getConfig(ctx, "oci-credentials")
+	cfg, err := d.getConfig(ctx, d.credentialSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +282,7 @@ func (d *OCIDriver) GetStatus(ctx context.Context, instanceID, region string) (*
 
 // ListInstances returns relay VMs managed by this driver.
 func (d *OCIDriver) ListInstances(ctx context.Context, region string) ([]VMInstance, error) {
-	cfg, err := d.getConfig(ctx, "oci-credentials")
+	cfg, err := d.getConfig(ctx, d.credentialSecret)
 	if err != nil {
 		return nil, err
 	}
