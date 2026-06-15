@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -14,8 +15,10 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	k8s "k8s.io/client-go/kubernetes"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	imocks "github.com/lenaxia/llmsafespace/api/internal/mocks"
 	kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
@@ -1606,16 +1609,32 @@ func TestEnsureWorkspaceConfig_PreservesLabels(t *testing.T) {
 		"created secret must carry workspace ID label")
 }
 
-// TestSetModel_PersistsConfigWhenSecretAbsent is the end-to-end regression
-// test for the full bug scenario: a user with zero LLM credentials selects a
-// model via the SetModel handler. The workspace-secrets Secret does not exist
-// because seedEphemeralSecrets skipped writing it (empty payload guard).
-// After SetModel, the Secret must exist and contain workspace-config.json,
-// so the next pod boot reads the correct default model from /sandbox-cfg.
-//
-// This test exercises EnsureWorkspaceConfig indirectly via SetModel, which is
-// the actual call site that was silently failing in production.
-func TestSetModel_PersistsConfigWhenSecretAbsent(t *testing.T) {
+// TestEnsureWorkspaceConfig_NonNotFoundGetError verifies that a transient
+// apiserver error (not NotFound) on the Get call is surfaced as an error
+// rather than silently treated as "absent". This matters because a temporary
+// network error on Get must not trigger a spurious Create that orphans a
+// Secret update.
+func TestEnsureWorkspaceConfig_NonNotFoundGetError(t *testing.T) {
+	f := newFixtureWithFakeClientset(t)
+	ctx := context.Background()
+
+	// Inject a reactor that returns a generic server error on every secret Get.
+	f.fakeCS.PrependReactor("get", "secrets", func(_ k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("apiserver timeout")
+	})
+
+	err := f.svc.EnsureWorkspaceConfig(ctx, "ws-err", types.WorkspaceConfig{DefaultModel: "x"})
+	require.Error(t, err, "non-NotFound Get error must propagate")
+	assert.Contains(t, err.Error(), "get workspace config secret")
+}
+
+// TestEnsureWorkspaceConfig_ZeroCredentialUserSelectsModel is the
+// end-to-end regression test for the zero-credential bug: a user with no LLM
+// credentials selects a model (EnsureWorkspaceConfig is the specific call that
+// was failing silently in production via SetModel). The workspace-secrets
+// Secret must be created so the init container can copy workspace-config.json
+// to /sandbox-cfg/ on the next pod boot.
+func TestEnsureWorkspaceConfig_ZeroCredentialUserSelectsModel(t *testing.T) {
 	f := newFixtureWithFakeClientset(t)
 	ctx := context.Background()
 
@@ -1626,13 +1645,12 @@ func TestSetModel_PersistsConfigWhenSecretAbsent(t *testing.T) {
 	require.Empty(t, secrets.Items, "precondition: no workspace-secrets exists")
 
 	// EnsureWorkspaceConfig is the specific call that was failing silently.
-	// Call it directly here (same as SetModel handler does) to prove the fix
-	// holds at the service layer independent of the HTTP handler wiring.
 	err = f.svc.EnsureWorkspaceConfig(ctx, "ws-nocreds", types.WorkspaceConfig{DefaultModel: "north-mini-code-free"})
 	require.NoError(t, err)
 
-	// The Secret must now exist — applyWorkspaceConfig in agentd will find
-	// workspace-config.json at /sandbox-cfg/workspace-config.json on next pod boot.
+	// The Secret must now exist — the init container will copy
+	// workspace-config.json to /sandbox-cfg/ on next pod boot,
+	// and applyWorkspaceConfig in agentd will write the model key.
 	secret, err := f.fakeCS.CoreV1().Secrets("default").Get(ctx, "workspace-secrets-ws-nocreds", metav1.GetOptions{})
 	require.NoError(t, err)
 
