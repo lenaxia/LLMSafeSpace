@@ -4,6 +4,7 @@ import type { ReactElement, ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "../providers/ThemeProvider";
+import { TooltipProvider } from "../components/ui/Tooltip";
 
 function createTestQueryClient() {
   return new QueryClient({
@@ -16,7 +17,9 @@ function AllProviders({ children }: { children: ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>
+          <TooltipProvider delayDuration={0}>{children}</TooltipProvider>
+        </ThemeProvider>
       </MemoryRouter>
     </QueryClientProvider>
   );

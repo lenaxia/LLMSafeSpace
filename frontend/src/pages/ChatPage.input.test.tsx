@@ -7,6 +7,7 @@ import { render, screen, act, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ChatPage } from "./ChatPage";
+import { TooltipProvider } from "../components/ui";
 import type { WorkspaceStreamEvent } from "../api/types";
 
 // --- Mocks ---
@@ -81,9 +82,11 @@ function renderChat(qc: QueryClient, path: string) {
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[path]}>
-        <Routes>
-          <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
-        </Routes>
+        <TooltipProvider delayDuration={0}>
+          <Routes>
+            <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
+          </Routes>
+        </TooltipProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -256,9 +259,11 @@ describe("ChatPage agent input requests (US-16.11, US-16.12)", () => {
     render(
       <QueryClientProvider client={qc}>
         <MemoryRouter initialEntries={["/chat/ws-1/ses_2"]}>
-          <Routes>
-            <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
-          </Routes>
+          <TooltipProvider delayDuration={0}>
+            <Routes>
+              <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
+            </Routes>
+          </TooltipProvider>
         </MemoryRouter>
       </QueryClientProvider>,
     );

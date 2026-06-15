@@ -30,6 +30,7 @@ import { act, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ChatPage } from "./ChatPage";
+import { TooltipProvider } from "../components/ui";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -110,7 +111,9 @@ function Wrapper({ qc }: { qc: QueryClient }) {
   void tick;
   return (
     <QueryClientProvider client={qc}>
-      <ChatPage />
+      <TooltipProvider delayDuration={0}>
+        <ChatPage />
+      </TooltipProvider>
     </QueryClientProvider>
   );
 }
