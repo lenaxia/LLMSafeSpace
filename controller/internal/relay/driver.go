@@ -28,11 +28,12 @@ type ProviderDriver interface {
 
 // ProvisionRequest holds the parameters for provisioning a relay VM.
 type ProvisionRequest struct {
-	Name        string
-	Region      string
-	Shape       string
-	CloudInit   string
-	WireGuardIP string
+	Name                  string
+	Region                string
+	Shape                 string
+	CloudInit             string
+	WireGuardIP           string
+	CredentialsSecretName string
 }
 
 // ProvisionResult is returned by Provision on success.

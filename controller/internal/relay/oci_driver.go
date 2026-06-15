@@ -92,7 +92,11 @@ func (d *OCIDriver) getConfig(ctx context.Context, secretName string) (*ociConfi
 
 // Provision creates an OCI compute instance with the given cloud-init userdata.
 func (d *OCIDriver) Provision(ctx context.Context, req ProvisionRequest) (*ProvisionResult, error) {
-	cfg, err := d.getConfig(ctx, "oci-credentials")
+	secretName := req.CredentialsSecretName
+	if secretName == "" {
+		secretName = "oci-credentials"
+	}
+	cfg, err := d.getConfig(ctx, secretName)
 	if err != nil {
 		return nil, err
 	}

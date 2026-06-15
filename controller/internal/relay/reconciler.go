@@ -353,11 +353,12 @@ func (r *InferenceRelayReconciler) provisionRelay(ctx context.Context, relay *v1
 
 	// Call the provider driver
 	result, err := driver.Provision(ctx, ProvisionRequest{
-		Name:        fmt.Sprintf("relay-%s", providerSpec.Provider),
-		Region:      providerSpec.Region,
-		Shape:       shape,
-		CloudInit:   cloudInit,
-		WireGuardIP: wgIPForProvider(providerSpec.Provider),
+		Name:                  fmt.Sprintf("relay-%s", providerSpec.Provider),
+		Region:                providerSpec.Region,
+		Shape:                 shape,
+		CloudInit:             cloudInit,
+		WireGuardIP:           wgIPForProvider(providerSpec.Provider),
+		CredentialsSecretName: providerSpec.CredentialsRef.Name,
 	})
 	if err != nil {
 		return nil, "", fmtError("provision", providerSpec.Provider, err)
@@ -502,6 +503,7 @@ func (r *InferenceRelayReconciler) handleDeletion(ctx context.Context, relay *v1
 
 	// Destroy all instances, tracking which are already gone
 	allDestroyed := true
+	anyDestroyed := false
 	for i := range relay.Status.Instances {
 		inst := &relay.Status.Instances[i]
 		if inst.State == string(v1.RelayStateTerminated) {
@@ -509,8 +511,6 @@ func (r *InferenceRelayReconciler) handleDeletion(ctx context.Context, relay *v1
 		}
 		driver, ok := r.Drivers[inst.Provider]
 		if !ok {
-			// No driver — can't destroy the VM. Log and mark as un-destroyable
-			// so the operator can manually terminate it. Don't remove finalizer.
 			logger.Error(fmt.Errorf("no driver for %s", inst.Provider),
 				"cannot destroy relay VM — manual cleanup required",
 				"instanceID", inst.ID, "provider", inst.Provider)
@@ -522,6 +522,14 @@ func (r *InferenceRelayReconciler) handleDeletion(ctx context.Context, relay *v1
 			allDestroyed = false
 		} else {
 			inst.State = string(v1.RelayStateTerminated)
+			anyDestroyed = true
+		}
+	}
+
+	// Persist partial destruction progress so retry knows which are gone
+	if anyDestroyed {
+		if err := r.Status().Update(ctx, relay); err != nil {
+			return ctrl.Result{}, err
 		}
 	}
 
