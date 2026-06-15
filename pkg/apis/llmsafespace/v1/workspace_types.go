@@ -195,6 +195,8 @@ const (
 	WorkspaceConditionSuspended            WorkspaceConditionType = "Suspended"
 	WorkspaceConditionCredentialsAvailable WorkspaceConditionType = "CredentialsAvailable"
 	WorkspaceConditionAgentHealthy         WorkspaceConditionType = "AgentHealthy"
+	WorkspaceConditionProviderReady        WorkspaceConditionType = "ProviderReady"
+	WorkspaceConditionDiskPressure         WorkspaceConditionType = "DiskPressure"
 )
 
 const (
@@ -207,10 +209,13 @@ const (
 )
 
 const (
-	ReasonAgentHealthy      = "AgentHealthy"
-	ReasonAgentUnhealthy    = "AgentUnhealthy"
-	ReasonAgentDegraded     = "AgentDegraded"
-	ReasonHealthCheckFailed = "HealthCheckFailed"
+	ReasonAgentHealthy          = "AgentHealthy"
+	ReasonAgentUnhealthy        = "AgentUnhealthy"
+	ReasonAgentDegraded         = "AgentDegraded"
+	ReasonHealthCheckFailed     = "HealthCheckFailed"
+	ReasonProvidersReady        = "ProvidersReady"
+	ReasonProvidersNotConnected = "ProvidersNotConnected"
+	ReasonDiskPressure          = "DiskPressure"
 )
 
 // WorkspaceCondition describes a condition of a Workspace.
