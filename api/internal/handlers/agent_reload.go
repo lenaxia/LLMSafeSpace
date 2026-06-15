@@ -120,24 +120,24 @@ func (h *AgentReloadHandler) SetQueueClearer(q QueueClearer) { h.queueSvc = q }
 // SetBrokerPublisher injects the SSE broker for publishing dismissed events on dispose.
 func (h *AgentReloadHandler) SetBrokerPublisher(b BrokerPublisher) { h.broker = b }
 
-// clearQueueOnDispose peeks all queued messages for the workspace, publishes
-// a dismissed SSE event for each, then clears the queue. It is called after a
-// successful dispose so that UIs remove pending pills and messages are not
-// drained to a freshly-reloaded opencode that has lost session context.
-func (h *AgentReloadHandler) clearQueueOnDispose(ctx context.Context, workspaceID string) {
-	if h.queueSvc == nil {
+// clearQueueForWorkspace peeks all queued messages for the workspace, publishes
+// a dismissed SSE event for each, then clears the queue. Called after a
+// successful dispose so UIs remove pending pills and messages are not drained
+// to a freshly-reloaded opencode with no session context.
+func clearQueueForWorkspace(ctx context.Context, workspaceID string, q QueueClearer, b BrokerPublisher, logger pkginterfaces.LoggerInterface) {
+	if q == nil {
 		return
 	}
-	msgs, err := h.queueSvc.PeekAllWorkspace(ctx, workspaceID)
+	msgs, err := q.PeekAllWorkspace(ctx, workspaceID)
 	if err != nil {
-		if h.logger != nil {
-			h.logger.Error("clearQueueOnDispose: peek failed", err, "workspaceID", workspaceID)
+		if logger != nil {
+			logger.Error("clearQueueForWorkspace: peek failed", err, "workspaceID", workspaceID)
 		}
 		return
 	}
-	if h.broker != nil {
+	if b != nil {
 		for _, msg := range msgs {
-			h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
+			b.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
 				Type:      "queue.update",
 				SessionID: msg.SessionID,
 				Data: queueUpdateData{
@@ -147,11 +147,15 @@ func (h *AgentReloadHandler) clearQueueOnDispose(ctx context.Context, workspaceI
 			})
 		}
 	}
-	if err := h.queueSvc.ClearWorkspace(ctx, workspaceID); err != nil {
-		if h.logger != nil {
-			h.logger.Error("clearQueueOnDispose: clear failed", err, "workspaceID", workspaceID)
+	if err := q.ClearWorkspace(ctx, workspaceID); err != nil {
+		if logger != nil {
+			logger.Error("clearQueueForWorkspace: clear failed", err, "workspaceID", workspaceID)
 		}
 	}
+}
+
+func (h *AgentReloadHandler) clearQueueOnDispose(ctx context.Context, workspaceID string) {
+	clearQueueForWorkspace(ctx, workspaceID, h.queueSvc, h.broker, h.logger)
 }
 
 // Reload handles POST /api/v1/workspaces/:id/agent/reload.
@@ -267,7 +271,9 @@ func (h *AgentReloadHandler) Reload(c *gin.Context) {
 	// Dispose succeeded. Clear any queued messages for this workspace — they
 	// would otherwise be drained to a freshly-loaded opencode that has no context
 	// of the previous session state. Publish dismissed SSE so UIs remove pills.
-	h.clearQueueOnDispose(c.Request.Context(), workspaceID)
+	// Use context.Background() so a client disconnect after dispose doesn't
+	// silently skip the cleanup.
+	h.clearQueueOnDispose(context.Background(), workspaceID)
 
 	// Update agent state.
 	tx, err := h.db.BeginTx(c.Request.Context(), nil)
@@ -383,33 +389,7 @@ func (h *BulkReloadHandler) SetBrokerPublisher(b BrokerPublisher) { h.broker = b
 // clearQueueOnDispose peeks all queued messages for the workspace, publishes
 // a dismissed SSE event for each, then clears the queue.
 func (h *BulkReloadHandler) clearQueueOnDispose(ctx context.Context, workspaceID string) {
-	if h.queueSvc == nil {
-		return
-	}
-	msgs, err := h.queueSvc.PeekAllWorkspace(ctx, workspaceID)
-	if err != nil {
-		if h.logger != nil {
-			h.logger.Error("clearQueueOnDispose: peek failed", err, "workspaceID", workspaceID)
-		}
-		return
-	}
-	if h.broker != nil {
-		for _, msg := range msgs {
-			h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
-				Type:      "queue.update",
-				SessionID: msg.SessionID,
-				Data: queueUpdateData{
-					Event:     "dismissed",
-					MessageID: msg.ID,
-				},
-			})
-		}
-	}
-	if err := h.queueSvc.ClearWorkspace(ctx, workspaceID); err != nil {
-		if h.logger != nil {
-			h.logger.Error("clearQueueOnDispose: clear failed", err, "workspaceID", workspaceID)
-		}
-	}
+	clearQueueForWorkspace(ctx, workspaceID, h.queueSvc, h.broker, h.logger)
 }
 
 // BulkReload streams per-workspace reload results as NDJSON.

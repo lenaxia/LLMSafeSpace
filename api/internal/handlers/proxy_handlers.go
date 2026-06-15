@@ -99,82 +99,99 @@ func (h *ProxyHandler) AbortSession(c *gin.Context) {
 	}
 	wid := c.Param("id")
 
-	// Flush-then-abort: peek all queued messages for this session before
-	// sending the abort, so we can inject them after the session goes idle.
-	// The messages are removed from Redis now — they will be sent once opencode
-	// signals idle (after the abort), and then the session is aborted again so
-	// they appear in the transcript but are not processed further.
-	var flushed []msgqueue.QueuedMessage
-	if h.queueSvc != nil {
-		if msgs, err := h.queueSvc.PeekAll(c.Request.Context(), wid, sid); err == nil {
-			flushed = msgs
-		}
-		if len(flushed) > 0 {
-			// Clear from Redis immediately — we own them now.
-			if err := h.queueSvc.Clear(c.Request.Context(), wid, sid); err != nil {
-				h.logger.Error("AbortSession: failed to clear queue before flush", err, "workspaceID", wid, "sessionID", sid)
-			}
-			// Publish dismissed SSE for each message so UIs remove the pills now.
-			for _, msg := range flushed {
-				h.publishQueueEvent(wid, sid, "dismissed", msg.ID, "")
-			}
-		}
-	}
-
-	// Proxy the abort to opencode.
+	// Proxy the abort to opencode first. Only if that succeeds do we take
+	// ownership of queued messages — this avoids clearing the queue when the
+	// abort itself fails (network error, workspace not active, etc.).
 	h.proxyToWorkspace(c, "/session/"+sid+"/abort", false, sid)
 
+	if h.queueSvc == nil || c.Writer.Status() >= 400 {
+		return
+	}
+
+	// Abort succeeded. Peek and atomically clear the session queue.
+	flushed, err := h.queueSvc.PeekAll(c.Request.Context(), wid, sid)
+	if err != nil {
+		h.logger.Error("AbortSession: failed to peek queue after abort", err, "workspaceID", wid, "sessionID", sid)
+		return
+	}
 	if len(flushed) == 0 {
 		return
 	}
-	if c.Writer.Status() >= 400 {
+	if err := h.queueSvc.Clear(c.Request.Context(), wid, sid); err != nil {
+		h.logger.Error("AbortSession: failed to clear queue after abort", err, "workspaceID", wid, "sessionID", sid)
 		return
 	}
+	// Publish dismissed SSE so UIs remove the pills immediately.
+	for _, msg := range flushed {
+		h.publishQueueEvent(wid, sid, "dismissed", msg.ID, "")
+	}
 
-	// After abort proxied successfully: in the background, wait for the session
-	// to become idle (the abort causes opencode to emit session.status idle),
-	// then send all flushed messages directly to opencode and immediately abort
-	// again so they are recorded in the transcript but not processed further.
+	// In the background: wait for idle, then send each flushed message one at a
+	// time (with an idle-wait between each) and abort again at the end. This
+	// ensures messages appear in the transcript without being processed.
 	go h.flushAndAbortAfterIdle(wid, sid, flushed)
 }
 
 // flushAndAbortAfterIdle waits for the session to become idle (after an abort),
-// sends all flushed messages to opencode via prompt_async, then aborts again.
-// This ensures aborted queue messages appear in the session transcript.
+// then sends each flushed message one at a time to opencode. Between each send
+// it waits for the session to go idle again before sending the next, ensuring
+// no 409 "session busy" errors. After all messages are sent it aborts once more
+// so they appear in the transcript but are not processed further.
 func (h *ProxyHandler) flushAndAbortAfterIdle(workspaceID, sessionID string, msgs []msgqueue.QueuedMessage) {
 	if h.sseTracker == nil {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	// Wait for session idle via the drain subscription.
-	idleCh := make(chan struct{}, 1)
-	unsub := h.sseTracker.SubscribeDrain(workspaceID,
-		func(_, sid string) {
-			if sid == sessionID {
-				select {
-				case idleCh <- struct{}{}:
-				default:
+	// waitIdle subscribes to the SSE drain and returns once this session signals idle,
+	// or when ctx is done.
+	waitIdle := func() bool {
+		idleCh := make(chan struct{}, 1)
+		unsub := h.sseTracker.SubscribeDrain(workspaceID,
+			func(_, sid string) {
+				if sid == sessionID {
+					select {
+					case idleCh <- struct{}{}:
+					default:
+					}
 				}
-			}
-		},
-		func(_, _ string) {},
-	)
-	defer unsub()
+			},
+			func(_, _ string) {},
+		)
+		defer unsub()
+		select {
+		case <-idleCh:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
 
-	select {
-	case <-idleCh:
-	case <-ctx.Done():
-		h.logger.Warn("flushAndAbortAfterIdle: timed out waiting for idle", "workspaceID", workspaceID, "sessionID", sessionID)
+	// Wait for idle from the initial abort before sending anything.
+	if !waitIdle() {
+		h.logger.Warn("flushAndAbortAfterIdle: timed out waiting for initial idle",
+			"workspaceID", workspaceID, "sessionID", sessionID)
 		return
 	}
 
-	// Send all flushed messages. Best-effort: skip on error.
-	for _, msg := range msgs {
+	// Send each message one at a time, waiting for idle after each send.
+	for i, msg := range msgs {
 		if err := h.sendQueuedToOpencode(ctx, workspaceID, sessionID, &msg); err != nil {
-			h.logger.Warn("flushAndAbortAfterIdle: failed to send flushed message", "workspaceID", workspaceID, "sessionID", sessionID, "messageID", msg.ID, "error", err)
+			h.logger.Warn("flushAndAbortAfterIdle: failed to send flushed message",
+				"workspaceID", workspaceID, "sessionID", sessionID,
+				"messageID", msg.ID, "index", i, "error", err)
+			// Stop on first error — remaining messages would also fail.
+			break
+		}
+		// Wait for this message's turn to complete before sending the next.
+		if i < len(msgs)-1 {
+			if !waitIdle() {
+				h.logger.Warn("flushAndAbortAfterIdle: timed out waiting for idle between messages",
+					"workspaceID", workspaceID, "sessionID", sessionID, "sentSoFar", i+1)
+				break
+			}
 		}
 	}
 
@@ -191,7 +208,8 @@ func (h *ProxyHandler) flushAndAbortAfterIdle(workspaceID, sessionID string, msg
 	req.SetBasicAuth(agentd.AuthUsername, password)
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
-		h.logger.Warn("flushAndAbortAfterIdle: second abort failed", "workspaceID", workspaceID, "sessionID", sessionID, "error", err)
+		h.logger.Warn("flushAndAbortAfterIdle: second abort failed",
+			"workspaceID", workspaceID, "sessionID", sessionID, "error", err)
 		return
 	}
 	_ = resp.Body.Close()

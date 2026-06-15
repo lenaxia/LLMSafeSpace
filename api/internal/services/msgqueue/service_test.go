@@ -289,3 +289,43 @@ func TestRemove_NotFound(t *testing.T) {
 	n, _ := svc.Len(ctx, "ws-1", "ses-1")
 	assert.Equal(t, int64(1), n)
 }
+
+func TestPeekAllWorkspace_MultiSession(t *testing.T) {
+	svc, _, cleanup := setupTestService(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	id1, err := svc.Enqueue(ctx, "ws-1", "ses-A", "msg1")
+	require.NoError(t, err)
+	id2, err := svc.Enqueue(ctx, "ws-1", "ses-B", "msg2")
+	require.NoError(t, err)
+	id3, err := svc.Enqueue(ctx, "ws-1", "ses-A", "msg3") // second message in ses-A
+	require.NoError(t, err)
+
+	msgs, err := svc.PeekAllWorkspace(ctx, "ws-1")
+	require.NoError(t, err)
+	assert.Len(t, msgs, 3)
+
+	ids := map[string]bool{}
+	for _, m := range msgs {
+		ids[m.ID] = true
+	}
+	assert.True(t, ids[id1])
+	assert.True(t, ids[id2])
+	assert.True(t, ids[id3])
+
+	// Verify: a different workspace's messages are not included.
+	_, _ = svc.Enqueue(ctx, "ws-2", "ses-X", "other ws")
+	msgs, err = svc.PeekAllWorkspace(ctx, "ws-1")
+	require.NoError(t, err)
+	assert.Len(t, msgs, 3, "ws-2 messages should not appear in ws-1 results")
+}
+
+func TestPeekAllWorkspace_Empty(t *testing.T) {
+	svc, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	msgs, err := svc.PeekAllWorkspace(context.Background(), "nonexistent-ws")
+	require.NoError(t, err)
+	assert.Empty(t, msgs)
+}
