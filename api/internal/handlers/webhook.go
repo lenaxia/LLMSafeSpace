@@ -154,7 +154,7 @@ func (h *StripeWebhookHandler) onCheckoutCompleted(ctx context.Context, event st
 
 	if obj.Subscription != "" {
 		if err := h.store.SetBillingAccountSubscription(ctx, orgID, string(types.OwnerTypeOrg), "stripe", obj.Subscription); err != nil {
-			h.logger.Error("stripe webhook: failed to persist subscription id", err, "orgID", orgID, "subID", obj.Subscription)
+			return fmt.Errorf("persist subscription id for org %s: %w", orgID, err)
 		}
 	}
 	return nil

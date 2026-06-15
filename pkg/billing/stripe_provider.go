@@ -120,7 +120,7 @@ func (s *StripeProvider) ConstructWebhookEvent(payload []byte, signature string)
 // ReportUsage reports usage events to Stripe Metered Billing. Each event maps
 // to a Stripe usage record on the subscription item for the corresponding
 // meter (llm_tokens or compute_seconds).
-func (s *StripeProvider) ReportUsage(_ context.Context, events []UsageExportEvent) ([]int64, error) {
+func (s *StripeProvider) ReportUsage(ctx context.Context, events []UsageExportEvent) ([]int64, error) {
 	ids := make([]int64, len(events))
 	for i, event := range events {
 		meterID, ok := s.cfg.Meters[event.EventType]
@@ -133,6 +133,7 @@ func (s *StripeProvider) ReportUsage(_ context.Context, events []UsageExportEven
 			Quantity:         stripe.Int64(event.Quantity),
 			Timestamp:        stripe.Int64(parseUnixTimestamp(event.Timestamp)),
 		}
+		params.Context = ctx
 		if event.IdempotencyKey != "" {
 			params.SetIdempotencyKey(event.IdempotencyKey)
 		}

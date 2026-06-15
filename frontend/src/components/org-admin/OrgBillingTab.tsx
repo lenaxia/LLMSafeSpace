@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useOutletContext } from "react-router-dom";
 import { orgsApi, type OrgResponse } from "../../api/orgs";
 import { Button } from "../ui/Button";
@@ -11,7 +11,6 @@ interface BillingContext {
 
 export function OrgBillingTab() {
   const { org } = useOutletContext<BillingContext>();
-  const [portalUrl, setPortalUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -20,7 +19,6 @@ export function OrgBillingTab() {
     setError("");
     try {
       const resp = await orgsApi.portal(org.id);
-      setPortalUrl(resp.url);
       window.location.href = resp.url;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to open billing portal");
@@ -28,12 +26,6 @@ export function OrgBillingTab() {
       setLoading(false);
     }
   };
-
-  useEffect(() => {
-    if (portalUrl) {
-      window.location.href = portalUrl;
-    }
-  }, [portalUrl]);
 
   const subBadge = () => {
     switch (org.subscriptionStatus) {

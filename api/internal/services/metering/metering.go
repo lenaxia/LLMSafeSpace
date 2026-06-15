@@ -466,13 +466,28 @@ func (s *Service) ExportUsage(ctx context.Context) (int, error) {
 // deterministic idempotency key scoped to the export window so retries (e.g.
 // from a transient Stripe error followed by cursor re-processing) do not
 // double-report.
+//
+// Usage events are recorded per-user (owner_type='user'); billing accounts are
+// per-org (owner_type='org'). The JOIN resolves user → org via org_memberships,
+// picking the user's earliest membership deterministically (a user in multiple
+// orgs is billed to their first-joined org). Users without an org membership
+// produce no billing rows (external_customer_id='') and are skipped.
 func (s *Service) exportToStripe(ctx context.Context, lastID, maxID int64) error {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ue.event_type, SUM(ue.quantity), MAX(ue.event_time),
 		       COALESCE(ba.external_customer_id, '')
 		FROM usage_events ue
+		LEFT JOIN LATERAL (
+			SELECT om.org_id
+			FROM org_memberships om
+			WHERE om.user_id = ue.owner_id
+			ORDER BY om.created_at ASC
+			LIMIT 1
+		) primary_org ON true
 		LEFT JOIN billing_accounts ba
-		  ON ba.owner_id = ue.owner_id AND ba.owner_type = ue.owner_type AND ba.provider = 'stripe'
+		  ON ba.owner_id = primary_org.org_id
+		 AND ba.owner_type = 'org'
+		 AND ba.provider = 'stripe'
 		WHERE ue.id > $1 AND ue.id <= $2
 		GROUP BY ue.event_type, ba.external_customer_id
 	`, lastID, maxID)

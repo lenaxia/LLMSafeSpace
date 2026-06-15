@@ -15,8 +15,8 @@ type PlanFeatures struct {
 	CustomCredentials bool `json:"customCredentials"`
 }
 
-// PlanTiers maps each internal plan ID to its feature set. Populated from
-// config at startup.
+// PlanTiers maps each internal plan ID to its feature set. Hardcoded —
+// extend this map when adding a new plan tier.
 var PlanTiers = map[types.OrgPlan]PlanFeatures{
 	types.PlanFree: {
 		MaxWorkspaces:     1,

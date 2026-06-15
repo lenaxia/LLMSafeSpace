@@ -27,6 +27,7 @@ type fakeStripeEventStore struct {
 	processed     map[string]string
 	customerToOrg map[string]string
 	statusUpdates []statusUpdateCall
+	subUpdates    []subUpdateCall
 	recordErr     error
 	updateErr     error
 }
@@ -36,6 +37,13 @@ type statusUpdateCall struct {
 	status       *types.OrgStatus
 	subscription *types.OrgSubscriptionStatus
 	plan         *types.OrgPlan
+}
+
+type subUpdateCall struct {
+	ownerID        string
+	ownerType      string
+	provider       string
+	subscriptionID string
 }
 
 func newFakeStripeEventStore() *fakeStripeEventStore {
@@ -65,7 +73,15 @@ func (f *fakeStripeEventStore) DeleteStripeEvent(_ context.Context, eventID stri
 	return nil
 }
 
-func (f *fakeStripeEventStore) SetBillingAccountSubscription(_ context.Context, _, _, _, _ string) error {
+func (f *fakeStripeEventStore) SetBillingAccountSubscription(_ context.Context, ownerID, ownerType, provider, subscriptionID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.subUpdates = append(f.subUpdates, subUpdateCall{
+		ownerID:        ownerID,
+		ownerType:      ownerType,
+		provider:       provider,
+		subscriptionID: subscriptionID,
+	})
 	return nil
 }
 
@@ -201,6 +217,22 @@ func TestWebhook_CheckoutCompleted_ActivatesOrg(t *testing.T) {
 	}
 	if upd.subscription == nil || *upd.subscription != types.SubscriptionActive {
 		t.Errorf("expected subscription active, got %+v", upd.subscription)
+	}
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.subUpdates) != 1 {
+		t.Fatalf("expected 1 subscription persistence call, got %d", len(store.subUpdates))
+	}
+	sub := store.subUpdates[0]
+	if sub.ownerID != "org-uuid-1" {
+		t.Errorf("expected ownerID org-uuid-1, got %s", sub.ownerID)
+	}
+	if sub.subscriptionID != "sub_1" {
+		t.Errorf("expected subscriptionID sub_1, got %s", sub.subscriptionID)
+	}
+	if sub.provider != "stripe" {
+		t.Errorf("expected provider stripe, got %s", sub.provider)
 	}
 }
 
