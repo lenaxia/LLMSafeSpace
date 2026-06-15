@@ -169,41 +169,6 @@ func TestRelaySetup_GCPSecretExists_Configured(t *testing.T) {
 	assert.True(t, resp.GCPConfigured)
 }
 
-func TestRelaySetup_MetalLBCRD_Detected(t *testing.T) {
-	// MetalLB registers CRDs in the metallb.io API group. Detecting the
-	// served group via discovery avoids requiring cross-namespace pod-list
-	// RBAC (the API service account has no permissions in metallb-system).
-	clientset := fake.NewSimpleClientset()
-	clientset.Resources = []*metav1.APIResourceList{
-		{GroupVersion: "metallb.io/v1beta1", APIResources: []metav1.APIResource{
-			{Name: "ipaddresspools", SingularName: "ipaddresspool", Kind: "IPAddressPool", Namespaced: true},
-		}},
-	}
-	r, _, _ := setupRelayRouter(t, clientset)
-
-	w := doRelayRequest(r, "GET", "/api/v1/admin/relay/setup")
-
-	require.Equal(t, http.StatusOK, w.Code)
-	var resp setupResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.True(t, resp.MetalLBInstalled)
-}
-
-func TestRelaySetup_MetalLBNotInstalled_NoError(t *testing.T) {
-	// When MetalLB CRDs are absent, discovery returns NotFound which must be
-	// treated as "not installed" (metalLBInstalled=false), not a 500. This
-	// guards the original failure: a missing prerequisite must not take down
-	// the whole setup endpoint.
-	r, _, _ := setupRelayRouter(t, fake.NewSimpleClientset())
-
-	w := doRelayRequest(r, "GET", "/api/v1/admin/relay/setup")
-
-	require.Equal(t, http.StatusOK, w.Code)
-	var resp setupResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.False(t, resp.MetalLBInstalled)
-}
-
 func TestRelaySetup_RouterDeploymentExists_Deployed(t *testing.T) {
 	clientset := fake.NewSimpleClientset(&appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "relay-router", Namespace: testNamespace},

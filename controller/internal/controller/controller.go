@@ -53,6 +53,11 @@ func SetupRelayController(mgr ctrl.Manager, namespace, routerURL string, enableR
 			"oci": relay.NewOCIDriver(mgr.GetClient(), namespace, "oci-credentials"),
 			"gcp": &relay.GCPDriver{},
 		},
+		ExpectedCredentialSecrets: map[string]string{
+			"aws": "aws-relay-irwa",
+			"oci": "oci-credentials",
+			"gcp": "gcp-credentials",
+		},
 	}
 
 	if err := relayReconciler.SetupWithManager(mgr); err != nil {

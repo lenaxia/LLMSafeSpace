@@ -39,6 +39,11 @@ type InferenceRelayReconciler struct {
 
 	// Drivers map provider name → driver implementation.
 	Drivers map[string]ProviderDriver
+
+	// ExpectedCredentialSecrets maps provider name → the K8s Secret name
+	// the driver reads credentials from. The reconciler validates that
+	// spec.providers[].credentialsRef.Name matches this value.
+	ExpectedCredentialSecrets map[string]string
 }
 
 // Reconcile handles the InferenceRelay CR lifecycle.
@@ -304,6 +309,16 @@ func (r *InferenceRelayReconciler) provisionRelay(ctx context.Context, relay *v1
 	driver, ok := r.Drivers[providerSpec.Provider]
 	if !ok {
 		return nil, "", fmt.Errorf("%w: no driver for provider %s", ErrConfig, providerSpec.Provider)
+	}
+
+	// Validate that the CRD's credentialsRef.Name matches the driver's
+	// expected credential secret. This prevents a schema mismatch where
+	// the CRD allows arbitrary names but the driver only reads one.
+	if expected, exists := r.ExpectedCredentialSecrets[providerSpec.Provider]; exists && expected != "" {
+		if providerSpec.CredentialsRef.Name != expected {
+			return nil, "", fmt.Errorf("%w: credentialsRef.Name %q does not match expected %q for provider %s",
+				ErrConfig, providerSpec.CredentialsRef.Name, expected, providerSpec.Provider)
+		}
 	}
 
 	// Generate WireGuard keypair for this relay VM

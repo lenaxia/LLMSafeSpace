@@ -44,7 +44,6 @@ async function mockAdminAuth(page: Page) {
 
 const mockSetupNotDeployed = {
   deployed: false,
-  metalLBInstalled: true,
   routerDeployed: true,
   crdInstalled: true,
   awsConfigured: false,
@@ -134,7 +133,7 @@ test.describe("Relay admin UI", () => {
     await page.getByRole("button", { name: "Relay" }).click();
 
     await expect(page.getByRole("heading", { name: "Prerequisites" })).toBeVisible({ timeout: 8000 });
-    await expect(page.getByText("MetalLB installed")).toBeVisible();
+    await expect(page.getByText("Relay router deployed")).toBeVisible();
   });
 
   test("setup wizard navigates through steps", async ({ page }) => {
