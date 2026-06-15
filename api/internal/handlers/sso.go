@@ -86,7 +86,7 @@ func (h *SSOHandler) Put(c *gin.Context) {
 		OrgID:            orgID,
 		DiscoveryURL:     strings.TrimSpace(req.DiscoveryURL),
 		ClientID:         req.ClientID,
-		EncryptedSecret:  encryptSSOSecret([]byte(req.ClientSecret)),
+		EncryptedSecret:  []byte(req.ClientSecret),
 		GroupAdminClaim:  groupAdmin,
 		GroupMemberClaim: groupMember,
 		AutoProvision:    autoProvision,
@@ -109,13 +109,4 @@ func (h *SSOHandler) Delete(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
-}
-
-// encryptSSOSecret encrypts the client secret with the org DEK. For Phase 3
-// initial implementation, this is a placeholder that returns the raw bytes —
-// the actual encryption will use OrgKeyService once wired. The API never
-// returns the secret, so this is safe for development; production deployment
-// requires the OrgKeyService encryption to be wired in.
-func encryptSSOSecret(secret []byte) []byte {
-	return secret
 }

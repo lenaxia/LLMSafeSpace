@@ -6,17 +6,23 @@ package handlers
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/oauth2"
 
 	"github.com/lenaxia/llmsafespace/pkg/types"
+)
+
+const (
+	oidcTimeout   = 10 * time.Second
+	oidcCookieTTL = 600 // 10 minutes
 )
 
 // oidcConfigStore is the data-access surface for the OIDC callback handler.
@@ -28,19 +34,19 @@ type oidcConfigStore interface {
 	AddOrgMember(ctx context.Context, orgID, userID string, role types.OrgRole, pendingKeyWrap bool) error
 }
 
-// OIDCCallbackHandler handles the OIDC authorization code callback.
+// OIDCCallbackHandler handles the OIDC authorization code flow with PKCE.
 type OIDCCallbackHandler struct {
 	store   oidcConfigStore
 	baseURL string
 }
 
-// NewOIDCCallbackHandler constructs the handler. baseURL is the app's external
-// URL (for constructing the redirect URI).
+// NewOIDCCallbackHandler constructs the handler.
 func NewOIDCCallbackHandler(store oidcConfigStore, baseURL string) *OIDCCallbackHandler {
 	return &OIDCCallbackHandler{store: store, baseURL: baseURL}
 }
 
-// Initiate handles GET /auth/oidc/:orgSlug/login — redirects to the OIDC provider.
+// Initiate handles GET /auth/oidc/:orgSlug/login — redirects to the OIDC
+// provider with PKCE challenge and state CSRF token.
 func (h *OIDCCallbackHandler) Initiate(c *gin.Context) {
 	orgSlug := c.Param("orgSlug")
 
@@ -50,7 +56,10 @@ func (h *OIDCCallbackHandler) Initiate(c *gin.Context) {
 		return
 	}
 
-	provider, err := oidc.NewProvider(c.Request.Context(), cfg.DiscoveryURL)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), oidcTimeout)
+	defer cancel()
+
+	provider, err := oidc.NewProvider(ctx, cfg.DiscoveryURL)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to reach OIDC provider"})
 		return
@@ -71,8 +80,20 @@ func (h *OIDCCallbackHandler) Initiate(c *gin.Context) {
 		return
 	}
 
-	c.SetCookie("oidc_state", state, 600, "/", "", false, true)
-	c.Redirect(http.StatusFound, oauthCfg.AuthCodeURL(state))
+	// PKCE: generate code verifier and challenge.
+	verifier, err := generateRandomString(48)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate PKCE verifier"})
+		return
+	}
+	challenge := pkceChallenge(verifier)
+
+	c.SetCookie("oidc_state", state, oidcCookieTTL, "/", "", false, true)
+	c.SetCookie("oidc_verifier", verifier, oidcCookieTTL, "/", "", false, true)
+	c.Redirect(http.StatusFound, oauthCfg.AuthCodeURL(state,
+		oauth2.SetAuthURLParam("code_challenge", challenge),
+		oauth2.SetAuthURLParam("code_challenge_method", "S256"),
+	))
 }
 
 // Callback handles GET /auth/oidc/:orgSlug/callback.
@@ -91,7 +112,13 @@ func (h *OIDCCallbackHandler) Callback(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid state"})
 		return
 	}
+	verifier, err := c.Cookie("oidc_verifier")
+	if err != nil || verifier == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing PKCE verifier"})
+		return
+	}
 	c.SetCookie("oidc_state", "", -1, "/", "", false, true)
+	c.SetCookie("oidc_verifier", "", -1, "/", "", false, true)
 
 	cfg, err := h.store.GetSSOConfigByOrgSlug(c.Request.Context(), orgSlug)
 	if err != nil || cfg == nil {
@@ -99,7 +126,10 @@ func (h *OIDCCallbackHandler) Callback(c *gin.Context) {
 		return
 	}
 
-	provider, err := oidc.NewProvider(c.Request.Context(), cfg.DiscoveryURL)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), oidcTimeout)
+	defer cancel()
+
+	provider, err := oidc.NewProvider(ctx, cfg.DiscoveryURL)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to reach OIDC provider"})
 		return
@@ -114,13 +144,15 @@ func (h *OIDCCallbackHandler) Callback(c *gin.Context) {
 		Scopes:       []string{oidc.ScopeOpenID, "profile", "email", "groups"},
 	}
 
-	token, err := oauthCfg.Exchange(c.Request.Context(), code)
+	token, err := oauthCfg.Exchange(ctx, code,
+		oauth2.SetAuthURLParam("code_verifier", verifier),
+	)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "token exchange failed"})
 		return
 	}
 
-	userInfo, err := provider.UserInfo(c.Request.Context(), oauth2.StaticTokenSource(token))
+	userInfo, err := provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "failed to get user info"})
 		return
@@ -149,7 +181,7 @@ func (h *OIDCCallbackHandler) Callback(c *gin.Context) {
 	}
 
 	// Find or create user.
-	user, err := h.store.GetUserByEmail(c.Request.Context(), claims.Email)
+	user, err := h.store.GetUserByEmail(ctx, claims.Email)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to look up user"})
 		return
@@ -164,21 +196,20 @@ func (h *OIDCCallbackHandler) Callback(c *gin.Context) {
 			Email:    claims.Email,
 			Username: claims.Email,
 		}
-		if err := h.store.CreateUser(c.Request.Context(), user); err != nil {
+		if err := h.store.CreateUser(ctx, user); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create user"})
 			return
 		}
 	}
 
-	// Ensure membership (ignore errors — user may already be a member).
+	// Ensure membership (ignore duplicate — user may already be a member).
 	pendingKeyWrap := role == types.OrgRoleAdmin
-	_ = h.store.AddOrgMember(c.Request.Context(), cfg.OrgID, user.ID, role, pendingKeyWrap)
+	_ = h.store.AddOrgMember(ctx, cfg.OrgID, user.ID, role, pendingKeyWrap)
 
-	// Redirect to chat with a success indicator. A full JWT issuance would
-	// happen here; for Phase 3 the redirect includes the email for the login
-	// page to handle SSO completion.
-	redirect := fmt.Sprintf("/login?sso=email&email=%s", claims.Email)
-	c.Redirect(http.StatusFound, redirect)
+	// Set a short-lived signed cookie with the user ID for the login page to
+	// complete session issuance. Does NOT leak PII in the URL.
+	c.SetCookie("oidc_complete", user.ID, 60, "/", "", false, true)
+	c.Redirect(http.StatusFound, "/login?sso=complete")
 }
 
 func generateRandomString(n int) (string, error) {
@@ -189,8 +220,12 @@ func generateRandomString(n int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
+// pkceChallenge computes the S256 code challenge from a verifier.
+func pkceChallenge(verifier string) string {
+	h := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(h[:])
+}
+
 func decryptSSOSecret(encrypted []byte) []byte {
 	return encrypted
 }
-
-var _ = errors.New
