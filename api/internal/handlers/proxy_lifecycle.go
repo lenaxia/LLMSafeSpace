@@ -106,6 +106,9 @@ func (h *ProxyHandler) GetMessageQueueService() interfaces.MessageQueueService {
 }
 
 func (h *ProxyHandler) GetBroker() BrokerPublisher {
+	if h.broker == nil {
+		return nil
+	}
 	return h.broker
 }
 
