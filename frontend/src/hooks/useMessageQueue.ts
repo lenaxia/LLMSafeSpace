@@ -38,6 +38,7 @@ export function useMessageQueue(
         return [...kept, ...added];
       });
     } catch {
+      // Best-effort queue refresh; stale UI recovers on next poll.
     } finally {
       refreshInFlightRef.current = false;
     }
@@ -86,6 +87,7 @@ export function useMessageQueue(
     try {
       await messagesApi.deleteQueueMessage(workspaceId, sessionId, id);
     } catch {
+      // Local removal already happened; server-side cleanup is best-effort.
     }
     void refreshQueue();
   }, [workspaceId, sessionId, refreshQueue, removeById]);

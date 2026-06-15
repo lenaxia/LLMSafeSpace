@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { workspacesApi } from "../../api/workspaces";
 import type { ModelInfo } from "../../api/workspaces";
+import { useUserSetting } from "../../hooks/useUserSettings";
 import { ChevronDown } from "lucide-react";
 
 interface Props {
@@ -17,6 +18,9 @@ export function ModelSelector({ workspaceId, disabled }: Props) {
   // once the server confirms. On error it reverts to the server-confirmed value.
   const [optimisticModel, setOptimisticModel] = useState<string | null>(null);
   const queryClient = useQueryClient();
+  // US-9.16: user's preferred default model (Tier-3 setting). Used to seed a
+  // workspace that has no currentModel yet. Empty string = no preference.
+  const preferredModel = useUserSetting<string>("preferredModel", "");
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["models", workspaceId],
@@ -58,6 +62,20 @@ export function ModelSelector({ workspaceId, disabled }: Props) {
   const currentDisplay = currentModel
     ? models.find((m) => m.id === currentModel)?.name || currentModel.split("/").pop()
     : "Select model";
+
+  // US-9.16: Seed the workspace's model from the user's preferredModel when the
+  // workspace has no currentModel yet. Fires at most once per workspace — the
+  // dependency array excludes the mutation to avoid re-triggering on every
+  // render. The setModel call flips serverModel non-empty, which causes the
+  // guard to fail on subsequent runs.
+  useEffect(() => {
+    if (!workspaceId || !preferredModel || serverModel || models.length === 0) return;
+    if (setModelMutation.isPending) return;
+    const available = models.some((m) => m.id === preferredModel);
+    if (!available) return;
+    setModelMutation.mutate(preferredModel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId, preferredModel, serverModel, models]);
 
   // Auto-dismiss toast after 4 seconds
   useEffect(() => {

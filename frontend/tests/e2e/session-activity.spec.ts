@@ -26,20 +26,6 @@ const SESS_B1 = "ses_sa_b1";  // session in WS_B — will become unread
 const API = "**/api/v1";
 
 // ---------------------------------------------------------------------------
-// SSE helper: write server-sent events into the Playwright SSE route
-// ---------------------------------------------------------------------------
-
-/** Emits a single SSE data line to the readable stream of a route response. */
-async function emitSSE(route: Route, event: Record<string, unknown>): Promise<void> {
-  const data = `data: ${JSON.stringify(event)}\n\n`;
-  await route.fulfill({
-    status: 200,
-    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
-    body: data,
-  });
-}
-
-// ---------------------------------------------------------------------------
 // Standard mock setup
 // ---------------------------------------------------------------------------
 

@@ -327,6 +327,7 @@ export function ChatPage() {
         void queue.refreshQueue();
       }
     } catch {
+      // Reconnect history fetch is best-effort; stale state self-corrects on next poll.
     }
   }, [workspaceId, sessionId, queryClient, queue]);
 
