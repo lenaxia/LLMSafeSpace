@@ -141,25 +141,6 @@ function OrgCard({
       <div className="text-xs text-muted-foreground">
         {org.memberCount} member{org.memberCount !== 1 ? "s" : ""}
       </div>
-      {org.userPendingKeyWrap && (
-        <div className="text-xs text-amber-500">
-          Key setup pending —{" "}
-          <button
-            className="underline"
-            onClick={() => {
-              const pw = prompt("Enter your password to complete key setup:");
-              if (pw) {
-                orgsApi
-                  .acceptKey(org.id, { password: pw })
-                  .then(() => onDeleted())
-                  .catch((e) => setError(e instanceof Error ? e.message : "Failed"));
-              }
-            }}
-          >
-            complete key setup
-          </button>
-        </div>
-      )}
       {error && <p className="text-xs text-red-500">{error}</p>}
       {org.userRole === "admin" && (
         <div className="flex gap-2 pt-1">
