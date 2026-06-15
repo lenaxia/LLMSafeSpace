@@ -145,8 +145,9 @@ type InferenceRelaySpec struct {
 	// +kubebuilder:default="https://opencode.ai/zen/v1"
 	UpstreamURL string `json:"upstreamURL"`
 
-	// Providers configures the relay VMs. Must include exactly one OCI
-	// and one GCP provider for the intended 2-VM fleet.
+	// Providers configures the relay VMs. The default fleet is 1 AWS
+	// (paid primary) + 1 OCI (free secondary). GCP can be added as an
+	// optional paid provider for IP diversity.
 	// +kubebuilder:validation:MinItems=1
 	Providers []RelayProviderSpec `json:"providers"`
 
@@ -204,10 +205,11 @@ type InferenceRelayStatus struct {
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 
 // InferenceRelay represents the managed relay VM fleet. The controller
-// provisions, health-checks, and replaces relay VMs on OCI and GCP to
-// maintain free-tier inference availability. Workspace pods route through
-// the in-cluster relay-router, which distributes traffic across healthy
-// relay VMs via WireGuard tunnels.
+// provisions, health-checks, and replaces relay VMs on AWS (paid primary),
+// OCI (free secondary), and optionally GCP (paid tertiary) to maintain
+// inference availability. Workspace pods route through the in-cluster
+// relay-router, which distributes traffic across healthy relay VMs via
+// WireGuard tunnels.
 type InferenceRelay struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

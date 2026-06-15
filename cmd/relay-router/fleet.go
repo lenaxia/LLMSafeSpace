@@ -122,9 +122,10 @@ func (f *relayFleet) UpdatePeers(peers []PeerEntry) {
 }
 
 // SelectRelay picks a relay using weighted random selection.
-// OCI receives 100% of traffic when healthy. GCP receives traffic only
-// when OCI is unavailable. Returns the selected relay ID and WG IP,
-// or empty strings if no healthy relay is available.
+// AWS receives 100% of traffic when healthy. OCI receives traffic only
+// when AWS is unavailable or draining. GCP receives traffic only when
+// both AWS and OCI are unavailable. Returns the selected relay ID and
+// WG IP, or empty strings if no healthy relay is available.
 func (f *relayFleet) SelectRelay() (id, wgIP string, ok bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
