@@ -365,6 +365,9 @@ func (r *WorkspaceReconciler) buildCredentialSetupInit(workspace *v1.Workspace, 
 if [ -f /mnt/secrets/user-secrets/secrets.json ]; then
   cp /mnt/secrets/user-secrets/secrets.json /sandbox-cfg/secrets.json
 fi
+if [ -f /mnt/secrets/user-secrets/workspace-config.json ]; then
+  cp /mnt/secrets/user-secrets/workspace-config.json /sandbox-cfg/workspace-config.json
+fi
 cp /mnt/secrets/password/password /sandbox-cfg/password
 `
 	pwVolume := corev1.Volume{
