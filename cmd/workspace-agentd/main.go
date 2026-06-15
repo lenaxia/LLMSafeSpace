@@ -760,15 +760,31 @@ func main() {
 	}
 	password := strings.TrimSpace(string(pw))
 
-	var proc *managedProcess
-	if supervise {
-		proc = &managedProcess{}
-		proc.start()
-	}
-
+	// Construct the HTTP client before the managed process so the onStart
+	// callback can close over it and be set in the struct literal — before
+	// start() spawns the supervisor goroutine. Assigning onStart after
+	// start() (the original wiring) races with the supervisor's mutex-
+	// protected read in supervise(): on the initial boot the supervisor
+	// could observe onStart == nil and silently skip the stale-session
+	// cleanup, defeating the entire fix.
 	client := &OpenCodeClient{
 		password: password,
 		client:   &http.Client{Timeout: 5 * time.Second},
+	}
+
+	var proc *managedProcess
+	if supervise {
+		proc = &managedProcess{
+			// Wire stale-session cleanup: after every opencode (re)start,
+			// once opencode is healthy, abort any sessions still marked
+			// busy from the previous run. Runs in a probeWg-tracked
+			// goroutine; bounded by a 30s deadline inside
+			// abortStaleSessions.
+			onStart: func() {
+				abortStaleSessionsAfterStart(rootCtx, client, log)
+			},
+		}
+		proc.start()
 	}
 
 	startedAt := time.Now()
@@ -1056,6 +1072,17 @@ type managedProcess struct {
 	// a leaked probe and a test's t.Cleanup that swaps out the
 	// logger race on `log` (caught by go test -race).
 	probeWg sync.WaitGroup
+
+	// onStart, if non-nil, is called in a probeWg-tracked goroutine
+	// immediately after each child process starts. Production uses
+	// this to abort stale busy sessions after every opencode restart.
+	// Tests may inject a custom callback; nil means no-op.
+	//
+	// MUST be set before start(): supervise() reads it under p.mu on the
+	// first iteration, and the supervisor goroutine is spawned by start().
+	// Assigning it after start() races with that read and may cause the
+	// initial-boot invocation to be skipped.
+	onStart func()
 }
 
 const (
@@ -1139,8 +1166,19 @@ func (p *managedProcess) supervise() {
 		// iteration so the next close() targets a fresh channel.
 		upCh := p.upCh
 		p.upCh = make(chan struct{})
+		onStart := p.onStart
 		p.mu.Unlock()
 		close(upCh)
+
+		// Fire the onStart callback (e.g. abort stale sessions) in a
+		// tracked goroutine so stop() can join it before returning.
+		if onStart != nil {
+			p.probeWg.Add(1)
+			go func() {
+				defer p.probeWg.Done()
+				onStart()
+			}()
+		}
 
 		// Sole Wait() in the codebase. This is the contract that
 		// Bug 2 broke.
