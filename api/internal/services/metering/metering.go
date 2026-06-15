@@ -471,7 +471,7 @@ func (s *Service) ExportUsage(ctx context.Context) (int, error) {
 // per-org (owner_type='org'). The JOIN resolves user → org via org_memberships,
 // picking the user's earliest membership deterministically (a user in multiple
 // orgs is billed to their first-joined org). Users without an org membership
-// produce no billing rows (external_customer_id='') and are skipped.
+// produce no billing rows (external_customer_id=”) and are skipped.
 func (s *Service) exportToStripe(ctx context.Context, lastID, maxID int64) error {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ue.event_type, SUM(ue.quantity), MAX(ue.event_time),
