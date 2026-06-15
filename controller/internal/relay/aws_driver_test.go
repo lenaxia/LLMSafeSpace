@@ -13,6 +13,10 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 )
 
+type testErr struct{ msg string }
+
+func (e testErr) Error() string { return e.msg }
+
 func TestAWSStateToVMState(t *testing.T) {
 	assert.Equal(t, VMStatePending, awsStateToVMState(ec2types.InstanceStateNamePending))
 	assert.Equal(t, VMStateRunning, awsStateToVMState(ec2types.InstanceStateNameRunning))
@@ -23,21 +27,21 @@ func TestAWSStateToVMState(t *testing.T) {
 }
 
 func TestClassifyAWSError_Capacity(t *testing.T) {
-	assert.True(t, IsCapacityError(classifyAWSError(simpleError("InsufficientInstanceCapacity: no m5.large"))))
-	assert.True(t, IsCapacityError(classifyAWSError(simpleError("InstanceLimitExceeded: too many instances"))))
-	assert.True(t, IsCapacityError(classifyAWSError(simpleError("RequestLimitExceeded: throttled"))))
-	assert.True(t, IsCapacityError(classifyAWSError(simpleError("Throttling: rate exceeded"))))
+	assert.True(t, IsCapacityError(classifyAWSError(testErr{"InsufficientInstanceCapacity: no m5.large"})))
+	assert.True(t, IsCapacityError(classifyAWSError(testErr{"InstanceLimitExceeded: too many instances"})))
+	assert.True(t, IsCapacityError(classifyAWSError(testErr{"RequestLimitExceeded: throttled"})))
+	assert.True(t, IsCapacityError(classifyAWSError(testErr{"Throttling: rate exceeded"})))
 }
 
 func TestClassifyAWSError_Config(t *testing.T) {
-	assert.True(t, IsConfigError(classifyAWSError(simpleError("InvalidParameterValue: bad AMI"))))
-	assert.True(t, IsConfigError(classifyAWSError(simpleError("InvalidAMIID: not found"))))
-	assert.True(t, IsConfigError(classifyAWSError(simpleError("UnauthorizedOperation: no perms"))))
-	assert.True(t, IsConfigError(classifyAWSError(simpleError("AccessDenied: forbidden"))))
+	assert.True(t, IsConfigError(classifyAWSError(testErr{"InvalidParameterValue: bad AMI"})))
+	assert.True(t, IsConfigError(classifyAWSError(testErr{"InvalidAMIID: not found"})))
+	assert.True(t, IsConfigError(classifyAWSError(testErr{"UnauthorizedOperation: no perms"})))
+	assert.True(t, IsConfigError(classifyAWSError(testErr{"AccessDenied: forbidden"})))
 }
 
 func TestClassifyAWSError_GenericError(t *testing.T) {
-	err := classifyAWSError(simpleError("InternalError: something broke"))
+	err := classifyAWSError(testErr{"InternalError: something broke"})
 	assert.False(t, IsCapacityError(err))
 	assert.False(t, IsConfigError(err))
 	assert.Contains(t, err.Error(), "AWS API error")
@@ -48,15 +52,11 @@ func TestClassifyAWSError_NilError(t *testing.T) {
 }
 
 func TestAWSDriver_GetConfig_FallsBackToDefaultChain(t *testing.T) {
-	// No secret in the cluster — should fall back to default credential chain
-	// (which will fail without env vars, but the function should not panic)
 	fakeClient := fake.NewClientBuilder().Build()
 	d := NewAWSDriver(fakeClient, "test-ns", "aws-relay-irwa")
 	_, err := d.loadAWSConfig(context.Background(), "us-east-1")
-	// This will fail because there are no AWS credentials in the test env,
-	// but it should NOT panic or return a config error.
-	// The error from the default chain is acceptable in tests.
-	_ = err // expected to be non-nil in test env without AWS creds
+	// Expected to fail in test env without AWS creds — just verify no panic
+	_ = err
 }
 
 func TestNewAWSDriver_DefaultCredentialSecret(t *testing.T) {

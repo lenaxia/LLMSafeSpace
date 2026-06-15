@@ -45,6 +45,9 @@ func NewAWSDriver(k8sClient client.Client, namespace, credentialSecret string) *
 
 // loadAWSConfig builds an AWS config for the given region, using credentials
 // from the K8s Secret if available, otherwise the default credential chain.
+// The Secret may contain either:
+//   - IRWA config (trustAnchorId, profileId, roleArn, region) — Phase 2
+//   - Static keys (accessKeyId, secretAccessKey) — direct EC2 access
 func (d *AWSDriver) loadAWSConfig(ctx context.Context, region string) (aws.Config, error) {
 	secret := &corev1.Secret{}
 	if err := d.k8sClient.Get(ctx,
@@ -58,7 +61,6 @@ func (d *AWSDriver) loadAWSConfig(ctx context.Context, region string) (aws.Confi
 	secretKey := string(secret.Data["secretAccessKey"])
 
 	if accessKey != "" && secretKey != "" {
-		// Use explicit credentials from the Secret
 		return awsconfig.LoadDefaultConfig(ctx,
 			awsconfig.WithRegion(region),
 			awsconfig.WithCredentialsProvider(
@@ -67,7 +69,7 @@ func (d *AWSDriver) loadAWSConfig(ctx context.Context, region string) (aws.Confi
 		)
 	}
 
-	// Fall back to default credential chain
+	// IRWA or other credential types fall back to default chain (IRSA, etc.)
 	return awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
 }
 
@@ -236,7 +238,7 @@ func (d *AWSDriver) resolveAMI(ctx context.Context, client *ec2.Client, region s
 		Filters: []ec2types.Filter{
 			{
 				Name:   aws.String("name"),
-				Values: []string{"ubuntu/images/hvm-ssd-generig-arm64-ubuntu-jammy-22.04*"},
+				Values: []string{"ubuntu/images/hvm-ssd-generic-arm64-ubuntu-jammy-22.04*"},
 			},
 			{
 				Name:   aws.String("architecture"),
@@ -260,7 +262,7 @@ func (d *AWSDriver) resolveAMI(ctx context.Context, client *ec2.Client, region s
 	var latestAMI *ec2types.Image
 	for i := range output.Images {
 		if latestAMI == nil ||
-			aws.ToInt64(output.Images[i].CreationDate) > aws.ToInt64(latestAMI.CreationDate) {
+			aws.ToString(output.Images[i].CreationDate) > aws.ToString(latestAMI.CreationDate) {
 			latestAMI = &output.Images[i]
 		}
 	}
