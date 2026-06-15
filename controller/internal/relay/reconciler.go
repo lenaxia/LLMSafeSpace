@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/lenaxia/llmsafespace/controller/internal/common"
+	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
@@ -228,6 +229,16 @@ func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1
 		}
 	}
 
+	metrics.RelayProvisioningFailed.Reset()
+	metrics.RelayDraining.Reset()
+	metrics.RelayQuotaExhausted.Reset()
+	setRelayHealthyReplicas(healthyReplicas)
+	for _, inst := range instances {
+		setRelayProvisioningFailed(inst.Provider, inst.State == string(v1.RelayStateProvisioningFailed))
+		setRelayDraining(inst.Provider, inst.State == string(v1.RelayStateDraining))
+		setRelayQuotaExhausted(inst.Provider, inst.State == string(v1.RelayStateQuotaExhausted))
+	}
+
 	// Build peer entries for ConfigMap (include WG public keys)
 	peers := make([]PeerEntry, 0, len(instances))
 	for _, inst := range instances {
@@ -360,6 +371,7 @@ func (r *InferenceRelayReconciler) provisionRelay(ctx context.Context, relay *v1
 	}
 
 	// Call the provider driver
+	start := time.Now()
 	result, err := driver.Provision(ctx, ProvisionRequest{
 		Name:        fmt.Sprintf("relay-%s", providerSpec.Provider),
 		Region:      providerSpec.Region,
@@ -371,6 +383,7 @@ func (r *InferenceRelayReconciler) provisionRelay(ctx context.Context, relay *v1
 		return nil, "", fmtError("provision", providerSpec.Provider, err)
 	}
 
+	observeProvisionDuration(providerSpec.Provider, time.Since(start).Seconds())
 	return result, kp.PublicKeyB64, nil
 }
 
@@ -476,6 +489,8 @@ func (r *InferenceRelayReconciler) handleRotation(ctx context.Context, relay *v1
 	if err := driver.Destroy(ctx, target.ID, target.Region); err != nil {
 		return fmtError("destroy during rotation", target.Provider, err)
 	}
+
+	recordRotation(target.Provider, "manual")
 
 	// Remove the instance from status
 	updated := relay.Status.Instances[:0]

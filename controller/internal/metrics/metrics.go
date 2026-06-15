@@ -128,9 +128,44 @@ var (
 	APIKeyLegacyTotal = prometheus.NewGauge(
 		prometheus.GaugeOpts{Name: "llmsafespace_api_key_legacy_total", Help: "API keys using plaintext storage (pre-migration 000017, target: 0)"},
 	)
+
+	// RELAY — InferenceRelay fleet lifecycle (Epic 42)
+
+	RelayHealthyReplicas = prometheus.NewGauge(
+		prometheus.GaugeOpts{Name: "llmsafespace_relay_healthy_replicas", Help: "count of healthy relay VMs"},
+	)
+	RelayProvisioningFailed = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{Name: "llmsafespace_relay_provisioning_failed", Help: "circuit breaker tripped (0/1)"},
+		[]string{"provider"},
+	)
+	RelayDraining = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{Name: "llmsafespace_relay_draining", Help: "relay in drain state (0/1)"},
+		[]string{"provider"},
+	)
+	RelayQuotaExhausted = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{Name: "llmsafespace_relay_quota_exhausted", Help: "egress quota exhausted (0/1)"},
+		[]string{"provider"},
+	)
+	RelayProvisionDurationSeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "llmsafespace_relay_provision_duration_seconds",
+			Help:    "time to provision + health-check a relay",
+			Buckets: []float64{5, 15, 30, 60, 120, 300, 600, 900, 1200},
+		},
+		[]string{"provider"},
+	)
+	RelayRotationTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Name: "llmsafespace_relay_rotation_total", Help: "rotation events (429, failure, manual)"},
+		[]string{"provider", "reason"},
+	)
 )
 
 func collectors() []prometheus.Collector {
+	return AllCollectors()
+}
+
+// AllCollectors returns all registered metric collectors. Exported for testing.
+func AllCollectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		WorkspacesCreatedTotal, WorkspacesDeletedTotal, WorkspacesRunning, WorkspacesFailedTotal,
 		WorkspaceRecoveryAttemptsTotal, WorkspaceRecoverySuccessTotal,
@@ -145,6 +180,8 @@ func collectors() []prometheus.Collector {
 		UserActiveSecondsTotal, UserCPUMillisecondsTotal,
 		UserDiskBytesSecondsTotal, UserMemoryBytesSecondsTotal,
 		APIKeyLegacyTotal,
+		RelayHealthyReplicas, RelayProvisioningFailed, RelayDraining,
+		RelayQuotaExhausted, RelayProvisionDurationSeconds, RelayRotationTotal,
 	}
 }
 
