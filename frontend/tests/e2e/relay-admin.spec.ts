@@ -18,6 +18,28 @@ async function mockAdminAuth(page: Page) {
       body: JSON.stringify({ registrationEnabled: true, oidcEnabled: false, instanceName: "test" }),
     });
   });
+  // Mock other API calls the settings page makes
+  await page.route(`${API_PREFIX}/users/me/settings`, async (route: Route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ settings: {}, schemaVersion: 1 }) });
+  });
+  await page.route(`${API_PREFIX}/users/me/settings/schema`, async (route: Route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ settings: [], schemaVersion: 1 }) });
+  });
+  await page.route(`${API_PREFIX}/provider-credentials`, async (route: Route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
+  });
+  await page.route(`${API_PREFIX}/secrets`, async (route: Route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
+  });
+  await page.route(`${API_PREFIX}/api-keys`, async (route: Route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
+  });
+  await page.route(`${API_PREFIX}/orgs`, async (route: Route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
+  });
+  await page.route(`${API_PREFIX}/events`, async (route: Route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) });
+  });
 }
 
 const mockSetupNotDeployed = {
