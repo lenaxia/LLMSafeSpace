@@ -91,7 +91,7 @@ func (h *RelayAdminHandler) checkMetalLB(ctx context.Context, resp *setupRespons
 		Limit:         1,
 	})
 	if err != nil {
-		return nil
+		return err
 	}
 	if len(pods.Items) > 0 {
 		resp.MetalLBInstalled = true
@@ -100,16 +100,11 @@ func (h *RelayAdminHandler) checkMetalLB(ctx context.Context, resp *setupRespons
 }
 
 func (h *RelayAdminHandler) checkRouter(ctx context.Context, resp *setupResponse) error {
-	deps, err := h.clientset.AppsV1().Deployments(h.namespace).List(ctx, metav1.ListOptions{
-		FieldSelector: "metadata.name=relay-router",
-		Limit:         1,
-	})
+	_, err := h.clientset.AppsV1().Deployments(h.namespace).Get(ctx, "relay-router", metav1.GetOptions{})
 	if err != nil {
 		return nil
 	}
-	if len(deps.Items) > 0 {
-		resp.RouterDeployed = true
-	}
+	resp.RouterDeployed = true
 	return nil
 }
 
@@ -196,6 +191,13 @@ type alertInfo struct {
 	Firing     bool   `json:"firing"`
 }
 
+type eventInfo struct {
+	Timestamp string `json:"timestamp"`
+	Type      string `json:"type"`
+	Message   string `json:"message"`
+	Severity  string `json:"severity"`
+}
+
 type statusResponse struct {
 	Deployed        bool             `json:"deployed"`
 	Overall         string           `json:"overall"`
@@ -205,7 +207,7 @@ type statusResponse struct {
 	ActiveStreams   int64            `json:"activeStreams"`
 	Instances       []instanceStatus `json:"instances"`
 	Conditions      []conditionInfo  `json:"conditions"`
-	RecentEvents    []gin.H          `json:"recentEvents"`
+	RecentEvents    []eventInfo      `json:"recentEvents"`
 	Alerts          []alertInfo      `json:"alerts"`
 }
 
@@ -289,13 +291,13 @@ func (h *RelayAdminHandler) GetStatus(c *gin.Context) {
 
 	resp.Alerts = buildAlerts(relay.Status.HealthyReplicas, len(relay.Status.Instances))
 
-	resp.RecentEvents = []gin.H{}
+	resp.RecentEvents = []eventInfo{}
 	if relay.Status.LastRotation != nil {
-		resp.RecentEvents = append(resp.RecentEvents, gin.H{
-			"timestamp": relay.Status.LastRotation.Time.Format(time.RFC3339),
-			"type":      "Rotated",
-			"message":   "Last rotation of relay fleet",
-			"severity":  "info",
+		resp.RecentEvents = append(resp.RecentEvents, eventInfo{
+			Timestamp: relay.Status.LastRotation.Time.Format(time.RFC3339),
+			Type:      "Rotated",
+			Message:   "Last rotation of relay fleet",
+			Severity:  "info",
 		})
 	}
 
@@ -312,10 +314,13 @@ type ociCredsRequest struct {
 	Region      string `json:"region" binding:"required"`
 }
 
+const maxRelayBodyBytes = 1 << 20 // 1 MiB max for relay credential request bodies
+
 // SaveOCICreds saves OCI credentials to a K8s Secret.
 func (h *RelayAdminHandler) SaveOCICreds(c *gin.Context) {
 	ctx := c.Request.Context()
 
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxRelayBodyBytes)
 	var req ociCredsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "tenancy, user, fingerprint, key, and region are required"})
@@ -354,6 +359,7 @@ type gcpCredsRequest struct {
 func (h *RelayAdminHandler) SaveGCPCreds(c *gin.Context) {
 	ctx := c.Request.Context()
 
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxRelayBodyBytes)
 	var req gcpCredsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "serviceAccountJson is required"})
