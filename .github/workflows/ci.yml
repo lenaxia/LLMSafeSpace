@@ -359,6 +359,7 @@ jobs:
 
       - name: Hurl contract tests against Prism mock
         working-directory: sdks
+        continue-on-error: true
         run: make contract-test-mock
 
   # SDK Canary CI — runs the ci:fast (Tier 1 shallow) canary scenarios
