@@ -4,21 +4,15 @@ import { render } from "../../test/utils";
 import { SessionItem } from "./SessionItem";
 import type { SessionListItem } from "../../api/types";
 
-const FIXED_NOW = new Date("2024-06-15T12:00:00Z").getTime();
-
-vi.mock("../../hooks/useNow", () => ({
-  useNow: () => FIXED_NOW,
-}));
-
 describe("SessionItem", () => {
   it("renders session title", () => {
-    const session: SessionListItem = { id: "s1", title: "My chat", messageCount: 3, status: "idle", lastMessageAt: new Date(FIXED_NOW).toISOString(), hasUnread: false };
+    const session: SessionListItem = { id: "s1", title: "My chat", messageCount: 3, status: "idle", lastMessageAt: new Date().toISOString(), hasUnread: false };
     render(<SessionItem session={session} selected={false} onSelect={vi.fn()} />);
     expect(screen.getByText("My chat")).toBeInTheDocument();
   });
 
   it("renders fallback title when title is empty", () => {
-    const twoHoursAgo = new Date(FIXED_NOW - 120 * 60_000).toISOString();
+    const twoHoursAgo = new Date(Date.now() - 120 * 60_000).toISOString();
     const session: SessionListItem = { id: "s1", messageCount: 3, status: "idle", lastMessageAt: twoHoursAgo, hasUnread: false };
     render(<SessionItem session={session} selected={false} onSelect={vi.fn()} />);
     expect(screen.getByText("New chat")).toBeInTheDocument();
@@ -37,8 +31,7 @@ describe("SessionItem", () => {
   });
 
   it("shows relative time for lastMessageAt", () => {
-    const twoMinAgo = new Date(FIXED_NOW - 120_000).toISOString();
-    const session: SessionListItem = { id: "s1", title: "Test", messageCount: 1, status: "idle", lastMessageAt: twoMinAgo, hasUnread: false };
+    const session: SessionListItem = { id: "s1", title: "Test", messageCount: 1, status: "idle", lastMessageAt: new Date(Date.now() - 120_000).toISOString(), hasUnread: false };
     render(<SessionItem session={session} selected={false} onSelect={vi.fn()} />);
     expect(screen.getByText("2m")).toBeInTheDocument();
   });

@@ -1,9 +1,5 @@
-/**
- * Format a timestamp as a human-readable relative string.
- * Pass `now` explicitly (from useNow()) so the output is pure and testable.
- */
-export function formatRelativeTime(iso: string, now: number): string {
-  const diff = now - new Date(iso).getTime();
+export function formatRelativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(diff / 60_000);
   if (mins < 1) return "now";
   if (mins < 60) return `${mins}m`;
