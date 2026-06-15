@@ -119,5 +119,9 @@ The `cmd/workspace-agentd` timeout failure under `-race -timeout 60s` is pre-exi
 
 ## Files Modified
 
-- `api/internal/services/workspace/workspace_service.go` — `EnsureWorkspaceConfig`: create-or-update pattern instead of update-only no-op on NotFound
-- `api/internal/services/workspace/workspace_service_test.go` — 6 new TDD tests for `EnsureWorkspaceConfig` and the zero-credential regression
+- `api/internal/services/workspace/workspace_service.go` — `EnsureWorkspaceConfig`: create-or-update pattern instead of update-only no-op on NotFound; `EnsureSecretsManifest`: merge `secrets.json` key instead of replacing entire Data map (preserves `workspace-config.json` on credential bind)
+- `api/internal/services/workspace/workspace_service_test.go` — 10 new TDD tests: 7 for `EnsureWorkspaceConfig` (including non-NotFound error path and zero-credential regression) + 2 for `EnsureSecretsManifest` clobber regression + 1 end-to-end zero-credential scenario
+- `controller/internal/workspace/pod_builder.go` — `credScript`: add conditional `cp` for `workspace-config.json` from mounted Secret to `/sandbox-cfg/`
+- `controller/internal/workspace/health_test.go` — add `workspace-config.json` copy assertion to existing init container test; add `TestInitContainerScript_CopiesWorkspaceConfig` regression test
+- `api/internal/handlers/models.go` — `SetModel`: surface `EnsureWorkspaceConfig` error as Warn log instead of silently discarding with `_ =`
+- `worklogs/0297_2026-06-15_ensure-workspace-config-create-or-update.md` — this worklog
