@@ -3,6 +3,7 @@ import type { Message, MessagePart } from "../../api/types";
 import { cn } from "../../lib/utils";
 import { MessagePart as MessagePartComponent } from "./MessagePart";
 import { Copy, Check } from "lucide-react";
+import { useNow } from "../../hooks/useNow";
 
 interface Props {
   message: Message;
@@ -50,6 +51,7 @@ export function MessageBubble({ message, isStreaming, modelName }: Props) {
   const isUser = message.role === "user";
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const now = useNow();
 
   const handleCopy = useCallback(async () => {
     const text = extractMessageText(message.parts);

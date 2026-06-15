@@ -26,6 +26,7 @@ import {
 import type { WorkspaceListItem } from "../../api/types";
 import { sessionDisplayTitle, generateWorkspaceName } from "../../lib/names";
 import { formatRelativeTime } from "../../lib/time";
+import { useNow } from "../../hooks/useNow";
 import { cn } from "../../lib/utils";
 import { buildSessionTree, ancestorChain } from "../../lib/sessionTree";
 import type { SessionTreeNode } from "../../lib/sessionTree";
@@ -691,6 +692,7 @@ function SessionTreeRow({
   const isRenaming = renamingSession?.sessionId === s.id;
   const hasChildren = node.children.length > 0;
   const isExpanded = expanded.has(s.id);
+  const now = useNow();
   const title = sessionDisplayTitle(s.title, s.lastMessageAt);
   const isBusy = useIsSessionBusy(s.id);
   const isUnread = useIsSessionUnread(s.id);
@@ -786,7 +788,7 @@ function SessionTreeRow({
             </span>
           )}
           {s.lastMessageAt && (
-            <span className="flex-shrink-0 text-xs text-muted-foreground/60">{formatRelativeTime(s.lastMessageAt)}</span>
+            <span className="flex-shrink-0 text-xs text-muted-foreground/60">{formatRelativeTime(s.lastMessageAt, now)}</span>
           )}
         </button>
         <div className="mr-1 flex-shrink-0">
