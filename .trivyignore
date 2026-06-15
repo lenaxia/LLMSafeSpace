@@ -25,3 +25,10 @@
 # incompatible with Vite 5 (drops destructuring transpile for ES2020 targets).
 # Re-evaluate when upgrading to Vite 6+.
 GHSA-gv7w-rqvm-qjhr exp:2026-09-13
+
+# CVE-2026-53571 — vite: server.fs.deny bypass on Windows alternate paths
+# Not exploitable: LLMSafeSpace runs on Linux (Debian-based containers) only.
+# The vulnerability affects Windows-specific alternate data stream paths which
+# do not exist on Linux filesystems. Fix is available in vite 6.4.3/7.3.5/8.0.16;
+# upgrade tracked separately from this bug fix.
+CVE-2026-53571 exp:2026-09-15
