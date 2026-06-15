@@ -352,6 +352,15 @@ jobs:
           npx tsc --noEmit
           npm run build
 
+      - name: Install Hurl
+        run: |
+          curl -L https://github.com/Orange-OpenSource/hurl/releases/download/5.0.1/hurl-5.0.1-x86_64-linux.tar.gz | tar xz -C /tmp
+          echo "/tmp/hurl-5.0.1" >> "$GITHUB_PATH"
+
+      - name: Hurl contract tests against Prism mock
+        working-directory: sdks
+        run: make contract-test-mock
+
   # SDK Canary CI — runs the ci:fast (Tier 1 shallow) canary scenarios
   # against the local API server. These scenarios do not require a live
   # Kubernetes cluster, LLM credentials, or waiting for pod scheduling.
