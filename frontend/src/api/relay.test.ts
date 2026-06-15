@@ -30,32 +30,6 @@ describe("relayApi", () => {
     });
   });
 
-  describe("saveAWSConfig", () => {
-    it("calls POST /admin/relay/aws-config with config", async () => {
-      vi.mocked(api.post).mockResolvedValue({ configured: true });
-      await relayApi.saveAWSConfig({
-        trustAnchorId: "ta-1",
-        profileId: "p-1",
-        roleArn: "arn:aws:iam::123:role/r",
-        region: "us-east-1",
-      });
-      expect(api.post).toHaveBeenCalledWith("/admin/relay/aws-config", {
-        trustAnchorId: "ta-1",
-        profileId: "p-1",
-        roleArn: "arn:aws:iam::123:role/r",
-        region: "us-east-1",
-      });
-    });
-  });
-
-  describe("testAWS", () => {
-    it("calls POST /admin/relay/test-aws", async () => {
-      vi.mocked(api.post).mockResolvedValue({ valid: true, accountId: "123" });
-      await relayApi.testAWS();
-      expect(api.post).toHaveBeenCalledWith("/admin/relay/test-aws");
-    });
-  });
-
   describe("saveOCICreds", () => {
     it("calls POST /admin/relay/oci-creds with credentials", async () => {
       vi.mocked(api.post).mockResolvedValue({ configured: true });
@@ -76,27 +50,37 @@ describe("relayApi", () => {
     });
   });
 
+  describe("saveGCPCreds", () => {
+    it("calls POST /admin/relay/gcp-creds with service account JSON", async () => {
+      vi.mocked(api.post).mockResolvedValue({ configured: true });
+      await relayApi.saveGCPCreds({ serviceAccountJson: '{"type":"service_account"}' });
+      expect(api.post).toHaveBeenCalledWith("/admin/relay/gcp-creds", {
+        serviceAccountJson: '{"type":"service_account"}',
+      });
+    });
+  });
+
   describe("deploy", () => {
     it("calls POST /admin/relay/deploy with fleet config", async () => {
       vi.mocked(api.post).mockResolvedValue({ deployed: true });
       await relayApi.deploy({
         upstreamURL: "https://example.com",
         routerEndpoint: "gw:51820",
-        providers: ["aws", "oci"],
+        providers: ["oci", "gcp"],
       });
       expect(api.post).toHaveBeenCalledWith("/admin/relay/deploy", {
         upstreamURL: "https://example.com",
         routerEndpoint: "gw:51820",
-        providers: ["aws", "oci"],
+        providers: ["oci", "gcp"],
       });
     });
   });
 
   describe("rotate", () => {
     it("calls POST /admin/relay/rotate/:id", async () => {
-      vi.mocked(api.post).mockResolvedValue({ rotating: "aws-1" });
-      await relayApi.rotate("aws-1");
-      expect(api.post).toHaveBeenCalledWith("/admin/relay/rotate/aws-1");
+      vi.mocked(api.post).mockResolvedValue({ rotating: "oci-1" });
+      await relayApi.rotate("oci-1");
+      expect(api.post).toHaveBeenCalledWith("/admin/relay/rotate/oci-1");
     });
   });
 

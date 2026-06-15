@@ -19,27 +19,15 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-// AWSConnectionTester abstracts the AWS IAM Roles Anywhere connection test.
-type AWSConnectionTester interface {
-	TestConnection(ctx context.Context, trustAnchorID, profileID, roleARN, region string) (accountID string, err error)
-}
-
-// noopAWSTester always returns success — replaced by a real implementation in production.
-type noopAWSTester struct{}
-
-func (noopAWSTester) TestConnection(_ context.Context, _, _, _, _ string) (string, error) {
-	return "", nil
-}
-
 // RelayAdminHandler serves the relay admin setup wizard and status dashboard endpoints.
+// The relay fleet uses OCI (Always Free, primary) and GCP (Always Free, failover)
+// providers — matching the InferenceRelay CRD enum `oci;gcp`.
 type RelayAdminHandler struct {
 	clientset    kubernetes.Interface
 	llmClient    interfaces.LLMSafespaceV1Interface
 	namespace    string
 	routerSvcURL string
 	httpClient   *http.Client
-	awsTester    AWSConnectionTester
-	caSecretName string
 }
 
 // NewRelayAdminHandler creates a new relay admin handler.
@@ -50,15 +38,6 @@ func NewRelayAdminHandler(clientset kubernetes.Interface, llmClient interfaces.L
 		namespace:    namespace,
 		routerSvcURL: routerSvcURL,
 		httpClient:   &http.Client{Timeout: 5 * time.Second},
-		awsTester:    noopAWSTester{},
-		caSecretName: "relay-root-ca",
-	}
-}
-
-// SetAWSTester overrides the AWS connection tester (for testing or production wiring).
-func (h *RelayAdminHandler) SetAWSTester(tester AWSConnectionTester) {
-	if tester != nil {
-		h.awsTester = tester
 	}
 }
 
@@ -72,14 +51,13 @@ func (h *RelayAdminHandler) SetHTTPClient(client *http.Client) {
 // ─── US-43.2: Setup checklist ───────────────────────────────────────────────
 
 type setupResponse struct {
-	Deployed             bool   `json:"deployed"`
-	CertManagerInstalled bool   `json:"certManagerInstalled"`
-	MetalLBInstalled     bool   `json:"metalLBInstalled"`
-	RouterDeployed       bool   `json:"routerDeployed"`
-	CRDInstalled         bool   `json:"crdInstalled"`
-	AWSConfigured        bool   `json:"awsConfigured"`
-	OCIConfigured        bool   `json:"ociConfigured"`
-	WireGuardEndpoint    string `json:"wireGuardEndpoint"`
+	Deployed          bool   `json:"deployed"`
+	MetalLBInstalled  bool   `json:"metalLBInstalled"`
+	RouterDeployed    bool   `json:"routerDeployed"`
+	CRDInstalled      bool   `json:"crdInstalled"`
+	OCIConfigured     bool   `json:"ociConfigured"`
+	GCPConfigured     bool   `json:"gcpConfigured"`
+	WireGuardEndpoint string `json:"wireGuardEndpoint"`
 }
 
 // GetSetup returns the prerequisite checklist state for the relay setup wizard.
@@ -87,10 +65,6 @@ func (h *RelayAdminHandler) GetSetup(c *gin.Context) {
 	ctx := c.Request.Context()
 	resp := setupResponse{}
 
-	if err := h.checkCertManager(ctx, &resp); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "cert-manager check failed: " + err.Error()})
-		return
-	}
 	if err := h.checkMetalLB(ctx, &resp); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "MetalLB check failed: " + err.Error()})
 		return
@@ -103,24 +77,12 @@ func (h *RelayAdminHandler) GetSetup(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "CRD check failed: " + err.Error()})
 		return
 	}
-	h.checkAWSSecret(ctx, &resp)
 	h.checkOCISecret(ctx, &resp)
+	h.checkGCPSecret(ctx, &resp)
 	h.fillWireGuardEndpoint(ctx, &resp)
 	resp.Deployed = h.isFleetDeployed(ctx)
 
 	c.JSON(http.StatusOK, resp)
-}
-
-func (h *RelayAdminHandler) checkCertManager(ctx context.Context, resp *setupResponse) error {
-	_, err := h.clientset.Discovery().ServerResourcesForGroupVersion("cert-manager.io/v1")
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "could not find") {
-			return nil
-		}
-		return err
-	}
-	resp.CertManagerInstalled = true
-	return nil
 }
 
 func (h *RelayAdminHandler) checkMetalLB(ctx context.Context, resp *setupResponse) error {
@@ -165,14 +127,14 @@ func (h *RelayAdminHandler) checkCRD(ctx context.Context, resp *setupResponse) e
 	return nil
 }
 
-func (h *RelayAdminHandler) checkAWSSecret(ctx context.Context, resp *setupResponse) {
-	_, err := h.clientset.CoreV1().Secrets(h.namespace).Get(ctx, "aws-relay-irwa", metav1.GetOptions{})
-	resp.AWSConfigured = err == nil
-}
-
 func (h *RelayAdminHandler) checkOCISecret(ctx context.Context, resp *setupResponse) {
 	_, err := h.clientset.CoreV1().Secrets(h.namespace).Get(ctx, "oci-credentials", metav1.GetOptions{})
 	resp.OCIConfigured = err == nil
+}
+
+func (h *RelayAdminHandler) checkGCPSecret(ctx context.Context, resp *setupResponse) {
+	_, err := h.clientset.CoreV1().Secrets(h.namespace).Get(ctx, "gcp-credentials", metav1.GetOptions{})
+	resp.GCPConfigured = err == nil
 }
 
 func (h *RelayAdminHandler) fillWireGuardEndpoint(ctx context.Context, resp *setupResponse) {
@@ -265,6 +227,12 @@ func (h *RelayAdminHandler) GetStatus(c *gin.Context) {
 	relay := relays.Items[0]
 	routerMetrics := h.scrapeRouterMetrics(ctx)
 
+	// Build a provider→shape lookup from spec for the status response
+	shapeByProvider := make(map[string]string)
+	for _, p := range relay.Spec.Providers {
+		shapeByProvider[p.Provider] = p.Shape
+	}
+
 	resp := statusResponse{
 		Deployed:        true,
 		Overall:         "healthy",
@@ -300,6 +268,7 @@ func (h *RelayAdminHandler) GetStatus(c *gin.Context) {
 			ID:       inst.ID,
 			Provider: inst.Provider,
 			Region:   inst.Region,
+			Shape:    shapeByProvider[inst.Provider],
 			WgIP:     inst.WgIP,
 			PublicIP: inst.PublicIP,
 			State:    inst.State,
@@ -312,7 +281,7 @@ func (h *RelayAdminHandler) GetStatus(c *gin.Context) {
 				EgressLimitBytes: egressLimitForProvider(inst.Provider),
 				ActiveStreams:    routerMetrics.streamsByProvider[inst.Provider],
 			},
-			Cost:               computeCost(inst.Provider, inst.Provider == "aws" && inst.Healthy),
+			Cost:               computeCost(inst.Provider),
 			LastProvisionError: inst.LastProvisionError,
 		}
 		resp.Instances = append(resp.Instances, is)
@@ -331,104 +300,6 @@ func (h *RelayAdminHandler) GetStatus(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, resp)
-}
-
-// ─── US-43.3: CA cert download ──────────────────────────────────────────────
-
-// GetCA downloads the root CA certificate (public key only) used for WireGuard mTLS.
-func (h *RelayAdminHandler) GetCA(c *gin.Context) {
-	ctx := c.Request.Context()
-
-	secret, err := h.clientset.CoreV1().Secrets(h.namespace).Get(ctx, h.caSecretName, metav1.GetOptions{})
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "root CA certificate not found — has the relay chart been deployed?"})
-		return
-	}
-
-	certPEM, ok := secret.Data["tls.crt"]
-	if !ok || len(certPEM) == 0 {
-		certPEM = secret.Data["ca.crt"]
-	}
-	if len(certPEM) == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "root CA certificate not found in secret"})
-		return
-	}
-
-	c.Header("Content-Disposition", `attachment; filename="relay-root-ca.pem"`)
-	c.Data(http.StatusOK, "application/x-pem-file", certPEM)
-}
-
-// ─── US-43.4: AWS IAM Roles Anywhere config ─────────────────────────────────
-
-type awsConfigRequest struct {
-	TrustAnchorID string `json:"trustAnchorId" binding:"required"`
-	ProfileID     string `json:"profileId" binding:"required"`
-	RoleARN       string `json:"roleArn" binding:"required"`
-	Region        string `json:"region" binding:"required"`
-}
-
-// SaveAWSConfig saves AWS IAM Roles Anywhere configuration to a K8s Secret.
-func (h *RelayAdminHandler) SaveAWSConfig(c *gin.Context) {
-	ctx := c.Request.Context()
-
-	var req awsConfigRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "trustAnchorId, profileId, roleArn, and region are required"})
-		return
-	}
-
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "aws-relay-irwa",
-			Namespace: h.namespace,
-		},
-		Data: map[string][]byte{
-			"trustAnchorId": []byte(req.TrustAnchorID),
-			"profileId":     []byte(req.ProfileID),
-			"roleArn":       []byte(req.RoleARN),
-			"region":        []byte(req.Region),
-		},
-	}
-
-	if err := h.upsertSecret(ctx, secret); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save AWS config: " + err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"configured": true})
-}
-
-// TestAWS tests the AWS connection using the saved IAM Roles Anywhere configuration.
-func (h *RelayAdminHandler) TestAWS(c *gin.Context) {
-	ctx := c.Request.Context()
-
-	secret, err := h.clientset.CoreV1().Secrets(h.namespace).Get(ctx, "aws-relay-irwa", metav1.GetOptions{})
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "AWS config not saved yet", "valid": false})
-		return
-	}
-
-	trustAnchorID := string(secret.Data["trustAnchorId"])
-	profileID := string(secret.Data["profileId"])
-	roleARN := string(secret.Data["roleArn"])
-	region := string(secret.Data["region"])
-
-	if trustAnchorID == "" || profileID == "" || roleARN == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "AWS config is incomplete", "valid": false})
-		return
-	}
-
-	accountID, err := h.awsTester.TestConnection(ctx, trustAnchorID, profileID, roleARN, region)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"valid": false, "error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"valid":     true,
-		"accountId": accountID,
-		"roleArn":   roleARN,
-	})
 }
 
 // ─── US-43.5: OCI credentials ───────────────────────────────────────────────
@@ -473,6 +344,40 @@ func (h *RelayAdminHandler) SaveOCICreds(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"configured": true})
 }
 
+// ─── GCP credentials ────────────────────────────────────────────────────────
+
+type gcpCredsRequest struct {
+	ServiceAccountJSON string `json:"serviceAccountJson" binding:"required"`
+}
+
+// SaveGCPCreds saves GCP service account JSON to a K8s Secret.
+func (h *RelayAdminHandler) SaveGCPCreds(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	var req gcpCredsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "serviceAccountJson is required"})
+		return
+	}
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "gcp-credentials",
+			Namespace: h.namespace,
+		},
+		Data: map[string][]byte{
+			"service-account-json": []byte(req.ServiceAccountJSON),
+		},
+	}
+
+	if err := h.upsertSecret(ctx, secret); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save GCP credentials: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"configured": true})
+}
+
 // ─── US-43.6: Deploy relay fleet ────────────────────────────────────────────
 
 type deployRequest struct {
@@ -483,6 +388,7 @@ type deployRequest struct {
 }
 
 // Deploy creates or updates the InferenceRelay CR.
+// Valid providers are "oci" and "gcp" — matching the CRD enum validation.
 func (h *RelayAdminHandler) Deploy(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -500,20 +406,20 @@ func (h *RelayAdminHandler) Deploy(c *gin.Context) {
 	providers := make([]v1.RelayProviderSpec, 0, len(req.Providers))
 	for _, p := range req.Providers {
 		switch p {
-		case "aws":
-			providers = append(providers, v1.RelayProviderSpec{
-				Provider:       "aws",
-				Region:         "us-east-1",
-				CredentialsRef: corev1.LocalObjectReference{Name: "aws-relay-irwa"},
-			})
 		case "oci":
 			providers = append(providers, v1.RelayProviderSpec{
 				Provider:       "oci",
 				Region:         "us-ashburn-1",
 				CredentialsRef: corev1.LocalObjectReference{Name: "oci-credentials"},
 			})
+		case "gcp":
+			providers = append(providers, v1.RelayProviderSpec{
+				Provider:       "gcp",
+				Region:         "us-west1",
+				CredentialsRef: corev1.LocalObjectReference{Name: "gcp-credentials"},
+			})
 		default:
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("unknown provider: %s", p)})
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("unknown provider: %s (valid: oci, gcp)", p)})
 			return
 		}
 	}
@@ -576,7 +482,8 @@ func (h *RelayAdminHandler) Rotate(c *gin.Context) {
 		return
 	}
 
-	_, err = h.llmClient.InferenceRelays().Update(ctx, applyAnnotationPatch(existing, "relay.llmsafespace.dev/rotate", relayID, time.Now().Format(time.RFC3339)))
+	applyAnnotation(existing, "relay.llmsafespace.dev/rotate", relayID)
+	_, err = h.llmClient.InferenceRelays().Update(ctx, existing)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to trigger rotation: " + err.Error()})
 		return
@@ -595,7 +502,8 @@ func (h *RelayAdminHandler) Pause(c *gin.Context) {
 		return
 	}
 
-	_, err = h.llmClient.InferenceRelays().Update(ctx, applyAnnotationPatch(existing, "relay.llmsafespace.dev/paused", "true", ""))
+	applyAnnotation(existing, "relay.llmsafespace.dev/paused", "true")
+	_, err = h.llmClient.InferenceRelays().Update(ctx, existing)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to pause relay fleet: " + err.Error()})
 		return
@@ -614,10 +522,9 @@ func (h *RelayAdminHandler) Resume(c *gin.Context) {
 		return
 	}
 
-	if existing.Annotations == nil {
-		existing.Annotations = map[string]string{}
+	if existing.Annotations != nil {
+		delete(existing.Annotations, "relay.llmsafespace.dev/paused")
 	}
-	delete(existing.Annotations, "relay.llmsafespace.dev/paused")
 
 	_, err = h.llmClient.InferenceRelays().Update(ctx, existing)
 	if err != nil {
@@ -630,31 +537,22 @@ func (h *RelayAdminHandler) Resume(c *gin.Context) {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+func applyAnnotation(relay *v1.InferenceRelay, key, value string) {
+	if relay.Annotations == nil {
+		relay.Annotations = map[string]string{}
+	}
+	relay.Annotations[key] = value
+}
+
 func (h *RelayAdminHandler) upsertSecret(ctx context.Context, desired *corev1.Secret) error {
-	_, err := h.clientset.CoreV1().Secrets(h.namespace).Get(ctx, desired.Name, metav1.GetOptions{})
+	existing, err := h.clientset.CoreV1().Secrets(h.namespace).Get(ctx, desired.Name, metav1.GetOptions{})
 	if err == nil {
-		desired.ResourceVersion = h.getSecretResourceVersion(ctx, desired.Name)
+		desired.ResourceVersion = existing.ResourceVersion
 		_, err = h.clientset.CoreV1().Secrets(h.namespace).Update(ctx, desired, metav1.UpdateOptions{})
 		return err
 	}
 	_, err = h.clientset.CoreV1().Secrets(h.namespace).Create(ctx, desired, metav1.CreateOptions{})
 	return err
-}
-
-func (h *RelayAdminHandler) getSecretResourceVersion(ctx context.Context, name string) string {
-	s, err := h.clientset.CoreV1().Secrets(h.namespace).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return ""
-	}
-	return s.ResourceVersion
-}
-
-func applyAnnotationPatch(relay *v1.InferenceRelay, key, value, _ string) *v1.InferenceRelay {
-	if relay.Annotations == nil {
-		relay.Annotations = map[string]string{}
-	}
-	relay.Annotations[key] = value
-	return relay
 }
 
 type routerMetricsData struct {
@@ -746,30 +644,23 @@ func parseInt(s string, out *int64) {
 	*out = n
 }
 
+// egressLimitForProvider returns the free-tier egress limit in bytes.
+// OCI Always Free: 10 TB/month. GCP Always Free (e2-micro): 1 GB/month.
 func egressLimitForProvider(provider string) int64 {
 	switch provider {
-	case "aws":
-		return 100 * 1024 * 1024 * 1024
 	case "oci":
-		return 10 * 1024 * 1024 * 1024 * 1024
+		return 10 * 1024 * 1024 * 1024 * 1024 // 10 TB
+	case "gcp":
+		return 1 * 1024 * 1024 * 1024 // 1 GB
 	default:
-		return 100 * 1024 * 1024 * 1024
+		return 1 * 1024 * 1024 * 1024
 	}
 }
 
-func computeCost(provider string, isRunning bool) instanceCost {
-	if !isRunning {
-		return instanceCost{}
-	}
-	switch provider {
-	case "aws":
-		return instanceCost{
-			MonthlyEstimate: 700,
-			SpentThisMonth:  0,
-		}
-	default:
-		return instanceCost{}
-	}
+// computeCost returns the cost estimate for a provider.
+// Both OCI and GCP are Always Free tier — cost is always $0.
+func computeCost(_ string) instanceCost {
+	return instanceCost{}
 }
 
 func buildAlerts(healthy, total int) []alertInfo {

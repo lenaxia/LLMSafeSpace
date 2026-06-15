@@ -48,10 +48,8 @@ func setupRelayRouter(t *testing.T, clientset *fake.Clientset) (*gin.Engine, *Re
 	g := r.Group("/api/v1/admin/relay")
 	g.GET("/setup", h.GetSetup)
 	g.GET("/status", h.GetStatus)
-	g.GET("/ca", h.GetCA)
-	g.POST("/aws-config", h.SaveAWSConfig)
-	g.POST("/test-aws", h.TestAWS)
 	g.POST("/oci-creds", h.SaveOCICreds)
+	g.POST("/gcp-creds", h.SaveGCPCreds)
 	g.POST("/deploy", h.Deploy)
 	g.POST("/rotate/:id", h.Rotate)
 	g.POST("/pause", h.Pause)
@@ -62,13 +60,15 @@ func setupRelayRouter(t *testing.T, clientset *fake.Clientset) (*gin.Engine, *Re
 
 func makeRelayCR(name string, instances []v1.RelayInstanceStatus, healthy int) *v1.InferenceRelay {
 	return &v1.InferenceRelay{
-		TypeMeta: metav1.TypeMeta{APIVersion: "llmsafespace.dev/v1", Kind: "InferenceRelay"},
-		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
-		},
+		TypeMeta:   metav1.TypeMeta{APIVersion: "llmsafespace.dev/v1", Kind: "InferenceRelay"},
+		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: v1.InferenceRelaySpec{
 			UpstreamURL: "https://opencode.ai/zen/v1",
-			WireGuard:   v1.WireGuardConfig{RouterEndpoint: "relay-gw.example.com:51820"},
+			Providers: []v1.RelayProviderSpec{
+				{Provider: "oci", Region: "us-ashburn-1", Shape: "VM.Standard.A1.Flex"},
+				{Provider: "gcp", Region: "us-west1", Shape: "e2-micro"},
+			},
+			WireGuard: v1.WireGuardConfig{RouterEndpoint: "relay-gw.example.com:51820"},
 		},
 		Status: v1.InferenceRelayStatus{
 			Instances:       instances,
@@ -87,16 +87,6 @@ func makeRelayCRWithConditions(name string, conditions []metav1.Condition) *v1.I
 	}
 }
 
-// fakeAWSTester implements AWSConnectionTester for testing.
-type fakeAWSTester struct {
-	accountID string
-	err       error
-}
-
-func (f fakeAWSTester) TestConnection(_ context.Context, _, _, _, _ string) (string, error) {
-	return f.accountID, f.err
-}
-
 func doRelayRequest(r *gin.Engine, method, path string, body ...string) *httptest.ResponseRecorder {
 	var buf *bytes.Buffer
 	if len(body) > 0 {
@@ -111,7 +101,6 @@ func doRelayRequest(r *gin.Engine, method, path string, body ...string) *httptes
 	return w
 }
 
-// overrideList replaces the default List expectation on a relay mock with a specific return value.
 func overrideList(relayMock *k8smocks.MockInferenceRelayInterface, list *v1.InferenceRelayList, err error) {
 	var filtered []*mock.Call
 	for _, c := range relayMock.ExpectedCalls {
@@ -139,24 +128,10 @@ func TestRelaySetup_NoSecrets_NotConfigured(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	var resp setupResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.False(t, resp.AWSConfigured, "AWS should not be configured without secret")
-	assert.False(t, resp.OCIConfigured, "OCI should not be configured without secret")
-	assert.False(t, resp.Deployed, "fleet should not be deployed")
-	assert.False(t, resp.RouterDeployed, "router should not be deployed in fake cluster")
-}
-
-func TestRelaySetup_AWSSecretExists_Configured(t *testing.T) {
-	clientset := fake.NewSimpleClientset(&corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "aws-relay-irwa", Namespace: testNamespace},
-	})
-	r, _, _ := setupRelayRouter(t, clientset)
-
-	w := doRelayRequest(r, "GET", "/api/v1/admin/relay/setup")
-
-	require.Equal(t, http.StatusOK, w.Code)
-	var resp setupResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.True(t, resp.AWSConfigured)
+	assert.False(t, resp.OCIConfigured)
+	assert.False(t, resp.GCPConfigured)
+	assert.False(t, resp.Deployed)
+	assert.False(t, resp.RouterDeployed)
 }
 
 func TestRelaySetup_OCISecretExists_Configured(t *testing.T) {
@@ -173,6 +148,20 @@ func TestRelaySetup_OCISecretExists_Configured(t *testing.T) {
 	assert.True(t, resp.OCIConfigured)
 }
 
+func TestRelaySetup_GCPSecretExists_Configured(t *testing.T) {
+	clientset := fake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "gcp-credentials", Namespace: testNamespace},
+	})
+	r, _, _ := setupRelayRouter(t, clientset)
+
+	w := doRelayRequest(r, "GET", "/api/v1/admin/relay/setup")
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp setupResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.True(t, resp.GCPConfigured)
+}
+
 func TestRelaySetup_RouterDeploymentExists_Deployed(t *testing.T) {
 	clientset := fake.NewSimpleClientset(&appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "relay-router", Namespace: testNamespace},
@@ -184,7 +173,7 @@ func TestRelaySetup_RouterDeploymentExists_Deployed(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	var resp setupResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.True(t, resp.RouterDeployed, "router should be detected from deployment")
+	assert.True(t, resp.RouterDeployed)
 }
 
 func TestRelaySetup_FleetDeployed_WireGuardEndpoint(t *testing.T) {
@@ -216,8 +205,8 @@ func TestRelayStatus_NotDeployed(t *testing.T) {
 func TestRelayStatus_HealthyFleet(t *testing.T) {
 	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
 	instances := []v1.RelayInstanceStatus{
-		{ID: "aws-1", Provider: "aws", Region: "us-east-1", State: "healthy", Healthy: true, WgIP: "10.42.42.4", PublicIP: "1.2.3.4"},
-		{ID: "oci-1", Provider: "oci", Region: "us-ashburn-1", State: "healthy", Healthy: true, WgIP: "10.42.42.2", PublicIP: "5.6.7.8"},
+		{ID: "oci-1", Provider: "oci", Region: "us-ashburn-1", State: "healthy", Healthy: true, WgIP: "10.42.42.2", PublicIP: "1.2.3.4"},
+		{ID: "gcp-1", Provider: "gcp", Region: "us-west1", State: "healthy", Healthy: true, WgIP: "10.42.42.3", PublicIP: "5.6.7.8"},
 	}
 	overrideList(relayMock, &v1.InferenceRelayList{Items: []v1.InferenceRelay{*makeRelayCR("relay-fleet", instances, 2)}}, nil)
 
@@ -231,15 +220,31 @@ func TestRelayStatus_HealthyFleet(t *testing.T) {
 	assert.Equal(t, 2, resp.HealthyReplicas)
 	assert.Equal(t, 2, resp.TotalReplicas)
 	require.Len(t, resp.Instances, 2)
-	assert.Equal(t, "aws-1", resp.Instances[0].ID)
-	assert.Equal(t, "oci-1", resp.Instances[1].ID)
+	assert.Equal(t, "oci-1", resp.Instances[0].ID)
+	assert.Equal(t, "gcp-1", resp.Instances[1].ID)
+}
+
+func TestRelayStatus_IncludesShapeFromSpec(t *testing.T) {
+	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
+	instances := []v1.RelayInstanceStatus{
+		{ID: "oci-1", Provider: "oci", Region: "us-ashburn-1", State: "healthy", Healthy: true},
+	}
+	overrideList(relayMock, &v1.InferenceRelayList{Items: []v1.InferenceRelay{*makeRelayCR("relay-fleet", instances, 1)}}, nil)
+
+	w := doRelayRequest(r, "GET", "/api/v1/admin/relay/status")
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp statusResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp.Instances, 1)
+	assert.Equal(t, "VM.Standard.A1.Flex", resp.Instances[0].Shape)
 }
 
 func TestRelayStatus_DegradedFleet(t *testing.T) {
 	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
 	instances := []v1.RelayInstanceStatus{
-		{ID: "aws-1", Provider: "aws", State: "healthy", Healthy: true},
-		{ID: "oci-1", Provider: "oci", State: "unhealthy", Healthy: false},
+		{ID: "oci-1", Provider: "oci", State: "healthy", Healthy: true},
+		{ID: "gcp-1", Provider: "gcp", State: "unhealthy", Healthy: false},
 	}
 	overrideList(relayMock, &v1.InferenceRelayList{Items: []v1.InferenceRelay{*makeRelayCR("relay-fleet", instances, 1)}}, nil)
 
@@ -256,8 +261,8 @@ func TestRelayStatus_DegradedFleet(t *testing.T) {
 func TestRelayStatus_AllUnhealthy(t *testing.T) {
 	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
 	instances := []v1.RelayInstanceStatus{
-		{ID: "aws-1", Provider: "aws", State: "unhealthy", Healthy: false},
 		{ID: "oci-1", Provider: "oci", State: "unhealthy", Healthy: false},
+		{ID: "gcp-1", Provider: "gcp", State: "unhealthy", Healthy: false},
 	}
 	overrideList(relayMock, &v1.InferenceRelayList{Items: []v1.InferenceRelay{*makeRelayCR("relay-fleet", instances, 0)}}, nil)
 
@@ -287,7 +292,7 @@ func TestRelayStatus_FallbackCondition(t *testing.T) {
 func TestRelayStatus_AlertsFiring(t *testing.T) {
 	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
 	instances := []v1.RelayInstanceStatus{
-		{ID: "aws-1", Provider: "aws", State: "unhealthy", Healthy: false},
+		{ID: "oci-1", Provider: "oci", State: "unhealthy", Healthy: false},
 	}
 	overrideList(relayMock, &v1.InferenceRelayList{Items: []v1.InferenceRelay{*makeRelayCR("relay-fleet", instances, 0)}}, nil)
 
@@ -297,14 +302,14 @@ func TestRelayStatus_AlertsFiring(t *testing.T) {
 	var resp statusResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.NotEmpty(t, resp.Alerts)
-	assert.True(t, resp.Alerts[0].Firing, "RelayFleetDegraded should be firing")
-	assert.True(t, resp.Alerts[1].Firing, "RelayFleetCritical should be firing when healthy==0")
+	assert.True(t, resp.Alerts[0].Firing)
+	assert.True(t, resp.Alerts[1].Firing)
 }
 
 func TestRelayStatus_ProvisioningFailed(t *testing.T) {
 	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
 	instances := []v1.RelayInstanceStatus{
-		{ID: "aws-1", Provider: "aws", State: "provisioning-failed", Healthy: false, LastProvisionError: "Invalid AMI id"},
+		{ID: "oci-1", Provider: "oci", State: "provisioning-failed", Healthy: false, LastProvisionError: "quota exceeded"},
 	}
 	overrideList(relayMock, &v1.InferenceRelayList{Items: []v1.InferenceRelay{*makeRelayCR("relay-fleet", instances, 0)}}, nil)
 
@@ -314,7 +319,7 @@ func TestRelayStatus_ProvisioningFailed(t *testing.T) {
 	var resp statusResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Len(t, resp.Instances, 1)
-	assert.Contains(t, resp.Instances[0].LastProvisionError, "Invalid AMI")
+	assert.Contains(t, resp.Instances[0].LastProvisionError, "quota exceeded")
 }
 
 func TestRelayStatus_ListError_500(t *testing.T) {
@@ -324,181 +329,6 @@ func TestRelayStatus_ListError_500(t *testing.T) {
 	w := doRelayRequest(r, "GET", "/api/v1/admin/relay/status")
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-// ─── US-43.3: GetCA tests ───────────────────────────────────────────────────
-
-func TestRelayCA_SecretExists_ReturnsPEM(t *testing.T) {
-	caPEM := []byte("-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----\n")
-	clientset := fake.NewSimpleClientset(&corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "relay-root-ca", Namespace: testNamespace},
-		Data:       map[string][]byte{"tls.crt": caPEM},
-	})
-	r, _, _ := setupRelayRouter(t, clientset)
-
-	w := doRelayRequest(r, "GET", "/api/v1/admin/relay/ca")
-
-	require.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "application/x-pem-file", w.Header().Get("Content-Type"))
-	assert.Contains(t, w.Header().Get("Content-Disposition"), "relay-root-ca.pem")
-	assert.Equal(t, string(caPEM), w.Body.String())
-}
-
-func TestRelayCA_SecretWithCaCrtKey(t *testing.T) {
-	caPEM := []byte("-----BEGIN CERTIFICATE-----\nFAKE...\n-----END CERTIFICATE-----\n")
-	clientset := fake.NewSimpleClientset(&corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "relay-root-ca", Namespace: testNamespace},
-		Data:       map[string][]byte{"ca.crt": caPEM},
-	})
-	r, _, _ := setupRelayRouter(t, clientset)
-
-	w := doRelayRequest(r, "GET", "/api/v1/admin/relay/ca")
-
-	require.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, string(caPEM), w.Body.String())
-}
-
-func TestRelayCA_NotFound_404(t *testing.T) {
-	r, _, _ := setupRelayRouter(t, fake.NewSimpleClientset())
-
-	w := doRelayRequest(r, "GET", "/api/v1/admin/relay/ca")
-
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-func TestRelayCA_EmptyData_404(t *testing.T) {
-	clientset := fake.NewSimpleClientset(&corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "relay-root-ca", Namespace: testNamespace},
-		Data:       map[string][]byte{},
-	})
-	r, _, _ := setupRelayRouter(t, clientset)
-
-	w := doRelayRequest(r, "GET", "/api/v1/admin/relay/ca")
-
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-// ─── US-43.4: SaveAWSConfig tests ───────────────────────────────────────────
-
-func TestRelayAWSConfig_Create_Success(t *testing.T) {
-	clientset := fake.NewSimpleClientset()
-	r, _, _ := setupRelayRouter(t, clientset)
-
-	body := `{"trustAnchorId":"ta-abc","profileId":"p-xyz","roleArn":"arn:aws:iam::123:role/relay","region":"us-east-1"}`
-	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/aws-config", body)
-
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-
-	secret, err := clientset.CoreV1().Secrets(testNamespace).Get(context.Background(), "aws-relay-irwa", metav1.GetOptions{})
-	require.NoError(t, err)
-	assert.Equal(t, "ta-abc", string(secret.Data["trustAnchorId"]))
-	assert.Equal(t, "p-xyz", string(secret.Data["profileId"]))
-	assert.Equal(t, "arn:aws:iam::123:role/relay", string(secret.Data["roleArn"]))
-	assert.Equal(t, "us-east-1", string(secret.Data["region"]))
-}
-
-func TestRelayAWSConfig_Update_Success(t *testing.T) {
-	clientset := fake.NewSimpleClientset(&corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "aws-relay-irwa", Namespace: testNamespace, ResourceVersion: "1"},
-		Data:       map[string][]byte{"trustAnchorId": []byte("old-value")},
-	})
-	r, _, _ := setupRelayRouter(t, clientset)
-
-	body := `{"trustAnchorId":"ta-new","profileId":"p-new","roleArn":"arn:aws:iam::123:role/relay","region":"us-west-2"}`
-	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/aws-config", body)
-
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-
-	secret, err := clientset.CoreV1().Secrets(testNamespace).Get(context.Background(), "aws-relay-irwa", metav1.GetOptions{})
-	require.NoError(t, err)
-	assert.Equal(t, "ta-new", string(secret.Data["trustAnchorId"]))
-}
-
-func TestRelayAWSConfig_MissingFields_400(t *testing.T) {
-	r, _, _ := setupRelayRouter(t, fake.NewSimpleClientset())
-
-	tests := []struct {
-		name string
-		body string
-	}{
-		{"missing trustAnchorId", `{"profileId":"p","roleArn":"r","region":"us-east-1"}`},
-		{"missing profileId", `{"trustAnchorId":"t","roleArn":"r","region":"us-east-1"}`},
-		{"missing roleArn", `{"trustAnchorId":"t","profileId":"p","region":"us-east-1"}`},
-		{"empty body", `{}`},
-		{"malformed JSON", `{bad json`},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			w := doRelayRequest(r, "POST", "/api/v1/admin/relay/aws-config", tc.body)
-			assert.Equal(t, http.StatusBadRequest, w.Code)
-		})
-	}
-}
-
-// ─── US-43.4: TestAWS tests ─────────────────────────────────────────────────
-
-func TestRelayTestAWS_ValidConnection(t *testing.T) {
-	clientset := fake.NewSimpleClientset(&corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "aws-relay-irwa", Namespace: testNamespace},
-		Data: map[string][]byte{
-			"trustAnchorId": []byte("ta-abc"),
-			"profileId":     []byte("p-xyz"),
-			"roleArn":       []byte("arn:aws:iam::123:role/relay"),
-			"region":        []byte("us-east-1"),
-		},
-	})
-	r, h, _ := setupRelayRouter(t, clientset)
-	h.SetAWSTester(fakeAWSTester{accountID: "123456789012"})
-
-	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/test-aws")
-
-	require.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.True(t, resp["valid"].(bool))
-	assert.Equal(t, "123456789012", resp["accountId"])
-}
-
-func TestRelayTestAWS_NoConfig_400(t *testing.T) {
-	r, _, _ := setupRelayRouter(t, fake.NewSimpleClientset())
-
-	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/test-aws")
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestRelayTestAWS_ConnectionFails(t *testing.T) {
-	clientset := fake.NewSimpleClientset(&corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "aws-relay-irwa", Namespace: testNamespace},
-		Data: map[string][]byte{
-			"trustAnchorId": []byte("ta-abc"),
-			"profileId":     []byte("p-xyz"),
-			"roleArn":       []byte("arn:aws:iam::123:role/relay"),
-			"region":        []byte("us-east-1"),
-		},
-	})
-	r, h, _ := setupRelayRouter(t, clientset)
-	h.SetAWSTester(fakeAWSTester{err: testError("invalid credentials")})
-
-	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/test-aws")
-
-	require.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.False(t, resp["valid"].(bool))
-}
-
-func TestRelayTestAWS_IncompleteConfig_400(t *testing.T) {
-	clientset := fake.NewSimpleClientset(&corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "aws-relay-irwa", Namespace: testNamespace},
-		Data:       map[string][]byte{"trustAnchorId": []byte("ta-abc")},
-	})
-	r, _, _ := setupRelayRouter(t, clientset)
-
-	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/test-aws")
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // ─── US-43.5: SaveOCICreds tests ────────────────────────────────────────────
@@ -543,6 +373,29 @@ func TestRelayOCICreds_MissingFields_400(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// ─── GCP credentials tests ──────────────────────────────────────────────────
+
+func TestRelayGCPCreds_Create_Success(t *testing.T) {
+	clientset := fake.NewSimpleClientset()
+	r, _, _ := setupRelayRouter(t, clientset)
+
+	body := `{"serviceAccountJson":"{\"type\":\"service_account\",\"project_id\":\"my-project\"}"}`
+	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/gcp-creds", body)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	secret, err := clientset.CoreV1().Secrets(testNamespace).Get(context.Background(), "gcp-credentials", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Contains(t, string(secret.Data["service-account-json"]), "service_account")
+}
+
+func TestRelayGCPCreds_MissingFields_400(t *testing.T) {
+	r, _, _ := setupRelayRouter(t, fake.NewSimpleClientset())
+
+	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/gcp-creds", `{}`)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 // ─── US-43.6: Deploy tests ──────────────────────────────────────────────────
 
 func TestRelayDeploy_Create_Success(t *testing.T) {
@@ -550,7 +403,7 @@ func TestRelayDeploy_Create_Success(t *testing.T) {
 	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, testError("not found")).Maybe()
 	relayMock.On("Create", mock.Anything, mock.Anything).Return(makeRelayCR("relay-fleet", nil, 0), nil).Maybe()
 
-	body := `{"upstreamURL":"https://opencode.ai/zen/v1","routerEndpoint":"relay-gw.example.com:51820","providers":["aws","oci"]}`
+	body := `{"upstreamURL":"https://opencode.ai/zen/v1","routerEndpoint":"relay-gw.example.com:51820","providers":["oci","gcp"]}`
 	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/deploy", body)
 
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -572,13 +425,14 @@ func TestRelayDeploy_Update_Existing(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 }
 
-func TestRelayDeploy_UnknownProvider_400(t *testing.T) {
+func TestRelayDeploy_RejectAWS_400(t *testing.T) {
 	r, _, _ := setupRelayRouter(t, fake.NewSimpleClientset())
 
-	body := `{"upstreamURL":"https://example.com","routerEndpoint":"gw:51820","providers":["gcp"]}`
+	body := `{"upstreamURL":"https://example.com","routerEndpoint":"gw:51820","providers":["aws"]}`
 	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/deploy", body)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "unknown provider")
 }
 
 func TestRelayDeploy_MissingFields_400(t *testing.T) {
@@ -613,6 +467,17 @@ func TestRelayDeploy_OCIOnly_Success(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 }
 
+func TestRelayDeploy_GCPOnly_Success(t *testing.T) {
+	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
+	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, testError("not found")).Maybe()
+	relayMock.On("Create", mock.Anything, mock.Anything).Return(makeRelayCR("relay-fleet", nil, 0), nil).Maybe()
+
+	body := `{"upstreamURL":"https://opencode.ai/zen/v1","routerEndpoint":"relay-gw.example.com:51820","providers":["gcp"]}`
+	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/deploy", body)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+}
+
 // ─── US-43.7: Rotate tests ──────────────────────────────────────────────────
 
 func TestRelayRotate_Success(t *testing.T) {
@@ -621,19 +486,19 @@ func TestRelayRotate_Success(t *testing.T) {
 	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(existing, nil).Maybe()
 	relayMock.On("Update", mock.Anything, mock.Anything).Return(existing, nil).Maybe()
 
-	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/rotate/aws-1")
+	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/rotate/oci-1")
 
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "aws-1", resp["rotating"])
+	assert.Equal(t, "oci-1", resp["rotating"])
 }
 
 func TestRelayRotate_NotFound_404(t *testing.T) {
 	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
 	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, testError("not found")).Maybe()
 
-	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/rotate/aws-1")
+	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/rotate/oci-1")
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
@@ -693,10 +558,10 @@ func TestParseRouterMetrics_BasicMetrics(t *testing.T) {
 	raw := `# HELP relay_router_active_streams Current active streams
 # TYPE relay_router_active_streams gauge
 relay_router_active_streams 5
-relay_router_requests_total{provider="aws"} 12847
-relay_router_requests_total{provider="oci"} 0
-relay_router_requests_429_total{provider="aws"} 3
-relay_router_streams{provider="aws"} 3
+relay_router_requests_total{provider="oci"} 12847
+relay_router_requests_total{provider="gcp"} 0
+relay_router_requests_429_total{provider="oci"} 3
+relay_router_streams{provider="oci"} 3
 `
 	data := &routerMetricsData{
 		requestsByProvider:    make(map[string]int64),
@@ -706,10 +571,10 @@ relay_router_streams{provider="aws"} 3
 	parseRouterMetrics(raw, data)
 
 	assert.Equal(t, int64(5), data.activeStreams)
-	assert.Equal(t, int64(12847), data.requestsByProvider["aws"])
-	assert.Equal(t, int64(0), data.requestsByProvider["oci"])
-	assert.Equal(t, int64(3), data.requests429ByProvider["aws"])
-	assert.Equal(t, int64(3), data.streamsByProvider["aws"])
+	assert.Equal(t, int64(12847), data.requestsByProvider["oci"])
+	assert.Equal(t, int64(0), data.requestsByProvider["gcp"])
+	assert.Equal(t, int64(3), data.requests429ByProvider["oci"])
+	assert.Equal(t, int64(3), data.streamsByProvider["oci"])
 }
 
 func TestParseRouterMetrics_EmptyInput(t *testing.T) {
@@ -724,44 +589,37 @@ func TestParseRouterMetrics_EmptyInput(t *testing.T) {
 }
 
 func TestEgressLimitForProvider(t *testing.T) {
-	assert.Equal(t, int64(100*1024*1024*1024), egressLimitForProvider("aws"))
 	assert.Equal(t, int64(10*1024*1024*1024*1024), egressLimitForProvider("oci"))
-	assert.Equal(t, int64(100*1024*1024*1024), egressLimitForProvider("unknown"))
+	assert.Equal(t, int64(1*1024*1024*1024), egressLimitForProvider("gcp"))
+	assert.Equal(t, int64(1*1024*1024*1024), egressLimitForProvider("unknown"))
 }
 
-func TestComputeCost(t *testing.T) {
-	awsCost := computeCost("aws", true)
-	assert.Equal(t, int64(700), awsCost.MonthlyEstimate)
-
-	ociCost := computeCost("oci", true)
-	assert.Equal(t, int64(0), ociCost.MonthlyEstimate)
-
-	stoppedCost := computeCost("aws", false)
-	assert.Equal(t, int64(0), stoppedCost.MonthlyEstimate)
+func TestComputeCost_AllFreeTier(t *testing.T) {
+	assert.Equal(t, int64(0), computeCost("oci").MonthlyEstimate)
+	assert.Equal(t, int64(0), computeCost("gcp").MonthlyEstimate)
 }
 
 func TestBuildAlerts_AllHealthy(t *testing.T) {
 	alerts := buildAlerts(2, 2)
-	assert.False(t, alerts[0].Firing, "degraded should not fire when all healthy")
-	assert.False(t, alerts[1].Firing, "critical should not fire")
+	assert.False(t, alerts[0].Firing)
+	assert.False(t, alerts[1].Firing)
 }
 
 func TestBuildAlerts_AllDown(t *testing.T) {
 	alerts := buildAlerts(0, 2)
-	assert.True(t, alerts[0].Firing, "degraded should fire")
-	assert.True(t, alerts[1].Firing, "critical should fire")
+	assert.True(t, alerts[0].Firing)
+	assert.True(t, alerts[1].Firing)
 }
 
 func TestBuildAlerts_Partial(t *testing.T) {
 	alerts := buildAlerts(1, 2)
-	assert.True(t, alerts[0].Firing, "degraded should fire when 1 < 2")
-	assert.False(t, alerts[1].Firing, "critical should not fire when 1 > 0")
+	assert.True(t, alerts[0].Firing)
+	assert.False(t, alerts[1].Firing)
 }
 
 func TestExtractLabel(t *testing.T) {
-	assert.Equal(t, "aws", extractLabel(`relay_router_requests_total{provider="aws"} 12847`, "provider"))
+	assert.Equal(t, "oci", extractLabel(`relay_router_requests_total{provider="oci"} 12847`, "provider"))
 	assert.Equal(t, "", extractLabel("no labels here", "provider"))
-	assert.Equal(t, "", extractLabel(`provider="`, "provider"))
 }
 
 func TestParseInt(t *testing.T) {
@@ -781,7 +639,7 @@ func TestParseInt(t *testing.T) {
 func TestRelayStatus_ScrapesRouterMetrics(t *testing.T) {
 	metricsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("relay_router_active_streams 7\nrelay_router_requests_total{provider=\"aws\"} 999\n"))
+		w.Write([]byte("relay_router_active_streams 7\nrelay_router_requests_total{provider=\"oci\"} 999\n"))
 	}))
 	defer metricsServer.Close()
 
@@ -791,7 +649,7 @@ func TestRelayStatus_ScrapesRouterMetrics(t *testing.T) {
 	llmMock.On("InferenceRelays").Return(relayMock).Maybe()
 	relayMock.On("List", mock.Anything, mock.Anything).Return(
 		&v1.InferenceRelayList{Items: []v1.InferenceRelay{*makeRelayCR("relay-fleet",
-			[]v1.RelayInstanceStatus{{ID: "aws-1", Provider: "aws", State: "healthy", Healthy: true}}, 1)}}, nil,
+			[]v1.RelayInstanceStatus{{ID: "oci-1", Provider: "oci", State: "healthy", Healthy: true}}, 1)}}, nil,
 	).Maybe()
 
 	h := NewRelayAdminHandler(clientset, llmMock, testNamespace, metricsServer.URL)
@@ -819,7 +677,7 @@ func TestRelayStatus_RouterUnreachable_GracefulDegrade(t *testing.T) {
 	llmMock.On("InferenceRelays").Return(relayMock).Maybe()
 	relayMock.On("List", mock.Anything, mock.Anything).Return(
 		&v1.InferenceRelayList{Items: []v1.InferenceRelay{*makeRelayCR("relay-fleet",
-			[]v1.RelayInstanceStatus{{ID: "aws-1", Provider: "aws", State: "healthy", Healthy: true}}, 1)}}, nil,
+			[]v1.RelayInstanceStatus{{ID: "oci-1", Provider: "oci", State: "healthy", Healthy: true}}, 1)}}, nil,
 	).Maybe()
 
 	h := NewRelayAdminHandler(clientset, llmMock, testNamespace, "http://127.0.0.1:1")
@@ -835,7 +693,7 @@ func TestRelayStatus_RouterUnreachable_GracefulDegrade(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	var resp statusResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, int64(0), resp.ActiveStreams, "should default to 0 when router is unreachable")
+	assert.Equal(t, int64(0), resp.ActiveStreams)
 }
 
 // ─── E2E: Full relay admin lifecycle ────────────────────────────────────────
@@ -843,15 +701,14 @@ func TestRelayStatus_RouterUnreachable_GracefulDegrade(t *testing.T) {
 func TestRelayAdmin_E2E_FullLifecycle(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 
-	// Build a dedicated mock setup for the E2E lifecycle
 	gin.SetMode(gin.TestMode)
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
 	relayMock := k8smocks.NewMockInferenceRelayInterface()
 	llmMock.On("InferenceRelays").Return(relayMock).Maybe()
 
 	instances := []v1.RelayInstanceStatus{
-		{ID: "aws-1", Provider: "aws", State: "healthy", Healthy: true},
 		{ID: "oci-1", Provider: "oci", State: "healthy", Healthy: true},
+		{ID: "gcp-1", Provider: "gcp", State: "healthy", Healthy: true},
 	}
 	deployedCR := makeRelayCR("relay-fleet", instances, 2)
 	relayMock.On("List", mock.Anything, mock.Anything).Return(
@@ -870,39 +727,38 @@ func TestRelayAdmin_E2E_FullLifecycle(t *testing.T) {
 	g := r.Group("/api/v1/admin/relay")
 	g.GET("/setup", h.GetSetup)
 	g.GET("/status", h.GetStatus)
-	g.GET("/ca", h.GetCA)
-	g.POST("/aws-config", h.SaveAWSConfig)
 	g.POST("/oci-creds", h.SaveOCICreds)
+	g.POST("/gcp-creds", h.SaveGCPCreds)
 	g.POST("/deploy", h.Deploy)
 	g.POST("/rotate/:id", h.Rotate)
 	g.POST("/pause", h.Pause)
 	g.POST("/resume", h.Resume)
 
-	// Step 1: Check setup — secrets not configured yet
+	// Step 1: Setup — nothing configured
 	w := doRelayRequest(r, "GET", "/api/v1/admin/relay/setup")
 	require.Equal(t, http.StatusOK, w.Code)
 	var setupResp setupResponse
 	json.Unmarshal(w.Body.Bytes(), &setupResp)
-	assert.False(t, setupResp.AWSConfigured)
 	assert.False(t, setupResp.OCIConfigured)
+	assert.False(t, setupResp.GCPConfigured)
 
-	// Step 2: Save AWS config
-	w = doRelayRequest(r, "POST", "/api/v1/admin/relay/aws-config",
-		`{"trustAnchorId":"ta-1","profileId":"p-1","roleArn":"arn:aws:iam::123:role/r","region":"us-east-1"}`)
-	require.Equal(t, http.StatusOK, w.Code)
-
-	// Step 3: Save OCI creds
+	// Step 2: Save OCI creds
 	w = doRelayRequest(r, "POST", "/api/v1/admin/relay/oci-creds",
 		`{"tenancy":"t","user":"u","fingerprint":"f","key":"k","region":"us-ashburn-1"}`)
 	require.Equal(t, http.StatusOK, w.Code)
 
-	// Step 4: Verify setup now shows both configured
+	// Step 3: Save GCP creds
+	w = doRelayRequest(r, "POST", "/api/v1/admin/relay/gcp-creds",
+		`{"serviceAccountJson":"{\"type\":\"service_account\"}"}`)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	// Step 4: Setup shows both configured
 	w = doRelayRequest(r, "GET", "/api/v1/admin/relay/setup")
 	json.Unmarshal(w.Body.Bytes(), &setupResp)
-	assert.True(t, setupResp.AWSConfigured)
 	assert.True(t, setupResp.OCIConfigured)
+	assert.True(t, setupResp.GCPConfigured)
 
-	// Step 5: Check status — fleet is "deployed" (mock returns instances)
+	// Step 5: Status — fleet is deployed
 	w = doRelayRequest(r, "GET", "/api/v1/admin/relay/status")
 	require.Equal(t, http.StatusOK, w.Code)
 	var status statusResponse
@@ -911,28 +767,24 @@ func TestRelayAdmin_E2E_FullLifecycle(t *testing.T) {
 	assert.Equal(t, "healthy", status.Overall)
 	assert.Len(t, status.Instances, 2)
 
-	// Step 6: Download CA (no CA secret — should 404)
-	w = doRelayRequest(r, "GET", "/api/v1/admin/relay/ca")
-	assert.Equal(t, http.StatusNotFound, w.Code)
-
-	// Step 7: Rotate
-	w = doRelayRequest(r, "POST", "/api/v1/admin/relay/rotate/aws-1")
+	// Step 6: Rotate
+	w = doRelayRequest(r, "POST", "/api/v1/admin/relay/rotate/oci-1")
 	require.Equal(t, http.StatusOK, w.Code)
 
-	// Step 8: Pause
+	// Step 7: Pause
 	w = doRelayRequest(r, "POST", "/api/v1/admin/relay/pause")
 	require.Equal(t, http.StatusOK, w.Code)
 
-	// Step 9: Resume
+	// Step 8: Resume
 	w = doRelayRequest(r, "POST", "/api/v1/admin/relay/resume")
 	require.Equal(t, http.StatusOK, w.Code)
 
-	// Verify secrets were actually persisted in the fake clientset
-	awsSecret, err := clientset.CoreV1().Secrets(testNamespace).Get(context.Background(), "aws-relay-irwa", metav1.GetOptions{})
-	require.NoError(t, err)
-	assert.Equal(t, "ta-1", string(awsSecret.Data["trustAnchorId"]))
-
+	// Verify secrets persisted
 	ociSecret, err := clientset.CoreV1().Secrets(testNamespace).Get(context.Background(), "oci-credentials", metav1.GetOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, "t", string(ociSecret.Data["tenancy"]))
+
+	gcpSecret, err := clientset.CoreV1().Secrets(testNamespace).Get(context.Background(), "gcp-credentials", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Contains(t, string(gcpSecret.Data["service-account-json"]), "service_account")
 }

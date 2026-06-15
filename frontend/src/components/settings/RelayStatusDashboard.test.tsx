@@ -22,25 +22,6 @@ const mockStatus = {
   activeStreams: 3,
   instances: [
     {
-      id: "aws-1",
-      provider: "aws",
-      region: "us-east-1",
-      shape: "t4g.micro",
-      wgIP: "10.42.42.4",
-      publicIP: "54.210.123.45",
-      state: "healthy",
-      healthy: true,
-      metrics: {
-        requestsToday: 12847,
-        requests429Today: 3,
-        totalRequests: 450000,
-        egressBytes: 149546362,
-        egressLimitBytes: 107374182400,
-        activeStreams: 3,
-      },
-      cost: { monthlyEstimate: 700, spentThisMonth: 68 },
-    },
-    {
       id: "oci-1",
       provider: "oci",
       region: "us-ashburn-1",
@@ -50,11 +31,30 @@ const mockStatus = {
       state: "healthy",
       healthy: true,
       metrics: {
+        requestsToday: 12847,
+        requests429Today: 3,
+        totalRequests: 450000,
+        egressBytes: 149546362,
+        egressLimitBytes: 10995116277760,
+        activeStreams: 3,
+      },
+      cost: { monthlyEstimate: 0, spentThisMonth: 0 },
+    },
+    {
+      id: "gcp-1",
+      provider: "gcp",
+      region: "us-west1",
+      shape: "e2-micro",
+      wgIP: "10.42.42.3",
+      publicIP: "34.16.50.1",
+      state: "healthy",
+      healthy: true,
+      metrics: {
         requestsToday: 0,
         requests429Today: 0,
         totalRequests: 0,
         egressBytes: 0,
-        egressLimitBytes: 10995116277760,
+        egressLimitBytes: 1073741824,
         activeStreams: 0,
       },
       cost: { monthlyEstimate: 0, spentThisMonth: 0 },
@@ -135,17 +135,17 @@ describe("RelayStatusDashboard", () => {
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText("54.210.123.45")).toBeInTheDocument();
+      expect(screen.getByText("150.230.67.89")).toBeInTheDocument();
     });
-    expect(screen.getByText("150.230.67.89")).toBeInTheDocument();
+    expect(screen.getByText("34.16.50.1")).toBeInTheDocument();
   });
 
-  it("renders cost information", async () => {
+  it("renders cost information (Always Free — $0)", async () => {
     vi.mocked(relayApi.getStatus).mockResolvedValue(mockStatus);
     renderDashboard();
 
     await waitFor(() => {
-      expect(screen.getByText(/\$0\.68/)).toBeInTheDocument();
+      expect(screen.getAllByText(/\$0\.00/).length).toBeGreaterThan(0);
     });
   });
 
@@ -227,7 +227,7 @@ describe("RelayStatusDashboard", () => {
     fireEvent.click(rotateButtons[0]!);
 
     await waitFor(() => {
-      expect(relayApi.rotate).toHaveBeenCalledWith("aws-1");
+      expect(relayApi.rotate).toHaveBeenCalledWith("oci-1");
     });
   });
 

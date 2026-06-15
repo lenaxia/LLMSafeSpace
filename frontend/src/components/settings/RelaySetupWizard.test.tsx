@@ -8,10 +8,8 @@ import { RelaySetupWizard } from "./RelaySetupWizard";
 vi.mock("../../api/relay", () => ({
   relayApi: {
     getSetup: vi.fn(),
-    saveAWSConfig: vi.fn(),
-    testAWS: vi.fn(),
     saveOCICreds: vi.fn(),
-    downloadCA: vi.fn(),
+    saveGCPCreds: vi.fn(),
     deploy: vi.fn(),
   },
 }));
@@ -26,12 +24,11 @@ function renderWizard() {
 
 const mockSetup = {
   deployed: false,
-  certManagerInstalled: true,
   metalLBInstalled: true,
   routerDeployed: true,
   crdInstalled: true,
-  awsConfigured: false,
   ociConfigured: false,
+  gcpConfigured: false,
   wireGuardEndpoint: "",
 };
 
@@ -51,85 +48,15 @@ describe("RelaySetupWizard", () => {
     await waitFor(() => {
       expect(screen.getAllByText("Prerequisites").length).toBeGreaterThan(0);
     });
-    expect(screen.getByText("cert-manager installed")).toBeInTheDocument();
     expect(screen.getByText("MetalLB installed")).toBeInTheDocument();
+    expect(screen.getByText("Relay router deployed")).toBeInTheDocument();
   });
 
-  it("shows X for unmet prerequisites", async () => {
-    vi.mocked(relayApi.getSetup).mockResolvedValue({
-      ...mockSetup,
-      certManagerInstalled: false,
-    });
-    renderWizard();
-
-    await waitFor(() => {
-      expect(screen.getByText("cert-manager installed")).toBeInTheDocument();
-    });
-  });
-
-  it("navigates to AWS step on Next", async () => {
-    vi.mocked(relayApi.getSetup).mockResolvedValue(mockSetup);
-    renderWizard();
-
-    await waitFor(() => {
-      expect(screen.getByText("Next →")).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByText("Next →"));
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText("Trust Anchor ID (ta-xxxxx)")).toBeInTheDocument();
-    });
-  });
-
-  it("saves AWS config and shows success", async () => {
-    vi.mocked(relayApi.getSetup).mockResolvedValue(mockSetup);
-    vi.mocked(relayApi.saveAWSConfig).mockResolvedValue({ configured: true });
-    vi.mocked(relayApi.getSetup).mockResolvedValueOnce(mockSetup).mockResolvedValueOnce({ ...mockSetup, awsConfigured: true });
-    renderWizard();
-
-    await waitFor(() => expect(screen.getByText("Next →")).toBeInTheDocument());
-    fireEvent.click(screen.getByText("Next →"));
-
-    await waitFor(() => expect(screen.getByPlaceholderText("Trust Anchor ID (ta-xxxxx)")).toBeInTheDocument());
-
-    await userEvent.type(screen.getByPlaceholderText("Trust Anchor ID (ta-xxxxx)"), "ta-abc");
-    await userEvent.type(screen.getByPlaceholderText("Profile ID (p-xxxxx)"), "p-xyz");
-    await userEvent.type(screen.getByPlaceholderText("Role ARN (arn:aws:iam::...)"), "arn:aws:iam::123:role/r");
-
-    fireEvent.click(screen.getByText("Save Config"));
-
-    await waitFor(() => {
-      expect(relayApi.saveAWSConfig).toHaveBeenCalledWith({
-        trustAnchorId: "ta-abc",
-        profileId: "p-xyz",
-        roleArn: "arn:aws:iam::123:role/r",
-        region: "us-east-1",
-      });
-    });
-  });
-
-  it("tests AWS connection when configured", async () => {
-    vi.mocked(relayApi.getSetup).mockResolvedValue({ ...mockSetup, awsConfigured: true });
-    vi.mocked(relayApi.testAWS).mockResolvedValue({ valid: true, accountId: "123" });
-    renderWizard();
-
-    await waitFor(() => expect(screen.getByText("Next →")).toBeInTheDocument());
-    fireEvent.click(screen.getByText("Next →"));
-
-    await waitFor(() => expect(screen.getByText("Test Connection")).toBeInTheDocument());
-    fireEvent.click(screen.getByText("Test Connection"));
-
-    await waitFor(() => {
-      expect(relayApi.testAWS).toHaveBeenCalled();
-    });
-  });
-
-  it("navigates to OCI step", async () => {
+  it("navigates to OCI step on Next", async () => {
     vi.mocked(relayApi.getSetup).mockResolvedValue(mockSetup);
     renderWizard();
 
     await waitFor(() => expect(screen.getByText("Next →")).toBeInTheDocument());
-    fireEvent.click(screen.getByText("Next →"));
     fireEvent.click(screen.getByText("Next →"));
 
     await waitFor(() => {
@@ -144,15 +71,48 @@ describe("RelaySetupWizard", () => {
 
     await waitFor(() => expect(screen.getByText("Next →")).toBeInTheDocument());
     fireEvent.click(screen.getByText("Next →"));
-    fireEvent.click(screen.getByText("Next →"));
 
     await waitFor(() => expect(screen.getByPlaceholderText("Tenancy OCID")).toBeInTheDocument());
     await userEvent.type(screen.getByPlaceholderText("Tenancy OCID"), "ocid1.tenancy...");
 
-    fireEvent.click(screen.getByText("Save & Test"));
+    fireEvent.click(screen.getByText("Save"));
 
     await waitFor(() => {
       expect(relayApi.saveOCICreds).toHaveBeenCalled();
+    });
+  });
+
+  it("navigates to GCP step", async () => {
+    vi.mocked(relayApi.getSetup).mockResolvedValue(mockSetup);
+    renderWizard();
+
+    await waitFor(() => expect(screen.getByText("Next →")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Next →"));
+    fireEvent.click(screen.getByText("Next →"));
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("Service Account JSON")).toBeInTheDocument();
+    });
+  });
+
+  it("saves GCP credentials", async () => {
+    vi.mocked(relayApi.getSetup).mockResolvedValue(mockSetup);
+    vi.mocked(relayApi.saveGCPCreds).mockResolvedValue({ configured: true });
+    renderWizard();
+
+    await waitFor(() => expect(screen.getByText("Next →")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Next →"));
+    fireEvent.click(screen.getByText("Next →"));
+
+    await waitFor(() => expect(screen.getByPlaceholderText("Service Account JSON")).toBeInTheDocument());
+    await userEvent.click(screen.getByPlaceholderText("Service Account JSON"));
+    await userEvent.paste('{"type":"service_account"}');
+
+    const saveButtons = screen.getAllByText("Save");
+    fireEvent.click(saveButtons[saveButtons.length - 1]!);
+
+    await waitFor(() => {
+      expect(relayApi.saveGCPCreds).toHaveBeenCalled();
     });
   });
 
@@ -181,7 +141,7 @@ describe("RelaySetupWizard", () => {
       expect(relayApi.deploy).toHaveBeenCalledWith(
         expect.objectContaining({
           routerEndpoint: "gw.example.com:51820",
-          providers: expect.arrayContaining(["oci"]),
+          providers: expect.arrayContaining(["oci", "gcp"]),
         }),
       );
     });

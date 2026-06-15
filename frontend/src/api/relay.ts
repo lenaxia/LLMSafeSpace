@@ -3,16 +3,16 @@ import { api } from "./client";
 // ---------------------------------------------------------------------------
 // Relay Admin API (Epic 43)
 // Routes: /api/v1/admin/relay
+// Providers: OCI (Always Free, primary) + GCP (Always Free, failover)
 // ---------------------------------------------------------------------------
 
 export interface RelaySetup {
   deployed: boolean;
-  certManagerInstalled: boolean;
   metalLBInstalled: boolean;
   routerDeployed: boolean;
   crdInstalled: boolean;
-  awsConfigured: boolean;
   ociConfigured: boolean;
+  gcpConfigured: boolean;
   wireGuardEndpoint: string;
 }
 
@@ -73,19 +73,16 @@ export interface RelayStatus {
   alerts: RelayAlert[];
 }
 
-export interface AWSConfigRequest {
-  trustAnchorId: string;
-  profileId: string;
-  roleArn: string;
-  region: string;
-}
-
 export interface OCICredsRequest {
   tenancy: string;
   user: string;
   fingerprint: string;
   key: string;
   region: string;
+}
+
+export interface GCPCredsRequest {
+  serviceAccountJson: string;
 }
 
 export interface DeployRequest {
@@ -95,26 +92,13 @@ export interface DeployRequest {
   providers: string[];
 }
 
-export interface AWSTestResult {
-  valid: boolean;
-  accountId?: string;
-  roleArn?: string;
-  error?: string;
-}
-
 export const relayApi = {
   getSetup: () => api.get<RelaySetup>("/admin/relay/setup"),
   getStatus: () => api.get<RelayStatus>("/admin/relay/status"),
-  downloadCA: () =>
-    fetch("/api/v1/admin/relay/ca", { credentials: "include" }).then((res) => {
-      if (!res.ok) throw new Error("Failed to download CA certificate");
-      return res.blob();
-    }),
-  saveAWSConfig: (req: AWSConfigRequest) =>
-    api.post<{ configured: boolean }>("/admin/relay/aws-config", req),
-  testAWS: () => api.post<AWSTestResult>("/admin/relay/test-aws"),
   saveOCICreds: (req: OCICredsRequest) =>
     api.post<{ configured: boolean }>("/admin/relay/oci-creds", req),
+  saveGCPCreds: (req: GCPCredsRequest) =>
+    api.post<{ configured: boolean }>("/admin/relay/gcp-creds", req),
   deploy: (req: DeployRequest) =>
     api.post<{ deployed: boolean }>("/admin/relay/deploy", req),
   rotate: (id: string) =>
