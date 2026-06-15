@@ -25,7 +25,6 @@ export interface Organization {
 
 export interface OrgResponse extends Organization {
   userRole: "admin" | "member";
-  userPendingKeyWrap: boolean;
   memberCount: number;
 }
 
@@ -39,7 +38,6 @@ export interface OrgMember {
   username: string;
   email: string;
   role: "admin" | "member";
-  pendingKeyWrap: boolean;
   createdAt: string;
 }
 
@@ -114,10 +112,6 @@ export const orgsApi = {
     api.delete<void>(`/orgs/${id}/members/${userId}`),
   changeMemberRole: (id: string, userId: string, role: "admin" | "member") =>
     api.put<{ message: string }>(`/orgs/${id}/members/${userId}`, { role }),
-  acceptKey: (id: string, req: { password: string }) =>
-    api.post<{ message: string }>(`/orgs/${id}/accept-key`, req),
-  rotateKey: (id: string, req: { password: string }) =>
-    api.post<{ message: string }>(`/orgs/${id}/rotate-key`, req),
 
   listInvitations: (id: string) =>
     api.get<OrgInvitation[]>(`/orgs/${id}/invitations`),
@@ -131,9 +125,7 @@ export const orgsApi = {
   getInvitationByToken: (token: string) =>
     api.get<InvitationDetail>(`/invitations/${token}`),
   acceptInvitation: (token: string) =>
-    api.post<{ membership: OrgMember; pendingKeyWrap?: boolean }>(
-      `/invitations/${token}/accept`,
-    ),
+    api.post<{ membership: OrgMember }>(`/invitations/${token}/accept`),
   declineInvitation: (token: string) =>
     api.post<{ status: string }>(`/invitations/${token}/decline`),
 

@@ -66,9 +66,6 @@ func (d *dekJKeyService) GetDEK(_ context.Context, sessionID string) ([]byte, er
 func (d *dekJKeyService) CacheDEK(_ context.Context, _ string, _ []byte, _ time.Duration) error {
 	return nil
 }
-func (d *dekJKeyService) UnlockAllOrgDEKs(_ context.Context, _ string, _ []byte, _ []byte, _ time.Duration) error {
-	return nil
-}
 
 func withMasterKey(t *testing.T, svc *Service) {
 	t.Helper()

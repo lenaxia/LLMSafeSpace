@@ -21,9 +21,7 @@ type mockOrgStore struct {
 	mu                    sync.Mutex
 	orgs                  map[string]*types.Organization
 	members               map[string][]*types.OrgMember
-	keyMembers            map[string]*secrets.OrgKeyMemberRecord
 	adminCounts           map[string]int
-	pendingKeyWrap        map[string]bool
 	salts                 map[string][]byte
 	billingAccounts       map[string]string
 	listOrgsForUserResult []*types.OrgResponse
@@ -37,9 +35,7 @@ func newMockOrgStore() *mockOrgStore {
 	return &mockOrgStore{
 		orgs:            make(map[string]*types.Organization),
 		members:         make(map[string][]*types.OrgMember),
-		keyMembers:      make(map[string]*secrets.OrgKeyMemberRecord),
 		adminCounts:     make(map[string]int),
-		pendingKeyWrap:  make(map[string]bool),
 		salts:           make(map[string][]byte),
 		billingAccounts: make(map[string]string),
 	}
@@ -47,7 +43,7 @@ func newMockOrgStore() *mockOrgStore {
 
 func memberKey(orgID, userID string) string { return orgID + ":" + userID }
 
-func (m *mockOrgStore) CreateOrgWithAdmin(_ context.Context, org *types.Organization, adminUserID string, _ []byte) (*types.Organization, error) {
+func (m *mockOrgStore) CreateOrgWithAdmin(_ context.Context, org *types.Organization, adminUserID string) (*types.Organization, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.createErr != nil {
@@ -65,7 +61,7 @@ func (m *mockOrgStore) CreateOrgWithAdmin(_ context.Context, org *types.Organiza
 	}
 	m.orgs[org.ID] = &cp
 	m.members[org.ID] = []*types.OrgMember{
-		{OrgID: org.ID, UserID: adminUserID, Role: types.OrgRoleAdmin, PendingKeyWrap: false},
+		{OrgID: org.ID, UserID: adminUserID, Role: types.OrgRoleAdmin},
 	}
 	return &cp, nil
 }
@@ -134,7 +130,7 @@ func (m *mockOrgStore) IsOrgAdmin(_ context.Context, orgID, userID string) (bool
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, mem := range m.members[orgID] {
-		if mem.UserID == userID && mem.Role == types.OrgRoleAdmin && !mem.PendingKeyWrap {
+		if mem.UserID == userID && mem.Role == types.OrgRoleAdmin {
 			return true, nil
 		}
 	}
@@ -159,11 +155,11 @@ func (m *mockOrgStore) ListOrgMembers(_ context.Context, orgID string) ([]*types
 	return m.members[orgID], nil
 }
 
-func (m *mockOrgStore) AddOrgMember(_ context.Context, orgID, userID string, role types.OrgRole, pendingKeyWrap bool) error {
+func (m *mockOrgStore) AddOrgMember(_ context.Context, orgID, userID string, role types.OrgRole) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.members[orgID] = append(m.members[orgID], &types.OrgMember{
-		OrgID: orgID, UserID: userID, Role: role, PendingKeyWrap: pendingKeyWrap,
+		OrgID: orgID, UserID: userID, Role: role,
 	})
 	return nil
 }
@@ -178,7 +174,6 @@ func (m *mockOrgStore) RemoveOrgMember(_ context.Context, orgID, userID string) 
 			break
 		}
 	}
-	delete(m.keyMembers, memberKey(orgID, userID))
 	return nil
 }
 
@@ -201,7 +196,6 @@ func (m *mockOrgStore) RemoveOrgAdminIfNotLast(_ context.Context, orgID, targetU
 			break
 		}
 	}
-	delete(m.keyMembers, memberKey(orgID, targetUserID))
 	return true, nil
 }
 
@@ -223,7 +217,6 @@ func (m *mockOrgStore) DemoteOrgAdminIfNotLast(_ context.Context, orgID, targetU
 			break
 		}
 	}
-	delete(m.keyMembers, memberKey(orgID, targetUserID))
 	return true, nil
 }
 
@@ -239,18 +232,6 @@ func (m *mockOrgStore) CountOrgAdmins(_ context.Context, orgID string) (int, err
 	return count, nil
 }
 
-func (m *mockOrgStore) SetPendingKeyWrap(_ context.Context, orgID, userID string, pending bool) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, mem := range m.members[orgID] {
-		if mem.UserID == userID {
-			mem.PendingKeyWrap = pending
-			return nil
-		}
-	}
-	return nil
-}
-
 func (m *mockOrgStore) UpdateOrgMemberRole(_ context.Context, orgID, userID string, role types.OrgRole) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -260,13 +241,6 @@ func (m *mockOrgStore) UpdateOrgMemberRole(_ context.Context, orgID, userID stri
 			return nil
 		}
 	}
-	return nil
-}
-
-func (m *mockOrgStore) DeleteOrgKeyMember(_ context.Context, orgID, userID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.keyMembers, memberKey(orgID, userID))
 	return nil
 }
 
@@ -324,12 +298,7 @@ func setupOrgTestRouter(t *testing.T, store *mockOrgStore) (*gin.Engine, *OrgsHa
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
-	dekCache := newTestDEKCache()
-	orgKeyStore := secrets.NewPgOrgKeyStore(nil)
-	_ = orgKeyStore
-	orgKeySvc := secrets.NewOrgKeyService(nil, dekCache)
-
-	handler := NewOrgsHandler(store, orgKeySvc, dekCache, &mockOrgAuthService{userID: "admin-1"})
+	handler := NewOrgsHandler(store, &mockOrgAuthService{userID: "admin-1"})
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -348,8 +317,6 @@ func setupOrgTestRouter(t *testing.T, store *mockOrgStore) (*gin.Engine, *OrgsHa
 	orgGroup.POST("/:id/members", handler.AddMember)
 	orgGroup.DELETE("/:id/members/:userID", handler.RemoveMember)
 	orgGroup.PUT("/:id/members/:userID", handler.ChangeMemberRole)
-	orgGroup.POST("/:id/accept-key", handler.AcceptKey)
-	orgGroup.POST("/:id/rotate-key", handler.RotateKey)
 
 	return router, handler
 }
@@ -468,7 +435,7 @@ func TestOrgsHandler_RemoveMember_NotFound(t *testing.T) {
 	}
 }
 
-func TestOrgsHandler_ChangeMemberRole_PromoteSetsPendingKeyWrap(t *testing.T) {
+func TestOrgsHandler_ChangeMemberRole_PromoteToAdmin(t *testing.T) {
 	store := newMockOrgStore()
 	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
 	store.members["org-1"] = []*types.OrgMember{
@@ -488,9 +455,6 @@ func TestOrgsHandler_ChangeMemberRole_PromoteSetsPendingKeyWrap(t *testing.T) {
 	}
 	if member.Role != types.OrgRoleAdmin {
 		t.Errorf("expected role=admin, got %q", member.Role)
-	}
-	if !member.PendingKeyWrap {
-		t.Error("REGRESSION: promoted admin must have pendingKeyWrap=true")
 	}
 }
 
@@ -521,21 +485,6 @@ func TestOrgsHandler_ChangeMemberRole_DemoteSelfBlocked(t *testing.T) {
 	w := doRequest(router, "PUT", "/api/v1/orgs/org-1/members/admin-1", `{"role":"member"}`)
 	if w.Code != http.StatusConflict {
 		t.Errorf("expected 409 for self-demotion, got %d", w.Code)
-	}
-}
-
-func TestOrgsHandler_AcceptKey_NonAdmin(t *testing.T) {
-	store := newMockOrgStore()
-	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
-	store.members["org-1"] = []*types.OrgMember{
-		{OrgID: "org-1", UserID: "admin-1", Role: types.OrgRoleMember},
-	}
-	store.salts["admin-1"] = make([]byte, 32)
-	router, _ := setupOrgTestRouter(t, store)
-
-	w := doRequest(router, "POST", "/api/v1/orgs/org-1/accept-key", `{"password":"pass"}`)
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected 403 for non-admin calling accept-key, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -586,7 +535,7 @@ func TestOrgsHandler_AddMember_Success(t *testing.T) {
 	}
 }
 
-func TestOrgsHandler_AddMember_AdminSetsPendingKeyWrap(t *testing.T) {
+func TestOrgsHandler_AddMember_AdminRole(t *testing.T) {
 	store := newMockOrgStore()
 	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
 	store.members["org-1"] = []*types.OrgMember{
@@ -603,8 +552,8 @@ func TestOrgsHandler_AddMember_AdminSetsPendingKeyWrap(t *testing.T) {
 	if member == nil {
 		t.Fatal("new admin member not found")
 	}
-	if !member.PendingKeyWrap {
-		t.Error("new admin must have pendingKeyWrap=true")
+	if member.Role != types.OrgRoleAdmin {
+		t.Errorf("expected role=admin, got %q", member.Role)
 	}
 }
 

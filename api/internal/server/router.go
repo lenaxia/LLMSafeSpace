@@ -988,7 +988,6 @@ func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *hand
 	orgIDGroup.GET("", h.Get)
 	orgIDGroup.GET("/workspaces", h.ListWorkspaces)
 	orgIDGroup.GET("/members", h.ListMembers)
-	orgIDGroup.POST("/accept-key", h.AcceptKey)
 	if invH != nil {
 		orgIDGroup.GET("/invitations", invH.List)
 	}
@@ -1000,7 +999,6 @@ func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *hand
 	orgAdminGroup.POST("/members", h.AddMember)
 	orgAdminGroup.DELETE("/members/:userID", h.RemoveMember)
 	orgAdminGroup.PUT("/members/:userID", h.ChangeMemberRole)
-	orgAdminGroup.POST("/rotate-key", h.RotateKey)
 	orgAdminGroup.POST("/billing/checkout", h.Checkout)
 	orgAdminGroup.POST("/billing/portal", h.Portal)
 	if invH != nil {

@@ -49,8 +49,8 @@ func OrgMemberGuard(store orgMemberChecker) gin.HandlerFunc {
 }
 
 // OrgAdminGuard returns Gin middleware that verifies the caller is an admin
-// (role='admin', pending_key_wrap=false) of the org identified by ":id".
-// Returns 403 for non-admins and members of soft-deleted orgs.
+// (role='admin') of the org identified by ":id". Returns 403 for non-admins
+// and members of soft-deleted orgs.
 func OrgAdminGuard(store orgMemberChecker) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID, _ := c.Get("userID")

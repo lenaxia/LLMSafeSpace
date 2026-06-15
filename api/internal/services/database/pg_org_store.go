@@ -26,7 +26,7 @@ type PendingOrgCleanup struct {
 
 // OrgStore is the data-access interface for organizations and their memberships.
 type OrgStore interface {
-	CreateOrgWithAdmin(ctx context.Context, org *types.Organization, adminUserID string, adminWrappedDEK []byte) (*types.Organization, error)
+	CreateOrgWithAdmin(ctx context.Context, org *types.Organization, adminUserID string) (*types.Organization, error)
 	GetOrg(ctx context.Context, orgID string) (*types.Organization, error)
 	GetOrgBySlug(ctx context.Context, slug string) (*types.Organization, error)
 	ListOrgsForUser(ctx context.Context, userID string) ([]*types.OrgResponse, error)
@@ -34,20 +34,17 @@ type OrgStore interface {
 	SoftDeleteOrg(ctx context.Context, orgID string) error
 	OrgHasActiveWorkspaces(ctx context.Context, orgID string) (bool, error)
 
-	AddOrgMember(ctx context.Context, orgID, userID string, role types.OrgRole, pendingKeyWrap bool) error
+	AddOrgMember(ctx context.Context, orgID, userID string, role types.OrgRole) error
 	GetOrgMember(ctx context.Context, orgID, userID string) (*types.OrgMember, error)
 	ListOrgMembers(ctx context.Context, orgID string) ([]*types.OrgMember, error)
 	UpdateOrgMemberRole(ctx context.Context, orgID, userID string, role types.OrgRole) error
-	SetPendingKeyWrap(ctx context.Context, orgID, userID string, pending bool) error
 	RemoveOrgMember(ctx context.Context, orgID, userID string) error
 	RemoveOrgAdminIfNotLast(ctx context.Context, orgID, targetUserID string) (bool, error)
 	DemoteOrgAdminIfNotLast(ctx context.Context, orgID, targetUserID string) (bool, error)
 	CountOrgAdmins(ctx context.Context, orgID string) (int, error)
 	IsOrgMember(ctx context.Context, orgID, userID string) (bool, error)
 	IsOrgAdmin(ctx context.Context, orgID, userID string) (bool, error)
-	SetPendingKeyWrapForOtherAdmins(ctx context.Context, orgID, excludeUserID string) error
 	ListOrgWorkspaces(ctx context.Context, orgID string, limit, offset int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error)
-	DeleteOrgKeyMember(ctx context.Context, orgID, userID string) error
 	GetUserSalt(ctx context.Context, userID string) ([]byte, error)
 
 	// US-43.1: Stripe lifecycle. UpdateOrgStatus sets the operational status
@@ -94,7 +91,7 @@ func NewPgOrgStore(db *sql.DB) *PgOrgStore {
 	return &PgOrgStore{db: db}
 }
 
-func (s *PgOrgStore) CreateOrgWithAdmin(ctx context.Context, org *types.Organization, adminUserID string, adminWrappedDEK []byte) (*types.Organization, error) {
+func (s *PgOrgStore) CreateOrgWithAdmin(ctx context.Context, org *types.Organization, adminUserID string) (*types.Organization, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin transaction: %w", err)
@@ -113,21 +110,12 @@ func (s *PgOrgStore) CreateOrgWithAdmin(ctx context.Context, org *types.Organiza
 	}
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO org_memberships (org_id, user_id, role, pending_key_wrap, created_at)
-		 VALUES ($1, $2, 'admin', false, NOW())`,
+		`INSERT INTO org_memberships (org_id, user_id, role, created_at)
+		 VALUES ($1, $2, 'admin', NOW())`,
 		org.ID, adminUserID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert org membership: %w", err)
-	}
-
-	_, err = tx.ExecContext(ctx,
-		`INSERT INTO org_key_members (org_id, user_id, wrapped_dek, key_version, created_at, updated_at)
-		 VALUES ($1, $2, $3, 1, NOW(), NOW())`,
-		org.ID, adminUserID, adminWrappedDEK,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("insert org key member: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -175,14 +163,14 @@ func (s *PgOrgStore) ListOrgsForUser(ctx context.Context, userID string) ([]*typ
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT o.id, o.name, o.slug, o.created_by, o.created_at, o.updated_at,
 		        o.status, o.plan_id, o.subscription_status,
-		        m.role, m.pending_key_wrap,
+		        m.role,
 		        COUNT(m2.user_id) AS member_count
 		 FROM organizations o
 		 JOIN org_memberships m ON m.org_id = o.id AND m.user_id = $1
 		 JOIN org_memberships m2 ON m2.org_id = o.id
 		 WHERE o.deleted_at IS NULL
 		 GROUP BY o.id, o.name, o.slug, o.created_by, o.created_at, o.updated_at,
-		          o.status, o.plan_id, o.subscription_status, m.role, m.pending_key_wrap
+		          o.status, o.plan_id, o.subscription_status, m.role
 		 ORDER BY o.created_at DESC`,
 		userID,
 	)
@@ -197,7 +185,7 @@ func (s *PgOrgStore) ListOrgsForUser(ctx context.Context, userID string) ([]*typ
 		if err := rows.Scan(
 			&r.ID, &r.Name, &r.Slug, &r.CreatedBy, &r.CreatedAt, &r.UpdatedAt,
 			&r.Status, &r.PlanID, &r.SubscriptionStatus,
-			&r.UserRole, &r.UserPendingKeyWrap,
+			&r.UserRole,
 			&r.MemberCount,
 		); err != nil {
 			return nil, fmt.Errorf("scan org row: %w", err)
@@ -268,11 +256,11 @@ func (s *PgOrgStore) OrgHasActiveWorkspaces(ctx context.Context, orgID string) (
 	return count > 0, nil
 }
 
-func (s *PgOrgStore) AddOrgMember(ctx context.Context, orgID, userID string, role types.OrgRole, pendingKeyWrap bool) error {
+func (s *PgOrgStore) AddOrgMember(ctx context.Context, orgID, userID string, role types.OrgRole) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO org_memberships (org_id, user_id, role, pending_key_wrap, created_at)
-		 VALUES ($1, $2, $3, $4, NOW())`,
-		orgID, userID, role, pendingKeyWrap,
+		`INSERT INTO org_memberships (org_id, user_id, role, created_at)
+		 VALUES ($1, $2, $3, NOW())`,
+		orgID, userID, role,
 	)
 	if err != nil {
 		return fmt.Errorf("add org member: %w", err)
@@ -283,12 +271,12 @@ func (s *PgOrgStore) AddOrgMember(ctx context.Context, orgID, userID string, rol
 func (s *PgOrgStore) GetOrgMember(ctx context.Context, orgID, userID string) (*types.OrgMember, error) {
 	var m types.OrgMember
 	err := s.db.QueryRowContext(ctx,
-		`SELECT m.org_id, m.user_id, u.username, u.email, m.role, m.pending_key_wrap, m.created_at
+		`SELECT m.org_id, m.user_id, u.username, u.email, m.role, m.created_at
 		 FROM org_memberships m
 		 JOIN users u ON u.id = m.user_id
 		 WHERE m.org_id = $1 AND m.user_id = $2`,
 		orgID, userID,
-	).Scan(&m.OrgID, &m.UserID, &m.Username, &m.Email, &m.Role, &m.PendingKeyWrap, &m.CreatedAt)
+	).Scan(&m.OrgID, &m.UserID, &m.Username, &m.Email, &m.Role, &m.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -300,7 +288,7 @@ func (s *PgOrgStore) GetOrgMember(ctx context.Context, orgID, userID string) (*t
 
 func (s *PgOrgStore) ListOrgMembers(ctx context.Context, orgID string) ([]*types.OrgMember, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT m.org_id, m.user_id, u.username, u.email, m.role, m.pending_key_wrap, m.created_at
+		`SELECT m.org_id, m.user_id, u.username, u.email, m.role, m.created_at
 		 FROM org_memberships m
 		 JOIN users u ON u.id = m.user_id
 		 WHERE m.org_id = $1
@@ -315,7 +303,7 @@ func (s *PgOrgStore) ListOrgMembers(ctx context.Context, orgID string) ([]*types
 	var members []*types.OrgMember
 	for rows.Next() {
 		var m types.OrgMember
-		if err := rows.Scan(&m.OrgID, &m.UserID, &m.Username, &m.Email, &m.Role, &m.PendingKeyWrap, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.OrgID, &m.UserID, &m.Username, &m.Email, &m.Role, &m.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan org member: %w", err)
 		}
 		members = append(members, &m)
@@ -340,17 +328,6 @@ func (s *PgOrgStore) UpdateOrgMemberRole(ctx context.Context, orgID, userID stri
 	return nil
 }
 
-func (s *PgOrgStore) SetPendingKeyWrap(ctx context.Context, orgID, userID string, pending bool) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE org_memberships SET pending_key_wrap = $3 WHERE org_id = $1 AND user_id = $2`,
-		orgID, userID, pending,
-	)
-	if err != nil {
-		return fmt.Errorf("set pending key wrap: %w", err)
-	}
-	return nil
-}
-
 func (s *PgOrgStore) RemoveOrgMember(ctx context.Context, orgID, userID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -362,13 +339,6 @@ func (s *PgOrgStore) RemoveOrgMember(ctx context.Context, orgID, userID string) 
 			_ = tx.Rollback()
 		}
 	}()
-
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM org_key_members WHERE org_id = $1 AND user_id = $2`,
-		orgID, userID,
-	); err != nil {
-		return fmt.Errorf("delete org key member: %w", err)
-	}
 
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM org_memberships WHERE org_id = $1 AND user_id = $2`,
@@ -429,13 +399,6 @@ func (s *PgOrgStore) RemoveOrgAdminIfNotLast(ctx context.Context, orgID, targetU
 	}
 
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM org_key_members WHERE org_id = $1 AND user_id = $2`,
-		orgID, targetUserID,
-	); err != nil {
-		return false, fmt.Errorf("delete org key member: %w", err)
-	}
-
-	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM org_memberships WHERE org_id = $1 AND user_id = $2`,
 		orgID, targetUserID,
 	); err != nil {
@@ -488,13 +451,6 @@ func (s *PgOrgStore) DemoteOrgAdminIfNotLast(ctx context.Context, orgID, targetU
 		return false, fmt.Errorf("demote org admin: %w", err)
 	}
 
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM org_key_members WHERE org_id = $1 AND user_id = $2`,
-		orgID, targetUserID,
-	); err != nil {
-		return false, fmt.Errorf("delete org key member: %w", err)
-	}
-
 	committed = true
 	return true, tx.Commit()
 }
@@ -535,7 +491,7 @@ func (s *PgOrgStore) IsOrgAdmin(ctx context.Context, orgID, userID string) (bool
 		   SELECT 1 FROM org_memberships m
 		   JOIN organizations o ON o.id = m.org_id
 		   WHERE m.org_id = $1 AND m.user_id = $2
-		     AND m.role = 'admin' AND m.pending_key_wrap = false
+		     AND m.role = 'admin'
 		     AND o.deleted_at IS NULL
 		     AND o.status != 'suspended'
 		 )`,
@@ -545,19 +501,6 @@ func (s *PgOrgStore) IsOrgAdmin(ctx context.Context, orgID, userID string) (bool
 		return false, fmt.Errorf("check org admin: %w", err)
 	}
 	return exists, nil
-}
-
-func (s *PgOrgStore) SetPendingKeyWrapForOtherAdmins(ctx context.Context, orgID, excludeUserID string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE org_memberships
-		 SET pending_key_wrap = true
-		 WHERE org_id = $1 AND user_id != $2 AND role = 'admin'`,
-		orgID, excludeUserID,
-	)
-	if err != nil {
-		return fmt.Errorf("set pending key wrap for other admins: %w", err)
-	}
-	return nil
 }
 
 func (s *PgOrgStore) ListOrgWorkspaces(ctx context.Context, orgID string, limit, offset int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error) {
@@ -624,17 +567,6 @@ func (s *PgOrgStore) ListOrgWorkspaces(ctx context.Context, orgID string, limit,
 	}
 
 	return workspaces, pagination, nil
-}
-
-func (s *PgOrgStore) DeleteOrgKeyMember(ctx context.Context, orgID, userID string) error {
-	_, err := s.db.ExecContext(ctx,
-		`DELETE FROM org_key_members WHERE org_id = $1 AND user_id = $2`,
-		orgID, userID,
-	)
-	if err != nil {
-		return fmt.Errorf("delete org key member: %w", err)
-	}
-	return nil
 }
 
 func (s *PgOrgStore) GetUserSalt(ctx context.Context, userID string) ([]byte, error) {
@@ -967,13 +899,11 @@ func (s *PgOrgStore) AcceptInvitationTx(ctx context.Context, invID, userID strin
 		return nil, true, nil
 	}
 
-	pendingKeyWrap := role == types.OrgRoleAdmin
-
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO org_memberships (org_id, user_id, role, pending_key_wrap, created_at)
-		 VALUES ($1, $2, $3, $4, NOW())
+		`INSERT INTO org_memberships (org_id, user_id, role, created_at)
+		 VALUES ($1, $2, $3, NOW())
 		 ON CONFLICT (org_id, user_id) DO NOTHING`,
-		orgID, userID, role, pendingKeyWrap,
+		orgID, userID, role,
 	); err != nil {
 		return nil, false, fmt.Errorf("insert membership: %w", err)
 	}
@@ -991,10 +921,9 @@ func (s *PgOrgStore) AcceptInvitationTx(ctx context.Context, invID, userID strin
 	}
 
 	return &types.OrgMember{
-		OrgID:          orgID,
-		UserID:         userID,
-		Role:           role,
-		PendingKeyWrap: pendingKeyWrap,
+		OrgID:  orgID,
+		UserID: userID,
+		Role:   role,
 	}, false, nil
 }
 

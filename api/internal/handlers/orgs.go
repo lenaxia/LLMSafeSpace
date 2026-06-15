@@ -5,21 +5,18 @@ package handlers
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 type orgStore interface {
-	CreateOrgWithAdmin(ctx context.Context, org *types.Organization, adminUserID string, adminWrappedDEK []byte) (*types.Organization, error)
+	CreateOrgWithAdmin(ctx context.Context, org *types.Organization, adminUserID string) (*types.Organization, error)
 	GetOrg(ctx context.Context, orgID string) (*types.Organization, error)
 	GetOrgBySlug(ctx context.Context, slug string) (*types.Organization, error)
 	ListOrgsForUser(ctx context.Context, userID string) ([]*types.OrgResponse, error)
@@ -30,14 +27,12 @@ type orgStore interface {
 	IsOrgAdmin(ctx context.Context, orgID, userID string) (bool, error)
 	GetOrgMember(ctx context.Context, orgID, userID string) (*types.OrgMember, error)
 	ListOrgMembers(ctx context.Context, orgID string) ([]*types.OrgMember, error)
-	AddOrgMember(ctx context.Context, orgID, userID string, role types.OrgRole, pendingKeyWrap bool) error
+	AddOrgMember(ctx context.Context, orgID, userID string, role types.OrgRole) error
 	RemoveOrgMember(ctx context.Context, orgID, userID string) error
 	RemoveOrgAdminIfNotLast(ctx context.Context, orgID, targetUserID string) (bool, error)
 	DemoteOrgAdminIfNotLast(ctx context.Context, orgID, targetUserID string) (bool, error)
 	CountOrgAdmins(ctx context.Context, orgID string) (int, error)
-	SetPendingKeyWrap(ctx context.Context, orgID, userID string, pending bool) error
 	UpdateOrgMemberRole(ctx context.Context, orgID, userID string, role types.OrgRole) error
-	DeleteOrgKeyMember(ctx context.Context, orgID, userID string) error
 	ListOrgWorkspaces(ctx context.Context, orgID string, limit, offset int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error)
 	GetUserSalt(ctx context.Context, userID string) ([]byte, error)
 	CreateBillingAccount(ctx context.Context, ownerID, ownerType, provider, externalCustomerID string) (int64, error)
@@ -53,8 +48,6 @@ type orgAuthService interface {
 // OrgsHandler handles org CRUD endpoints.
 type OrgsHandler struct {
 	orgStore   orgStore
-	orgKeySvc  *secrets.OrgKeyService
-	dekCache   secrets.DEKCache
 	authSvc    orgAuthService
 	billing    OrgBilling
 	successURL string
@@ -65,15 +58,11 @@ type OrgsHandler struct {
 // NewOrgsHandler creates a new OrgsHandler.
 func NewOrgsHandler(
 	store orgStore,
-	orgKeySvc *secrets.OrgKeyService,
-	dekCache secrets.DEKCache,
 	authSvc orgAuthService,
 ) *OrgsHandler {
 	return &OrgsHandler{
-		orgStore:  store,
-		orgKeySvc: orgKeySvc,
-		dekCache:  dekCache,
-		authSvc:   authSvc,
+		orgStore: store,
+		authSvc:  authSvc,
 	}
 }
 
@@ -127,32 +116,6 @@ func (h *OrgsHandler) Create(c *gin.Context) {
 		return
 	}
 
-	orgDEK, err := secrets.GenerateDEK()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate org key"})
-		return
-	}
-	defer zeroBytes(orgDEK)
-
-	adminSalt, err := h.orgStore.GetUserSalt(ctx, userID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to retrieve admin key material"})
-		return
-	}
-
-	adminKEK, err := secrets.DeriveKEKFromPassword([]byte(req.Password), adminSalt)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to derive admin key"})
-		return
-	}
-	defer zeroBytes(adminKEK)
-
-	wrappedDEK, err := secrets.WrapDEK(adminKEK, orgDEK)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to wrap org key"})
-		return
-	}
-
 	platformAdmin := isPlatformAdmin(c)
 
 	newOrg := &types.Organization{
@@ -162,7 +125,7 @@ func (h *OrgsHandler) Create(c *gin.Context) {
 		CreatedBy: userID,
 	}
 
-	created, err := h.orgStore.CreateOrgWithAdmin(ctx, newOrg, userID, wrappedDEK)
+	created, err := h.orgStore.CreateOrgWithAdmin(ctx, newOrg, userID)
 	if err != nil {
 		if isDuplicateErr(err) {
 			c.JSON(http.StatusConflict, gin.H{"error": "slug already in use"})
@@ -172,14 +135,11 @@ func (h *OrgsHandler) Create(c *gin.Context) {
 		return
 	}
 
-	_ = h.dekCache.CacheDEK(ctx, secrets.OrgCacheKey(created.ID), orgDEK, 24*time.Hour)
-
 	resp := types.CreateOrgResponse{
 		OrgResponse: types.OrgResponse{
-			Organization:       *created,
-			UserRole:           types.OrgRoleAdmin,
-			UserPendingKeyWrap: false,
-			MemberCount:        1,
+			Organization: *created,
+			UserRole:     types.OrgRoleAdmin,
+			MemberCount:  1,
 		},
 	}
 
@@ -291,10 +251,9 @@ func (h *OrgsHandler) Get(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, types.OrgResponse{
-		Organization:       *org,
-		UserRole:           member.Role,
-		UserPendingKeyWrap: member.PendingKeyWrap,
-		MemberCount:        0,
+		Organization: *org,
+		UserRole:     member.Role,
+		MemberCount:  0,
 	})
 }
 
@@ -447,22 +406,12 @@ func (h *OrgsHandler) AddMember(c *gin.Context) {
 		return
 	}
 
-	pendingKeyWrap := req.Role == types.OrgRoleAdmin
-
-	if err := h.orgStore.AddOrgMember(ctx, orgID, req.UserID, req.Role, pendingKeyWrap); err != nil {
+	if err := h.orgStore.AddOrgMember(ctx, orgID, req.UserID, req.Role); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to add member"})
 		return
 	}
 
-	if req.Role == types.OrgRoleAdmin {
-		c.JSON(http.StatusCreated, gin.H{
-			"pendingKeyWrap": true,
-			"message":        "Admin must call POST /orgs/" + orgID + "/accept-key to complete key setup",
-		})
-		return
-	}
-
-	c.JSON(http.StatusCreated, gin.H{"pendingKeyWrap": false})
+	c.JSON(http.StatusCreated, gin.H{})
 }
 
 // RemoveMember handles DELETE /api/v1/orgs/:id/members/:userID.
@@ -507,53 +456,6 @@ func (h *OrgsHandler) RemoveMember(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// AcceptKey handles POST /api/v1/orgs/:id/accept-key.
-func (h *OrgsHandler) AcceptKey(c *gin.Context) {
-	orgID := c.Param("id")
-	userID := h.authSvc.GetUserID(c)
-	ctx := c.Request.Context()
-
-	var req types.AcceptOrgKeyRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
-		return
-	}
-
-	member, err := h.orgStore.GetOrgMember(ctx, orgID, userID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check membership"})
-		return
-	}
-	if member == nil {
-		c.JSON(http.StatusForbidden, gin.H{"error": "not a member of this organization"})
-		return
-	}
-	if member.Role != types.OrgRoleAdmin {
-		c.JSON(http.StatusForbidden, gin.H{"error": "only admins can complete key setup"})
-		return
-	}
-	if !member.PendingKeyWrap {
-		c.JSON(http.StatusConflict, gin.H{"error": "key wrap already complete — no action needed"})
-		return
-	}
-
-	if err := h.orgKeySvc.WrapOrgDEKForNewAdmin(ctx, orgID, userID, []byte(req.Password)); err != nil {
-		if errors.Is(err, secrets.ErrOrgDEKUnavailable) {
-			c.JSON(http.StatusConflict, gin.H{"error": "org DEK not currently available — an org admin must be logged in to complete key setup"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to wrap org key"})
-		return
-	}
-
-	if err := h.orgStore.SetPendingKeyWrap(ctx, orgID, userID, false); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update membership"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "Key wrap complete. Org credentials will be available on your next login."})
-}
-
 // ChangeMemberRole handles PUT /api/v1/orgs/:id/members/:userID.
 func (h *OrgsHandler) ChangeMemberRole(c *gin.Context) {
 	orgID := c.Param("id")
@@ -592,14 +494,7 @@ func (h *OrgsHandler) ChangeMemberRole(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to promote member"})
 			return
 		}
-		if err := h.orgStore.SetPendingKeyWrap(ctx, orgID, targetUserID, true); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to set pending key wrap"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{
-			"pendingKeyWrap": true,
-			"message":        "Admin must call POST /orgs/" + orgID + "/accept-key to complete key setup",
-		})
+		c.JSON(http.StatusOK, gin.H{"message": "Member role updated"})
 		return
 	}
 
@@ -619,37 +514,6 @@ func (h *OrgsHandler) ChangeMemberRole(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Member role updated"})
-}
-
-// RotateKey handles POST /api/v1/orgs/:id/rotate-key.
-func (h *OrgsHandler) RotateKey(c *gin.Context) {
-	orgID := c.Param("id")
-	userID := h.authSvc.GetUserID(c)
-	ctx := c.Request.Context()
-
-	var req struct {
-		Password string `json:"password" binding:"required" log:"-"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "password required"})
-		return
-	}
-
-	reencrypted, err := h.orgKeySvc.RotateOrgDEK(ctx, orgID, userID, []byte(req.Password))
-	if err != nil {
-		if errors.Is(err, secrets.ErrOrgDEKUnavailable) {
-			c.JSON(http.StatusConflict, gin.H{"error": "org DEK not available — please log out and back in to refresh your org key"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to rotate org DEK"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"message":       "org DEK rotated successfully",
-		"credentials":   reencrypted,
-		"pendingAdmins": true,
-	})
 }
 
 func zeroBytes(b []byte) {

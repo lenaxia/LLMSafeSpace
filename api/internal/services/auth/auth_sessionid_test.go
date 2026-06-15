@@ -244,9 +244,6 @@ func (t *trackingKeyService) GetDEK(_ context.Context, _ string) ([]byte, error)
 func (t *trackingKeyService) CacheDEK(_ context.Context, _ string, _ []byte, _ time.Duration) error {
 	return nil
 }
-func (t *trackingKeyService) UnlockAllOrgDEKs(_ context.Context, _ string, _ []byte, _ []byte, _ time.Duration) error {
-	return nil
-}
 
 // TestOptionalAuthMiddleware_ValidToken verifies that a valid JWT sets userID
 // in context and calls the next handler (does not abort).

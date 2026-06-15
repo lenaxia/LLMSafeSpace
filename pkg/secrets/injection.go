@@ -58,12 +58,19 @@ func (s *SecretService) PrepareSecretsForInjection(ctx context.Context, userID, 
 		return nil, fmt.Errorf("get workspace credentials: %w", err)
 	}
 
-	// Derive server KEK once if any admin credentials are present.
-	var serverKEK []byte
+	// Derive server KEKs once if any admin or org credentials are present.
+	// Admin and org credentials use separate HKDF labels for domain separation.
+	var adminKEK, orgKEK []byte
 	for _, b := range bindings {
-		if b.OwnerType == "admin" {
-			serverKEK = s.deriveAdminKey("provider-credentials")
-			break
+		switch b.OwnerType {
+		case "admin":
+			if adminKEK == nil {
+				adminKEK = s.deriveAdminKey("provider-credentials")
+			}
+		case "org":
+			if orgKEK == nil {
+				orgKEK = s.deriveAdminKey("org-credentials")
+			}
 		}
 	}
 
@@ -74,7 +81,7 @@ func (s *SecretService) PrepareSecretsForInjection(ctx context.Context, userID, 
 		if seen[b.Provider] {
 			continue
 		}
-		pd, err := s.decryptBinding(ctx, b, sessionID, serverKEK)
+		pd, err := s.decryptBinding(ctx, b, sessionID, adminKEK, orgKEK)
 		if err != nil {
 			// Log the failure for operator visibility. Without this, a corrupted
 			// ciphertext or expired DEK silently falls through to a lower-priority
@@ -140,7 +147,7 @@ func (s *SecretService) PrepareSecretsForInjection(ctx context.Context, userID, 
 	return buildSecretsJSON(providerData, nonLLM)
 }
 
-func (s *SecretService) decryptBinding(ctx context.Context, b CredentialBinding, sessionID string, serverKEK []byte) (LLMProviderData, error) {
+func (s *SecretService) decryptBinding(ctx context.Context, b CredentialBinding, sessionID string, adminKEK, orgKEK []byte) (LLMProviderData, error) {
 	var key []byte
 	switch b.OwnerType {
 	case "user":
@@ -150,19 +157,15 @@ func (s *SecretService) decryptBinding(ctx context.Context, b CredentialBinding,
 		}
 		key = dek
 	case "admin":
-		if serverKEK == nil {
-			return LLMProviderData{}, fmt.Errorf("server KEK unavailable")
+		if adminKEK == nil {
+			return LLMProviderData{}, fmt.Errorf("server KEK unavailable for admin credentials")
 		}
-		key = serverKEK
+		key = adminKEK
 	case "org":
-		if s.orgKeySvc == nil {
-			return LLMProviderData{}, fmt.Errorf("org credential injection not enabled (OrgKeyService not wired)")
+		if orgKEK == nil {
+			return LLMProviderData{}, fmt.Errorf("server KEK unavailable for org credentials")
 		}
-		orgDEK, err := s.orgKeySvc.GetOrgDEK(ctx, b.OwnerID)
-		if err != nil {
-			return LLMProviderData{}, fmt.Errorf("get org DEK for %s: %w", b.OwnerID, err)
-		}
-		key = orgDEK
+		key = orgKEK
 	default:
 		return LLMProviderData{}, fmt.Errorf("unsupported owner_type %q", b.OwnerType)
 	}

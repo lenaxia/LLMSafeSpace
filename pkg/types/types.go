@@ -679,13 +679,12 @@ type Organization struct {
 
 // OrgMember is the API DTO for an organization membership.
 type OrgMember struct {
-	OrgID          string    `json:"orgId"`
-	UserID         string    `json:"userId"`
-	Username       string    `json:"username"`
-	Email          string    `json:"email"`
-	Role           OrgRole   `json:"role"`
-	PendingKeyWrap bool      `json:"pendingKeyWrap"`
-	CreatedAt      time.Time `json:"createdAt"`
+	OrgID     string    `json:"orgId"`
+	UserID    string    `json:"userId"`
+	Username  string    `json:"username"`
+	Email     string    `json:"email"`
+	Role      OrgRole   `json:"role"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 // CreateOrgRequest is the request body for creating an organization. The slug is
@@ -714,9 +713,8 @@ type CreateOrgResponse struct {
 // OrgResponse extends Organization with the calling user's membership context.
 type OrgResponse struct {
 	Organization
-	UserRole           OrgRole `json:"userRole"`
-	UserPendingKeyWrap bool    `json:"userPendingKeyWrap"`
-	MemberCount        int     `json:"memberCount"`
+	UserRole    OrgRole `json:"userRole"`
+	MemberCount int     `json:"memberCount"`
 }
 
 // AddOrgMemberRequest is the request body for adding an org member.

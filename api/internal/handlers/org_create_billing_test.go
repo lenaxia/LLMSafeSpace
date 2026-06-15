@@ -13,7 +13,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
@@ -64,9 +63,7 @@ func (f *fakeOrgBilling) CreatePortalSession(_ context.Context, _, _ string) (st
 func setupOrgTestRouterWithBilling(t *testing.T, store *mockOrgStore, billing OrgBilling, isPlatformAdmin bool) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	dekCache := newTestDEKCache()
-	orgKeySvc := secrets.NewOrgKeyService(nil, dekCache)
-	handler := NewOrgsHandler(store, orgKeySvc, dekCache, &mockOrgAuthService{userID: "admin-1"})
+	handler := NewOrgsHandler(store, &mockOrgAuthService{userID: "admin-1"})
 	if billing != nil {
 		handler.SetBilling(billing, "https://app/success", "https://app/cancel", "https://app/portal")
 	}

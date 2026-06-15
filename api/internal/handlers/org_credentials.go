@@ -28,14 +28,14 @@ type orgCredentialStore interface {
 
 // OrgCredentialsHandler handles org credential endpoints.
 type OrgCredentialsHandler struct {
-	credStore orgCredentialStore
-	orgKeySvc *secrets.OrgKeyService
-	authSvc   orgAuthService
+	credStore     orgCredentialStore
+	orgKeyDeriver secrets.AdminKeyDeriver
+	authSvc       orgAuthService
 }
 
 // NewOrgCredentialsHandler creates a new OrgCredentialsHandler.
-func NewOrgCredentialsHandler(store orgCredentialStore, orgKeySvc *secrets.OrgKeyService, authSvc orgAuthService) *OrgCredentialsHandler {
-	return &OrgCredentialsHandler{credStore: store, orgKeySvc: orgKeySvc, authSvc: authSvc}
+func NewOrgCredentialsHandler(store orgCredentialStore, orgKeyDeriver secrets.AdminKeyDeriver, authSvc orgAuthService) *OrgCredentialsHandler {
+	return &OrgCredentialsHandler{credStore: store, orgKeyDeriver: orgKeyDeriver, authSvc: authSvc}
 }
 
 type createOrgCredentialRequest struct {
@@ -66,9 +66,9 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 		return
 	}
 
-	orgDEK, err := h.orgKeySvc.GetOrgDEK(ctx, orgID)
-	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "org DEK not available — please log out and back in to refresh your org key"})
+	orgKEK := h.orgKeyDeriver("org-credentials")
+	if orgKEK == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "server key not configured"})
 		return
 	}
 
@@ -81,7 +81,7 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode credential"})
 		return
 	}
-	ciphertext, err := secrets.EncryptSecret(orgDEK, plaintext)
+	ciphertext, err := secrets.EncryptSecret(orgKEK, plaintext)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "encryption failed"})
 		return
@@ -153,13 +153,13 @@ func (h *OrgCredentialsHandler) Update(c *gin.Context) {
 	var newCiphertext []byte
 	newKeyVersion := existing.KeyVersion
 	if req.APIKey != nil {
-		orgDEK, err := h.orgKeySvc.GetOrgDEK(ctx, orgID)
-		if err != nil {
-			c.JSON(http.StatusConflict, gin.H{"error": "org DEK not available"})
+		orgKEK := h.orgKeyDeriver("org-credentials")
+		if orgKEK == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "server key not configured"})
 			return
 		}
 
-		oldPlaintext, err := secrets.DecryptSecret(orgDEK, existing.Ciphertext)
+		oldPlaintext, err := secrets.DecryptSecret(orgKEK, existing.Ciphertext)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to decrypt existing credential"})
 			return
@@ -178,7 +178,7 @@ func (h *OrgCredentialsHandler) Update(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode credential"})
 			return
 		}
-		newCiphertext, err = secrets.EncryptSecret(orgDEK, newPlaintext)
+		newCiphertext, err = secrets.EncryptSecret(orgKEK, newPlaintext)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "re-encryption failed"})
 			return
