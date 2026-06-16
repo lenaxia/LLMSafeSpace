@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-15 (continued 2026-06-16)
 **Session:** Implement Story 1 from design 0031 — eliminate org DEK, commit, push, PR, iterate CI
-**Status:** In Progress — unblocked, push landed, CI cycle 7 running. Worklog renumbered 0302→0303.
+**Status:** In Progress — unblocked, push landed, CI cycle 7 running. Worklog renumbered 0302→0303→0305 (main collision at 0303).
 
 ---
 
@@ -82,7 +82,7 @@ All 7 test files updated and passing:
 - **Iteration 4:** Worklog collision persisted (main advanced: new 0299 and 0300 from parallel merges collided with renames). golangci-lint caught unused `memberKey` helper.
 - **Iteration 5:** Fixed `memberKey`, restored accidentally deleted `CreateOrgWithAdmin` mock. Frontend typecheck failures (pendingKeyWrap in 3 components, acceptKey call). Fixed all frontend references.
 - **Iteration 6:** Merged latest main (Epic 42 AWS EC2 driver, relay router, queue-drain rename). Worklog numbering fixed (0300→0302 to avoid collision with main's new 0300 epic42-aws-ec2-driver). **Merge commit committed locally but not pushed — GitHub token expired.**
-- **Iteration 7 (2026-06-16):** GitHub auth restored. Pushed commits `6210d0a4` (merge) and `dfa7338c` (prior worklog doc update). CI re-triggered — Lint failed again: main had advanced with PR #190 (`feat: relay-router + relay-proxy container images`), which landed `worklogs/0302_2026-06-16_relay-router-image-build.md`, re-colliding with this worklog's 0302. Renumbered `0302→0303`, merged latest main again. Other checks (migration safety, gitleaks, trivy, govulncheck, pkg/secrets integration, frontend build) all passed.
+- **Iteration 7 (2026-06-16):** GitHub auth restored. Pushed commits `6210d0a4` (merge) and `dfa7338c` (prior worklog doc update). CI re-triggered — Lint failed again: main had advanced with PR #190 (`feat: relay-router + relay-proxy container images`), which landed `worklogs/0302_2026-06-16_relay-router-image-build.md`, re-colliding with this worklog's 0302. Renumbered `0302→0303`, merged latest main again. Other checks (migration safety, gitleaks, trivy, govulncheck, pkg/secrets integration, frontend build) all passed.\n- **Iteration 8 (2026-06-16):** Main advanced again — `0303_2026-06-15_abort-stale-sessions-on-restart.md` and `0304_2026-06-15_merge-secrets-dek-absent-activate.md` landed via PRs #184, #189. Renumbered `0303→0305`, `0304→0306`.
 
 ---
 
@@ -172,5 +172,6 @@ All 7 test files updated and passing:
 **Worklog history:**
 - Originally numbered 0300, renamed to 0302 (iteration 6) to avoid collision with main's `0300_2026-06-15_epic42-aws-ec2-driver.md`
 - Renamed 0302→0303 (iteration 7, 2026-06-16) to avoid collision with main's `0302_2026-06-16_relay-router-image-build.md` (landed via PR #190)
+- Renamed 0303→0305 (iteration 8, 2026-06-16) to avoid collision with main's `0303_2026-06-15_abort-stale-sessions-on-restart.md` (PR #184) and `0304_2026-06-15_merge-secrets-dek-absent-activate.md` (PR #189)
 
-**Pushed commits (2026-06-16):** `6210d0a4` (merge main + 0300→0302 renumber), `dfa7338c` (prior worklog doc update), `0bbcf656` (0302→0303 renumber), merge of `origin/main` (brings in PR #190).
+**Pushed commits (2026-06-16):** `6210d0a4` (merge main + 0300→0302 renumber), `dfa7338c` (prior worklog doc update), `0bbcf656` (0302→0303 renumber), `c2af9978` (reviewer round 8 fixes), merge of `origin/main` (brings in PRs #190, #184, #189).
