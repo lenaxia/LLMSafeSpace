@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8s "k8s.io/client-go/kubernetes"
@@ -1718,4 +1719,201 @@ func TestEnsureSecretsManifest_PreservesWorkspaceConfig_BindFirst(t *testing.T) 
 	var wsCfg types.WorkspaceConfig
 	require.NoError(t, json.Unmarshal(secret.Data["workspace-config.json"], &wsCfg))
 	assert.Equal(t, "gpt-5.4", wsCfg.DefaultModel)
+}
+
+// ===== seedEphemeralSecrets merge behavior =====
+//
+// When the user's DEK is unavailable (API-key auth, expired session, background
+// reconcile), seedEphemeralSecrets can only produce admin-owned credentials.
+// Previously it called createEphemeralSecretsSecret which called EnsureSecretsManifest
+// and overwrote the entire secrets.json — silently dropping user-owned credentials
+// (e.g. thekao cloud) that had been correctly written when the DEK was available.
+//
+// Fix: seedEphemeralSecrets must MERGE: incoming payload wins for names it contains,
+// existing payload fills in names the incoming payload lacks (because the DEK
+// was unavailable to decrypt them). User credentials survive a DEK-absent activate.
+
+// TestSeedEphemeralSecrets_PreservesUserCredentials is the primary regression test.
+// It calls seedEphemeralSecrets directly — the exact function whose wiring was changed —
+// so any regression that reverts the change back to createEphemeralSecretsSecret would
+// cause this test to fail.
+//
+// Sequence: DEK was available → full credential set written via EnsureSecretsManifest
+// → DEK expires → workspace restarts → seedEphemeralSecrets runs (admin-only, no DEK)
+// → user credentials must survive in the K8s Secret.
+func TestSeedEphemeralSecrets_PreservesUserCredentials(t *testing.T) {
+	f := newFixtureWithFakeClientset(t)
+	ctx := context.Background()
+
+	// Step 1: Prior full-DEK inject wrote thekao cloud + opencode.
+	fullPayload := []byte(`[
+		{"type":"llm-provider","name":"opencode","metadata":null,"plaintext":"{\"provider\":\"opencode\",\"apiKey\":\"public\"}"},
+		{"type":"llm-provider","name":"thekao cloud","metadata":null,"plaintext":"{\"provider\":\"thekao cloud\",\"apiKey\":\"sk-user-secret\"}"}
+	]`)
+	require.NoError(t, f.svc.EnsureSecretsManifest(ctx, "ws-dek-absent", fullPayload))
+
+	// Step 2: DEK expires. seedEphemeralSecrets is called with sessionID="" which
+	// means PrepareSecretsForInjection can only decrypt admin credentials.
+	adminOnlyPayload := []byte(`[
+		{"type":"llm-provider","name":"opencode","metadata":null,"plaintext":"{\"provider\":\"opencode\",\"apiKey\":\"public\"}"}
+	]`)
+	inj := &fakeSecretInjector{
+		prepare: func(_ context.Context, _, _, _ string) ([]byte, error) {
+			return adminOnlyPayload, nil
+		},
+	}
+	f.svc.SetSecretInjector(inj)
+
+	// This is the function under test — the call site that was previously
+	// calling createEphemeralSecretsSecret (full overwrite).
+	f.svc.seedEphemeralSecrets(ctx, "user1", "ws-dek-absent")
+
+	// User credential must still be present — not overwritten by the admin-only payload.
+	secret, err := f.fakeCS.CoreV1().Secrets("default").Get(ctx, "workspace-secrets-ws-dek-absent", metav1.GetOptions{})
+	require.NoError(t, err)
+
+	var got []map[string]interface{}
+	require.NoError(t, json.Unmarshal(secret.Data["secrets.json"], &got))
+
+	names := make(map[string]bool)
+	for _, entry := range got {
+		names[entry["name"].(string)] = true
+	}
+	assert.True(t, names["opencode"], "admin credential must be present after seedEphemeralSecrets")
+	assert.True(t, names["thekao cloud"],
+		"user credential must survive a DEK-absent seedEphemeralSecrets — would fail if wired to createEphemeralSecretsSecret")
+}
+
+// TestSeedEphemeralSecrets_IncomingWinsForExistingName verifies that when the
+// incoming payload contains a name that also exists in the stored secret, the
+// incoming value wins (e.g. admin rotated the opencode key).
+func TestSeedEphemeralSecrets_IncomingWinsForExistingName(t *testing.T) {
+	f := newFixtureWithFakeClientset(t)
+	ctx := context.Background()
+
+	old := []byte(`[{"type":"llm-provider","name":"opencode","metadata":null,"plaintext":"old-key"}]`)
+	require.NoError(t, f.svc.EnsureSecretsManifest(ctx, "ws-win", old))
+
+	incoming := []byte(`[{"type":"llm-provider","name":"opencode","metadata":null,"plaintext":"new-key"}]`)
+	require.NoError(t, f.svc.MergeSecretsManifest(ctx, "ws-win", incoming))
+
+	secret, err := f.fakeCS.CoreV1().Secrets("default").Get(ctx, "workspace-secrets-ws-win", metav1.GetOptions{})
+	require.NoError(t, err)
+
+	var got []map[string]interface{}
+	require.NoError(t, json.Unmarshal(secret.Data["secrets.json"], &got))
+	require.Len(t, got, 1)
+	assert.Equal(t, "new-key", got[0]["plaintext"], "incoming must win for names it contains")
+}
+
+// TestSeedEphemeralSecrets_NoExistingSecret verifies that when no secret exists
+// yet (brand-new workspace), MergeSecretsManifest behaves identically to
+// EnsureSecretsManifest — it creates the secret with the incoming payload.
+func TestSeedEphemeralSecrets_NoExistingSecret(t *testing.T) {
+	f := newFixtureWithFakeClientset(t)
+	ctx := context.Background()
+
+	payload := []byte(`[{"type":"llm-provider","name":"opencode","metadata":null,"plaintext":"key"}]`)
+	require.NoError(t, f.svc.MergeSecretsManifest(ctx, "ws-new", payload))
+
+	secret, err := f.fakeCS.CoreV1().Secrets("default").Get(ctx, "workspace-secrets-ws-new", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, payload, secret.Data["secrets.json"])
+}
+
+// TestSeedEphemeralSecrets_EmptyIncoming verifies that an empty incoming payload
+// (no bindings, or all decrypt failures) does not overwrite existing credentials.
+func TestSeedEphemeralSecrets_EmptyIncomingPreservesExisting(t *testing.T) {
+	f := newFixtureWithFakeClientset(t)
+	ctx := context.Background()
+
+	existing := []byte(`[{"type":"llm-provider","name":"thekao cloud","metadata":null,"plaintext":"sk-user"}]`)
+	require.NoError(t, f.svc.EnsureSecretsManifest(ctx, "ws-empty", existing))
+
+	// Empty incoming (all decrypts failed, len <= 2).
+	require.NoError(t, f.svc.MergeSecretsManifest(ctx, "ws-empty", []byte(`[]`)))
+
+	secret, err := f.fakeCS.CoreV1().Secrets("default").Get(ctx, "workspace-secrets-ws-empty", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, existing, secret.Data["secrets.json"],
+		"empty incoming must not overwrite existing credentials")
+}
+
+// TestMergeSecretsByName_MalformedExisting_FallsBackToIncoming exercises the
+// recovery branch in MergeSecretsManifest: when the existing secret's
+// secrets.json is unparseable (e.g. corruption, version skew), the code logs
+// a Warn and writes the incoming payload as-is rather than leaving the secret
+// in a corrupt state. This test asserts that fallback behavior end-to-end
+// through MergeSecretsManifest, ensuring the function does not silently
+// preserve corrupt data when given a chance to overwrite.
+func TestMergeSecretsByName_MalformedExisting_FallsBackToIncoming(t *testing.T) {
+	f := newFixtureWithFakeClientset(t)
+	ctx := context.Background()
+
+	// Pre-create a secret with a malformed secrets.json directly via the
+	// fake clientset (bypassing the service so we can inject corruption).
+	corrupt := []byte(`{not-an-array, completely malformed`)
+	_, err := f.fakeCS.CoreV1().Secrets("default").Create(ctx, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "workspace-secrets-ws-corrupt",
+			Namespace: "default",
+			Labels:    map[string]string{"app": "llmsafespace"},
+		},
+		Data: map[string][]byte{"secrets.json": corrupt},
+	}, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	// Merge a valid incoming payload. The merge of corrupt+valid must fall
+	// back to writing the incoming as-is (rather than failing or preserving
+	// corruption).
+	incoming := []byte(`[{"type":"llm-provider","name":"opencode","metadata":null,"plaintext":"key"}]`)
+	require.NoError(t, f.svc.MergeSecretsManifest(ctx, "ws-corrupt", incoming))
+
+	secret, err := f.fakeCS.CoreV1().Secrets("default").Get(ctx, "workspace-secrets-ws-corrupt", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, incoming, secret.Data["secrets.json"],
+		"corrupt existing secret must be overwritten with valid incoming payload — not preserved as garbage")
+}
+
+// TestMergeSecretsManifest_PreservesWorkspaceConfig verifies that the merge
+// path (used by seedEphemeralSecrets on DEK-absent activate) preserves
+// workspace-config.json — the same property already verified for
+// EnsureSecretsManifest. Without this, a DEK-absent activate that triggers a
+// merge would silently drop the user's selected default model from the Secret,
+// even though the merge correctly preserves secrets.json entries.
+func TestMergeSecretsManifest_PreservesWorkspaceConfig(t *testing.T) {
+	f := newFixtureWithFakeClientset(t)
+	ctx := context.Background()
+
+	// Step 1: User selects a model — EnsureWorkspaceConfig writes
+	// workspace-config.json to the Secret.
+	require.NoError(t, f.svc.EnsureWorkspaceConfig(ctx, "ws-merge-cfg", types.WorkspaceConfig{DefaultModel: "glm-5.2"}))
+
+	// Step 2: User binds credentials — EnsureSecretsManifest writes secrets.json
+	// without clobbering workspace-config.json (verified separately).
+	secretsPayload := []byte(`[{"type":"llm-provider","name":"opencode","metadata":null,"plaintext":"key"}]`)
+	require.NoError(t, f.svc.EnsureSecretsManifest(ctx, "ws-merge-cfg", secretsPayload))
+
+	// Step 3: DEK expires; activate triggers MergeSecretsManifest with admin-only payload.
+	mergePayload := []byte(`[{"type":"llm-provider","name":"opencode","metadata":null,"plaintext":"key-rotated"}]`)
+	require.NoError(t, f.svc.MergeSecretsManifest(ctx, "ws-merge-cfg", mergePayload))
+
+	// All three keys must coexist:
+	//   - secrets.json: merged (incoming wins, but no other entries to preserve)
+	//   - workspace-config.json: preserved unchanged
+	secret, err := f.fakeCS.CoreV1().Secrets("default").Get(ctx, "workspace-secrets-ws-merge-cfg", metav1.GetOptions{})
+	require.NoError(t, err)
+
+	require.NotNil(t, secret.Data["workspace-config.json"],
+		"MergeSecretsManifest must not clobber workspace-config.json")
+	var wsCfg types.WorkspaceConfig
+	require.NoError(t, json.Unmarshal(secret.Data["workspace-config.json"], &wsCfg))
+	assert.Equal(t, "glm-5.2", wsCfg.DefaultModel,
+		"model selection must survive a DEK-absent merge — workspace-config.json key untouched")
+
+	// secrets.json reflects the merge (incoming key wins).
+	var got []map[string]interface{}
+	require.NoError(t, json.Unmarshal(secret.Data["secrets.json"], &got))
+	require.Len(t, got, 1)
+	assert.Equal(t, "key-rotated", got[0]["plaintext"], "incoming admin rotation must apply")
 }

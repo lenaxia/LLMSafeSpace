@@ -778,3 +778,192 @@ func TestHandler_RevealSecret_RequiresPasswordVerification(t *testing.T) {
 		}
 	})
 }
+
+// TestHandler_RevealSecret_CiphertextDecryptFailed_Returns409 verifies the
+// failure path observed in production: the user's DEK was rotated (or
+// user_keys row rewritten) without re-encrypting their existing user_secrets
+// rows. The DEK unwraps fine, but the stored ciphertext is AEAD-incompatible.
+//
+// Before the fix this returned 500 "internal error" and emitted no audit log.
+// After: 409 Conflict with an actionable user-facing message, and a
+// secret_audit_log entry with reason=ciphertext_aead_failure.
+func TestHandler_RevealSecret_CiphertextDecryptFailed_Returns409(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctx := context.Background()
+	userID := "test-user"
+	password := []byte("test-password")
+	sessionID := "test-session"
+
+	keyStore := newTestKeyStore()
+	dekCache := newTestDEKCache()
+	keySvc := secrets.NewKeyService(keyStore, dekCache)
+	secretStore := newTestSecretStore()
+	svc := secrets.NewSecretService(keySvc, secretStore)
+
+	if _, err := keySvc.InitializeUserKeys(ctx, userID, password); err != nil {
+		t.Fatalf("InitializeUserKeys: %v", err)
+	}
+	if err := keySvc.UnlockDEK(ctx, userID, password, sessionID, time.Hour); err != nil {
+		t.Fatalf("UnlockDEK: %v", err)
+	}
+
+	created, err := svc.CreateSecret(ctx, userID, sessionID, secrets.CreateSecretRequest{
+		Name: "rotated-out", Type: secrets.SecretTypeEnvSecret, Value: "stale-value",
+		Metadata: []byte(`{"var_name":"X"}`),
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	// Corrupt the stored ciphertext: simulates DEK rotated without re-encrypting,
+	// or storage tampering. The current DEK can no longer authenticate this blob.
+	stored, _ := secretStore.GetSecret(ctx, userID, created.ID)
+	stored.Ciphertext = []byte("\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d")
+	if err := secretStore.UpdateSecret(ctx, stored); err != nil {
+		t.Fatalf("UpdateSecret(corrupt): %v", err)
+	}
+
+	verifier := &stubPasswordVerifier{expected: password}
+	h := NewSecretsHandler(svc)
+	h.SetPasswordVerifier(verifier)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", userID)
+		c.Set("sessionID", sessionID)
+		c.Next()
+	})
+	router.POST("/api/v1/secrets/:id/reveal", h.RevealSecret)
+
+	body, _ := json.Marshal(map[string]string{"password": string(password)})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets/"+created.ID+"/reveal", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// 409 Conflict — distinct from 500 (was: "internal error") and 403
+	// (which means re-authenticate, which would NOT help here).
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409 Conflict for ciphertext mismatch, got %d: %s", w.Code, w.Body.String())
+	}
+	// User-facing message must be actionable, not "internal error".
+	bodyStr := w.Body.String()
+	if !bytes.Contains(w.Body.Bytes(), []byte("cannot be decrypted")) {
+		t.Errorf("expected actionable error message mentioning decryption, got: %s", bodyStr)
+	}
+	if bytes.Contains(w.Body.Bytes(), []byte("internal error")) {
+		t.Errorf("must not return generic 'internal error' — was the regression we are fixing: %s", bodyStr)
+	}
+
+	// Audit log must contain a structured entry with reason=ciphertext_aead_failure
+	// so operators can detect this scenario from logs alone.
+	found := false
+	for _, e := range secretStore.audit {
+		if e.Action != "secret_decrypt_failed" || len(e.Metadata) == 0 {
+			continue
+		}
+		var meta map[string]string
+		if err := json.Unmarshal(e.Metadata, &meta); err != nil {
+			continue
+		}
+		if meta["reason"] != "ciphertext_aead_failure" {
+			continue
+		}
+		found = true
+		// Verify the entry is keyed to the right user and secret
+		if e.UserID != userID {
+			t.Errorf("audit entry user mismatch: got %q want %q", e.UserID, userID)
+		}
+		if e.SecretID == nil || *e.SecretID != created.ID {
+			t.Errorf("audit entry secretID mismatch")
+		}
+		if meta["name"] != "rotated-out" {
+			t.Errorf("audit metadata missing secret name: %v", meta)
+		}
+		break
+	}
+	if !found {
+		t.Errorf("expected secret_audit_log entry with reason=ciphertext_aead_failure; got %d entries", len(secretStore.audit))
+	}
+}
+
+// TestHandler_RevealSecret_DEKUnavailable_Returns403 verifies the existing
+// distinct path: DEK is not in cache (session expired, user not logged in).
+// This is correctly handled with 403 + "re-authenticate" — re-authenticating
+// will fix it, unlike ErrCiphertextDecryptFailed.
+func TestHandler_RevealSecret_DEKUnavailable_Returns403(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	ctx := context.Background()
+	userID := "test-user"
+	password := []byte("test-password")
+	sessionID := "test-session"
+
+	keyStore := newTestKeyStore()
+	dekCache := newTestDEKCache()
+	keySvc := secrets.NewKeyService(keyStore, dekCache)
+	secretStore := newTestSecretStore()
+	svc := secrets.NewSecretService(keySvc, secretStore)
+
+	if _, err := keySvc.InitializeUserKeys(ctx, userID, password); err != nil {
+		t.Fatalf("InitializeUserKeys: %v", err)
+	}
+	if err := keySvc.UnlockDEK(ctx, userID, password, sessionID, time.Hour); err != nil {
+		t.Fatalf("UnlockDEK: %v", err)
+	}
+	created, err := svc.CreateSecret(ctx, userID, sessionID, secrets.CreateSecretRequest{
+		Name: "expired-session", Type: secrets.SecretTypeEnvSecret, Value: "v",
+		Metadata: []byte(`{"var_name":"X"}`),
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	// Evict the DEK to simulate session expiry.
+	_ = dekCache.EvictDEK(ctx, sessionID)
+
+	verifier := &stubPasswordVerifier{expected: password}
+	h := NewSecretsHandler(svc)
+	h.SetPasswordVerifier(verifier)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", userID)
+		c.Set("sessionID", sessionID)
+		c.Next()
+	})
+	router.POST("/api/v1/secrets/:id/reveal", h.RevealSecret)
+
+	body, _ := json.Marshal(map[string]string{"password": string(password)})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets/"+created.ID+"/reveal", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for DEK unavailable, got %d: %s", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte("re-authenticate")) {
+		t.Errorf("expected message instructing re-authenticate, got: %s", w.Body.String())
+	}
+
+	// Audit log entry distinguishes this case via reason=dek_unavailable.
+	found := false
+	for _, e := range secretStore.audit {
+		if e.Action != "secret_decrypt_failed" || len(e.Metadata) == 0 {
+			continue
+		}
+		var meta map[string]string
+		if err := json.Unmarshal(e.Metadata, &meta); err != nil {
+			continue
+		}
+		if meta["reason"] == "dek_unavailable" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected secret_audit_log entry with reason=dek_unavailable")
+	}
+}

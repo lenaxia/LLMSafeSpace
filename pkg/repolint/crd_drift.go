@@ -436,5 +436,23 @@ func LiveBindings() []CRDBinding {
 			CRDFile:  "charts/llmsafespace/crds/runtimeenvironment.yaml",
 			CRDPath:  []string{"spec", "versions", "0", "schema", "openAPIV3Schema", "properties", "status"},
 		},
+		{
+			GoFile:   "pkg/apis/llmsafespace/v1/inferencerelay_types.go",
+			GoStruct: "InferenceRelaySpec",
+			CRDFile:  "charts/llmsafespace/crds/inferencerelay.yaml",
+			CRDPath:  []string{"spec", "versions", "0", "schema", "openAPIV3Schema", "properties", "spec"},
+		},
+		{
+			GoFile:   "pkg/apis/llmsafespace/v1/inferencerelay_types.go",
+			GoStruct: "InferenceRelayStatus",
+			CRDFile:  "charts/llmsafespace/crds/inferencerelay.yaml",
+			CRDPath:  []string{"spec", "versions", "0", "schema", "openAPIV3Schema", "properties", "status"},
+		},
+		{
+			GoFile:   "pkg/apis/llmsafespace/v1/inferencerelay_types.go",
+			GoStruct: "RelayInstanceStatus",
+			CRDFile:  "charts/llmsafespace/crds/inferencerelay.yaml",
+			CRDPath:  []string{"spec", "versions", "0", "schema", "openAPIV3Schema", "properties", "status", "properties", "instances", "items"},
+		},
 	}
 }

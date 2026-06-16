@@ -276,12 +276,23 @@ func (s *SecretService) DecryptSecretValue(ctx context.Context, userID, sessionI
 
 	dek, err := s.keys.GetDEK(ctx, sessionID)
 	if err != nil {
+		// DEK is unavailable from cache (session expired, user not logged in,
+		// or Redis flushed). Audit so operators can correlate user reports.
+		s.audit(ctx, userID, "secret_decrypt_failed", &secretID, nil,
+			map[string]string{"name": secret.Name, "type": string(secret.Type), "reason": "dek_unavailable", "error": err.Error()})
 		return nil, fmt.Errorf("%w: %v", ErrDEKUnavailable, err)
 	}
 
 	plaintext, err := DecryptSecret(dek, secret.Ciphertext)
 	if err != nil {
-		return nil, fmt.Errorf("decrypt secret: %w", err)
+		// AEAD authentication failed: DEK is present but does not match the
+		// stored ciphertext. Most common cause is a DEK rotation or user_keys
+		// rewrite without re-encrypting the existing secrets. Distinct from
+		// ErrDEKUnavailable — re-authenticating will NOT fix this.
+		s.audit(ctx, userID, "secret_decrypt_failed", &secretID, nil,
+			map[string]string{"name": secret.Name, "type": string(secret.Type), "reason": "ciphertext_aead_failure", "key_version": fmt.Sprintf("%d", secret.KeyVersion), "error": err.Error()})
+		return nil, fmt.Errorf("%w: secret %q (type=%s, key_version=%d): %v",
+			ErrCiphertextDecryptFailed, secret.Name, secret.Type, secret.KeyVersion, err)
 	}
 
 	s.audit(ctx, userID, "read", &secretID, nil, map[string]string{"name": secret.Name})

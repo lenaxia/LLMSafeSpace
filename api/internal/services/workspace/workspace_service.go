@@ -1298,11 +1298,16 @@ func (s *Service) refreshEphemeralSecrets(ctx context.Context, userID, workspace
 //
 // Called from one path:
 //   - refreshEphemeralSecrets fallback: when no sessionID is in context
-//     (API-key auth, controller reconcile), this is called instead of
-//     skipping entirely, ensuring platform credentials are always injected.
+//     (API-key auth, controller reconcile, expired DEK), this is called instead
+//     of skipping entirely, ensuring platform credentials are always current.
 //
-// User credentials (requiring a per-session DEK) are injected by
-// refreshEphemeralSecrets when the user opens the workspace with a JWT session.
+// Uses MergeSecretsManifest rather than a full overwrite so that user-owned
+// credentials (which require the DEK and could not be decrypted here) are
+// preserved from the prior full refresh. Without this, every DEK-absent activate
+// silently drops user credentials and the pod boots with only admin providers.
+//
+// User credentials are injected by refreshEphemeralSecrets when the user opens
+// the workspace with a live session DEK.
 func (s *Service) seedEphemeralSecrets(ctx context.Context, userID, workspaceID string) {
 	if s.secretInjector == nil {
 		return
@@ -1313,16 +1318,13 @@ func (s *Service) seedEphemeralSecrets(ctx context.Context, userID, workspaceID 
 			"workspaceID", workspaceID, "error", err.Error())
 		return
 	}
-	if len(secretsJSON) <= 2 {
-		// Empty result after a successful PrepareSecretsForInjection call means
-		// either (a) no bindings exist yet (credential seeding race) or (b) all
-		// decrypt attempts failed silently (key mismatch, audit logged separately).
-		// Log at Warn so operators can correlate with secret_audit_log entries.
-		s.logger.Warn("seedEphemeralSecrets: PrepareSecretsForInjection returned empty — workspace-secrets not written; pod will boot without platform credentials",
+	// Merge rather than overwrite. An empty result (no admin bindings, or all
+	// decrypts failed) still runs the merge path — which is a no-op against
+	// existing credentials, preserving them intact.
+	if err := s.MergeSecretsManifest(ctx, workspaceID, secretsJSON); err != nil {
+		s.logger.Error("seedEphemeralSecrets: failed to merge secrets manifest", err,
 			"workspaceID", workspaceID, "userID", userID)
-		return
 	}
-	s.createEphemeralSecretsSecret(ctx, workspaceID, secretsJSON)
 }
 
 // EnsureSecretsManifest writes (create-or-update) the K8s Secret named
@@ -1401,6 +1403,154 @@ func (s *Service) EnsureSecretsManifest(ctx context.Context, workspaceID string,
 		}
 		return nil
 	})
+}
+
+// MergeSecretsManifest writes the incoming secrets.json payload into the
+// workspace-secrets-<id> K8s Secret using a merge strategy: incoming entries
+// win for names they contain, and existing entries fill in names the incoming
+// payload lacks.
+//
+// This is the correct write path for seedEphemeralSecrets (DEK-absent activate).
+// When only admin credentials can be decrypted, user-owned credentials that were
+// written by a prior full-DEK refresh must not be overwritten. Without this,
+// every workspace activate with an expired or absent DEK silently drops user
+// credentials (e.g. thekao cloud) and the pod boots with only the relay provider.
+//
+// Merge semantics:
+//   - incoming entry (by name) always wins — ensures rotated admin keys propagate
+//   - existing entry whose name is absent from incoming is preserved — ensures
+//     user credentials survive a DEK-absent refresh
+//   - if no existing secret: behaves identically to EnsureSecretsManifest
+//   - empty incoming ([]): preserves all existing entries unchanged
+func (s *Service) MergeSecretsManifest(ctx context.Context, workspaceID string, incomingJSON []byte) error {
+	if workspaceID == "" {
+		return fmt.Errorf("workspaceID is required")
+	}
+
+	secretName := fmt.Sprintf("workspace-secrets-%s", workspaceID)
+	clientset := s.k8sClient.Clientset()
+	secretClient := clientset.CoreV1().Secrets(s.config.Namespace)
+
+	labels := map[string]string{
+		"app":                        "llmsafespace",
+		"llmsafespace.dev/workspace": workspaceID,
+		"llmsafespace.dev/ephemeral": "true",
+	}
+
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		existing, err := secretClient.Get(ctx, secretName, metav1.GetOptions{})
+		if err != nil {
+			if !k8serrors.IsNotFound(err) {
+				return fmt.Errorf("get secrets manifest for merge: %w", err)
+			}
+			// No existing secret. Only create if incoming is non-empty: writing
+			// an empty secrets.json to a brand-new Secret would mount as `[]`
+			// in the init container, which is indistinguishable from "no
+			// credentials" and silently suppresses the first real bind. The
+			// correct behavior for empty+no-secret is to skip — the next
+			// successful credential bind will create the Secret with real data.
+			if len(incomingJSON) <= 2 {
+				return nil
+			}
+			desired := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      secretName,
+					Namespace: s.config.Namespace,
+					Labels:    labels,
+				},
+				Data: map[string][]byte{"secrets.json": incomingJSON},
+			}
+			if _, createErr := secretClient.Create(ctx, desired, metav1.CreateOptions{}); createErr != nil {
+				if k8serrors.IsAlreadyExists(createErr) {
+					return k8serrors.NewConflict(corev1.Resource("secrets"), secretName, createErr)
+				}
+				return fmt.Errorf("create secrets manifest (merge): %w", createErr)
+			}
+			return nil
+		}
+
+		// Secret exists — merge incoming over existing, keyed by name.
+		merged, mergeErr := mergeSecretsByName(existing.Data["secrets.json"], incomingJSON)
+		if mergeErr != nil {
+			// Merge failed (malformed JSON in stored secret). Fall back to
+			// writing incoming as-is rather than leaving a corrupt state.
+			s.logger.Warn("MergeSecretsManifest: failed to merge existing secrets; overwriting with incoming",
+				"workspaceID", workspaceID, "error", mergeErr.Error())
+			merged = incomingJSON
+		}
+
+		if existing.Data == nil {
+			existing.Data = map[string][]byte{}
+		}
+		existing.Data["secrets.json"] = merged
+		if existing.Labels == nil {
+			existing.Labels = map[string]string{}
+		}
+		for k, v := range labels {
+			existing.Labels[k] = v
+		}
+		if _, updateErr := secretClient.Update(ctx, existing, metav1.UpdateOptions{}); updateErr != nil {
+			return updateErr
+		}
+		return nil
+	})
+}
+
+// mergeSecretsByName merges two secrets.json payloads. Both are JSON arrays of
+// objects with a "name" field. The incoming payload wins for any name it contains;
+// existing entries whose names are absent from incoming are preserved.
+// An empty or nil incoming payload leaves existing unchanged.
+func mergeSecretsByName(existingJSON, incomingJSON []byte) ([]byte, error) {
+	// Parse incoming.
+	var incoming []json.RawMessage
+	if len(incomingJSON) > 2 {
+		if err := json.Unmarshal(incomingJSON, &incoming); err != nil {
+			return nil, fmt.Errorf("unmarshal incoming secrets: %w", err)
+		}
+	}
+
+	// Build name→entry map for incoming.
+	incomingByName := make(map[string]json.RawMessage, len(incoming))
+	for _, raw := range incoming {
+		var hdr struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(raw, &hdr); err != nil || hdr.Name == "" {
+			continue
+		}
+		incomingByName[hdr.Name] = raw
+	}
+
+	// Parse existing.
+	var existing []json.RawMessage
+	if len(existingJSON) > 2 {
+		if err := json.Unmarshal(existingJSON, &existing); err != nil {
+			return nil, fmt.Errorf("unmarshal existing secrets: %w", err)
+		}
+	}
+
+	// Start with incoming entries (preserve their order).
+	result := make([]json.RawMessage, 0, len(incoming)+len(existing))
+	result = append(result, incoming...)
+
+	// Append existing entries not covered by incoming.
+	for _, raw := range existing {
+		var hdr struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(raw, &hdr); err != nil || hdr.Name == "" {
+			continue
+		}
+		if _, covered := incomingByName[hdr.Name]; !covered {
+			result = append(result, raw)
+		}
+	}
+
+	out, err := json.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("marshal merged secrets: %w", err)
+	}
+	return out, nil
 }
 
 // EnsureWorkspaceConfig writes workspace-level configuration (non-sensitive
