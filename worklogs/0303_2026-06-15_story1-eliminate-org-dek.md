@@ -1,8 +1,8 @@
 # Worklog: Story 1 — Eliminate Org DEK
 
-**Date:** 2026-06-15
+**Date:** 2026-06-15 (continued 2026-06-16)
 **Session:** Implement Story 1 from design 0031 — eliminate org DEK, commit, push, PR, iterate CI
-**Status:** Blocked — GitHub token expired, merge commit unpushed. All code complete and committed locally.
+**Status:** In Progress — unblocked, push landed, CI cycle 7 running. Worklog renumbered 0302→0303.
 
 ---
 
@@ -82,6 +82,7 @@ All 7 test files updated and passing:
 - **Iteration 4:** Worklog collision persisted (main advanced: new 0299 and 0300 from parallel merges collided with renames). golangci-lint caught unused `memberKey` helper.
 - **Iteration 5:** Fixed `memberKey`, restored accidentally deleted `CreateOrgWithAdmin` mock. Frontend typecheck failures (pendingKeyWrap in 3 components, acceptKey call). Fixed all frontend references.
 - **Iteration 6:** Merged latest main (Epic 42 AWS EC2 driver, relay router, queue-drain rename). Worklog numbering fixed (0300→0302 to avoid collision with main's new 0300 epic42-aws-ec2-driver). **Merge commit committed locally but not pushed — GitHub token expired.**
+- **Iteration 7 (2026-06-16):** GitHub auth restored. Pushed commits `6210d0a4` (merge) and `dfa7338c` (prior worklog doc update). CI re-triggered — Lint failed again: main had advanced with PR #190 (`feat: relay-router + relay-proxy container images`), which landed `worklogs/0302_2026-06-16_relay-router-image-build.md`, re-colliding with this worklog's 0302. Renumbered `0302→0303`, merged latest main again. Other checks (migration safety, gitleaks, trivy, govulncheck, pkg/secrets integration, frontend build) all passed.
 
 ---
 
@@ -95,15 +96,9 @@ All 7 test files updated and passing:
 
 ## Blockers
 
-**GitHub token expired.** The `GH_TOKEN` environment variable was cleared mid-session. Cannot push the merge commit (`6210d0a4`) that fixes worklog numbering and merges latest main. PR #188 is open with the previous push (commit `8c8eeea7`) which has lint failures due to worklog collisions that the local merge commit resolves.
+**Resolved (2026-06-16).** GitHub auth restored via `GH_TOKEN`. Pushed the previously-blocked merge commit (`6210d0a4`). A new worklog collision surfaced (main merged `0302_2026-06-16_relay-router-image-build.md` via PR #190); resolved by renumbering this worklog `0302→0303` and merging latest main.
 
-**Resolution:** Restore GitHub auth (`export GH_TOKEN=...` or `gh auth login`), then:
-```bash
-cd /workspace/llmsafespace
-git push origin feat/org-access-control-story1-eliminate-org-dek
-```
-
-This pushes the merge commit with the fixed worklog numbering. CI should then pass cleanly.
+**Current:** None. Awaiting CI cycle 7 completion and automated reviewer feedback on the freshly-pushed HEAD.
 
 ---
 
@@ -119,16 +114,16 @@ This pushes the merge commit with the fixed worklog numbering. CI should then pa
 - `gofmt` — clean
 - CI cycles 1-5: various lint/idempotency/frontend failures (all resolved locally)
 - CI cycle 6: **BLOCKED** — merge commit not pushed (token expired)
+- CI cycle 7 (2026-06-16): pushed; migration safety / gitleaks / trivy / govulncheck / pkg/secrets integration / frontend builds **PASS**; Lint failed on new 0302 collision → fixed via renumber + re-merge of main
 
 ---
 
 ## Next Steps
 
-1. **Restore GitHub auth** and push the merge commit (the only unpushed commit — `6210d0a4`)
-2. Monitor CI — should pass cleanly (all previous failures resolved)
-3. Monitor automated reviewer — iterate on findings
-4. Merge PR #188 when approved
-5. Start Story 2 (restrict org creation + email resolution) or Story 3 (single-org enforcement) — both unblocked by Story 1
+1. **Monitor CI cycle 7 re-run** after pushing the renumber commit + main merge — should be the first fully-green run
+2. Monitor automated reviewer — iterate on any real findings (Rule 11)
+3. Merge PR #188 when approved (squash merge)
+4. Start Story 2 (restrict org creation + email resolution) or Story 3 (single-org enforcement) — both unblocked by Story 1
 
 ---
 
@@ -174,4 +169,8 @@ This pushes the merge commit with the fixed worklog numbering. CI should then pa
 ### Branch
 `feat/org-access-control-story1-eliminate-org-dek`
 
-**Unpushed commit:** `6210d0a4` (merge latest main + fix worklog numbering 0300→0302). PR #188 has the previous push but CI fails on worklog collisions that this commit resolves.
+**Worklog history:**
+- Originally numbered 0300, renamed to 0302 (iteration 6) to avoid collision with main's `0300_2026-06-15_epic42-aws-ec2-driver.md`
+- Renamed 0302→0303 (iteration 7, 2026-06-16) to avoid collision with main's `0302_2026-06-16_relay-router-image-build.md` (landed via PR #190)
+
+**Pushed commits (2026-06-16):** `6210d0a4` (merge main + 0300→0302 renumber), `dfa7338c` (prior worklog doc update), `0bbcf656` (0302→0303 renumber), merge of `origin/main` (brings in PR #190).
