@@ -20,7 +20,6 @@ type SecretService struct {
 	store             SecretStore
 	wsOwners          WorkspaceOwnerVerifier
 	deriveAdminKey    AdminKeyDeriver
-	orgKeySvc         *OrgKeyService
 	requireWsVerifier bool
 }
 
@@ -74,13 +73,6 @@ func (s *SecretService) RequireOwnerVerification() {
 // When non-nil, PrepareSecretsForInjection uses the new multi-source path.
 func (s *SecretService) SetAdminKeyDeriver(d AdminKeyDeriver) {
 	s.deriveAdminKey = d
-}
-
-// SetOrgKeyService wires the OrgKeyService so decryptBinding can handle
-// owner_type='org' credentials. Optional: if nil, org credentials are skipped
-// with an explicit error (not silent). Wire this in app.go after US-11.2.
-func (s *SecretService) SetOrgKeyService(svc *OrgKeyService) {
-	s.orgKeySvc = svc
 }
 
 // CreateSecret encrypts and stores a new secret.

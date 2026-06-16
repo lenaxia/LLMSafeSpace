@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { orgsApi, type OrgResponse } from "../../api/orgs";
 import { Button } from "../ui/Button";
 import { ApiClientError } from "../../api/client";
@@ -20,10 +20,8 @@ function CreateOrgForm({
 }) {
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
-  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const passwordRef = useRef<HTMLInputElement>(null);
 
   const handleSubmit = async () => {
     setError("");
@@ -31,16 +29,10 @@ function CreateOrgForm({
       setError("Name is required");
       return;
     }
-    if (!password) {
-      setError("Password is required to encrypt organisation credentials");
-      return;
-    }
     setLoading(true);
     try {
       const finalSlug = slug.trim() || slugify(name);
-      await orgsApi.create({ name: name.trim(), slug: finalSlug, password });
-      setPassword("");
-      if (passwordRef.current) passwordRef.current.value = "";
+      await orgsApi.create({ name: name.trim(), slug: finalSlug });
       onCreated();
     } catch (e) {
       if (e instanceof ApiClientError && e.status === 409) {
@@ -77,19 +69,6 @@ function CreateOrgForm({
           placeholder="slug (auto-generated from name)"
           className="h-8 w-full rounded border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
         />
-        <input
-          ref={passwordRef}
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="Your password (used to encrypt org credentials)"
-          autoComplete="current-password"
-          className="h-8 w-full rounded border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-        />
-        <p className="text-xs text-muted-foreground">
-          Your password is used to create an encryption key for organisation credentials.
-          It is never stored.
-        </p>
       </div>
       <div className="flex gap-2">
         <Button size="sm" disabled={loading} onClick={handleSubmit}>
@@ -141,25 +120,6 @@ function OrgCard({
       <div className="text-xs text-muted-foreground">
         {org.memberCount} member{org.memberCount !== 1 ? "s" : ""}
       </div>
-      {org.userPendingKeyWrap && (
-        <div className="text-xs text-amber-500">
-          Key setup pending —{" "}
-          <button
-            className="underline"
-            onClick={() => {
-              const pw = prompt("Enter your password to complete key setup:");
-              if (pw) {
-                orgsApi
-                  .acceptKey(org.id, { password: pw })
-                  .then(() => onDeleted())
-                  .catch((e) => setError(e instanceof Error ? e.message : "Failed"));
-              }
-            }}
-          >
-            complete key setup
-          </button>
-        </div>
-      )}
       {error && <p className="text-xs text-red-500">{error}</p>}
       {org.userRole === "admin" && (
         <div className="flex gap-2 pt-1">

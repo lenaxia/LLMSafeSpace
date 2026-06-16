@@ -295,21 +295,10 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			}
 		}
 
-		pgOrgKeyStore := secrets.NewPgOrgKeyStore(secretsPool)
-		orgKeyService := secrets.NewOrgKeyService(pgOrgKeyStore, dekCache)
-		orgKeyService.SetLogger(log)
-		orgKeyService.SetCredentialStore(pgStore)
-		orgAwareKS := secrets.NewOrgAwareKeyService(keyService, orgKeyService)
-		if authSvc, ok := svc.Auth.(*auth.Service); ok {
-			authSvc.SetKeyService(orgAwareKS)
-		}
-		secretService.SetOrgKeyService(orgKeyService)
-
 		pgOrgStore = database.NewPgOrgStore(dbSvc.DB)
 		orgStoreForVerifier = pgOrgStore
-		orgsHandler = handlers.NewOrgsHandler(pgOrgStore, orgKeyService, dekCache, svc.GetAuth())
-		orgCredsHandler = handlers.NewOrgCredentialsHandler(pgStore, orgKeyService, svc.GetAuth())
-		rotateKeyHandler.SetOrgKeyService(orgKeyService)
+		orgsHandler = handlers.NewOrgsHandler(pgOrgStore, svc.GetAuth())
+		orgCredsHandler = handlers.NewOrgCredentialsHandler(pgStore, deriveServerKey, svc.GetAuth())
 
 		if rkp != nil {
 			keyService.SetAPIKeyStore(&apiKeyStoreAdapter{db: dbSvc}, rkp)
@@ -582,11 +571,11 @@ func (a *App) Run() error {
 		return fmt.Errorf("failed to start services: %w", err)
 	}
 
-	// Start the pending-org cleanup cron (Stripe only; nil in dev mode).
-	if a.pendingOrgCleaner != nil {
-		go a.pendingOrgCleaner.Run(a.ctx)
-		a.logger.Info("pending org cleanup cron started", "interval", "1h", "maxAge", "7d")
-	}
+	// Disabled: self-service org creation removed. Re-enable when billing portal ships.
+	// if a.pendingOrgCleaner != nil {
+	// 	go a.pendingOrgCleaner.Run(a.ctx)
+	// 	a.logger.Info("pending org cleanup cron started", "interval", "1h", "maxAge", "7d")
+	// }
 
 	// Start instance settings (loads cache from DB).
 	if err := a.instanceSettings.Start(); err != nil {

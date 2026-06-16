@@ -100,12 +100,10 @@ func (m *mockInvitationStore) AcceptInvitationTx(_ context.Context, invID, userI
 	}
 	now := time.Now()
 	inv.AcceptedAt = &now
-	pendingKeyWrap := role == types.OrgRoleAdmin
 	member := &types.OrgMember{
-		OrgID:          inv.OrgID,
-		UserID:         userID,
-		Role:           role,
-		PendingKeyWrap: pendingKeyWrap,
+		OrgID:  inv.OrgID,
+		UserID: userID,
+		Role:   role,
 	}
 	m.members[inv.OrgID] = append(m.members[inv.OrgID], member)
 	return member, false, nil
@@ -280,12 +278,12 @@ func TestInvitations_Accept_Success_Member(t *testing.T) {
 	if !ok {
 		t.Fatal("expected membership in response")
 	}
-	if member["pendingKeyWrap"] != false {
-		t.Error("member role should not require key wrap")
+	if member["role"] != "member" {
+		t.Errorf("expected role=member, got %v", member["role"])
 	}
 }
 
-func TestInvitations_Accept_Success_Admin_PendingKeyWrap(t *testing.T) {
+func TestInvitations_Accept_Success_Admin(t *testing.T) {
 	store := newMockInvitationStore()
 	store.orgs["org-1"] = &types.Organization{ID: "org-1", Name: "Acme", Slug: "acme"}
 
@@ -304,8 +302,12 @@ func TestInvitations_Accept_Success_Admin_PendingKeyWrap(t *testing.T) {
 	}
 	var resp map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["pendingKeyWrap"] != true {
-		t.Error("admin role should set pendingKeyWrap")
+	member, ok := resp["membership"].(map[string]any)
+	if !ok {
+		t.Fatal("expected membership in response")
+	}
+	if member["role"] != "admin" {
+		t.Errorf("expected role=admin, got %v", member["role"])
 	}
 }
 

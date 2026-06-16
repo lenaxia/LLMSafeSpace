@@ -747,10 +747,9 @@ type PasswordHashUpdater interface {
 
 // RotateKeyHandler handles account key management endpoints.
 type RotateKeyHandler struct {
-	keySvc        KeyRotator
-	pwUpdater     PasswordHashUpdater
-	auditFunc     func(userID, action string)
-	orgKeyService *secrets.OrgKeyService // optional; nil disables org DEK re-wrap
+	keySvc    KeyRotator
+	pwUpdater PasswordHashUpdater
+	auditFunc func(userID, action string)
 }
 
 // NewRotateKeyHandler creates a new RotateKeyHandler.
@@ -766,11 +765,6 @@ func (h *RotateKeyHandler) SetPasswordUpdater(u PasswordHashUpdater) {
 // SetAuditFunc sets an optional audit callback for key operations.
 func (h *RotateKeyHandler) SetAuditFunc(f func(userID, action string)) {
 	h.auditFunc = f
-}
-
-// SetOrgKeyService wires the OrgKeyService for re-wrapping org DEKs on password change.
-func (h *RotateKeyHandler) SetOrgKeyService(svc *secrets.OrgKeyService) {
-	h.orgKeyService = svc
 }
 
 // RotateKey handles POST /api/v1/account/rotate-key.
@@ -845,17 +839,6 @@ func (h *RotateKeyHandler) ChangePassword(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "password change failed"})
 			return
 		}
-	}
-
-	// Re-wrap org DEKs for all orgs where this user is an admin.
-	// Non-fatal per org: if re-wrap fails (e.g. org DEK not in cache), the
-	// org_key_members row becomes stale. The admin is directed to trigger
-	// POST /orgs/:id/rotate-key at next login when UnlockOrgDEK returns ErrOrgKeyStale.
-	// CACHE ORDERING NOTE: ChangePassword evicts the user's personal DEK cache key
-	// but does NOT evict "org:<orgID>" keys. RewrapAllOrgDEKsForAdmin reads from
-	// "org:<orgID>" — which is still present. This ordering must be preserved.
-	if h.orgKeyService != nil {
-		_ = h.orgKeyService.RewrapAllOrgDEKsForAdmin(c.Request.Context(), userID, []byte(req.NewPassword))
 	}
 
 	c.Status(http.StatusNoContent)

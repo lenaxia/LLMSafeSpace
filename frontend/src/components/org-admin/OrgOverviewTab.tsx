@@ -8,7 +8,7 @@ interface OverviewContext {
 }
 
 export function OrgOverviewTab() {
-  const { org, isAdmin } = useOutletContext<OverviewContext>();
+  const { org } = useOutletContext<OverviewContext>();
 
   return (
     <div className="space-y-6">
@@ -18,18 +18,6 @@ export function OrgOverviewTab() {
           Organization summary and plan status.
         </p>
       </div>
-
-      {isAdmin && org.userPendingKeyWrap && (
-        <div className="rounded border border-yellow-500/30 bg-yellow-500/10 p-4">
-          <p className="text-sm font-medium text-yellow-700">
-            Key setup required
-          </p>
-          <p className="mt-1 text-xs text-yellow-600">
-            You need to complete the admin key handshake to access org
-            credentials. Go to the Members tab → Complete Key.
-          </p>
-        </div>
-      )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatCard label="Members" value={org.memberCount} />

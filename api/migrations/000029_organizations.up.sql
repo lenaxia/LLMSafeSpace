@@ -36,8 +36,16 @@ CREATE TABLE IF NOT EXISTS org_memberships (
 );
 
 CREATE INDEX IF NOT EXISTS idx_org_memberships_user ON org_memberships(user_id);
-CREATE INDEX IF NOT EXISTS idx_org_memberships_pending
-    ON org_memberships(org_id) WHERE pending_key_wrap = TRUE;
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'org_memberships' AND column_name = 'pending_key_wrap'
+    ) THEN
+        CREATE INDEX IF NOT EXISTS idx_org_memberships_pending
+            ON org_memberships(org_id) WHERE pending_key_wrap = TRUE;
+    END IF;
+END $$;
 
 -- One row per (org, admin). Stores the org DEK wrapped with that admin's KEK.
 -- Members do not have rows here; they rely on server-side org DEK cache during injection.

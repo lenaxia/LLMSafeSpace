@@ -287,14 +287,6 @@ func (h *InvitationsHandler) Accept(c *gin.Context) {
 		return
 	}
 
-	if member.PendingKeyWrap {
-		c.JSON(http.StatusOK, gin.H{
-			"membership":     member,
-			"pendingKeyWrap": true,
-			"message":        "Admin must call POST /orgs/" + member.OrgID + "/accept-key to complete key setup",
-		})
-		return
-	}
 	c.JSON(http.StatusOK, gin.H{"membership": member})
 }
 

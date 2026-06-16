@@ -90,11 +90,7 @@ export function OrgMembersTab() {
                   </Badge>
                 </td>
                 <td className="px-4 py-2">
-                  {m.pendingKeyWrap ? (
-                    <Badge variant="warning">Pending</Badge>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">Active</span>
-                  )}
+                  <span className="text-xs text-muted-foreground">Active</span>
                 </td>
                 {isAdmin && (
                   <td className="px-4 py-2 text-right">
@@ -196,9 +192,6 @@ function MemberActions({
 }) {
   return (
     <div className="flex justify-end gap-2">
-      {member.pendingKeyWrap && member.role === "admin" && (
-        <span className="text-xs text-yellow-600">Awaiting key setup</span>
-      )}
       <Button
         size="sm"
         variant="ghost"
