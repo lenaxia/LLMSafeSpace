@@ -496,27 +496,31 @@ func (h *ProxyHandler) publishQueueEvent(workspaceID, sessionID, event, messageI
 	})
 }
 
-// reconcileStrandedQueues is called by the SSE tracker's onReconnect callback
+// reconcileSessionState is called by the SSE tracker's onReconnect callback
 // each time the tracker establishes a new connection to the workspace pod.
 // It queries /v1/statusz on the agentd admin port to get the current session
-// states. For any session that is currently idle and has messages in the Redis
-// queue, it calls onSessionIdle to trigger a drain.
+// states and reconciles two classes of state drift:
 //
-// This handles the case where a session went idle while the SSE connection was
-// down: the session.status=idle event was never received, so drainQueuedMessage
-// was never called, leaving the queue stranded.
-func (h *ProxyHandler) reconcileStrandedQueues(workspaceID, podIP, password string) {
-	if h.queueSvc == nil {
-		return
-	}
-
+//  1. Stranded queues: a session went idle while the SSE connection was down,
+//     so the session.status=idle event was never received, leaving messages
+//     stuck in the Redis queue. We trigger drainQueuedMessage for these.
+//
+//  2. Stale activeSess entries: a session is idle in opencode (per statusz)
+//     but still marked active in our local activeSess map. This happens when
+//     opencode dies (OOM/SIGTERM) mid-stream — the session.status=idle event
+//     is never emitted, so onSessionIdle is never called, and our local map
+//     keeps the session marked busy forever. Without this fix, POST to a
+//     stuck session returns 409 Conflict indefinitely (until API restart).
+//     See incident report 2026-06-16 (sessions ses_13076538bffeYtLrhoZ2ccRM1E
+//     and ses_130c14344ffeVF52UQ6QGPmB0P stuck after pod OOMKill).
+func (h *ProxyHandler) reconcileSessionState(workspaceID, podIP, password string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	url := fmt.Sprintf("http://%s:%d/v1/statusz", podIP, agentd.AgentdAdminPort) //nolint:gosec // G107: internal pod
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		h.logger.Debug("reconcileStrandedQueues: failed to build statusz request", "workspaceID", workspaceID, "error", err)
+		h.logger.Debug("reconcileSessionState: failed to build statusz request", "workspaceID", workspaceID, "error", err)
 		return
 	}
 	if password != "" {
@@ -525,19 +529,19 @@ func (h *ProxyHandler) reconcileStrandedQueues(workspaceID, podIP, password stri
 
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
-		h.logger.Debug("reconcileStrandedQueues: statusz unavailable", "workspaceID", workspaceID, "error", err)
+		h.logger.Debug("reconcileSessionState: statusz unavailable", "workspaceID", workspaceID, "error", err)
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		h.logger.Debug("reconcileStrandedQueues: unexpected statusz status", "workspaceID", workspaceID, "status", resp.StatusCode)
+		h.logger.Debug("reconcileSessionState: unexpected statusz status", "workspaceID", workspaceID, "status", resp.StatusCode)
 		return
 	}
 
 	var statusz agentd.StatuszResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 16*1024)).Decode(&statusz); err != nil {
-		h.logger.Debug("reconcileStrandedQueues: failed to decode statusz", "workspaceID", workspaceID, "error", err)
+		h.logger.Debug("reconcileSessionState: failed to decode statusz", "workspaceID", workspaceID, "error", err)
 		return
 	}
 
@@ -545,12 +549,38 @@ func (h *ProxyHandler) reconcileStrandedQueues(workspaceID, podIP, password stri
 		if sess.Status != "idle" {
 			continue
 		}
-		n, err := h.queueSvc.Len(ctx, workspaceID, sess.ID)
-		if err != nil || n == 0 {
-			continue
+
+		// Reconcile stale activeSess entries: opencode says idle, but our
+		// local map says active. This is the OOM/SIGTERM case — clean up
+		// regardless of whether there are queued messages.
+		if h.isSessionActive(workspaceID, sess.ID) {
+			h.logger.Info("reconcileSessionState: clearing stale activeSess entry",
+				"workspaceID", workspaceID, "sessionID", sess.ID,
+				"reason", "session is idle in opencode but marked active locally")
+			h.removeActiveSession(workspaceID, sess.ID)
+			// Publish session.status=idle so connected clients update their UI.
+			// Without this, browsers showing the session keep their busy
+			// indicator until the next page reload.
+			if h.broker != nil {
+				h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
+					Type:      "session.status",
+					SessionID: sess.ID,
+					Status:    "idle",
+				})
+			}
 		}
-		h.logger.Info("reconcileStrandedQueues: found stranded queue, triggering drain",
-			"workspaceID", workspaceID, "sessionID", sess.ID, "queueLen", n)
-		h.onSessionIdle(workspaceID, sess.ID)
+
+		// Reconcile stranded queues: drain any queued messages for idle sessions.
+		// Note: this runs regardless of whether activeSess was stale above —
+		// queued messages should drain whenever a session is idle.
+		if h.queueSvc != nil {
+			n, err := h.queueSvc.Len(ctx, workspaceID, sess.ID)
+			if err != nil || n == 0 {
+				continue
+			}
+			h.logger.Info("reconcileSessionState: found stranded queue, triggering drain",
+				"workspaceID", workspaceID, "sessionID", sess.ID, "queueLen", n)
+			h.onSessionIdle(workspaceID, sess.ID)
+		}
 	}
 }
