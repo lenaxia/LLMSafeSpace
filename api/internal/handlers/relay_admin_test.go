@@ -576,7 +576,9 @@ func TestRelayDeploy_MissingFields_400(t *testing.T) {
 func TestRelayDeploy_Defaults_UpstreamURL(t *testing.T) {
 	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
 	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, notFoundError()).Maybe()
-	relayMock.On("Create", mock.Anything, mock.Anything).Return(makeRelayCR("relay-fleet", nil, 0), nil).Maybe()
+	relayMock.On("Create", mock.Anything, mock.MatchedBy(func(r *v1.InferenceRelay) bool {
+		return r.Spec.UpstreamURL == "https://opencode.ai/zen/v1"
+	})).Return(makeRelayCR("relay-fleet", nil, 0), nil)
 
 	body := `{"routerEndpoint":"gw:51820","providers":["oci"]}`
 	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/deploy", body)
