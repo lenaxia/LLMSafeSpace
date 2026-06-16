@@ -1874,3 +1874,46 @@ func TestMergeSecretsByName_MalformedExisting_FallsBackToIncoming(t *testing.T) 
 	assert.Equal(t, incoming, secret.Data["secrets.json"],
 		"corrupt existing secret must be overwritten with valid incoming payload — not preserved as garbage")
 }
+
+// TestMergeSecretsManifest_PreservesWorkspaceConfig verifies that the merge
+// path (used by seedEphemeralSecrets on DEK-absent activate) preserves
+// workspace-config.json — the same property already verified for
+// EnsureSecretsManifest. Without this, a DEK-absent activate that triggers a
+// merge would silently drop the user's selected default model from the Secret,
+// even though the merge correctly preserves secrets.json entries.
+func TestMergeSecretsManifest_PreservesWorkspaceConfig(t *testing.T) {
+	f := newFixtureWithFakeClientset(t)
+	ctx := context.Background()
+
+	// Step 1: User selects a model — EnsureWorkspaceConfig writes
+	// workspace-config.json to the Secret.
+	require.NoError(t, f.svc.EnsureWorkspaceConfig(ctx, "ws-merge-cfg", types.WorkspaceConfig{DefaultModel: "glm-5.2"}))
+
+	// Step 2: User binds credentials — EnsureSecretsManifest writes secrets.json
+	// without clobbering workspace-config.json (verified separately).
+	secretsPayload := []byte(`[{"type":"llm-provider","name":"opencode","metadata":null,"plaintext":"key"}]`)
+	require.NoError(t, f.svc.EnsureSecretsManifest(ctx, "ws-merge-cfg", secretsPayload))
+
+	// Step 3: DEK expires; activate triggers MergeSecretsManifest with admin-only payload.
+	mergePayload := []byte(`[{"type":"llm-provider","name":"opencode","metadata":null,"plaintext":"key-rotated"}]`)
+	require.NoError(t, f.svc.MergeSecretsManifest(ctx, "ws-merge-cfg", mergePayload))
+
+	// All three keys must coexist:
+	//   - secrets.json: merged (incoming wins, but no other entries to preserve)
+	//   - workspace-config.json: preserved unchanged
+	secret, err := f.fakeCS.CoreV1().Secrets("default").Get(ctx, "workspace-secrets-ws-merge-cfg", metav1.GetOptions{})
+	require.NoError(t, err)
+
+	require.NotNil(t, secret.Data["workspace-config.json"],
+		"MergeSecretsManifest must not clobber workspace-config.json")
+	var wsCfg types.WorkspaceConfig
+	require.NoError(t, json.Unmarshal(secret.Data["workspace-config.json"], &wsCfg))
+	assert.Equal(t, "glm-5.2", wsCfg.DefaultModel,
+		"model selection must survive a DEK-absent merge — workspace-config.json key untouched")
+
+	// secrets.json reflects the merge (incoming key wins).
+	var got []map[string]interface{}
+	require.NoError(t, json.Unmarshal(secret.Data["secrets.json"], &got))
+	require.Len(t, got, 1)
+	assert.Equal(t, "key-rotated", got[0]["plaintext"], "incoming admin rotation must apply")
+}

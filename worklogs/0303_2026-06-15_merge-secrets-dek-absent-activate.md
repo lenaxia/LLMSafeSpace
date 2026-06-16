@@ -56,8 +56,8 @@ entries whose name was not covered by incoming.
 
 ## Tests
 
-Five new tests covering the merge surface, plus one updated test for the new
-empty-incoming semantics:
+Six new tests for the merge surface, plus one pre-existing test whose
+assertion now relies on the new empty-incoming guard:
 
 | Test | What it proves |
 |---|---|
@@ -66,7 +66,8 @@ empty-incoming semantics:
 | `TestSeedEphemeralSecrets_NoExistingSecret` (new) | No existing secret + non-empty incoming → create |
 | `TestSeedEphemeralSecrets_EmptyIncomingPreservesExisting` (new) | Empty incoming → existing unchanged |
 | `TestMergeSecretsByName_MalformedExisting_FallsBackToIncoming` (new) | Malformed JSON in stored secret falls back to writing incoming as-is |
-| `TestSeedEphemeralSecrets_EmptyResult_NoWrite` (updated) | Empty incoming + no existing → still no write (guard preserved under new semantics) |
+| `TestMergeSecretsManifest_PreservesWorkspaceConfig` (new) | Merge path preserves `workspace-config.json` (same property as EnsureSecretsManifest) |
+| `TestSeedEphemeralSecrets_EmptyResult_NoWrite` (pre-existing) | Empty incoming + no existing → still no write — the new `len(incomingJSON) <= 2` guard in `MergeSecretsManifest` makes this assertion continue to pass under the new wiring |
 | `TestHandler_RevealSecret_CiphertextDecryptFailed_Returns409` (new) | Ciphertext mismatch → 409 + actionable message + audit log entry |
 | `TestHandler_RevealSecret_DEKUnavailable_Returns403` (new) | DEK absent → 403 + "re-authenticate" message + distinct audit reason |
 
@@ -107,7 +108,7 @@ Changes:
 ## Files Modified
 
 - `api/internal/services/workspace/workspace_service.go` — add `MergeSecretsManifest`, `mergeSecretsByName`; rewire `seedEphemeralSecrets` to use merge path
-- `api/internal/services/workspace/workspace_service_test.go` — 5 new tests + 1 updated
+- `api/internal/services/workspace/workspace_service_test.go` — 6 new tests for merge behavior
 - `pkg/secrets/errors.go` — add `ErrCiphertextDecryptFailed` sentinel
 - `pkg/secrets/secret_service.go` — `DecryptSecretValue` distinguishes DEK-absent vs ciphertext-mismatch; emits structured audit entries
 - `api/internal/handlers/secrets.go` — `handleSecretError` maps new sentinel to 409 + actionable message; `RevealSecret` adds structured Warn logging
