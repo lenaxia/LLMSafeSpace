@@ -52,6 +52,7 @@ function renderSidebar(initialPath = "/chat/ws-1") {
 describe("Sidebar — Force Stop kebab menu item", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    (workspacesApi.abortSession as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
       items: [{ id: "ws-1", name: "My Workspace", phase: "Active", userId: "u1", runtime: "base", storageSize: "5Gi", createdAt: "", updatedAt: "" }],
       pagination: { limit: 20, offset: 0, total: 1 },
