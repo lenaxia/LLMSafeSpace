@@ -68,4 +68,20 @@ var (
 	// type system was designed to hide. Callers that need to
 	// classify the failure mode use errors.Is.
 	ErrWorkspaceNotOwned = errors.New("workspace not found")
+
+	// ErrCiphertextDecryptFailed is returned when the DEK was
+	// successfully obtained but the stored ciphertext cannot be
+	// decrypted with it (AEAD authentication failure). This is
+	// distinct from ErrDEKUnavailable: the key material is present,
+	// but it does not match the ciphertext.
+	//
+	// Most common cause: the user's DEK was rotated or the user_keys
+	// row was rewritten without re-encrypting the secrets that were
+	// encrypted under the old DEK. Less common: ciphertext corruption,
+	// schema version skew (key_version mismatch), or storage tampering.
+	//
+	// Handlers map this to 409 Conflict with a message directing the
+	// user to either restore the secret from a backup or re-create it.
+	// The DEK itself is fine — re-authenticating will not help.
+	ErrCiphertextDecryptFailed = errors.New("ciphertext decryption failed: stored data does not match current key")
 )

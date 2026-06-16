@@ -67,6 +67,40 @@ empty-incoming semantics:
 | `TestSeedEphemeralSecrets_EmptyIncomingPreservesExisting` (new) | Empty incoming → existing unchanged |
 | `TestMergeSecretsByName_MalformedExisting_FallsBackToIncoming` (new) | Malformed JSON in stored secret falls back to writing incoming as-is |
 | `TestSeedEphemeralSecrets_EmptyResult_NoWrite` (updated) | Empty incoming + no existing → still no write (guard preserved under new semantics) |
+| `TestHandler_RevealSecret_CiphertextDecryptFailed_Returns409` (new) | Ciphertext mismatch → 409 + actionable message + audit log entry |
+| `TestHandler_RevealSecret_DEKUnavailable_Returns403` (new) | DEK absent → 403 + "re-authenticate" message + distinct audit reason |
+
+---
+
+## Improved error handling and logging
+
+In addition to the merge fix, this PR addresses a separate gap revealed by the
+production incident: the reveal/inject path returned a generic `500 internal
+error` and emitted no audit log when the stored ciphertext could not be
+decrypted with the current DEK (the production failure mode). Operators had
+no signal; users had no actionable message.
+
+Changes:
+
+- **New sentinel `ErrCiphertextDecryptFailed`** — distinguishes "DEK is fine,
+  ciphertext doesn't match it" (data-state problem, e.g. DEK rotated without
+  re-encrypt) from `ErrDEKUnavailable` (session expired, fixable by
+  re-authenticating).
+
+- **`DecryptSecretValue` now writes structured audit log entries** for both
+  failure modes, with `reason=ciphertext_aead_failure` or `reason=dek_unavailable`,
+  plus `name`, `type`, and `key_version`. Operators can correlate user reports
+  with audit log entries by `secretID`.
+
+- **`handleSecretError` maps `ErrCiphertextDecryptFailed` to 409 Conflict** with
+  an actionable user-facing message that explains what happened and what to do
+  (re-create the secret; contact admin if password unchanged). 409 is the
+  correct status: "the resource exists but is in an inconsistent state with
+  the current key material" — re-authenticating won't help.
+
+- **`RevealSecret` handler emits structured Warn logs** with `userID`, `secretID`,
+  and the underlying error, so operators can see decrypt failures in the
+  application log without grepping audit tables.
 
 ---
 
@@ -74,4 +108,8 @@ empty-incoming semantics:
 
 - `api/internal/services/workspace/workspace_service.go` — add `MergeSecretsManifest`, `mergeSecretsByName`; rewire `seedEphemeralSecrets` to use merge path
 - `api/internal/services/workspace/workspace_service_test.go` — 5 new tests + 1 updated
-- `worklogs/0302_2026-06-15_merge-secrets-dek-absent-activate.md` — this worklog
+- `pkg/secrets/errors.go` — add `ErrCiphertextDecryptFailed` sentinel
+- `pkg/secrets/secret_service.go` — `DecryptSecretValue` distinguishes DEK-absent vs ciphertext-mismatch; emits structured audit entries
+- `api/internal/handlers/secrets.go` — `handleSecretError` maps new sentinel to 409 + actionable message; `RevealSecret` adds structured Warn logging
+- `api/internal/handlers/secrets_integration_test.go` — 2 new reveal tests
+- `worklogs/0303_2026-06-15_merge-secrets-dek-absent-activate.md` — this worklog

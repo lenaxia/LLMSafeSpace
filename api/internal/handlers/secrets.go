@@ -294,6 +294,27 @@ func (h *SecretsHandler) RevealSecret(c *gin.Context) {
 
 	plaintext, err := h.svc.DecryptSecretValue(c.Request.Context(), userID, sessionID, secretID)
 	if err != nil {
+		// Log every reveal failure with full context so operators can correlate
+		// user reports with audit log entries. ErrCiphertextDecryptFailed and
+		// ErrDEKUnavailable both produce structured audit_log entries via the
+		// service layer; this Warn surfaces them in the application log too,
+		// which is where most operator alerting hangs off.
+		switch {
+		case errors.Is(err, secrets.ErrCiphertextDecryptFailed):
+			h.warn("RevealSecret: ciphertext decrypt failed (DEK present, ciphertext mismatch — likely DEK rotation without re-encrypt)",
+				"userID", userID, "secretID", secretID, "error", err.Error())
+		case errors.Is(err, secrets.ErrDEKUnavailable):
+			h.warn("RevealSecret: DEK unavailable (session expired or cache flushed; user should re-authenticate)",
+				"userID", userID, "secretID", secretID, "sessionID", sessionID, "error", err.Error())
+		case errors.Is(err, secrets.ErrSecretNotFound), errors.Is(err, secrets.ErrUserKeysMissing):
+			// Expected, lower-severity failures — log at Info to keep Warn
+			// dashboards focused on operational issues.
+			h.info("RevealSecret: known failure", "userID", userID, "secretID", secretID, "error", err.Error())
+		default:
+			// Unmapped error — these are the ones operators most need to see.
+			h.warn("RevealSecret: unexpected error",
+				"userID", userID, "secretID", secretID, "error", err.Error())
+		}
 		handleSecretError(c, err)
 		return
 	}
@@ -895,6 +916,11 @@ func extractAuth(c *gin.Context) (userID, sessionID string) {
 // predecessor was fragile to upstream wrap text and silently
 // mis-routed any future error containing the words "requires" /
 // "not found" / "duplicate". Sentinels live in pkg/secrets/errors.go.
+//
+// Unmapped (default-branch) errors are returned as a generic 500 to the
+// client to avoid leaking internal detail, but the handler caller is
+// responsible for logging them with full context — see RevealSecret etc.
+// for the structured log calls that emit before this function returns.
 func handleSecretError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, secrets.ErrSecretNotFound):
@@ -912,6 +938,17 @@ func handleSecretError(c *gin.Context, err error) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "encryption key not available; re-authenticate"})
 	case errors.Is(err, secrets.ErrUserKeysMissing):
 		c.JSON(http.StatusPreconditionFailed, gin.H{"error": "user key material not initialized; please re-login"})
+	case errors.Is(err, secrets.ErrCiphertextDecryptFailed):
+		// The DEK is fine; the stored ciphertext does not match it. This is a
+		// data-state problem (DEK rotated without re-encrypting, ciphertext
+		// corruption) — re-authenticating will not help. 409 Conflict signals
+		// "the resource exists but is in an inconsistent state with the
+		// current key material". The user-facing message points the user at
+		// recovery actions; the underlying detail (secret name, key version)
+		// is in the secret_audit_log entry written by the service layer.
+		c.JSON(http.StatusConflict, gin.H{
+			"error": "this secret cannot be decrypted with your current encryption key — the ciphertext was likely encrypted with a previous key. Re-create the secret to recover; if you have not changed your password, contact an administrator and reference your audit log.",
+		})
 	case errors.Is(err, secrets.ErrInvalidSecretType), errors.Is(err, secrets.ErrInvalidMetadata):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	default:
