@@ -466,16 +466,15 @@ func TestRelayAWSCreds_Create_Success(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 	r, _, _ := setupRelayRouter(t, clientset)
 
-	body := `{"trustAnchorId":"ta-abc","profileId":"p-xyz","roleArn":"arn:aws:iam::123:role/relay","region":"us-east-1"}`
+	body := `{"accessKeyId":"AKIATEST","secretAccessKey":"secret123","region":"us-east-1"}`
 	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/aws-creds", body)
 
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 
 	secret, err := clientset.CoreV1().Secrets(testNamespace).Get(context.Background(), "aws-relay-irwa", metav1.GetOptions{})
 	require.NoError(t, err)
-	assert.Equal(t, "ta-abc", string(secret.Data["trustAnchorId"]))
-	assert.Equal(t, "p-xyz", string(secret.Data["profileId"]))
-	assert.Equal(t, "arn:aws:iam::123:role/relay", string(secret.Data["roleArn"]))
+	assert.Equal(t, "AKIATEST", string(secret.Data["accessKeyId"]))
+	assert.Equal(t, "secret123", string(secret.Data["secretAccessKey"]))
 	assert.Equal(t, "us-east-1", string(secret.Data["region"]))
 }
 
@@ -486,8 +485,8 @@ func TestRelayAWSCreds_MissingFields_400(t *testing.T) {
 		name string
 		body string
 	}{
-		{"missing trustAnchorId", `{"profileId":"p","roleArn":"r","region":"us-east-1"}`},
-		{"missing roleArn", `{"trustAnchorId":"t","profileId":"p","region":"us-east-1"}`},
+		{"missing accessKeyId", `{"secretAccessKey":"s","region":"us-east-1"}`},
+		{"missing secretAccessKey", `{"accessKeyId":"a","region":"us-east-1"}`},
 		{"empty body", `{}`},
 	}
 

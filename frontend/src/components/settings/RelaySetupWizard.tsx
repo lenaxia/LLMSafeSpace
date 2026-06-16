@@ -9,14 +9,13 @@ const PROVIDER_INSTRUCTIONS: Record<string, { title: string; cost: string; steps
     title: "AWS (paid primary — $7–8/month, most reliable)",
     cost: "~$7/month for t4g.micro Graviton2 instance. Most reliable option for production.",
     steps: [
-      "Go to AWS IAM Identity Center → https://console.aws.amazon.com/iamv2",
-      "Under Multi-account permissions, find or create a Permission Set with EC2FullAccess",
-      "Assign the permission set to your account and a user/group",
-      "From the AWS account page in Identity Center, copy the Trust Anchor ID (starts with ta-)",
-      "From the permission set, copy the Profile ID (starts with p-)",
-      "Create or find an IAM Role with EC2 permissions (e.g. EC2FullAccess)",
-      "Copy the Role ARN (format: arn:aws:iam::123456789:role/role-name)",
-      "Choose a region for your relay VM (e.g. us-east-1, eu-west-1). t4g.micro is available globally.",
+      "Go to AWS IAM → https://console.aws.amazon.com/iam",
+      "Create a user (or use an existing one) with programmatic access",
+      "Attach the 'AmazonEC2FullAccess' policy (or a custom policy with ec2:RunInstances, ec2:TerminateInstances, ec2:Describe*)",
+      "Go to the user → Security Credentials → Create Access Key",
+      "Copy the Access Key ID (starts with AKIA...)",
+      "Copy the Secret Access Key (show it once — you won't see it again)",
+      "Choose a region for your relay VM (e.g. us-east-1). t4g.micro is available globally.",
     ],
   },
   oci: {
@@ -51,9 +50,8 @@ const PROVIDER_INSTRUCTIONS: Record<string, { title: string; cost: string; steps
 
 const PROVIDER_FIELDS: Record<string, { name: string; placeholder: string; type?: string }[]> = {
   aws: [
-    { name: "trustAnchorId", placeholder: "Trust Anchor ID (ta-xxxxx)" },
-    { name: "profileId", placeholder: "Profile ID (p-xxxxx)" },
-    { name: "roleArn", placeholder: "Role ARN (arn:aws:iam::...)" },
+    { name: "accessKeyId", placeholder: "Access Key ID (AKIA...)" },
+    { name: "secretAccessKey", placeholder: "Secret Access Key" },
     { name: "region", placeholder: "Region (e.g. us-east-1)" },
   ],
   oci: [
