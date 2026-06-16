@@ -487,6 +487,7 @@ func TestRelayAWSCreds_MissingFields_400(t *testing.T) {
 	}{
 		{"missing accessKeyId", `{"secretAccessKey":"s","region":"us-east-1"}`},
 		{"missing secretAccessKey", `{"accessKeyId":"a","region":"us-east-1"}`},
+		{"missing region", `{"accessKeyId":"a","secretAccessKey":"s"}`},
 		{"empty body", `{}`},
 	}
 

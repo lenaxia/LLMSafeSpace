@@ -6,7 +6,6 @@ package relay
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -45,10 +44,8 @@ func NewAWSDriver(k8sClient client.Client, namespace, credentialSecret string) *
 }
 
 // loadAWSConfig builds an AWS config for the given region, using credentials
-// from the K8s Secret if available, otherwise the default credential chain.
-// The Secret may contain either:
-//   - IRWA config (trustAnchorId, profileId, roleArn, region) — Phase 2
-//   - Static keys (accessKeyId, secretAccessKey) — direct EC2 access
+// from the K8s Secret if available, otherwise the default credential chain
+// (IRSA, env, instance metadata).
 func (d *AWSDriver) loadAWSConfig(ctx context.Context, region string) (aws.Config, error) {
 	secret := &corev1.Secret{}
 	if err := d.k8sClient.Get(ctx,
@@ -70,15 +67,7 @@ func (d *AWSDriver) loadAWSConfig(ctx context.Context, region string) (aws.Confi
 		)
 	}
 
-	// Check if IRWA config is present (trustAnchorId, profileId, roleArn).
-	// Phase 2 will implement IAM Roles Anywhere credential exchange.
-	// For now, log that the admin-saved IRWA config is not yet supported.
-	if string(secret.Data["trustAnchorId"]) != "" {
-		slog.Warn("AWS Secret contains IRWA config but driver does not yet support it; falling back to default credential chain (IRSA). Phase 2 will add IRWA support.",
-			"secret", d.credentialSecret)
-	}
-
-	// IRWA or other credential types fall back to default chain (IRSA, etc.)
+	// No static keys — fall back to default chain (IRSA, etc.)
 	return awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
 }
 
