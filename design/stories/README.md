@@ -64,6 +64,8 @@ Organized by epic, following the V2 design roadmap (design/EVOLUTION-V2.md v2.4)
 | 37 | Session Activity & Unread State UX — activity spinners across workspaces, unread pulsation, "new messages" divider, persisted across refreshes | ❌ Not Started | Epics 15, 28 |
 | 41 | Message Queue Reliability — fix streaming state clear timing, add 409 guard for in-flight sessions, restore dead `onSessionIdle` activity recording | ❌ Not Started | Epics 15, 28, 38 |
 | 43 | Organization Management & Multi-Tenant Product — org admin portal, email invitations, SSO, policy engine, billing tiers | ❌ Not Started | Epic 11 (complete), Epic 12 (metering infra built), Epic 30 (complete) |
+| 44 | Session Reliability & Transparency — terminal SSE events on agent death, session-aware restart, OOM detection, memory pressure warnings, request buffering, fix api-key restart bug | ❌ Not Started | Epics 3, 6, 27a. **Driven by 2026-06-16 production incidents (OOMKill + unsafe restart). 11 user stories across 3 phases (~20 days).** |
+| 45 | Multi-Replica State Consistency — externalize `ProxyHandler` per-replica state to Valkey/Redis (`activeSess`, `pwCache`, etc.). Eliminates today's stuck-session bug class at multi-replica. | ❌ Not Started | None. **9 stories (~12 days).** |
 
 ---
 
