@@ -50,7 +50,7 @@ export const router = createBrowserRouter([
         ],
       },
       {
-        path: "/admin/orgs/:slug",
+        path: "/orgs/:id",
         element: <OrgAdminLayout />,
         children: [
           { index: true, element: <Navigate to="overview" replace /> },

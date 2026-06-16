@@ -6,17 +6,17 @@ import { Badge } from "../ui/Badge";
 import { Spinner } from "../ui/Spinner";
 
 export function OrgAdminLayout() {
-  const { slug } = useParams<{ slug: string }>();
+  const { id } = useParams<{ id: string }>();
   const [org, setOrg] = useState<OrgResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!slug) return;
+    if (!id) return;
     setLoading(true);
     setError("");
     orgsApi
-      .get(slug)
+      .get(id)
       .then((data) => setOrg(data))
       .catch((e) => {
         if (e instanceof ApiClientError && (e.status === 403 || e.status === 404)) {
@@ -26,7 +26,7 @@ export function OrgAdminLayout() {
         }
       })
       .finally(() => setLoading(false));
-  }, [slug]);
+  }, [id]);
 
   if (loading)
     return (

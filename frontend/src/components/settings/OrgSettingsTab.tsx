@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { orgsApi, type OrgResponse } from "../../api/orgs";
 import { Button } from "../ui/Button";
 import { ApiClientError } from "../../api/client";
@@ -82,7 +83,7 @@ function CreateOrgForm({
   );
 }
 
-function OrgCard({
+export function OrgCard({
   org,
   onDeleted,
 }: {
@@ -121,8 +122,14 @@ function OrgCard({
         {org.memberCount} member{org.memberCount !== 1 ? "s" : ""}
       </div>
       {error && <p className="text-xs text-red-500">{error}</p>}
-      {org.userRole === "admin" && (
-        <div className="flex gap-2 pt-1">
+      <div className="flex gap-2 pt-1">
+        <Link
+          to={`/orgs/${org.id}`}
+          className="text-xs text-accent hover:underline"
+        >
+          Manage
+        </Link>
+        {org.userRole === "admin" && (
           <button
             onClick={handleDelete}
             disabled={loading}
@@ -130,8 +137,8 @@ function OrgCard({
           >
             Delete
           </button>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
