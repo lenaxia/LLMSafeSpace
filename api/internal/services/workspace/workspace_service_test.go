@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8s "k8s.io/client-go/kubernetes"
@@ -1836,4 +1837,40 @@ func TestSeedEphemeralSecrets_EmptyIncomingPreservesExisting(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, existing, secret.Data["secrets.json"],
 		"empty incoming must not overwrite existing credentials")
+}
+
+// TestMergeSecretsByName_MalformedExisting_FallsBackToIncoming exercises the
+// recovery branch in MergeSecretsManifest: when the existing secret's
+// secrets.json is unparseable (e.g. corruption, version skew), the code logs
+// a Warn and writes the incoming payload as-is rather than leaving the secret
+// in a corrupt state. This test asserts that fallback behavior end-to-end
+// through MergeSecretsManifest, ensuring the function does not silently
+// preserve corrupt data when given a chance to overwrite.
+func TestMergeSecretsByName_MalformedExisting_FallsBackToIncoming(t *testing.T) {
+	f := newFixtureWithFakeClientset(t)
+	ctx := context.Background()
+
+	// Pre-create a secret with a malformed secrets.json directly via the
+	// fake clientset (bypassing the service so we can inject corruption).
+	corrupt := []byte(`{not-an-array, completely malformed`)
+	_, err := f.fakeCS.CoreV1().Secrets("default").Create(ctx, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "workspace-secrets-ws-corrupt",
+			Namespace: "default",
+			Labels:    map[string]string{"app": "llmsafespace"},
+		},
+		Data: map[string][]byte{"secrets.json": corrupt},
+	}, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	// Merge a valid incoming payload. The merge of corrupt+valid must fall
+	// back to writing the incoming as-is (rather than failing or preserving
+	// corruption).
+	incoming := []byte(`[{"type":"llm-provider","name":"opencode","metadata":null,"plaintext":"key"}]`)
+	require.NoError(t, f.svc.MergeSecretsManifest(ctx, "ws-corrupt", incoming))
+
+	secret, err := f.fakeCS.CoreV1().Secrets("default").Get(ctx, "workspace-secrets-ws-corrupt", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, incoming, secret.Data["secrets.json"],
+		"corrupt existing secret must be overwritten with valid incoming payload — not preserved as garbage")
 }

@@ -56,23 +56,22 @@ entries whose name was not covered by incoming.
 
 ## Tests
 
-Eight tests covering the merge surface:
+Five new tests covering the merge surface, plus one updated test for the new
+empty-incoming semantics:
 
 | Test | What it proves |
 |---|---|
-| `TestSeedEphemeralSecrets_PreservesUserCredentials` | Primary regression: DEK expires → admin-only activate → user credential must survive |
-| `TestSeedEphemeralSecrets_IncomingWinsForExistingName` | Incoming replaces existing for same name (admin rotation) |
-| `TestSeedEphemeralSecrets_NoExistingSecret` | No existing secret + non-empty incoming → create |
-| `TestSeedEphemeralSecrets_EmptyIncomingPreservesExisting` | Empty incoming → existing unchanged |
-| `TestSeedEphemeralSecrets_EmptyResult_NoWrite` | Empty incoming + no existing → no write (guard preserved) |
-| `TestEnsureSecretsManifest_PreservesWorkspaceConfig` | Credential bind does not clobber workspace-config.json |
-| `TestEnsureSecretsManifest_PreservesWorkspaceConfig_BindFirst` | Reverse ordering also safe |
-| `TestEnsureWorkspaceConfig_UpdatesExistingSecret` | EnsureWorkspaceConfig preserves secrets.json |
+| `TestSeedEphemeralSecrets_PreservesUserCredentials` (new) | **Primary regression:** calls `seedEphemeralSecrets` end-to-end with a `fakeSecretInjector` returning admin-only payload after a prior full inject; user credentials must survive |
+| `TestSeedEphemeralSecrets_IncomingWinsForExistingName` (new) | Incoming replaces existing for same name (admin rotation) |
+| `TestSeedEphemeralSecrets_NoExistingSecret` (new) | No existing secret + non-empty incoming → create |
+| `TestSeedEphemeralSecrets_EmptyIncomingPreservesExisting` (new) | Empty incoming → existing unchanged |
+| `TestMergeSecretsByName_MalformedExisting_FallsBackToIncoming` (new) | Malformed JSON in stored secret falls back to writing incoming as-is |
+| `TestSeedEphemeralSecrets_EmptyResult_NoWrite` (updated) | Empty incoming + no existing → still no write (guard preserved under new semantics) |
 
 ---
 
 ## Files Modified
 
 - `api/internal/services/workspace/workspace_service.go` — add `MergeSecretsManifest`, `mergeSecretsByName`; rewire `seedEphemeralSecrets` to use merge path
-- `api/internal/services/workspace/workspace_service_test.go` — 8 tests
-- `worklogs/0299_2026-06-15_merge-secrets-dek-absent-activate.md` — this worklog
+- `api/internal/services/workspace/workspace_service_test.go` — 5 new tests + 1 updated
+- `worklogs/0302_2026-06-15_merge-secrets-dek-absent-activate.md` — this worklog
