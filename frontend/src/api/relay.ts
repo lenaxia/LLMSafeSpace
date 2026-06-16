@@ -86,9 +86,8 @@ export interface GCPCredsRequest {
 }
 
 export interface AWSCredsRequest {
-  trustAnchorId: string;
-  profileId: string;
-  roleArn: string;
+  accessKeyId: string;
+  secretAccessKey: string;
   region: string;
 }
 

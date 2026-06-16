@@ -167,7 +167,7 @@ test.describe("Relay admin UI", () => {
     await expect(page.getByText("Select Provider")).toBeVisible();
 
     await page.getByText("AWS").first().click();
-    await expect(page.getByPlaceholder("Trust Anchor ID (ta-xxxxx)")).toBeVisible();
+    await expect(page.getByPlaceholder("Access Key ID (AKIA...)")).toBeVisible();
     await expect(page.getByText("How to get AWS credentials")).toBeVisible();
   });
 

@@ -90,7 +90,7 @@ describe("RelaySetupWizard", () => {
     fireEvent.click(screen.getByText("AWS"));
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText("Trust Anchor ID (ta-xxxxx)")).toBeInTheDocument();
+      expect(screen.getByPlaceholderText("Access Key ID (AKIA...)")).toBeInTheDocument();
     });
   });
 
@@ -103,16 +103,16 @@ describe("RelaySetupWizard", () => {
     await waitFor(() => expect(screen.getByText("Select Provider")).toBeInTheDocument());
     fireEvent.click(screen.getByText("AWS"));
 
-    await waitFor(() => expect(screen.getByPlaceholderText("Trust Anchor ID (ta-xxxxx)")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByPlaceholderText("Access Key ID (AKIA...)")).toBeInTheDocument());
 
-    await userEvent.type(screen.getByPlaceholderText("Trust Anchor ID (ta-xxxxx)"), "ta-test");
-    await userEvent.type(screen.getByPlaceholderText("Role ARN (arn:aws:iam::...)"), "arn:aws:iam::test");
+    await userEvent.type(screen.getByPlaceholderText("Access Key ID (AKIA...)"), "AKIATEST");
+    await userEvent.type(screen.getByPlaceholderText("Secret Access Key"), "secret123");
 
     fireEvent.click(screen.getByText("Save AWS Credentials"));
 
     await waitFor(() => {
       expect(relayApi.saveAWSCreds).toHaveBeenCalledWith(
-        expect.objectContaining({ trustAnchorId: "ta-test", region: "us-east-1" }),
+        expect.objectContaining({ accessKeyId: "AKIATEST", region: "us-east-1" }),
       );
     });
   });
@@ -186,8 +186,8 @@ describe("RelaySetupWizard", () => {
     await waitFor(() => expect(screen.getByText("Select Provider")).toBeInTheDocument());
     fireEvent.click(screen.getByText("AWS"));
 
-    await waitFor(() => expect(screen.getByPlaceholderText("Trust Anchor ID (ta-xxxxx)")).toBeInTheDocument());
-    await userEvent.type(screen.getByPlaceholderText("Trust Anchor ID (ta-xxxxx)"), "ta-test");
+    await waitFor(() => expect(screen.getByPlaceholderText("Access Key ID (AKIA...)")).toBeInTheDocument());
+    await userEvent.type(screen.getByPlaceholderText("Access Key ID (AKIA...)"), "AKIATEST");
 
     fireEvent.click(screen.getByText("Save AWS Credentials"));
 

@@ -395,20 +395,19 @@ func (h *RelayAdminHandler) SaveGCPCreds(c *gin.Context) {
 // ─── AWS credentials ────────────────────────────────────────────────────────
 
 type awsCredsRequest struct {
-	TrustAnchorID string `json:"trustAnchorId" binding:"required"`
-	ProfileID     string `json:"profileId" binding:"required"`
-	RoleARN       string `json:"roleArn" binding:"required"`
-	Region        string `json:"region" binding:"required"`
+	AccessKeyID     string `json:"accessKeyId" binding:"required"`
+	SecretAccessKey string `json:"secretAccessKey" binding:"required"`
+	Region          string `json:"region" binding:"required"`
 }
 
-// SaveAWSCreds saves AWS IAM Roles Anywhere configuration to a K8s Secret.
+// SaveAWSCreds saves AWS IAM access key credentials for EC2 provisioning.
 func (h *RelayAdminHandler) SaveAWSCreds(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxRelayBodyBytes)
 	var req awsCredsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "trustAnchorId, profileId, roleArn, and region are required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "accessKeyId, secretAccessKey, and region are required"})
 		return
 	}
 
@@ -418,10 +417,9 @@ func (h *RelayAdminHandler) SaveAWSCreds(c *gin.Context) {
 			Namespace: h.namespace,
 		},
 		Data: map[string][]byte{
-			"trustAnchorId": []byte(req.TrustAnchorID),
-			"profileId":     []byte(req.ProfileID),
-			"roleArn":       []byte(req.RoleARN),
-			"region":        []byte(req.Region),
+			"accessKeyId":     []byte(req.AccessKeyID),
+			"secretAccessKey": []byte(req.SecretAccessKey),
+			"region":          []byte(req.Region),
 		},
 	}
 
