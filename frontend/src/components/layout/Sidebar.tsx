@@ -406,10 +406,10 @@ function WorkspaceGroup({
           onNewSession={onNewSession}
           creatingSession={creatingSession}
           isSuspended={isSuspended || isResuming}
-            onRenameSession={onRenameSession}
-            onDeleteSession={onDeleteSession}
-            onAbortSession={onAbortSession}
-            renamingSession={renamingSession}
+          onRenameSession={onRenameSession}
+          onDeleteSession={onDeleteSession}
+          onAbortSession={onAbortSession}
+          renamingSession={renamingSession}
           onRenameSessionCancel={onRenameSessionCancel}
           onRenameSessionConfirm={onRenameSessionConfirm}
         />

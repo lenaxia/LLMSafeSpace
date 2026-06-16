@@ -20,6 +20,7 @@ vi.mock("../api/workspaces", () => ({
     deleteWorkspace: vi.fn().mockResolvedValue({}),
     suspend: vi.fn().mockResolvedValue({}),
     deleteSession: vi.fn().mockResolvedValue(undefined),
+    abortSession: vi.fn().mockResolvedValue(undefined),
     markSessionSeen: vi.fn().mockResolvedValue(undefined),
     getSessions: vi.fn().mockResolvedValue([]),
   },
@@ -411,5 +412,62 @@ describe("ChatPage — session delete", () => {
     await userEvent.click(deleteBtn);
 
     expect(workspacesApi.deleteSession).toHaveBeenCalledWith("ws-1", "sess-1");
+  });
+
+  it("header kebab Force Stop calls abortSession with correct IDs", async () => {
+    (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+
+    renderChatPage("/chat/ws-1/sess-1");
+    await waitFor(() => expect(screen.getByLabelText("Actions")).toBeInTheDocument());
+
+    const kebab = screen.getByLabelText("Actions");
+    await userEvent.click(kebab);
+
+    const forceStopBtn = await screen.findByText("Force Stop");
+    await userEvent.click(forceStopBtn);
+
+    expect(workspacesApi.abortSession).toHaveBeenCalledWith("ws-1", "sess-1");
+  });
+
+  it("header kebab Force Stop fires without confirmation", async () => {
+    (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    renderChatPage("/chat/ws-1/sess-1");
+    await waitFor(() => expect(screen.getByLabelText("Actions")).toBeInTheDocument());
+
+    const kebab = screen.getByLabelText("Actions");
+    await userEvent.click(kebab);
+
+    const forceStopBtn = await screen.findByText("Force Stop");
+    await userEvent.click(forceStopBtn);
+
+    expect(workspacesApi.abortSession).toHaveBeenCalledWith("ws-1", "sess-1");
+    expect(confirmSpy).not.toHaveBeenCalled();
+
+    confirmSpy.mockRestore();
+  });
+
+  it("header kebab Force Stop surfaces alert on failure", async () => {
+    (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+    (workspacesApi.abortSession as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("boom"));
+
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+
+    renderChatPage("/chat/ws-1/sess-1");
+    await waitFor(() => expect(screen.getByLabelText("Actions")).toBeInTheDocument());
+
+    const kebab = screen.getByLabelText("Actions");
+    await userEvent.click(kebab);
+
+    const forceStopBtn = await screen.findByText("Force Stop");
+    await userEvent.click(forceStopBtn);
+
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith("Failed to force stop session.");
+    });
+
+    alertSpy.mockRestore();
   });
 });
