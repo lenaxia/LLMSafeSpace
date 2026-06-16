@@ -191,6 +191,12 @@ export function Sidebar({ onNavigate }: Props) {
               onSuspend={() => suspendMutation.mutate(ws.id)}
               onResume={() => activateMutation.mutate(ws.id)}
               onRenameSession={(sessionId, title) => setRenamingSession({ wsId: ws.id, sessionId, title })}
+              onAbortSession={(sid) => {
+                workspacesApi.abortSession(ws.id, sid)
+                  .catch(() => {
+                    try { window.alert("Failed to force stop session."); } catch { /* blocked */ }
+                  });
+              }}
               onDeleteSession={(sid) => {
                 // wrap confirm() in try/catch — sandboxed iframes, CSP, or
                 // suppressed dialogs can throw and silently swallow the click.
@@ -265,6 +271,7 @@ interface WorkspaceGroupProps {
   onResume: () => void;
   onRenameSession: (sessionId: string, title: string) => void;
   onDeleteSession: (sessionId: string) => void;
+  onAbortSession: (sessionId: string) => void;
   renamingSession: { wsId: string; sessionId: string; title: string } | null;
   onRenameSessionCancel: () => void;
   onRenameSessionConfirm: (sessionId: string, title: string) => void;
@@ -289,6 +296,7 @@ function WorkspaceGroup({
   onResume,
   onRenameSession,
   onDeleteSession,
+  onAbortSession,
   renamingSession,
   onRenameSessionCancel,
   onRenameSessionConfirm,
@@ -400,6 +408,7 @@ function WorkspaceGroup({
           isSuspended={isSuspended || isResuming}
           onRenameSession={onRenameSession}
           onDeleteSession={onDeleteSession}
+          onAbortSession={onAbortSession}
           renamingSession={renamingSession}
           onRenameSessionCancel={onRenameSessionCancel}
           onRenameSessionConfirm={onRenameSessionConfirm}
@@ -424,6 +433,7 @@ interface SessionListProps {
   isSuspended: boolean;
   onRenameSession: (sessionId: string, title: string) => void;
   onDeleteSession: (sessionId: string) => void;
+  onAbortSession: (sessionId: string) => void;
   renamingSession: { wsId: string; sessionId: string; title: string } | null;
   onRenameSessionCancel: () => void;
   onRenameSessionConfirm: (sessionId: string, title: string) => void;
@@ -438,6 +448,7 @@ function WorkspaceSessionList({
   isSuspended,
   onRenameSession,
   onDeleteSession,
+  onAbortSession,
   renamingSession,
   onRenameSessionCancel,
   onRenameSessionConfirm,
@@ -618,6 +629,7 @@ function WorkspaceSessionList({
               onSelectSession={onSelectSession}
               onRenameSession={onRenameSession}
               onDeleteSession={onDeleteSession}
+              onAbortSession={onAbortSession}
               renamingSession={renamingSession}
               onRenameSessionCancel={onRenameSessionCancel}
               onRenameSessionConfirm={onRenameSessionConfirm}
@@ -638,6 +650,7 @@ function WorkspaceSessionList({
               onSelectSession={onSelectSession}
               onRenameSession={onRenameSession}
               onDeleteSession={onDeleteSession}
+              onAbortSession={onAbortSession}
               renamingSession={renamingSession}
               onRenameSessionCancel={onRenameSessionCancel}
               onRenameSessionConfirm={onRenameSessionConfirm}
@@ -661,6 +674,7 @@ interface SessionTreeRowProps {
   onSelectSession: (sessionId: string) => void;
   onRenameSession: (sessionId: string, title: string) => void;
   onDeleteSession: (sessionId: string) => void;
+  onAbortSession: (sessionId: string) => void;
   renamingSession: { wsId: string; sessionId: string; title: string } | null;
   onRenameSessionCancel: () => void;
   onRenameSessionConfirm: (sessionId: string, title: string) => void;
@@ -682,6 +696,7 @@ function SessionTreeRow({
   onSelectSession,
   onRenameSession,
   onDeleteSession,
+  onAbortSession,
   renamingSession,
   onRenameSessionCancel,
   onRenameSessionConfirm,
@@ -721,6 +736,10 @@ function SessionTreeRow({
     {
       label: "Rename",
       onClick: () => onRenameSession(s.id, s.title ?? ""),
+    },
+    {
+      label: "Force Stop",
+      onClick: () => onAbortSession(s.id),
     },
     {
       label: "Delete",
@@ -808,6 +827,7 @@ function SessionTreeRow({
             onSelectSession={onSelectSession}
             onRenameSession={onRenameSession}
             onDeleteSession={onDeleteSession}
+            onAbortSession={onAbortSession}
             renamingSession={renamingSession}
             onRenameSessionCancel={onRenameSessionCancel}
             onRenameSessionConfirm={onRenameSessionConfirm}
@@ -830,6 +850,7 @@ interface OrphansGroupProps {
   onSelectSession: (sessionId: string) => void;
   onRenameSession: (sessionId: string, title: string) => void;
   onDeleteSession: (sessionId: string) => void;
+  onAbortSession: (sessionId: string) => void;
   renamingSession: { wsId: string; sessionId: string; title: string } | null;
   onRenameSessionCancel: () => void;
   onRenameSessionConfirm: (sessionId: string, title: string) => void;
@@ -854,6 +875,7 @@ function OrphansGroup({
   onSelectSession,
   onRenameSession,
   onDeleteSession,
+  onAbortSession,
   renamingSession,
   onRenameSessionCancel,
   onRenameSessionConfirm,
@@ -891,6 +913,7 @@ function OrphansGroup({
             onSelectSession={onSelectSession}
             onRenameSession={onRenameSession}
             onDeleteSession={onDeleteSession}
+            onAbortSession={onAbortSession}
             renamingSession={renamingSession}
             onRenameSessionCancel={onRenameSessionCancel}
             onRenameSessionConfirm={onRenameSessionConfirm}
