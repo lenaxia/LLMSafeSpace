@@ -46,9 +46,13 @@ export interface OrgCredential {
   orgId: string;
   name: string;
   provider: string;
+  baseURL?: string;
   modelAllowlist: string[];
+  modelContextLimits: Record<string, number>;
   createdAt: string;
   updatedAt: string;
+  /** Present when the credential was created but org-workspace auto-bind failed. */
+  bindWarning?: string;
 }
 
 export interface OrgInvitation {
@@ -138,15 +142,26 @@ export const orgsApi = {
       apiKey: string;
       baseURL?: string;
       modelAllowlist?: string[];
+      modelContextLimits?: Record<string, number>;
     },
   ) => api.post<OrgCredential>(`/orgs/${id}/credentials`, req),
   updateCredential: (
     id: string,
     credId: string,
-    req: { name?: string; apiKey?: string; modelAllowlist?: string[] },
+    req: {
+      name?: string;
+      apiKey?: string;
+      baseURL?: string;
+      modelAllowlist?: string[];
+      modelContextLimits?: Record<string, number>;
+    },
   ) => api.put<OrgCredential>(`/orgs/${id}/credentials/${credId}`, req),
   deleteCredential: (id: string, credId: string) =>
     api.delete<void>(`/orgs/${id}/credentials/${credId}`),
+  probeCredentialModels: (id: string, credId: string) =>
+    api.get<{ models: { id: string; contextLimit: number }[]; baseURL?: string; warning?: string }>(
+      `/orgs/${id}/credentials/${credId}/models`,
+    ),
 
   listWorkspaces: (id: string) =>
     api.get<{ items: WorkspaceListItem[] }>(`/orgs/${id}/workspaces`),

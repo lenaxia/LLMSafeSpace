@@ -34,7 +34,7 @@ type OrgCredentialRow struct {
 // OrgCredentialStore is the DB interface for org-scoped credential operations.
 type OrgCredentialStore interface {
 	CreateOrgCredential(ctx context.Context, orgID, name, provider string, ciphertext []byte, modelAllowlist []string, modelContextLimits map[string]int) (string, error)
-	ListOrgCredentials(ctx context.Context, orgID string) ([]*OrgCredentialMetadata, error)
+	ListOrgCredentials(ctx context.Context, orgID string) ([]*OrgCredentialRow, error)
 	GetOrgCredential(ctx context.Context, orgID, credID string) (*OrgCredentialRow, error)
 	UpdateOrgCredential(ctx context.Context, orgID, credID string, name *string, ciphertext []byte, modelAllowlist []string, modelContextLimits map[string]int, keyVersion int) error
 	DeleteOrgCredential(ctx context.Context, orgID, credID string) error
@@ -63,9 +63,9 @@ func (s *PgSecretStore) CreateOrgCredential(ctx context.Context, orgID, name, pr
 	return id, nil
 }
 
-func (s *PgSecretStore) ListOrgCredentials(ctx context.Context, orgID string) ([]*OrgCredentialMetadata, error) {
+func (s *PgSecretStore) ListOrgCredentials(ctx context.Context, orgID string) ([]*OrgCredentialRow, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, owner_id, name, provider, model_allowlist, model_context_limits, created_at, updated_at
+		SELECT id, owner_id, name, provider, model_allowlist, model_context_limits, created_at, updated_at, ciphertext, key_version
 		FROM provider_credentials
 		WHERE owner_type = 'org' AND owner_id = $1
 		ORDER BY created_at DESC
@@ -75,16 +75,16 @@ func (s *PgSecretStore) ListOrgCredentials(ctx context.Context, orgID string) ([
 	}
 	defer rows.Close()
 
-	var out []*OrgCredentialMetadata
+	var out []*OrgCredentialRow
 	for rows.Next() {
-		var m OrgCredentialMetadata
-		if err := rows.Scan(&m.ID, &m.OrgID, &m.Name, &m.Provider, &m.ModelAllowlist, &m.ModelContextLimits, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		var r OrgCredentialRow
+		if err := rows.Scan(&r.ID, &r.OrgID, &r.Name, &r.Provider, &r.ModelAllowlist, &r.ModelContextLimits, &r.CreatedAt, &r.UpdatedAt, &r.Ciphertext, &r.KeyVersion); err != nil {
 			return nil, fmt.Errorf("scan org credential: %w", err)
 		}
-		if m.ModelContextLimits == nil {
-			m.ModelContextLimits = map[string]int{}
+		if r.ModelContextLimits == nil {
+			r.ModelContextLimits = map[string]int{}
 		}
-		out = append(out, &m)
+		out = append(out, &r)
 	}
 	return out, rows.Err()
 }
