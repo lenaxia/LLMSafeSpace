@@ -155,7 +155,6 @@ export function RelaySetupWizard({ onComplete }: { onComplete?: () => void }) {
     setDeploying(true);
     try {
       await relayApi.deploy({
-        upstreamURL: "https://opencode.ai/zen/v1",
         routerEndpoint: deployConfig.routerEndpoint,
         providers,
       });
@@ -321,7 +320,7 @@ export function RelaySetupWizard({ onComplete }: { onComplete?: () => void }) {
                 </button>
                 <button
                   onClick={() => handleSave(provider)}
-                  disabled={saving}
+                  disabled={saving || !getFieldValue(provider, PROVIDER_FIELDS[provider]?.[0]?.name ?? "")}
                   className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
                 >
                   {saving ? "Saving..." : `Save ${provider.toUpperCase()} Credentials`}

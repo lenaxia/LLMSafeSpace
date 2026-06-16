@@ -560,7 +560,6 @@ func TestRelayDeploy_MissingFields_400(t *testing.T) {
 		name string
 		body string
 	}{
-		{"missing upstreamURL", `{"routerEndpoint":"gw:51820","providers":["oci"]}`},
 		{"missing routerEndpoint", `{"upstreamURL":"https://x.com","providers":["oci"]}`},
 		{"empty providers", `{"upstreamURL":"https://x.com","routerEndpoint":"gw:51820","providers":[]}`},
 		{"empty body", `{}`},
@@ -572,6 +571,17 @@ func TestRelayDeploy_MissingFields_400(t *testing.T) {
 			assert.Equal(t, http.StatusBadRequest, w.Code)
 		})
 	}
+}
+
+func TestRelayDeploy_Defaults_UpstreamURL(t *testing.T) {
+	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
+	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, notFoundError()).Maybe()
+	relayMock.On("Create", mock.Anything, mock.Anything).Return(makeRelayCR("relay-fleet", nil, 0), nil).Maybe()
+
+	body := `{"routerEndpoint":"gw:51820","providers":["oci"]}`
+	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/deploy", body)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 }
 
 func TestRelayDeploy_OCIOnly_Success(t *testing.T) {

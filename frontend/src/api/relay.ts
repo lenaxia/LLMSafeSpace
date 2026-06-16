@@ -93,7 +93,7 @@ export interface AWSCredsRequest {
 }
 
 export interface DeployRequest {
-  upstreamURL: string;
+  upstreamURL?: string;
   routerEndpoint: string;
   wireGuardPort?: number;
   providers: string[];
