@@ -436,7 +436,7 @@ func (h *RelayAdminHandler) SaveAWSCreds(c *gin.Context) {
 // ─── US-43.6: Deploy relay fleet ────────────────────────────────────────────
 
 type deployRequest struct {
-	UpstreamURL    string   `json:"upstreamURL" binding:"required"`
+	UpstreamURL    string   `json:"upstreamURL,omitempty"`
 	WireGuardPort  int      `json:"wireGuardPort,omitempty"`
 	RouterEndpoint string   `json:"routerEndpoint" binding:"required"`
 	Providers      []string `json:"providers" binding:"required"`
@@ -449,8 +449,12 @@ func (h *RelayAdminHandler) Deploy(c *gin.Context) {
 
 	var req deployRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "upstreamURL, routerEndpoint, and providers are required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "routerEndpoint and providers are required"})
 		return
+	}
+
+	if req.UpstreamURL == "" {
+		req.UpstreamURL = "https://opencode.ai/zen/v1"
 	}
 
 	if len(req.Providers) == 0 {
