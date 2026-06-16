@@ -801,6 +801,16 @@ export function ChatPage() {
       },
     },
     {
+      label: "Force Stop",
+      onClick: () => {
+        if (!workspaceId || !sessionId) return;
+        workspacesApi.abortSession(workspaceId, sessionId)
+          .catch(() => {
+            try { window.alert("Failed to force stop session."); } catch { /* blocked */ }
+          });
+      },
+    },
+    {
       label: "Delete session",
       onClick: () => {
         if (!workspaceId || !sessionId) return;
