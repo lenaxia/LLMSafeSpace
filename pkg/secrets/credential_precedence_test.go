@@ -612,7 +612,7 @@ func TestCredentialPrecedence_ModelContextLimits_DoesNotOverrideExisting(t *test
 // OwnerType="org" credential decrypts using the server KEK derived from the
 // "org-credentials" HKDF label and produces correct provider data.
 //
-// This is the keystone behaviour of the org-DEK elimination (design 0031, Story 1):
+// This is the keystone behavior of the org-DEK elimination (design 0031, Story 1):
 // org credentials must inject via the server-side KEK with no per-org DEK and no
 // active admin session. A regression that drops the "org" case from the
 // OwnerType switch in injection.go, or that uses the wrong label, fails here.
