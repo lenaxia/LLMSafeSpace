@@ -83,7 +83,7 @@ function CreateOrgForm({
   );
 }
 
-function OrgCard({
+export function OrgCard({
   org,
   onDeleted,
 }: {
