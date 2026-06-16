@@ -18,7 +18,6 @@ async function mockAdminAuth(page: Page) {
       body: JSON.stringify({ registrationEnabled: true, oidcEnabled: false, instanceName: "test" }),
     });
   });
-  // Mock other API calls the settings page makes
   await page.route(`${API_PREFIX}/users/me/settings`, async (route: Route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ settings: {}, schemaVersion: 1 }) });
   });
@@ -123,7 +122,7 @@ test.describe("Relay admin UI", () => {
     await mockAdminAuth(page);
   });
 
-  test("setup wizard shows when fleet not deployed", async ({ page }) => {
+  test("setup view shows when fleet not deployed", async ({ page }) => {
     await page.route(`${API_PREFIX}/admin/relay/setup`, async (route: Route) => {
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(mockSetupNotDeployed) });
     });
@@ -132,11 +131,12 @@ test.describe("Relay admin UI", () => {
     await page.waitForLoadState("networkidle");
     await page.getByRole("button", { name: "Relay" }).click();
 
-    await expect(page.getByRole("heading", { name: "Prerequisites" })).toBeVisible({ timeout: 8000 });
+    await expect(page.getByText("Inference Relay")).toBeVisible({ timeout: 8000 });
     await expect(page.getByText("Relay router deployed")).toBeVisible();
+    await expect(page.getByText("Add Relay Provider")).toBeVisible();
   });
 
-  test("setup wizard navigates through steps", async ({ page }) => {
+  test("Add Relay Provider shows provider selection cards", async ({ page }) => {
     await page.route(`${API_PREFIX}/admin/relay/setup`, async (route: Route) => {
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(mockSetupNotDeployed) });
     });
@@ -145,23 +145,30 @@ test.describe("Relay admin UI", () => {
     await page.waitForLoadState("networkidle");
     await page.getByRole("button", { name: "Relay" }).click();
 
-    await expect(page.getByRole("heading", { name: "Prerequisites" })).toBeVisible();
+    await expect(page.getByText("Add Relay Provider")).toBeVisible();
+    await page.getByText("Add Relay Provider").click();
 
-    // AWS step (primary provider, added after OCI)
-    await page.getByText("Next →").click();
+    await expect(page.getByText("Select Provider")).toBeVisible();
+    await expect(page.getByText("AWS").first()).toBeVisible();
+    await expect(page.getByText("OCI").first()).toBeVisible();
+    await expect(page.getByText("GCP").first()).toBeVisible();
+  });
+
+  test("clicking a provider shows its credential form with instructions", async ({ page }) => {
+    await page.route(`${API_PREFIX}/admin/relay/setup`, async (route: Route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(mockSetupNotDeployed) });
+    });
+
+    await page.goto("/settings");
+    await page.waitForLoadState("networkidle");
+    await page.getByRole("button", { name: "Relay" }).click();
+
+    await page.getByText("Add Relay Provider").click();
+    await expect(page.getByText("Select Provider")).toBeVisible();
+
+    await page.getByText("AWS").first().click();
     await expect(page.getByPlaceholder("Trust Anchor ID (ta-xxxxx)")).toBeVisible();
-
-    // OCI step
-    await page.getByText("Next →").click();
-    await expect(page.getByPlaceholder("Tenancy OCID")).toBeVisible();
-
-    // GCP step
-    await page.getByText("Next →").click();
-    await expect(page.getByPlaceholder("Service Account JSON")).toBeVisible();
-
-    // Deploy step
-    await page.getByText("Next →").click();
-    await expect(page.getByPlaceholder(/WireGuard endpoint/)).toBeVisible();
+    await expect(page.getByText("How to get AWS credentials")).toBeVisible();
   });
 
   test("status dashboard shows healthy fleet", async ({ page }) => {
