@@ -34,6 +34,7 @@ spec:
             spec:
               type: object
               required:
+                - upstreamURL
                 - providers
               properties:
                 upstreamURL:
@@ -203,7 +204,6 @@ spec:
                       - status
                       - lastTransitionTime
                       - reason
-                      - message
                     properties:
                       type:
                         type: string
