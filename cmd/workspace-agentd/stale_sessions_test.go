@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -312,6 +314,65 @@ func TestAbortStaleSessionsAfterStart_WaitsForHealth(t *testing.T) {
 	abortStaleSessionsAfterStart(context.Background(), client, log)
 
 	assert.GreaterOrEqual(t, int(healthCallCount.Load()), 3, "should poll health until healthy")
+}
+
+// TestAbortStaleSessionsAfterStart_AbortsSessionsAfterHealth stitches together
+// the two halves that the unit-level tests cover independently: health-polling
+// (TestAbortStaleSessionsAfterStart_WaitsForHealth) and session abort
+// (TestAbortStaleSessions_AbortsAllSessions). With non-empty /session
+// responses, this proves the full production wiring: opencode becomes healthy →
+// abortStaleSessionsAfterStart lists sessions → each is POST-aborted. Closes
+// the gap where a regression in the wiring between abortStaleSessionsAfterStart
+// and abortStaleSessions (e.g. a future refactor that breaks the call) would
+// not be caught by the existing tests.
+func TestAbortStaleSessionsAfterStart_AbortsSessionsAfterHealth(t *testing.T) {
+	var mu sync.Mutex
+	var aborted []string
+	var healthChecks int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/global/health" && r.Method == http.MethodGet:
+			atomic.AddInt32(&healthChecks, 1)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"healthy": true, "version": "test"})
+		case r.URL.Path == "/session" && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode([]map[string]string{
+				{"id": "ses_stale1", "title": "Stale One"},
+				{"id": "ses_stale2", "title": "Stale Two"},
+			})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/abort"):
+			sid := strings.TrimPrefix(r.URL.Path, "/session/")
+			sid = strings.TrimSuffix(sid, "/abort")
+			mu.Lock()
+			aborted = append(aborted, sid)
+			mu.Unlock()
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("true"))
+			return
+		default:
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]string{})
+		}
+	}))
+	defer server.Close()
+
+	client := &OpenCodeClient{password: "pw", client: &http.Client{Timeout: 5 * time.Second}}
+	orig := getAgentAddr()
+	defer func() { setAgentAddr(orig) }()
+	setAgentAddr(server.URL)
+
+	withTestLogger(t)
+	abortStaleSessionsAfterStart(context.Background(), client, log)
+
+	assert.GreaterOrEqual(t, atomic.LoadInt32(&healthChecks), int32(1),
+		"should have polled health at least once before aborting")
+
+	mu.Lock()
+	got := append([]string(nil), aborted...)
+	mu.Unlock()
+	assert.ElementsMatch(t, []string{"ses_stale1", "ses_stale2"}, got,
+		"both sessions must be aborted after health check passes — the full "+
+			"abortStaleSessionsAfterStart → abortStaleSessions wiring must be intact")
 }
 
 func TestAbortStaleSessionsAfterStart_TimesOutIfNeverHealthy(t *testing.T) {
