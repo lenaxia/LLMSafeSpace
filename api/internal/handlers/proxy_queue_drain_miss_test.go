@@ -740,6 +740,54 @@ func TestReconcileSessionState_NoStalenessNoOp(t *testing.T) {
 		"busy session should remain active after reconcile")
 }
 
+// TestReconcileSessionState_PublishesIdleEventOnStaleClear verifies that when
+// a stale activeSess entry is cleared, the function publishes session.status=idle
+// to the workspace event broker. This is what causes connected browsers to
+// update their UI from "busy" to "idle" without needing a page reload.
+//
+// Without this event, users would have to reload the page to see that the
+// session is no longer busy — even after the activeSess entry is cleared,
+// the frontend's local state would still show the busy indicator.
+func TestReconcileSessionState_PublishesIdleEventOnStaleClear(t *testing.T) {
+	handler, _, _, cleanup := setupReconcileHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		body, _ := json.Marshal(map[string]interface{}{
+			"sessions": []map[string]interface{}{
+				{"id": "stuck-session", "status": "idle"},
+			},
+		})
+		_, _ = w.Write(body)
+	})
+	defer cleanup()
+
+	// Set up the stuck state.
+	handler.activeMu.Lock()
+	handler.activeSess["ws-1"] = map[string]bool{"stuck-session": true}
+	handler.activeMu.Unlock()
+
+	// Subscribe BEFORE triggering reconcile so we don't miss the event.
+	sub := handler.broker.Subscribe("ws-1")
+	defer handler.broker.Unsubscribe("ws-1", sub)
+
+	handler.reconcileSessionState("ws-1", "127.0.0.1", "test-pw")
+
+	// The function publishes the event synchronously via publishWorkspaceEvent.
+	// Use Eventually to handle any internal async fan-out without depending on
+	// internal broker timing.
+	require.Eventually(t, func() bool {
+		select {
+		case evt := <-sub.Ch:
+			return evt.Type == "session.status" &&
+				evt.SessionID == "stuck-session" &&
+				evt.Status == "idle"
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond,
+		"expected session.status=idle event to be published when stale activeSess is cleared")
+}
+
 // TestReconcileStrandedQueues_MultipleIdleSessions verifies that when multiple
 // sessions are idle and each has queued messages, reconcileSessionState
 // drains ALL of them — not just the first one found.
