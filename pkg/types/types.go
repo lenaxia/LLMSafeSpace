@@ -690,10 +690,9 @@ type OrgMember struct {
 // CreateOrgRequest is the request body for creating an organization. The slug is
 // lowercased by the service before insert and uniqueness check.
 type CreateOrgRequest struct {
-	Name     string  `json:"name"     binding:"required,min=2,max=100"`
-	Slug     string  `json:"slug"     binding:"required,min=2,max=50,alphanum"`
-	Password string  `json:"password" binding:"required"               log:"-"`
-	PlanID   OrgPlan `json:"planId" binding:"omitempty"`
+	Name   string  `json:"name"   binding:"required,min=2,max=100"`
+	Slug   string  `json:"slug"   binding:"required,min=2,max=50,alphanum"`
+	PlanID OrgPlan `json:"planId" binding:"omitempty"`
 }
 
 // UpdateOrgRequest is the request body for updating an organization.
@@ -721,11 +720,6 @@ type OrgResponse struct {
 type AddOrgMemberRequest struct {
 	UserID string  `json:"userId" binding:"required"`
 	Role   OrgRole `json:"role"   binding:"required"`
-}
-
-// AcceptOrgKeyRequest is the request body for completing the admin key handshake.
-type AcceptOrgKeyRequest struct {
-	Password string `json:"password" binding:"required" log:"-"`
 }
 
 // ChangeOrgMemberRoleRequest is the request body for changing a member's role.

@@ -339,19 +339,9 @@ func TestOrgsHandler_Create_SlugConflict(t *testing.T) {
 	store.slugExists = true
 	router, _ := setupOrgTestRouter(t, store)
 
-	w := doRequest(router, "POST", "/api/v1/orgs", `{"name":"Test","slug":"test","password":"pass123"}`)
+	w := doRequest(router, "POST", "/api/v1/orgs", `{"name":"Test","slug":"test"}`)
 	if w.Code != http.StatusConflict {
 		t.Errorf("expected 409, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestOrgsHandler_Create_MissingPassword(t *testing.T) {
-	store := newMockOrgStore()
-	router, _ := setupOrgTestRouter(t, store)
-
-	w := doRequest(router, "POST", "/api/v1/orgs", `{"name":"Test","slug":"test"}`)
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", w.Code)
 	}
 }
 
@@ -360,7 +350,7 @@ func TestOrgsHandler_Create_Success(t *testing.T) {
 	store.salts["admin-1"] = make([]byte, 32)
 	router, _ := setupOrgTestRouter(t, store)
 
-	w := doRequest(router, "POST", "/api/v1/orgs", `{"name":"Test Org","slug":"testorg","password":"secretpass"}`)
+	w := doRequest(router, "POST", "/api/v1/orgs", `{"name":"Test Org","slug":"testorg"}`)
 	if w.Code != http.StatusCreated {
 		t.Errorf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}

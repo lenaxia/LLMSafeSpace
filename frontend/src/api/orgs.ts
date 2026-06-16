@@ -87,7 +87,6 @@ export interface InvitationDetail {
 export interface CreateOrgRequest {
   name: string;
   slug: string;
-  password: string;
   planId?: OrgPlan;
 }
 

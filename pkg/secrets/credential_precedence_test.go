@@ -607,3 +607,176 @@ func TestCredentialPrecedence_ModelContextLimits_DoesNotOverrideExisting(t *test
 	assert.Equal(t, 128000, pd.Models[0].ContextLimit,
 		"ContextLimit from blob (128000) must NOT be overwritten by ModelContextLimits (999999)")
 }
+
+// TestCredentialPrecedence_OrgCredentialViaServerKEK verifies that an
+// OwnerType="org" credential decrypts using the server KEK derived from the
+// "org-credentials" HKDF label and produces correct provider data.
+//
+// This is the keystone behaviour of the org-DEK elimination (design 0031, Story 1):
+// org credentials must inject via the server-side KEK with no per-org DEK and no
+// active admin session. A regression that drops the "org" case from the
+// OwnerType switch in injection.go, or that uses the wrong label, fails here.
+func TestCredentialPrecedence_OrgCredentialViaServerKEK(t *testing.T) {
+	keyStore := newMockKeyStore()
+	dekCache := newTestDEKCache()
+	keyService := NewKeyService(keyStore, dekCache)
+	secretStore := newMockSecretStore()
+
+	orgKEK := make([]byte, 32)
+	for i := range orgKEK {
+		orgKEK[i] = byte(i + 50)
+	}
+
+	orgPlaintext, _ := json.Marshal(LLMProviderData{Provider: "openai", APIKey: "org-key"}) //nolint:gosec
+	orgCipher, err := EncryptSecret(orgKEK, orgPlaintext)
+	require.NoError(t, err)
+
+	mockCredStore := &mockCredentialStore{
+		bindings: []CredentialBinding{{
+			ID: "cred-org", OwnerType: "org", OwnerID: "org-1",
+			Provider: "openai", Ciphertext: orgCipher, SourceType: "auto",
+		}},
+	}
+
+	combinedStore := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCredStore}
+	svc := NewSecretService(keyService, combinedStore)
+	svc.SetAdminKeyDeriver(func(label string) []byte {
+		require.Equal(t, "org-credentials", label, "org binding must derive the org-credentials label")
+		return orgKEK
+	})
+
+	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
+	require.NoError(t, err)
+
+	var injected []InjectedSecret
+	require.NoError(t, json.Unmarshal(result, &injected))
+	llm := filterByType(injected, SecretTypeLLMProvider)
+	require.Len(t, llm, 1, "org credential must inject via server KEK")
+
+	var pd LLMProviderData
+	require.NoError(t, json.Unmarshal([]byte(llm[0].Plaintext), &pd))
+	assert.Equal(t, "org-key", pd.APIKey)
+	assert.Equal(t, "openai", pd.Provider)
+}
+
+// TestCredentialPrecedence_DomainSeparation_AdminAndOrgDistinctKeys verifies
+// HKDF domain separation between admin and org credentials: a deriver that
+// returns cryptographically distinct keys for the "provider-credentials" and
+// "org-credentials" labels must successfully decrypt BOTH an admin and an org
+// credential in the same workspace.
+//
+// A regression that reuses the admin label for org credentials (or vice versa)
+// causes exactly one decryption to fail here — the wrong-key ciphertext is
+// unreadable. This is stronger than a label-string assertion: it proves the
+// decryptBinding switch routes each OwnerType to its matching key end-to-end.
+func TestCredentialPrecedence_DomainSeparation_AdminAndOrgDistinctKeys(t *testing.T) {
+	keyStore := newMockKeyStore()
+	dekCache := newTestDEKCache()
+	keyService := NewKeyService(keyStore, dekCache)
+	secretStore := newMockSecretStore()
+
+	adminKEK := make([]byte, 32)
+	for i := range adminKEK {
+		adminKEK[i] = byte(i + 1)
+	}
+	orgKEK := make([]byte, 32)
+	for i := range orgKEK {
+		orgKEK[i] = byte(i + 200) // distinct from adminKEK
+	}
+	require.NotEqual(t, adminKEK, orgKEK, "test premise: keys must differ")
+
+	// Admin credential for anthropic, encrypted with adminKEK.
+	adminPlaintext, _ := json.Marshal(LLMProviderData{Provider: "anthropic", APIKey: "admin-key"})
+	adminCipher, err := EncryptSecret(adminKEK, adminPlaintext)
+	require.NoError(t, err)
+
+	// Org credential for openai, encrypted with orgKEK.
+	orgPlaintext, _ := json.Marshal(LLMProviderData{Provider: "openai", APIKey: "org-key"}) //nolint:gosec
+	orgCipher, err := EncryptSecret(orgKEK, orgPlaintext)
+	require.NoError(t, err)
+
+	mockCredStore := &mockCredentialStore{
+		bindings: []CredentialBinding{
+			{ID: "cred-admin", OwnerType: "admin", OwnerID: "_platform", Provider: "anthropic", Ciphertext: adminCipher, SourceType: "auto"},
+			{ID: "cred-org", OwnerType: "org", OwnerID: "org-1", Provider: "openai", Ciphertext: orgCipher, SourceType: "auto"},
+		},
+	}
+
+	combinedStore := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCredStore}
+	svc := NewSecretService(keyService, combinedStore)
+	svc.SetAdminKeyDeriver(func(label string) []byte {
+		// Return distinct keys per label — proves injection.go passes the right
+		// label for each OwnerType. Returning the wrong key for a label would
+		// cause the corresponding credential to fail decryption below.
+		switch label {
+		case "provider-credentials":
+			return adminKEK
+		case "org-credentials":
+			return orgKEK
+		default:
+			t.Fatalf("unexpected label %q", label)
+			return nil
+		}
+	})
+
+	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
+	require.NoError(t, err)
+
+	var injected []InjectedSecret
+	require.NoError(t, json.Unmarshal(result, &injected))
+	llm := filterByType(injected, SecretTypeLLMProvider)
+	require.Len(t, llm, 2, "both admin and org credentials must decrypt with their respective KEKs")
+
+	byProvider := map[string]string{}
+	for _, s := range llm {
+		var pd LLMProviderData
+		require.NoError(t, json.Unmarshal([]byte(s.Plaintext), &pd))
+		byProvider[pd.Provider] = pd.APIKey
+	}
+	assert.Equal(t, "admin-key", byProvider["anthropic"], "admin cred must decrypt with adminKEK")
+	assert.Equal(t, "org-key", byProvider["openai"], "org cred must decrypt with orgKEK")
+}
+
+// TestCredentialPrecedence_OrgCredential_WrongKEK_FailsAndFallsBack verifies
+// that an org credential encrypted with one key cannot be decrypted when the
+// server derives a different key for the "org-credentials" label, and that the
+// workspace boots without that provider rather than crashing or injecting
+// corrupt data. This anchors the fail-soft contract in decryptBinding.
+func TestCredentialPrecedence_OrgCredential_WrongKEK_FailsAndFallsBack(t *testing.T) {
+	keyStore := newMockKeyStore()
+	dekCache := newTestDEKCache()
+	keyService := NewKeyService(keyStore, dekCache)
+	secretStore := newMockSecretStore()
+
+	encryptKEK := make([]byte, 32) // key used to encrypt the stored ciphertext
+	for i := range encryptKEK {
+		encryptKEK[i] = byte(i + 1)
+	}
+	deriveKEK := make([]byte, 32) // different key the deriver returns → decrypt fails
+	for i := range deriveKEK {
+		deriveKEK[i] = byte(i + 77)
+	}
+
+	orgPlaintext, _ := json.Marshal(LLMProviderData{Provider: "openai", APIKey: "org-key"}) //nolint:gosec
+	orgCipher, err := EncryptSecret(encryptKEK, orgPlaintext)
+	require.NoError(t, err)
+
+	mockCredStore := &mockCredentialStore{
+		bindings: []CredentialBinding{{
+			ID: "cred-org", OwnerType: "org", OwnerID: "org-1",
+			Provider: "openai", Ciphertext: orgCipher, SourceType: "auto",
+		}},
+	}
+
+	combinedStore := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCredStore}
+	svc := NewSecretService(keyService, combinedStore)
+	svc.SetAdminKeyDeriver(func(label string) []byte { return deriveKEK })
+
+	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
+	require.NoError(t, err, "fail-soft: decrypt failure must not error the whole call")
+
+	var injected []InjectedSecret
+	require.NoError(t, json.Unmarshal(result, &injected))
+	llm := filterByType(injected, SecretTypeLLMProvider)
+	assert.Empty(t, llm, "undecryptable org credential must be skipped, not injected")
+}

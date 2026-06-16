@@ -89,7 +89,7 @@ func TestCreateOrg_RegularUser_PendingActivationWithCheckoutURL(t *testing.T) {
 	billing := &fakeOrgBilling{checkoutURL: "https://checkout.example.com/cs_1"}
 	router := setupOrgTestRouterWithBilling(t, store, billing, false)
 
-	w := doRequest(router, "POST", "/api/v1/orgs", `{"name":"Acme","slug":"ACME","password":"secretpass","planId":"team"}`)
+	w := doRequest(router, "POST", "/api/v1/orgs", `{"name":"Acme","slug":"ACME","planId":"team"}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
@@ -120,7 +120,7 @@ func TestCreateOrg_SlugLowercasedAndStored(t *testing.T) {
 	billing := &fakeOrgBilling{}
 	router := setupOrgTestRouterWithBilling(t, store, billing, false)
 
-	w := doRequest(router, "POST", "/api/v1/orgs", `{"name":"Acme","slug":"AcMeCo","password":"secretpass"}`)
+	w := doRequest(router, "POST", "/api/v1/orgs", `{"name":"Acme","slug":"AcMeCo"}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
@@ -147,7 +147,7 @@ func TestCreateOrg_PlatformAdmin_ActiveEnterprise(t *testing.T) {
 	billing := &fakeOrgBilling{}
 	router := setupOrgTestRouterWithBilling(t, store, billing, true)
 
-	w := doRequest(router, "POST", "/api/v1/orgs", `{"name":"Enterprise Co","slug":"entco","password":"secretpass"}`)
+	w := doRequest(router, "POST", "/api/v1/orgs", `{"name":"Enterprise Co","slug":"entco"}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
@@ -177,7 +177,7 @@ func TestCreateOrg_NoBillingConfigured_StillCreatesPending(t *testing.T) {
 	store.salts["admin-1"] = make([]byte, 32)
 	router := setupOrgTestRouterWithBilling(t, store, nil, false)
 
-	w := doRequest(router, "POST", "/api/v1/orgs", `{"name":"Dev Org","slug":"devorg","password":"secretpass"}`)
+	w := doRequest(router, "POST", "/api/v1/orgs", `{"name":"Dev Org","slug":"devorg"}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201 in dev mode without billing, got %d: %s", w.Code, w.Body.String())
 	}
@@ -244,7 +244,7 @@ func TestCreateOrg_StripeCustomerCreationFails_LeavesPending(t *testing.T) {
 	billing := &fakeOrgBilling{customerErr: errors.New("stripe down")}
 	router := setupOrgTestRouterWithBilling(t, store, billing, false)
 
-	w := doRequest(router, "POST", "/api/v1/orgs", `{"name":"Acme","slug":"acme","password":"secretpass"}`)
+	w := doRequest(router, "POST", "/api/v1/orgs", `{"name":"Acme","slug":"acme"}`)
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500 on customer creation failure, got %d: %s", w.Code, w.Body.String())
 	}
