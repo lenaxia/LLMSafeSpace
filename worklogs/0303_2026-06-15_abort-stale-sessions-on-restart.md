@@ -113,4 +113,4 @@ go vet ./cmd/workspace-agentd/...
 - `cmd/workspace-agentd/stale_sessions.go` (new) — `doPost`, `AbortSession`, `abortStaleSessions`, `abortStaleSessionsAfterStart`
 - `cmd/workspace-agentd/main.go` — `managedProcess.onStart` field (with ordering constraint documented); wire `abortStaleSessionsAfterStart` as `onStart` before `start()`; construct `client` before `managedProcess`
 - `cmd/workspace-agentd/stale_sessions_test.go` (new) — 12 tests; deterministic channel-based `managedProcess.onStart` tests + `waitForChildStart` helper
-- `worklogs/0299_2026-06-15_abort-stale-sessions-on-restart.md` — this worklog
+- `worklogs/0303_2026-06-15_abort-stale-sessions-on-restart.md` — this worklog
