@@ -19,54 +19,72 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeAdminCredStore implements AdminCredentialStore for testing.
-type fakeAdminCredStore struct {
-	creds     map[string]*secrets.CredentialRow
+// fakeCredentialStore implements handlers.CredentialStore for testing. It is
+// shared by the admin, user, and org credential handler tests; each scopes its
+// rows by (ownerType, ownerID) so a single fake backs all three handlers.
+type fakeCredentialStore struct {
+	creds     map[string]*secrets.CredentialRow // keyed by cred ID
 	nextErr   error
-	updateErr error // returned specifically by UpdateAdminCredential
+	updateErr error // returned specifically by UpdateCredential
+	createErr error // returned specifically by CreateCredential
 }
 
-func newFakeAdminCredStore() *fakeAdminCredStore {
-	return &fakeAdminCredStore{creds: make(map[string]*secrets.CredentialRow)}
+func newFakeCredentialStore() *fakeCredentialStore {
+	return &fakeCredentialStore{creds: make(map[string]*secrets.CredentialRow)}
 }
 
-func (f *fakeAdminCredStore) CreateAdminCredential(_ context.Context, row *secrets.CredentialRow) error {
+// scopedCreds returns the credentials matching (ownerType, ownerID). The map is
+// keyed by cred ID, so this filters by the row's embedded OwnerType/OwnerID.
+func (f *fakeCredentialStore) scopedCreds(ownerType, ownerID string) []*secrets.CredentialRow {
+	var out []*secrets.CredentialRow
+	for _, c := range f.creds {
+		if c.OwnerType == ownerType && c.OwnerID == ownerID {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func (f *fakeCredentialStore) CreateCredential(_ context.Context, ownerType, ownerID string, row *secrets.CredentialRow) error {
+	if f.createErr != nil {
+		err := f.createErr
+		f.createErr = nil
+		return err
+	}
 	if f.nextErr != nil {
 		err := f.nextErr
 		f.nextErr = nil
 		return err
 	}
+	row.OwnerType = ownerType
+	row.OwnerID = ownerID
 	f.creds[row.ID] = row
 	return nil
 }
 
-func (f *fakeAdminCredStore) ListAdminCredentials(_ context.Context) ([]*secrets.CredentialRow, error) {
+func (f *fakeCredentialStore) ListCredentials(_ context.Context, ownerType, ownerID string) ([]*secrets.CredentialRow, error) {
 	if f.nextErr != nil {
 		err := f.nextErr
 		f.nextErr = nil
 		return nil, err
 	}
-	var out []*secrets.CredentialRow
-	for _, c := range f.creds {
-		out = append(out, c)
-	}
-	return out, nil
+	return f.scopedCreds(ownerType, ownerID), nil
 }
 
-func (f *fakeAdminCredStore) GetAdminCredential(_ context.Context, id string) (*secrets.CredentialRow, error) {
+func (f *fakeCredentialStore) GetCredential(_ context.Context, ownerType, ownerID, id string) (*secrets.CredentialRow, error) {
 	if f.nextErr != nil {
 		err := f.nextErr
 		f.nextErr = nil
 		return nil, err
 	}
 	c, ok := f.creds[id]
-	if !ok {
+	if !ok || c.OwnerType != ownerType || c.OwnerID != ownerID {
 		return nil, nil
 	}
 	return c, nil
 }
 
-func (f *fakeAdminCredStore) UpdateAdminCredential(_ context.Context, row *secrets.CredentialRow) error {
+func (f *fakeCredentialStore) UpdateCredential(_ context.Context, ownerType, ownerID string, credID string, row *secrets.CredentialRow) error {
 	if f.updateErr != nil {
 		err := f.updateErr
 		f.updateErr = nil
@@ -77,22 +95,31 @@ func (f *fakeAdminCredStore) UpdateAdminCredential(_ context.Context, row *secre
 		f.nextErr = nil
 		return err
 	}
-	f.creds[row.ID] = row
+	row.ID = credID
+	row.OwnerType = ownerType
+	row.OwnerID = ownerID
+	f.creds[credID] = row
 	return nil
 }
 
-func (f *fakeAdminCredStore) DeleteAdminCredential(_ context.Context, id string) error {
+func (f *fakeCredentialStore) DeleteCredential(_ context.Context, ownerType, ownerID, id string) error {
 	if f.nextErr != nil {
 		err := f.nextErr
 		f.nextErr = nil
 		return err
 	}
-	if _, ok := f.creds[id]; !ok {
+	c, ok := f.creds[id]
+	if !ok || c.OwnerType != ownerType || c.OwnerID != ownerID {
 		return pgx.ErrNoRows
 	}
 	delete(f.creds, id)
 	return nil
 }
+
+// newFakeAdminCredStore returns a fakeCredentialStore for the admin handler
+// tests (which historically used a dedicated fakeAdminCredStore). Kept as an
+// alias for minimal diff against existing test bodies.
+func newFakeAdminCredStore() *fakeCredentialStore { return newFakeCredentialStore() }
 
 func setupAdminCredRouter(h *AdminProviderCredentialsHandler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
@@ -167,6 +194,7 @@ func TestAdminProviderCredentials_List(t *testing.T) {
 
 	// Create one first.
 	store.creds["id1"] = &secrets.CredentialRow{
+		OwnerType: "admin", OwnerID: "_platform",
 		ID: "id1", Name: "test", Provider: "openai",
 		Ciphertext: mustEncrypt(t, kek, `{"provider":"openai","apiKey":"sk-123"}`),
 	}
@@ -196,7 +224,8 @@ func TestAdminProviderCredentials_Get_NotFound(t *testing.T) {
 
 func TestAdminProviderCredentials_Delete(t *testing.T) {
 	store := newFakeAdminCredStore()
-	store.creds["del-id"] = &secrets.CredentialRow{ID: "del-id", Name: "x", Provider: "anthropic"}
+	store.creds["del-id"] = &secrets.CredentialRow{
+		OwnerType: "admin", OwnerID: "_platform",ID: "del-id", Name: "x", Provider: "anthropic"}
 	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return make([]byte, 32) })
 	router := setupAdminCredRouter(h)
 
@@ -215,6 +244,7 @@ func TestAdminProviderCredentials_Update_Success(t *testing.T) {
 		kek[i] = byte(i)
 	}
 	store.creds["upd-id"] = &secrets.CredentialRow{
+		OwnerType: "admin", OwnerID: "_platform",
 		ID: "upd-id", Name: "old", Provider: "anthropic",
 		Ciphertext: mustEncrypt(t, kek, `{"provider":"anthropic","apiKey":"old-key"}`),
 	}
@@ -268,6 +298,7 @@ func TestAdminProviderCredentials_Update_CorruptCiphertext_Returns500(t *testing
 	// the "unreadable ciphertext" scenario (wrong KEK, DB corruption, etc.).
 	differentKEK := make([]byte, 32)
 	store.creds["c1"] = &secrets.CredentialRow{
+		OwnerType: "admin", OwnerID: "_platform",
 		ID:         "c1",
 		Name:       "test",
 		Provider:   "openai",
@@ -295,10 +326,11 @@ func TestAdminProviderCredentials_Update_DuplicateProvider_Returns409(t *testing
 	store := newFakeAdminCredStore()
 	kek := make([]byte, 32)
 	store.creds["c1"] = &secrets.CredentialRow{
+		OwnerType: "admin", OwnerID: "_platform",
 		ID: "c1", Name: "existing", Provider: "openai",
 		Ciphertext: mustEncrypt(t, kek, `{"provider":"openai","apiKey":"key1"}`),
 	}
-	// updateErr is consumed ONLY by UpdateAdminCredential; GetAdminCredential won't touch it.
+	// updateErr is consumed ONLY by UpdateCredential; GetCredential won't touch it.
 	store.updateErr = &pgconn.PgError{Code: "23505", Message: "duplicate key value violates unique constraint"}
 	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
 	router := setupAdminCredRouter(h)

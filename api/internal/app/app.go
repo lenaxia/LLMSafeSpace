@@ -221,7 +221,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		}
 		adminProvCredHandler = handlers.NewAdminProviderCredentialsHandler(pgStore, deriveServerKey)
 		adminProvCredHandler.SetAutoApplyStore(pgStore)
-		userProvCredHandler = handlers.NewUserProviderCredentialsHandler(pgStore, keyService, secrets.NewPgKeyStore(secretsPool))
+		userProvCredHandler = handlers.NewUserProviderCredentialsHandler(pgStore, pgStore, keyService, secrets.NewPgKeyStore(secretsPool))
 		userProvCredHandler.SetWorkspaceOwnerChecker(func(ctx context.Context, userID, wsID string) error {
 			return (&workspaceOwnerVerifierAdapter{db: dbSvc, orgStore: orgStoreForVerifier, logger: log}).VerifyWorkspaceOwner(ctx, userID, wsID)
 		})
@@ -298,7 +298,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		pgOrgStore = database.NewPgOrgStore(dbSvc.DB)
 		orgStoreForVerifier = pgOrgStore
 		orgsHandler = handlers.NewOrgsHandler(pgOrgStore, svc.GetAuth())
-		orgCredsHandler = handlers.NewOrgCredentialsHandler(pgStore, deriveServerKey, svc.GetAuth())
+		orgCredsHandler = handlers.NewOrgCredentialsHandler(pgStore, pgStore, deriveServerKey, svc.GetAuth())
 
 		if rkp != nil {
 			keyService.SetAPIKeyStore(&apiKeyStoreAdapter{db: dbSvc}, rkp)

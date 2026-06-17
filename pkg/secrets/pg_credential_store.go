@@ -213,25 +213,28 @@ type CredentialRow struct {
 	UpdatedAt          time.Time
 }
 
-// CreateAdminCredential inserts a new admin-owned provider credential.
-func (s *PgSecretStore) CreateAdminCredential(ctx context.Context, row *CredentialRow) error {
+// CreateCredential inserts a provider credential scoped by (ownerType, ownerID).
+// The caller supplies a pre-generated ID (uuid.New().String()), matching the
+// admin/user pattern; the DB DEFAULT gen_random_uuid() is only a fallback.
+func (s *PgSecretStore) CreateCredential(ctx context.Context, ownerType, ownerID string, row *CredentialRow) error {
 	if row.ModelContextLimits == nil {
 		row.ModelContextLimits = map[string]int{}
 	}
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO provider_credentials (id, owner_type, owner_id, name, provider, ciphertext, key_version, model_allowlist, model_context_limits, created_at, updated_at)
-		VALUES ($1, 'admin', '_platform', $2, $3, $4, $5, $6, $7, $8, $9)
-	`, row.ID, row.Name, row.Provider, row.Ciphertext, row.KeyVersion, row.ModelAllowlist, row.ModelContextLimits, row.CreatedAt, row.UpdatedAt)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	`, row.ID, ownerType, ownerID, row.Name, row.Provider, row.Ciphertext, row.KeyVersion, row.ModelAllowlist, row.ModelContextLimits, row.CreatedAt, row.UpdatedAt)
 	return err
 }
 
-// ListAdminCredentials returns all admin-owned credentials.
-func (s *PgSecretStore) ListAdminCredentials(ctx context.Context) ([]*CredentialRow, error) {
+// ListCredentials returns all credentials owned by (ownerType, ownerID),
+// ordered by created_at ASC.
+func (s *PgSecretStore) ListCredentials(ctx context.Context, ownerType, ownerID string) ([]*CredentialRow, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, name, provider, ciphertext, key_version, model_allowlist, model_context_limits, created_at, updated_at
-		FROM provider_credentials WHERE owner_type = 'admin' AND owner_id = '_platform'
+		SELECT id, owner_id, name, provider, ciphertext, key_version, model_allowlist, model_context_limits, created_at, updated_at
+		FROM provider_credentials WHERE owner_type = $1 AND owner_id = $2
 		ORDER BY created_at ASC
-	`)
+	`, ownerType, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +243,7 @@ func (s *PgSecretStore) ListAdminCredentials(ctx context.Context) ([]*Credential
 	var out []*CredentialRow
 	for rows.Next() {
 		var r CredentialRow
-		if err := rows.Scan(&r.ID, &r.Name, &r.Provider, &r.Ciphertext, &r.KeyVersion, &r.ModelAllowlist, &r.ModelContextLimits, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Name, &r.Provider, &r.Ciphertext, &r.KeyVersion, &r.ModelAllowlist, &r.ModelContextLimits, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if r.ModelContextLimits == nil {
@@ -251,14 +254,15 @@ func (s *PgSecretStore) ListAdminCredentials(ctx context.Context) ([]*Credential
 	return out, rows.Err()
 }
 
-// GetAdminCredential returns a single admin credential by ID, or nil if not found.
-// Filters on both owner_type AND owner_id (L-4 fix: safer against future multi-admin).
-func (s *PgSecretStore) GetAdminCredential(ctx context.Context, id string) (*CredentialRow, error) {
+// GetCredential returns a single credential by ID scoped to (ownerType, ownerID),
+// or nil if not found. Filtering on both owner_type AND owner_id preserves the
+// L-4 defensive multi-admin safety of the former admin path.
+func (s *PgSecretStore) GetCredential(ctx context.Context, ownerType, ownerID, credID string) (*CredentialRow, error) {
 	var r CredentialRow
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, name, provider, ciphertext, key_version, model_allowlist, model_context_limits, created_at, updated_at
-		FROM provider_credentials WHERE id = $1 AND owner_type = 'admin' AND owner_id = '_platform'
-	`, id).Scan(&r.ID, &r.Name, &r.Provider, &r.Ciphertext, &r.KeyVersion, &r.ModelAllowlist, &r.ModelContextLimits, &r.CreatedAt, &r.UpdatedAt)
+		SELECT id, owner_id, name, provider, ciphertext, key_version, model_allowlist, model_context_limits, created_at, updated_at
+		FROM provider_credentials WHERE id = $1 AND owner_type = $2 AND owner_id = $3
+	`, credID, ownerType, ownerID).Scan(&r.ID, &r.OwnerID, &r.Name, &r.Provider, &r.Ciphertext, &r.KeyVersion, &r.ModelAllowlist, &r.ModelContextLimits, &r.CreatedAt, &r.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -271,26 +275,43 @@ func (s *PgSecretStore) GetAdminCredential(ctx context.Context, id string) (*Cre
 	return &r, nil
 }
 
-// UpdateAdminCredential updates an existing admin credential.
-// Omits updated_at from the SET clause so the DB trigger sets it to now(),
-// then reads it back via RETURNING (M-8 fix).
-// Filters on owner_id='_platform' for defensive consistency with Get/Delete (L-4 fix).
-func (s *PgSecretStore) UpdateAdminCredential(ctx context.Context, row *CredentialRow) error {
+// UpdateCredential updates an existing credential scoped to (ownerType, ownerID).
+//
+// It uses COALESCE for model_allowlist and model_context_limits so a nil value
+// means "don't change this column" (the org handler relies on this — a nil
+// modelContextLimits must NOT overwrite existing limits). An empty/zero-length
+// slice or map is a valid "clear the column" value and is written as-is.
+//
+// For the admin handler (which allows provider changes and re-encrypts up-front),
+// the caller passes the fully-resolved row with non-nil fields; COALESCE is a
+// no-op there because the caller always supplies concrete values.
+//
+// updated_at is read back via RETURNING (M-8 fix); the DB trigger sets it to now().
+func (s *PgSecretStore) UpdateCredential(ctx context.Context, ownerType, ownerID, credID string, row *CredentialRow) error {
 	if row.ModelContextLimits == nil {
+		// Defensive: COALESCE below treats nil as "no change", but only the
+		// org path legitimately passes nil. Normalize defensively so an
+		// accidental nil from admin/user doesn't silently drop the column.
 		row.ModelContextLimits = map[string]int{}
 	}
 	return s.pool.QueryRow(ctx, `
 		UPDATE provider_credentials
-		SET name = $2, provider = $3, ciphertext = $4, key_version = $5, model_allowlist = $6, model_context_limits = $7
-		WHERE id = $1 AND owner_type = 'admin' AND owner_id = '_platform'
+		SET name = COALESCE(NULLIF($4, ''), name),
+		    provider = COALESCE(NULLIF($5, ''), provider),
+		    ciphertext = CASE WHEN $6::bytea IS NOT NULL THEN $6 ELSE ciphertext END,
+		    key_version = $7,
+		    model_allowlist = COALESCE($8, model_allowlist),
+		    model_context_limits = COALESCE($9, model_context_limits)
+		WHERE id = $1 AND owner_type = $2 AND owner_id = $3
 		RETURNING updated_at
-	`, row.ID, row.Name, row.Provider, row.Ciphertext, row.KeyVersion, row.ModelAllowlist, row.ModelContextLimits).Scan(&row.UpdatedAt)
+	`, credID, ownerType, ownerID, row.Name, row.Provider, row.Ciphertext, row.KeyVersion, row.ModelAllowlist, row.ModelContextLimits).Scan(&row.UpdatedAt)
 }
 
-// DeleteAdminCredential deletes an admin credential by ID. FK cascades handle bindings.
-// Returns pgx.ErrNoRows if no row was deleted so callers can distinguish 404 (L-1 fix).
-func (s *PgSecretStore) DeleteAdminCredential(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM provider_credentials WHERE id = $1 AND owner_type = 'admin' AND owner_id = '_platform'`, id)
+// DeleteCredential deletes a credential by ID scoped to (ownerType, ownerID).
+// FK cascades handle bindings. Returns pgx.ErrNoRows if no row was deleted so
+// callers can distinguish 404 (L-1 fix).
+func (s *PgSecretStore) DeleteCredential(ctx context.Context, ownerType, ownerID, credID string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM provider_credentials WHERE id = $1 AND owner_type = $2 AND owner_id = $3`, credID, ownerType, ownerID)
 	if err != nil {
 		return err
 	}
@@ -354,68 +375,6 @@ func (s *PgSecretStore) ListAutoApply(ctx context.Context, credentialID string) 
 		out = append(out, r)
 	}
 	return out, rows.Err()
-}
-
-// CreateUserCredential inserts a user-owned provider credential.
-func (s *PgSecretStore) CreateUserCredential(ctx context.Context, row *CredentialRow) error {
-	if row.ModelContextLimits == nil {
-		row.ModelContextLimits = map[string]int{}
-	}
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO provider_credentials (id, owner_type, owner_id, name, provider, ciphertext, key_version, model_allowlist, model_context_limits, created_at, updated_at)
-		VALUES ($1, 'user', $2, $3, $4, $5, $6, $7, $8, $9, $10)
-	`, row.ID, row.OwnerID, row.Name, row.Provider, row.Ciphertext, row.KeyVersion, row.ModelAllowlist, row.ModelContextLimits, row.CreatedAt, row.UpdatedAt)
-	return err
-}
-
-// ListUserCredentials returns all credentials owned by a user.
-func (s *PgSecretStore) ListUserCredentials(ctx context.Context, userID string) ([]*CredentialRow, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, owner_id, name, provider, ciphertext, key_version, model_allowlist, model_context_limits, created_at, updated_at
-		FROM provider_credentials WHERE owner_type = 'user' AND owner_id = $1
-		ORDER BY created_at ASC
-	`, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []*CredentialRow
-	for rows.Next() {
-		var r CredentialRow
-		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Name, &r.Provider, &r.Ciphertext, &r.KeyVersion, &r.ModelAllowlist, &r.ModelContextLimits, &r.CreatedAt, &r.UpdatedAt); err != nil {
-			return nil, err
-		}
-		if r.ModelContextLimits == nil {
-			r.ModelContextLimits = map[string]int{}
-		}
-		out = append(out, &r)
-	}
-	return out, rows.Err()
-}
-
-// GetUserCredential returns a single user credential by ID, or nil if not found/not owned.
-func (s *PgSecretStore) GetUserCredential(ctx context.Context, userID, id string) (*CredentialRow, error) {
-	var r CredentialRow
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, owner_id, name, provider, ciphertext, key_version, model_allowlist, model_context_limits, created_at, updated_at
-		FROM provider_credentials WHERE id = $1 AND owner_type = 'user' AND owner_id = $2
-	`, id, userID).Scan(&r.ID, &r.OwnerID, &r.Name, &r.Provider, &r.Ciphertext, &r.KeyVersion, &r.ModelAllowlist, &r.ModelContextLimits, &r.CreatedAt, &r.UpdatedAt)
-	if err == pgx.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if r.ModelContextLimits == nil {
-		r.ModelContextLimits = map[string]int{}
-	}
-	return &r, nil
-}
-
-// DeleteUserCredential deletes a user credential by ID.
-func (s *PgSecretStore) DeleteUserCredential(ctx context.Context, userID, id string) error {
-	_, err := s.pool.Exec(ctx, `DELETE FROM provider_credentials WHERE id = $1 AND owner_type = 'user' AND owner_id = $2`, id, userID)
-	return err
 }
 
 // BindCredentialToWorkspace explicitly binds a credential to a workspace.

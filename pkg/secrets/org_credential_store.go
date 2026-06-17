@@ -5,122 +5,22 @@ package secrets
 
 import (
 	"context"
-	"errors"
 	"fmt"
-
-	"github.com/jackc/pgx/v5"
 )
 
-// OrgCredentialStore is the DB interface for org-scoped credential operations.
-type OrgCredentialStore interface {
-	CreateOrgCredential(ctx context.Context, orgID, name, provider string, ciphertext []byte, modelAllowlist []string, modelContextLimits map[string]int) (string, error)
-	ListOrgCredentials(ctx context.Context, orgID string) ([]*CredentialRow, error)
-	GetOrgCredential(ctx context.Context, orgID, credID string) (*CredentialRow, error)
-	UpdateOrgCredential(ctx context.Context, orgID, credID string, name *string, ciphertext []byte, modelAllowlist []string, modelContextLimits map[string]int, keyVersion int) error
-	DeleteOrgCredential(ctx context.Context, orgID, credID string) error
+// OrgAutoApplyStore is the DB interface for org-scoped auto-apply and
+// workspace-binding operations (the credential CRUD itself is served by the
+// owner-parameterized CredentialStore methods on PgSecretStore).
+type OrgAutoApplyStore interface {
 	BindCredentialToAllOrgWorkspaces(ctx context.Context, credentialID, orgID string) error
 	CreateOrgAutoApply(ctx context.Context, credentialID, orgID string, withinPriority int) error
 	ListOrgAutoApply(ctx context.Context, orgID string) ([]*AutoApplyRule, error)
 	DeleteOrgAutoApply(ctx context.Context, credentialID, orgID string) error
 }
 
-// PgSecretStore implements OrgCredentialStore. Methods are defined here alongside
-// the other PgSecretStore credential methods.
-
-func (s *PgSecretStore) CreateOrgCredential(ctx context.Context, orgID, name, provider string, ciphertext []byte, modelAllowlist []string, modelContextLimits map[string]int) (string, error) {
-	if modelContextLimits == nil {
-		modelContextLimits = map[string]int{}
-	}
-	var id string
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO provider_credentials (owner_type, owner_id, name, provider, ciphertext, key_version, model_allowlist, model_context_limits, created_at, updated_at)
-		VALUES ('org', $1, $2, $3, $4, 1, COALESCE($5, '{}'::text[]), $6, now(), now())
-		RETURNING id
-	`, orgID, name, provider, ciphertext, modelAllowlist, modelContextLimits).Scan(&id)
-	if err != nil {
-		return "", fmt.Errorf("create org credential: %w", err)
-	}
-	return id, nil
-}
-
-func (s *PgSecretStore) ListOrgCredentials(ctx context.Context, orgID string) ([]*CredentialRow, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id, owner_id, name, provider, model_allowlist, model_context_limits, created_at, updated_at, ciphertext, key_version
-		FROM provider_credentials
-		WHERE owner_type = 'org' AND owner_id = $1
-		ORDER BY created_at DESC
-	`, orgID)
-	if err != nil {
-		return nil, fmt.Errorf("list org credentials: %w", err)
-	}
-	defer rows.Close()
-
-	var out []*CredentialRow
-	for rows.Next() {
-		var r CredentialRow
-		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Name, &r.Provider, &r.ModelAllowlist, &r.ModelContextLimits, &r.CreatedAt, &r.UpdatedAt, &r.Ciphertext, &r.KeyVersion); err != nil {
-			return nil, fmt.Errorf("scan org credential: %w", err)
-		}
-		if r.ModelContextLimits == nil {
-			r.ModelContextLimits = map[string]int{}
-		}
-		out = append(out, &r)
-	}
-	return out, rows.Err()
-}
-
-func (s *PgSecretStore) GetOrgCredential(ctx context.Context, orgID, credID string) (*CredentialRow, error) {
-	var r CredentialRow
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, owner_id, name, provider, model_allowlist, model_context_limits, created_at, updated_at, ciphertext, key_version
-		FROM provider_credentials
-		WHERE owner_type = 'org' AND owner_id = $1 AND id = $2
-	`, orgID, credID).Scan(
-		&r.ID, &r.OwnerID, &r.Name, &r.Provider, &r.ModelAllowlist, &r.ModelContextLimits,
-		&r.CreatedAt, &r.UpdatedAt, &r.Ciphertext, &r.KeyVersion,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("get org credential: %w", err)
-	}
-	if r.ModelContextLimits == nil {
-		r.ModelContextLimits = map[string]int{}
-	}
-	return &r, nil
-}
-
-func (s *PgSecretStore) UpdateOrgCredential(ctx context.Context, orgID, credID string, name *string, ciphertext []byte, modelAllowlist []string, modelContextLimits map[string]int, keyVersion int) error {
-	// Do NOT normalize nil→{} here. A nil modelContextLimits means "don't change
-	// this column" — COALESCE($6, model_context_limits) must receive a SQL NULL
-	// to fall through to the existing value. An empty map {} is a valid "clear all
-	// limits" value and must be written as-is.
-	_, err := s.pool.Exec(ctx, `
-		UPDATE provider_credentials
-		SET name                 = COALESCE($3, name),
-		    ciphertext           = CASE WHEN $4::bytea IS NOT NULL THEN $4 ELSE ciphertext END,
-		    model_allowlist      = COALESCE($5, model_allowlist),
-		    model_context_limits = COALESCE($6, model_context_limits),
-		    key_version          = $7,
-		    updated_at           = now()
-		WHERE owner_type = 'org' AND owner_id = $1 AND id = $2
-	`, orgID, credID, name, ciphertext, modelAllowlist, modelContextLimits, keyVersion)
-	if err != nil {
-		return fmt.Errorf("update org credential: %w", err)
-	}
-	return nil
-}
-
-func (s *PgSecretStore) DeleteOrgCredential(ctx context.Context, orgID, credID string) error {
-	_, err := s.pool.Exec(ctx, `
-		DELETE FROM provider_credentials WHERE owner_type = 'org' AND owner_id = $1 AND id = $2
-	`, orgID, credID)
-	if err != nil {
-		return fmt.Errorf("delete org credential: %w", err)
-	}
-	return nil
-}
+// PgSecretStore implements OrgAutoApplyStore. The org-scoped CRUD methods
+// (Create/List/Get/Update/Delete) are the owner-parameterized CredentialStore
+// methods in pg_credential_store.go.
 
 func (s *PgSecretStore) BindCredentialToAllOrgWorkspaces(ctx context.Context, credentialID, orgID string) error {
 	_, err := s.pool.Exec(ctx, `

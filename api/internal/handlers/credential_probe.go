@@ -242,7 +242,7 @@ func probeCredentialModels(ctx context.Context, plaintext []byte, savedLimits ma
 // Admin variant — uses the platform KEK to decrypt.
 func (h *AdminProviderCredentialsHandler) ProbeModels(c *gin.Context) {
 	id := c.Param("id")
-	row, err := h.store.GetAdminCredential(c.Request.Context(), id)
+	row, err := h.store.GetCredential(c.Request.Context(), "admin", "_platform", id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get credential"})
 		return
@@ -276,7 +276,7 @@ func (h *UserProviderCredentialsHandler) ProbeModels(c *gin.Context) {
 		return
 	}
 
-	row, err := h.store.GetUserCredential(c.Request.Context(), userID, c.Param("id"))
+	row, err := h.store.GetCredential(c.Request.Context(), "user", userID, c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get credential"})
 		return

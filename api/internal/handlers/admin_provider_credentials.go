@@ -16,13 +16,16 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 )
 
-// AdminCredentialStore abstracts DB operations for admin provider credentials.
-type AdminCredentialStore interface {
-	CreateAdminCredential(ctx context.Context, row *secrets.CredentialRow) error
-	ListAdminCredentials(ctx context.Context) ([]*secrets.CredentialRow, error)
-	GetAdminCredential(ctx context.Context, id string) (*secrets.CredentialRow, error)
-	UpdateAdminCredential(ctx context.Context, row *secrets.CredentialRow) error
-	DeleteAdminCredential(ctx context.Context, id string) error
+// CredentialStore is the unified DB interface for provider credential CRUD,
+// scoped by (ownerType, ownerID) for multi-tenant isolation. All three
+// credential handlers (admin/user/org) depend on it; their specialized stores
+// (bindings, auto-apply) are wired separately.
+type CredentialStore interface {
+	CreateCredential(ctx context.Context, ownerType, ownerID string, row *secrets.CredentialRow) error
+	ListCredentials(ctx context.Context, ownerType, ownerID string) ([]*secrets.CredentialRow, error)
+	GetCredential(ctx context.Context, ownerType, ownerID, credID string) (*secrets.CredentialRow, error)
+	UpdateCredential(ctx context.Context, ownerType, ownerID, credID string, row *secrets.CredentialRow) error
+	DeleteCredential(ctx context.Context, ownerType, ownerID, credID string) error
 }
 
 // CredentialResponse is the API response for any provider credential.
@@ -98,13 +101,13 @@ func buildCredentialResponse(row *secrets.CredentialRow, key []byte) CredentialR
 
 // AdminProviderCredentialsHandler handles CRUD for admin provider credentials.
 type AdminProviderCredentialsHandler struct {
-	store          AdminCredentialStore
+	store          CredentialStore
 	autoApplyStore AutoApplyStore
 	deriveKey      secrets.AdminKeyDeriver
 }
 
 // NewAdminProviderCredentialsHandler creates a new handler.
-func NewAdminProviderCredentialsHandler(store AdminCredentialStore, deriveKey secrets.AdminKeyDeriver) *AdminProviderCredentialsHandler {
+func NewAdminProviderCredentialsHandler(store CredentialStore, deriveKey secrets.AdminKeyDeriver) *AdminProviderCredentialsHandler {
 	return &AdminProviderCredentialsHandler{store: store, deriveKey: deriveKey}
 }
 
@@ -170,7 +173,7 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 		row.ModelContextLimits = map[string]int{}
 	}
 
-	if err := h.store.CreateAdminCredential(c.Request.Context(), row); err != nil {
+	if err := h.store.CreateCredential(c.Request.Context(), "admin", "_platform", row); err != nil {
 		if errors.Is(ClassifyPostgresError(err), ErrDuplicateCredential) {
 			c.JSON(http.StatusConflict, gin.H{"error": "credential for this provider already exists"})
 			return
@@ -193,7 +196,7 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 
 // List handles GET /api/v1/admin/provider-credentials.
 func (h *AdminProviderCredentialsHandler) List(c *gin.Context) {
-	rows, err := h.store.ListAdminCredentials(c.Request.Context())
+	rows, err := h.store.ListCredentials(c.Request.Context(), "admin", "_platform")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list credentials"})
 		return
@@ -210,7 +213,7 @@ func (h *AdminProviderCredentialsHandler) List(c *gin.Context) {
 // Get handles GET /api/v1/admin/provider-credentials/:id.
 func (h *AdminProviderCredentialsHandler) Get(c *gin.Context) {
 	id := c.Param("id")
-	row, err := h.store.GetAdminCredential(c.Request.Context(), id)
+	row, err := h.store.GetCredential(c.Request.Context(), "admin", "_platform", id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get credential"})
 		return
@@ -225,7 +228,7 @@ func (h *AdminProviderCredentialsHandler) Get(c *gin.Context) {
 // Update handles PUT /api/v1/admin/provider-credentials/:id.
 func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 	id := c.Param("id")
-	existing, err := h.store.GetAdminCredential(c.Request.Context(), id)
+	existing, err := h.store.GetCredential(c.Request.Context(), "admin", "_platform", id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get credential"})
 		return
@@ -303,7 +306,7 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 		existing.KeyVersion++ // increment on every ciphertext write (M-2 fix)
 	}
 
-	if err := h.store.UpdateAdminCredential(c.Request.Context(), existing); err != nil {
+	if err := h.store.UpdateCredential(c.Request.Context(), "admin", "_platform", existing.ID, existing); err != nil {
 		if errors.Is(ClassifyPostgresError(err), ErrDuplicateCredential) {
 			c.JSON(http.StatusConflict, gin.H{"error": "a credential for that provider already exists"})
 			return
@@ -320,7 +323,7 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 // Delete handles DELETE /api/v1/admin/provider-credentials/:id.
 func (h *AdminProviderCredentialsHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
-	if err := h.store.DeleteAdminCredential(c.Request.Context(), id); err != nil {
+	if err := h.store.DeleteCredential(c.Request.Context(), "admin", "_platform", id); err != nil {
 		if errors.Is(ClassifyPostgresError(err), ErrCredentialNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "credential not found"})
 			return
