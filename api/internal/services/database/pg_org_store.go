@@ -46,6 +46,12 @@ type OrgStore interface {
 	IsOrgAdmin(ctx context.Context, orgID, userID string) (bool, error)
 	ListOrgWorkspaces(ctx context.Context, orgID string, limit, offset int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error)
 	GetUserSalt(ctx context.Context, userID string) ([]byte, error)
+	// GetUserIDByEmail resolves an owner email to a user ID for admin-driven org
+	// creation (design 0031 D1). Returns ("", nil) when no user matches. This is
+	// a single targeted lookup, never a search/list endpoint, to prevent account
+	// enumeration. Users are hard-deleted (no deleted_at column), so no soft-delete
+	// filter is needed.
+	GetUserIDByEmail(ctx context.Context, email string) (string, error)
 
 	// US-43.1: Stripe lifecycle. UpdateOrgStatus sets the operational status
 	// (active/suspended) and/or subscription_status and/or plan_id. A nil/empty
@@ -582,6 +588,21 @@ func (s *PgOrgStore) GetUserSalt(ctx context.Context, userID string) ([]byte, er
 		return nil, fmt.Errorf("get user salt: %w", err)
 	}
 	return salt, nil
+}
+
+func (s *PgOrgStore) GetUserIDByEmail(ctx context.Context, email string) (string, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM users WHERE email = $1`,
+		email,
+	).Scan(&id)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("get user id by email: %w", err)
+	}
+	return id, nil
 }
 
 func (s *PgOrgStore) UpdateOrgStatus(ctx context.Context, orgID string, status *types.OrgStatus, subStatus *types.OrgSubscriptionStatus, planID *types.OrgPlan) error {
