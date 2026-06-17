@@ -77,18 +77,21 @@ The `{workspace_id}` hash tag ensures all keys for a workspace land on the same 
 **Goal:** Define interface, refactor existing code to use it, no behavior change.
 
 **Acceptance:**
-- [ ] New package `api/internal/services/wsstate/`
-- [ ] Define `interfaces.WorkspaceStateStore` interface
-- [ ] In-memory implementation matches current `ProxyHandler` behavior exactly
-- [ ] All `ProxyHandler` map accesses go through interface
-- [ ] Existing tests pass without modification
-- [ ] New tests for the interface contract
+- [x] New package `api/internal/services/wsstate/`
+- [x] Define `wsstate.Store` interface *(deviation from original wording "`interfaces.WorkspaceStateStore`" — package-local interface is more idiomatic Go and the consumer is exclusively ProxyHandler. Deviation recorded 2026-06-17.)*
+- [x] In-memory implementation matches current `ProxyHandler` behavior exactly *(one near-miss: original `InvalidateAll` would have cleared `priorPhase`, breaking Active→Active reconcile. Caught by skeptical validator before PR; fixed.)*
+- [x] All `ProxyHandler` map accesses go through interface
+- [x] Existing tests pass *(deviation: 6 test files modified to migrate direct map pokes to typed `SetXxxForTest` helpers — the underlying private fields were removed, so the literal criterion "without modification" was impossible. The migrated tests assert the same semantics.)*
+- [x] New tests for the interface contract (`api/internal/services/wsstate/inmemory_test.go` — 35 tests covering active sessions, tombstones, password cache, config cache, prior phase, parent backfill, InvalidateAll, concurrency)
 
 **Files:**
 - New: `api/internal/services/wsstate/store.go`
 - New: `api/internal/services/wsstate/inmemory.go`
+- New: `api/internal/services/wsstate/inmemory_test.go`
 - Modified: `api/internal/handlers/proxy.go` (use interface)
 - Modified: `api/internal/handlers/proxy_connections.go` (delegate to interface)
+- Modified: `api/internal/handlers/proxy_handlers.go`, `proxy_permissions.go`, `proxy_events.go`, `proxy_session_index.go`
+- Modified: 6 test files (mechanical migration to test helpers)
 
 **Effort:** 2 days
 

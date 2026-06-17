@@ -24,10 +24,8 @@ import (
 func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 	phase := workspace.Status.Phase
 
-	h.priorPhaseMu.Lock()
-	prior := h.priorPhase[workspace.Name]
-	h.priorPhase[workspace.Name] = string(phase)
-	h.priorPhaseMu.Unlock()
+	prior, hadPrior := h.state().GetPriorPhase(workspace.Name)
+	h.state().SetPriorPhase(workspace.Name, string(phase))
 
 	if h.userBroker != nil && workspace.Spec.Owner.UserID != "" {
 		h.userBroker.RecordWorkspaceOwner(workspace.Name, workspace.Spec.Owner.UserID)
@@ -76,9 +74,7 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 			}
 		}
 		if phase == phaseTerminated || phase == phaseTerminating {
-			h.priorPhaseMu.Lock()
-			delete(h.priorPhase, workspace.Name)
-			h.priorPhaseMu.Unlock()
+			h.state().DeletePriorPhase(workspace.Name)
 
 			if h.activityTracker != nil {
 				h.activityTracker.Delete(workspace.Name)
@@ -93,23 +89,23 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 	}
 
 	if phase == phaseActive {
-		// prior == "" means this is the first invocation for this workspace in the handler —
-		// either a seed call (workspace was already Active on API restart) or a real transition
-		// from a phase not yet seen by the handler (e.g. Creating→Active on a new workspace
-		// whose Creating event arrived before the handler was aware of it).
-		// prior != phaseActive means a real transition into Active (e.g. Creating → Active,
-		// Resuming → Active). Both prior=="" and prior!=Active require starting the SSE subscription.
-		// prior == phaseActive means a watch event with no phase change — only clear cached config.
-		if prior == "" || prior != string(phaseActive) {
+		// hadPrior==false means this is the first invocation for this
+		// workspace in the handler — either a seed call (workspace was
+		// already Active on API restart) or a real transition from a
+		// phase not yet seen by the handler (e.g. Creating→Active on a
+		// new workspace whose Creating event arrived before the handler
+		// was aware of it). prior != phaseActive means a real transition
+		// into Active (e.g. Creating → Active, Resuming → Active). Both
+		// cases require starting the SSE subscription. prior == phaseActive
+		// means a watch event with no phase change — only clear cached config.
+		if !hadPrior || prior != string(phaseActive) {
 			h.invalidateCaches(workspace.Name)
 			if h.sseTracker != nil {
 				h.sseTracker.StopWatching(workspace.Name)
 				h.sseTracker.EnsureWatching(workspace.Name)
 			}
 		} else {
-			h.wsConfigMu.Lock()
-			delete(h.wsConfig, workspace.Name)
-			h.wsConfigMu.Unlock()
+			h.state().InvalidateWorkspaceConfig(workspace.Name)
 		}
 	}
 }
@@ -149,12 +145,10 @@ func (h *ProxyHandler) onSessionIdle(workspaceID, sessionID string) {
 }
 
 func (h *ProxyHandler) onSessionActive(workspaceID, sessionID string) {
-	h.wsConfigMu.RLock()
-	cfg, ok := h.wsConfig[workspaceID]
-	h.wsConfigMu.RUnlock()
+	cfg, ok := h.state().GetWorkspaceConfig(workspaceID)
 	maxSessions := defaultMaxActiveSessions
-	if ok && cfg.maxActiveSessions > 0 {
-		maxSessions = cfg.maxActiveSessions
+	if ok && cfg.MaxActiveSessions > 0 {
+		maxSessions = cfg.MaxActiveSessions
 	}
 	h.checkAndAddActiveSession(workspaceID, sessionID, maxSessions)
 

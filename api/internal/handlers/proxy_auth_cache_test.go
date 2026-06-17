@@ -108,9 +108,7 @@ func TestProxy_Upstream401_InvalidatesPasswordCache(t *testing.T) {
 	assert.Equal(t, http.StatusBadGateway, w1.Code)
 
 	// Verify cache was invalidated
-	env.handler.pwCacheMu.RLock()
-	_, cached := env.handler.pwCache["ws-cache-inv"]
-	env.handler.pwCacheMu.RUnlock()
+	_, cached := env.handler.GetCachedPasswordForTest("ws-cache-inv")
 	assert.False(t, cached, "password cache must be invalidated after 401")
 }
 
@@ -121,9 +119,7 @@ func TestOnPhaseChange_Failed_InvalidatesPwCache(t *testing.T) {
 	env.setupPasswordWithT(t, "ws-fail", "test-password")
 
 	// Prime the cache
-	env.handler.pwCacheMu.Lock()
-	env.handler.pwCache["ws-fail"] = "cached-password"
-	env.handler.pwCacheMu.Unlock()
+	env.handler.SetCachedPasswordForTest("ws-fail", "cached-password")
 
 	// Simulate phase change to Failed
 	ws := &v1.Workspace{}
@@ -131,9 +127,7 @@ func TestOnPhaseChange_Failed_InvalidatesPwCache(t *testing.T) {
 	ws.Status.Phase = v1.WorkspacePhaseFailed
 	env.handler.onPhaseChange(ws)
 
-	env.handler.pwCacheMu.RLock()
-	_, cached := env.handler.pwCache["ws-fail"]
-	env.handler.pwCacheMu.RUnlock()
+	_, cached := env.handler.GetCachedPasswordForTest("ws-fail")
 	assert.False(t, cached, "pwCache must be invalidated on Failed transition")
 }
 
@@ -141,12 +135,8 @@ func TestOnPhaseChange_ActiveFromNonActive_InvalidatesPwCache(t *testing.T) {
 	env := newTestEnv(t)
 
 	// Prime the cache and set prior phase to Creating
-	env.handler.pwCacheMu.Lock()
-	env.handler.pwCache["ws-recover"] = "old-password"
-	env.handler.pwCacheMu.Unlock()
-	env.handler.priorPhaseMu.Lock()
-	env.handler.priorPhase["ws-recover"] = "Creating"
-	env.handler.priorPhaseMu.Unlock()
+	env.handler.SetCachedPasswordForTest("ws-recover", "old-password")
+	env.handler.SetPriorPhaseForTest("ws-recover", "Creating")
 
 	// Simulate phase change to Active (from Creating)
 	ws := &v1.Workspace{}
@@ -154,9 +144,7 @@ func TestOnPhaseChange_ActiveFromNonActive_InvalidatesPwCache(t *testing.T) {
 	ws.Status.Phase = v1.WorkspacePhaseActive
 	env.handler.onPhaseChange(ws)
 
-	env.handler.pwCacheMu.RLock()
-	_, cached := env.handler.pwCache["ws-recover"]
-	env.handler.pwCacheMu.RUnlock()
+	_, cached := env.handler.GetCachedPasswordForTest("ws-recover")
 	assert.False(t, cached, "pwCache must be invalidated on Active-from-non-Active")
 }
 
@@ -164,12 +152,8 @@ func TestOnPhaseChange_ActiveFromActive_DoesNotInvalidatePwCache(t *testing.T) {
 	env := newTestEnv(t)
 
 	// Prime the cache and set prior phase to Active
-	env.handler.pwCacheMu.Lock()
-	env.handler.pwCache["ws-stable"] = "good-password"
-	env.handler.pwCacheMu.Unlock()
-	env.handler.priorPhaseMu.Lock()
-	env.handler.priorPhase["ws-stable"] = "Active"
-	env.handler.priorPhaseMu.Unlock()
+	env.handler.SetCachedPasswordForTest("ws-stable", "good-password")
+	env.handler.SetPriorPhaseForTest("ws-stable", "Active")
 
 	// Simulate Active→Active reconcile
 	ws := &v1.Workspace{}
@@ -177,9 +161,7 @@ func TestOnPhaseChange_ActiveFromActive_DoesNotInvalidatePwCache(t *testing.T) {
 	ws.Status.Phase = v1.WorkspacePhaseActive
 	env.handler.onPhaseChange(ws)
 
-	env.handler.pwCacheMu.RLock()
-	pw, cached := env.handler.pwCache["ws-stable"]
-	env.handler.pwCacheMu.RUnlock()
+	pw, cached := env.handler.GetCachedPasswordForTest("ws-stable")
 	assert.True(t, cached, "pwCache must NOT be invalidated on Active→Active")
 	assert.Equal(t, "good-password", pw)
 }
@@ -187,18 +169,14 @@ func TestOnPhaseChange_ActiveFromActive_DoesNotInvalidatePwCache(t *testing.T) {
 func TestOnPhaseChange_Terminated_CleansUpPriorPhase(t *testing.T) {
 	env := newTestEnv(t)
 
-	env.handler.priorPhaseMu.Lock()
-	env.handler.priorPhase["ws-term"] = "Active"
-	env.handler.priorPhaseMu.Unlock()
+	env.handler.SetPriorPhaseForTest("ws-term", "Active")
 
 	ws := &v1.Workspace{}
 	ws.Name = "ws-term"
 	ws.Status.Phase = v1.WorkspacePhaseTerminated
 	env.handler.onPhaseChange(ws)
 
-	env.handler.priorPhaseMu.Lock()
-	_, exists := env.handler.priorPhase["ws-term"]
-	env.handler.priorPhaseMu.Unlock()
+	_, exists := env.handler.GetPriorPhaseForTest("ws-term")
 	assert.False(t, exists, "priorPhase must be cleaned up on Terminated")
 }
 
@@ -207,18 +185,14 @@ func TestOnPhaseChange_Terminated_CleansUpPriorPhase(t *testing.T) {
 func TestOnPhaseChange_Suspending_StillInvalidates(t *testing.T) {
 	env := newTestEnv(t)
 
-	env.handler.pwCacheMu.Lock()
-	env.handler.pwCache["ws-susp"] = "pw"
-	env.handler.pwCacheMu.Unlock()
+	env.handler.SetCachedPasswordForTest("ws-susp", "pw")
 
 	ws := &v1.Workspace{}
 	ws.Name = "ws-susp"
 	ws.Status.Phase = v1.WorkspacePhaseSuspending
 	env.handler.onPhaseChange(ws)
 
-	env.handler.pwCacheMu.RLock()
-	_, cached := env.handler.pwCache["ws-susp"]
-	env.handler.pwCacheMu.RUnlock()
+	_, cached := env.handler.GetCachedPasswordForTest("ws-susp")
 	assert.False(t, cached)
 }
 

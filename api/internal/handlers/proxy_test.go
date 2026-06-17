@@ -38,6 +38,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/activity"
 	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
+	"github.com/lenaxia/llmsafespace/api/internal/services/wsstate"
 )
 
 type testLogger struct{}
@@ -775,46 +776,26 @@ func TestProxy_Backend404Passthrough(t *testing.T) {
 func TestProxy_CacheInvalidation(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
-	handler.pwCacheMu.Lock()
-	handler.pwCache["ws-1"] = "old-password"
-	handler.pwCacheMu.Unlock()
-
-	handler.wsConfigMu.Lock()
-	handler.wsConfig["ws-1"] = workspaceConfig{maxActiveSessions: 5}
-	handler.wsConfigMu.Unlock()
-
-	handler.activeMu.Lock()
-	handler.activeSess["ws-1"] = map[string]bool{"s1": true}
-	handler.activeMu.Unlock()
+	handler.SetCachedPasswordForTest("ws-1", "old-password")
+	handler.SetWorkspaceConfigForTest("ws-1", wsstate.Config{MaxActiveSessions: 5})
+	handler.SetActiveSessionsForTest("ws-1", []string{"s1"})
 
 	handler.invalidateCaches("ws-1")
 
-	handler.pwCacheMu.RLock()
-	_, pwOk := handler.pwCache["ws-1"]
-	handler.pwCacheMu.RUnlock()
+	_, pwOk := handler.GetCachedPasswordForTest("ws-1")
 	assert.False(t, pwOk, "password cache should be cleared")
 
-	handler.wsConfigMu.RLock()
-	_, wsOk := handler.wsConfig["ws-1"]
-	handler.wsConfigMu.RUnlock()
+	_, wsOk := handler.GetWorkspaceConfigForTest("ws-1")
 	assert.False(t, wsOk, "workspace config cache should be cleared")
 
-	handler.activeMu.Lock()
-	_, sessOk := handler.activeSess["ws-1"]
-	handler.activeMu.Unlock()
-	assert.False(t, sessOk, "active sessions should be cleared")
+	assert.False(t, handler.HasActiveWorkspaceForTest("ws-1"), "active sessions should be cleared")
 }
 
 func TestProxy_PhaseChangeCallback(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
-	handler.pwCacheMu.Lock()
-	handler.pwCache["ws-1"] = "password"
-	handler.pwCacheMu.Unlock()
-
-	handler.activeMu.Lock()
-	handler.activeSess["ws-1"] = map[string]bool{"s1": true}
-	handler.activeMu.Unlock()
+	handler.SetCachedPasswordForTest("ws-1", "password")
+	handler.SetActiveSessionsForTest("ws-1", []string{"s1"})
 
 	phases := []string{phaseSuspending, phaseSuspended, phaseTerminating, phaseTerminated}
 	for _, phase := range phases {
@@ -822,31 +803,23 @@ func TestProxy_PhaseChangeCallback(t *testing.T) {
 		handler.onPhaseChange(sb)
 	}
 
-	handler.pwCacheMu.RLock()
-	_, pwOk := handler.pwCache["ws-1"]
-	handler.pwCacheMu.RUnlock()
+	_, pwOk := handler.GetCachedPasswordForTest("ws-1")
 	assert.False(t, pwOk, "phase change to %s should invalidate password cache")
 }
 
 func TestProxy_PhaseChange_RunningNoInvalidation(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
-	handler.pwCacheMu.Lock()
-	handler.pwCache["ws-1"] = "password"
-	handler.pwCacheMu.Unlock()
+	handler.SetCachedPasswordForTest("ws-1", "password")
 
 	// Set prior phase to Active so this is a no-op Active→Active reconcile event.
 	// The seed call (prior=="") intentionally invalidates caches and restarts SSE subscriptions.
-	handler.priorPhaseMu.Lock()
-	handler.priorPhase["ws-1"] = string(phaseActive)
-	handler.priorPhaseMu.Unlock()
+	handler.SetPriorPhaseForTest("ws-1", string(phaseActive))
 
 	sb := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(phaseActive), "ws-1")
 	handler.onPhaseChange(sb)
 
-	handler.pwCacheMu.RLock()
-	_, pwOk := handler.pwCache["ws-1"]
-	handler.pwCacheMu.RUnlock()
+	_, pwOk := handler.GetCachedPasswordForTest("ws-1")
 	assert.True(t, pwOk, "phase change to Running should NOT invalidate cache")
 }
 
@@ -899,9 +872,7 @@ func TestProxy_E2E_MaxActiveSessionsCustom(t *testing.T) {
 func TestProxy_RemoveActiveSession(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
-	handler.activeMu.Lock()
-	handler.activeSess["ws-1"] = map[string]bool{"s1": true, "s2": true}
-	handler.activeMu.Unlock()
+	handler.SetActiveSessionsForTest("ws-1", []string{"s1", "s2"})
 
 	handler.removeActiveSession("ws-1", "s1")
 	assert.Equal(t, 1, handler.activeSessionCount("ws-1"))
@@ -909,10 +880,7 @@ func TestProxy_RemoveActiveSession(t *testing.T) {
 	handler.removeActiveSession("ws-1", "s2")
 	assert.Equal(t, 0, handler.activeSessionCount("ws-1"))
 
-	handler.activeMu.Lock()
-	_, exists := handler.activeSess["ws-1"]
-	handler.activeMu.Unlock()
-	assert.False(t, exists, "empty session set should be cleaned up")
+	assert.False(t, handler.HasActiveWorkspaceForTest("ws-1"), "empty session set should be cleaned up")
 }
 
 func TestProxy_RemoveNonexistentSession(t *testing.T) {
@@ -1111,9 +1079,7 @@ func TestProxy_E2E_SSEBusyEventAddsActiveSession(t *testing.T) {
 	handler, err := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 
-	handler.wsConfigMu.Lock()
-	handler.wsConfig["ws-1"] = workspaceConfig{maxActiveSessions: 5}
-	handler.wsConfigMu.Unlock()
+	handler.SetWorkspaceConfigForTest("ws-1", wsstate.Config{MaxActiveSessions: 5})
 
 	handler.onSessionActive("ws-1", "s1")
 	assert.Equal(t, 1, handler.activeSessionCount("ws-1"), "busy event should add session s1")
@@ -1280,9 +1246,7 @@ func TestProxy_OnPhaseChange_RunningKeepsSSE(t *testing.T) {
 
 	// Set prior to Active — this is the Active→Active reconcile path. The subscription
 	// must NOT be reset (no Stop+EnsureWatching) because the workspace hasn't changed phase.
-	handler.priorPhaseMu.Lock()
-	handler.priorPhase["ws-1"] = string(phaseActive)
-	handler.priorPhaseMu.Unlock()
+	handler.SetPriorPhaseForTest("ws-1", string(phaseActive))
 
 	sb := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(phaseActive), "ws-1")
 	handler.onPhaseChange(sb)
@@ -1324,9 +1288,7 @@ func TestProxy_OnPhaseChange_CreatingToActive_ResetsSSETracker(t *testing.T) {
 	// stays at 1 (Stop decrements to 0, EnsureWatching brings back to 1).
 
 	// Set prior phase to Creating to trigger the reset path.
-	handler.priorPhaseMu.Lock()
-	handler.priorPhase["ws-1"] = "Creating"
-	handler.priorPhaseMu.Unlock()
+	handler.SetPriorPhaseForTest("ws-1", "Creating")
 
 	sb := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(phaseActive), "ws-1")
 	handler.onPhaseChange(sb)
@@ -1354,9 +1316,7 @@ func TestProxy_OnPhaseChange_ActiveToActive_NoReset(t *testing.T) {
 
 	handler.sseTracker.EnsureWatching("ws-1")
 	// Prime the cache with Active so onPhaseChange sees Active→Active.
-	handler.priorPhaseMu.Lock()
-	handler.priorPhase["ws-1"] = string(phaseActive)
-	handler.priorPhaseMu.Unlock()
+	handler.SetPriorPhaseForTest("ws-1", string(phaseActive))
 
 	sb := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(phaseActive), "ws-1")
 	handler.onPhaseChange(sb)
@@ -1364,6 +1324,52 @@ func TestProxy_OnPhaseChange_ActiveToActive_NoReset(t *testing.T) {
 	// Subscription must still exist and must NOT have been reset.
 	assert.Equal(t, 1, handler.sseTracker.SubscriptionCount(),
 		"Active→Active reconcile must not reset the SSE subscription")
+}
+
+// TestProxy_OnPhaseChange_SecondActiveNoManualSeed_PreservesState is the
+// regression test for a US-45.1 bug that almost shipped: the new
+// InvalidateAll cleared priorPhase, which made every subsequent
+// Active→Active reconcile event look like the first invocation and
+// therefore wipe active sessions / deleted tombstones / password cache.
+//
+// The original invalidateCaches (pre-US-45.1) deliberately did NOT touch
+// priorPhase. This test exercises the full path: two onPhaseChange
+// calls with phase=Active and no manual seeding of state between them —
+// proving that the second call (which goes through the prior==Active
+// branch) preserves the state the first call established.
+func TestProxy_OnPhaseChange_SecondActiveNoManualSeed_PreservesState(t *testing.T) {
+	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
+
+	// Seed state that the first onPhaseChange(Active) would naturally
+	// establish via downstream code paths (active session via prompt,
+	// deleted tombstone via DeleteSession, cached password via getPassword).
+	handler.SetActiveSessionsForTest("ws-1", []string{"sess-1"})
+	handler.MarkSessionDeletedForTest("ws-1", "sess-deleted")
+	handler.SetCachedPasswordForTest("ws-1", "pw")
+
+	// First onPhaseChange(Active): no prior, so invalidateCaches is
+	// called (would wipe state in a buggy impl), then prior is set.
+	sb1 := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(phaseActive), "ws-1")
+	handler.onPhaseChange(sb1)
+
+	// Re-seed state that was just cleared by the first call (this mirrors
+	// what real downstream code does after the first Active event).
+	handler.SetActiveSessionsForTest("ws-1", []string{"sess-1"})
+	handler.MarkSessionDeletedForTest("ws-1", "sess-deleted")
+	handler.SetCachedPasswordForTest("ws-1", "pw")
+
+	// Second onPhaseChange(Active): prior=="Active", so this is the
+	// reconcile branch. State MUST be preserved.
+	sb2 := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(phaseActive), "ws-1")
+	handler.onPhaseChange(sb2)
+
+	assert.True(t, handler.isSessionActive("ws-1", "sess-1"),
+		"Active→Active reconcile must preserve active sessions (regression: US-45.1 InvalidateAll was clearing priorPhase, wiping activeSess)")
+	assert.True(t, handler.isSessionDeleted("ws-1", "sess-deleted"),
+		"Active→Active reconcile must preserve deleted tombstones (regression: late SSE events for deleted sessions would resurrect zombie session_index rows)")
+	_, pwOk := handler.GetCachedPasswordForTest("ws-1")
+	assert.True(t, pwOk,
+		"Active→Active reconcile must preserve password cache (regression: extra K8s Secret fetches on every redundant watch event)")
 }
 
 // TestProxy_OnPhaseChange_SeedCallActive_StartsSSETracker verifies that when onPhaseChange
@@ -1492,9 +1498,7 @@ func TestProxy_OnSessionIdle_RecordsActivityWithoutWsConfig(t *testing.T) {
 	tracker := activity.NewActivityTracker(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default")
 	handler.activityTracker = tracker
 
-	handler.activeMu.Lock()
-	handler.activeSess["ws-1"] = map[string]bool{"s1": true}
-	handler.activeMu.Unlock()
+	handler.SetActiveSessionsForTest("ws-1", []string{"s1"})
 
 	handler.onSessionIdle("ws-1", "s1")
 
@@ -1925,7 +1929,7 @@ func TestProxy_DeleteSession_RemovesActiveSession(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]bool{"deleted": true})
 	})
 	env.handler.SetSessionIndex(si)
-	env.handler.activeSess["ws-1"] = map[string]bool{"s1": true, "s2": true}
+	env.handler.SetActiveSessionsForTest("ws-1", []string{"s1", "s2"})
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
@@ -1934,15 +1938,10 @@ func TestProxy_DeleteSession_RemovesActiveSession(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	assert.Eventually(t, func() bool {
-		env.handler.activeMu.Lock()
-		defer env.handler.activeMu.Unlock()
-		_, exists := env.handler.activeSess["ws-1"]["s1"]
-		return !exists
+		return !env.handler.isSessionActive("ws-1", "s1")
 	}, 2*time.Second, 10*time.Millisecond, "deleted session should be removed from active sessions")
 
-	env.handler.activeMu.Lock()
-	assert.True(t, env.handler.activeSess["ws-1"]["s2"], "other sessions should be unaffected")
-	env.handler.activeMu.Unlock()
+	assert.True(t, env.handler.isSessionActive("ws-1", "s2"), "other sessions should be unaffected")
 }
 
 func TestProxy_DeleteSession_PublishesSSEEvent(t *testing.T) {
@@ -2007,7 +2006,7 @@ func TestProxy_DeleteSession_ConcurrentDeletesIdempotent(t *testing.T) {
 	})
 	env.handler.SetSessionIndex(si)
 	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
-	env.handler.activeSess["ws-1"] = map[string]bool{"s1": true}
+	env.handler.SetActiveSessionsForTest("ws-1", []string{"s1"})
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
@@ -2030,17 +2029,11 @@ func TestProxy_DeleteSession_ConcurrentDeletesIdempotent(t *testing.T) {
 	}
 
 	assert.Eventually(t, func() bool {
-		env.handler.activeMu.Lock()
-		defer env.handler.activeMu.Unlock()
-		_, exists := env.handler.activeSess["ws-1"]["s1"]
-		return !exists
+		return !env.handler.isSessionActive("ws-1", "s1")
 	}, 2*time.Second, 10*time.Millisecond, "session should be removed from active set after concurrent deletes")
 
 	assert.Eventually(t, func() bool {
-		env.handler.activeMu.Lock()
-		defer env.handler.activeMu.Unlock()
-		_, wsExists := env.handler.activeSess["ws-1"]
-		return !wsExists
+		return !env.handler.HasActiveWorkspaceForTest("ws-1")
 	}, 2*time.Second, 10*time.Millisecond, "workspace entry should be cleaned up when no active sessions remain")
 }
 
@@ -2133,7 +2126,7 @@ func TestProxy_PersistTitleFromEvent_SkipsDeletedSession(t *testing.T) {
 	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {})
 	env.handler.SetSessionIndex(si)
 
-	env.handler.markSessionDeleted("ws-1", "s1")
+	env.handler.MarkSessionDeletedForTest("ws-1", "s1")
 
 	rawData := `{"properties":{"sessionID":"s1","info":{"id":"s1","title":"Late Title"}}}`
 	env.handler.persistTitleFromEvent("ws-1", rawData)
@@ -2148,7 +2141,7 @@ func TestProxy_PersistContextFromEvent_SkipsDeletedSession(t *testing.T) {
 	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {})
 	env.handler.SetSessionIndex(si)
 
-	env.handler.markSessionDeleted("ws-1", "s1")
+	env.handler.MarkSessionDeletedForTest("ws-1", "s1")
 
 	rawData := `{"properties":{"sessionID":"s1","tokens":{"input":100,"cache":{"read":0,"write":0}}}}`
 	env.handler.persistContextFromEvent("ws-1", rawData)
@@ -2246,7 +2239,6 @@ func TestProxy_OnSessionIdle_RecordsSessionIndexWithoutWsConfig(t *testing.T) {
 	llmMock.On("Workspaces", "default").Return(wsMock).Maybe()
 	ws := makeWorkspaceCRDWithStatus("ws-1", "", string(v1.WorkspacePhaseActive), "ws-1")
 	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil).Maybe()
-
 	handler, _ := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 
 	tracker := activity.NewActivityTracker(k8sMock, &testLogger{}, "default")
@@ -2254,9 +2246,7 @@ func TestProxy_OnSessionIdle_RecordsSessionIndexWithoutWsConfig(t *testing.T) {
 	si := &recordingActivitySessionIndex{}
 	handler.sessionIndex = si
 
-	handler.activeMu.Lock()
-	handler.activeSess["ws-1"] = map[string]bool{"s1": true}
-	handler.activeMu.Unlock()
+	handler.SetActiveSessionsForTest("ws-1", []string{"s1"})
 
 	handler.onSessionIdle("ws-1", "s1")
 
@@ -2309,9 +2299,7 @@ func TestProxy_OnSessionIdle_FetchAndPersistTitleWithoutWsConfig(t *testing.T) {
 	si := &recordingActivitySessionIndex{}
 	handler.sessionIndex = si
 
-	handler.activeMu.Lock()
-	handler.activeSess["ws-1"] = map[string]bool{"s1": true}
-	handler.activeMu.Unlock()
+	handler.SetActiveSessionsForTest("ws-1", []string{"s1"})
 
 	handler.onSessionIdle("ws-1", "s1")
 
@@ -2337,9 +2325,7 @@ func TestProxy_SendPromptAsync_Returns409WhenSessionActive(t *testing.T) {
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	env.handler.activeMu.Lock()
-	env.handler.activeSess["ws-1"] = map[string]bool{"s1": true}
-	env.handler.activeMu.Unlock()
+	env.handler.SetActiveSessionsForTest("ws-1", []string{"s1"})
 
 	body := strings.NewReader(`{"parts":[{"type":"text","text":"hello"}]}`)
 	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s1/prompt", body)
@@ -2375,9 +2361,7 @@ func TestProxy_IsSessionActive_ReturnsFalseForUnknownWorkspace(t *testing.T) {
 func TestProxy_IsSessionActive_ReturnsTrueForActiveSession(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
-	handler.activeMu.Lock()
-	handler.activeSess["ws-1"] = map[string]bool{"s1": true, "s2": true}
-	handler.activeMu.Unlock()
+	handler.SetActiveSessionsForTest("ws-1", []string{"s1", "s2"})
 
 	assert.True(t, handler.isSessionActive("ws-1", "s1"), "s1 should be active")
 	assert.True(t, handler.isSessionActive("ws-1", "s2"), "s2 should be active")
@@ -2390,9 +2374,7 @@ func TestProxy_SendPromptAsync_409DoesNotAffectSendMessage(t *testing.T) {
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	env.handler.activeMu.Lock()
-	env.handler.activeSess["ws-1"] = map[string]bool{"s1": true}
-	env.handler.activeMu.Unlock()
+	env.handler.SetActiveSessionsForTest("ws-1", []string{"s1"})
 
 	body := strings.NewReader(`{"parts":[{"type":"text","text":"hello"}]}`)
 	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s1/message", body)
@@ -2415,9 +2397,7 @@ func TestProxy_OnSessionIdle_SessionIndexIndependentOfActivityTracker(t *testing
 	si := &recordingActivitySessionIndex{}
 	handler.sessionIndex = si
 
-	handler.activeMu.Lock()
-	handler.activeSess["ws-1"] = map[string]bool{"s1": true}
-	handler.activeMu.Unlock()
+	handler.SetActiveSessionsForTest("ws-1", []string{"s1"})
 
 	handler.onSessionIdle("ws-1", "s1")
 
@@ -2435,9 +2415,7 @@ func TestProxy_ProxyToWorkspace_NoDoubleReleaseOnMaxSessions(t *testing.T) {
 	env.wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil).Maybe()
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 
-	env.handler.activeMu.Lock()
-	env.handler.activeSess["ws-1"] = map[string]bool{"s1": true}
-	env.handler.activeMu.Unlock()
+	env.handler.SetActiveSessionsForTest("ws-1", []string{"s1"})
 
 	env.handler.connMu.Lock()
 	env.handler.connCount["ws-1"] = 5
@@ -2455,9 +2433,7 @@ func TestProxy_ProxyToWorkspace_NoDoubleReleaseOnMaxSessions(t *testing.T) {
 func TestProxy_IsSessionActive_ConcurrentReads(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
-	handler.activeMu.Lock()
-	handler.activeSess["ws-1"] = map[string]bool{"s1": true}
-	handler.activeMu.Unlock()
+	handler.SetActiveSessionsForTest("ws-1", []string{"s1"})
 
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
@@ -2477,9 +2453,7 @@ func TestProxy_OnPhaseChange_RecordsLifecycleEvent(t *testing.T) {
 	handler.SetMeteringService(meteringSvc)
 
 	// Set prior phase to simulate a real Creating→Active transition.
-	handler.priorPhaseMu.Lock()
-	handler.priorPhase["ws-1"] = "Creating"
-	handler.priorPhaseMu.Unlock()
+	handler.SetPriorPhaseForTest("ws-1", "Creating")
 
 	ws := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "user-1")
 	ws.Spec.SecurityLevel = "standard"
