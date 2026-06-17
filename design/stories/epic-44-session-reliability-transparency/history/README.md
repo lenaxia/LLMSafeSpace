@@ -4,7 +4,7 @@ This directory preserves intermediate artifacts from the Epic 44 design process.
 
 These files document **how the design evolved** and are kept for institutional memory — useful when someone in the future asks "why did we make this choice?"
 
-For a chronological narrative, see worklog `0310_2026-06-16_epic-44-design.md`.
+For a chronological narrative, see worklog `0313_2026-06-16_epic-44-design.md`.
 
 ## Files
 

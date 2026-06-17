@@ -27,7 +27,7 @@ The API server is deployed with multiple replicas (currently 2), but `ProxyHandl
 - Same session showed `status: "idle"` in workspace CRD
 - Root cause: `proxy_connections.go:70-78` reads from per-replica `activeSess` map
 - The map had stale entry from when opencode was OOMKilled mid-stream
-- `reconcileStrandedQueues` (`proxy_events.go:549`) only fixes sessions with queued messages
+- `reconcileStrandedQueues` (pre-PR-#197 name; `proxy_events.go:549` line reference is from the pre-#197 state) only fixed sessions with queued messages. PR #197 (`f0ea9c50`) renamed it to `reconcileSessionState` and extended it to clear stale `activeSess` entries regardless of queue length, providing automatic recovery within ~5 minutes.
 
 **State Inventory:**
 
