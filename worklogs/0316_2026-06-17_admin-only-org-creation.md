@@ -191,6 +191,11 @@ None.
 - **tsc TS2532 (possibly-undefined array index):** `mockCreate.mock.calls[0][0]` failed strict tsc even though vitest (esbuild) accepted it. Fixed with a non-null assertion after an explicit length check.
 - **misspell (`behaviour` → `behavior`):** golangci-lint misspell caught the British spelling in a test comment. Fixed.
 
+### Automated reviewer round 2 (REQUEST CHANGES — one item) — addressed
+Round 2 confirmed all round-1 items resolved but flagged incomplete dead-code cleanup: I had removed `GetUserSalt`/`CreateBillingAccount` from the *handler-local* interface, but their **store-layer** declarations remained with zero callers. Verified independently (Rule 7): `grep -rn "\.GetUserSalt(\|\.CreateBillingAccount(" --include="*.go"` returns **zero** call sites repo-wide; both are defined only on `*PgOrgStore`; the only `OrgStore` consumer is `OrgMembershipChecker` which needs just `IsOrgMember`/`IsOrgAdmin`. Removed:
+- `GetUserSalt` from the `OrgStore` interface (`pg_org_store.go:48`) + its `*PgOrgStore` impl.
+- `CreateBillingAccount` impl from `*PgOrgStore` (it was not on the interface; standalone dead method). `SetBillingAccountSubscription` (retained — different method, may be used by the webhook path) is unaffected.
+
 ### Automated reviewer round 1 (REQUEST CHANGES) — all addressed
 The CI reviewer requested changes for untested `Create` error paths and two minor issues. All resolved:
 - **Added `TestCreateOrg_Admin_UpdateOrgStatusFails_Returns500`** — exercises the partial-state path (create succeeds, activate fails → 500, org left `pending_activation`). Added `updateStatusErr` field to the mock.

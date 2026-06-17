@@ -45,7 +45,6 @@ type OrgStore interface {
 	IsOrgMember(ctx context.Context, orgID, userID string) (bool, error)
 	IsOrgAdmin(ctx context.Context, orgID, userID string) (bool, error)
 	ListOrgWorkspaces(ctx context.Context, orgID string, limit, offset int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error)
-	GetUserSalt(ctx context.Context, userID string) ([]byte, error)
 	// GetUserIDByEmail resolves an owner email to a user ID for admin-driven org
 	// creation (design 0031 D1). Returns ("", nil) when no user matches. This is
 	// a single targeted lookup, never a search/list endpoint, to prevent account
@@ -575,21 +574,6 @@ func (s *PgOrgStore) ListOrgWorkspaces(ctx context.Context, orgID string, limit,
 	return workspaces, pagination, nil
 }
 
-func (s *PgOrgStore) GetUserSalt(ctx context.Context, userID string) ([]byte, error) {
-	var salt []byte
-	err := s.db.QueryRowContext(ctx,
-		`SELECT salt FROM user_keys WHERE user_id = $1`,
-		userID,
-	).Scan(&salt)
-	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("user key record not found for user %s", userID)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("get user salt: %w", err)
-	}
-	return salt, nil
-}
-
 func (s *PgOrgStore) GetUserIDByEmail(ctx context.Context, email string) (string, error) {
 	var id string
 	err := s.db.QueryRowContext(ctx,
@@ -764,23 +748,6 @@ func (s *PgOrgStore) HardDeleteOrg(ctx context.Context, orgID string) error {
 
 	committed = true
 	return tx.Commit()
-}
-
-func (s *PgOrgStore) CreateBillingAccount(ctx context.Context, ownerID, ownerType, provider, externalCustomerID string) (int64, error) {
-	var id int64
-	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO billing_accounts (owner_id, owner_type, provider, external_customer_id, status)
-		 VALUES ($1, $2, $3, $4, 'pending')
-		 ON CONFLICT (owner_id, owner_type, provider) DO UPDATE
-		   SET external_customer_id = EXCLUDED.external_customer_id,
-		       updated_at = NOW()
-		 RETURNING id`,
-		ownerID, ownerType, provider, externalCustomerID,
-	).Scan(&id)
-	if err != nil {
-		return 0, fmt.Errorf("create billing account: %w", err)
-	}
-	return id, nil
 }
 
 func (s *PgOrgStore) SetBillingAccountSubscription(ctx context.Context, ownerID, ownerType, provider, subscriptionID string) error {
