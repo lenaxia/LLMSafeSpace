@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
@@ -84,6 +85,9 @@ func TestCreateOrg_Admin_KnownEmail_CreatesActiveOrgWithResolvedOwner(t *testing
 	}
 	if resp.SubscriptionStatus != types.SubscriptionActive {
 		t.Errorf("expected subscription active, got %q", resp.SubscriptionStatus)
+	}
+	if resp.UserRole != types.OrgRole("") {
+		t.Errorf("caller (admin-1) is not the owner, so UserRole should be empty, got %q", resp.UserRole)
 	}
 	if resp.CheckoutURL != "" {
 		t.Errorf("admin-created org must not produce a checkout URL, got %q", resp.CheckoutURL)
@@ -160,6 +164,14 @@ func TestCreateOrg_Admin_SelfEmail_OwnerEqualsCreator(t *testing.T) {
 	mem, _ := store.GetOrgMember(context.Background(), created.ID, "admin-1")
 	if mem == nil || mem.Role != types.OrgRoleAdmin {
 		t.Errorf("creator==owner should still be an admin member; mem=%v", mem)
+	}
+
+	var resp types.CreateOrgResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.UserRole != types.OrgRoleAdmin {
+		t.Errorf("when caller==owner, UserRole should be admin, got %q", resp.UserRole)
 	}
 }
 
@@ -319,4 +331,70 @@ func (m *mockOrgStore) orgsLen() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.orgs)
+}
+
+// --- Error-path branches in Create (reviewer round 1) ---
+
+// CreateOrgWithAdmin succeeds but UpdateOrgStatus fails → 500. The org is left
+// pending_activation with no billing customer. This documents the partial-state
+// behavior (a separate cleanup concern tracked outside Story 2).
+func TestCreateOrg_Admin_UpdateOrgStatusFails_Returns500(t *testing.T) {
+	store := newMockOrgStore()
+	store.usersByEmail["owner@example.com"] = "owner-1"
+	store.updateStatusErr = errors.New("update failed")
+
+	router, _ := setupAdminCreateRouter(t, store, true, nil)
+
+	w := doRequest(router, "POST", "/api/v1/orgs",
+		`{"name":"Acme","slug":"acme","ownerEmail":"owner@example.com"}`)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 when UpdateOrgStatus fails, got %d: %s", w.Code, w.Body.String())
+	}
+	store.mu.Lock()
+	var created *types.Organization
+	for _, o := range store.orgs {
+		created = o
+	}
+	store.mu.Unlock()
+	if created == nil {
+		t.Fatal("org row should exist from CreateOrgWithAdmin even when activation fails")
+	}
+	if created.Status != types.OrgStatusPendingActivation {
+		t.Errorf("org should remain pending_activation when UpdateOrgStatus fails, got %q", created.Status)
+	}
+}
+
+// CreateOrgWithAdmin returns a generic (non-duplicate) error → 500.
+func TestCreateOrg_Admin_CreateOrgGenericError_Returns500(t *testing.T) {
+	store := newMockOrgStore()
+	store.usersByEmail["owner@example.com"] = "owner-1"
+	store.createErr = errors.New("insert failed: connection refused")
+
+	router, _ := setupAdminCreateRouter(t, store, true, nil)
+
+	w := doRequest(router, "POST", "/api/v1/orgs",
+		`{"name":"Acme","slug":"acme","ownerEmail":"owner@example.com"}`)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 on generic create error, got %d: %s", w.Code, w.Body.String())
+	}
+	if store.orgsLen() != 0 {
+		t.Errorf("no org row should persist when CreateOrgWithAdmin fails")
+	}
+}
+
+// CreateOrgWithAdmin returns a unique-violation (TOCTOU between the
+// GetOrgBySlug pre-check and the insert) → 409. The partial unique index on
+// organizations(LOWER(slug)) WHERE deleted_at IS NULL raises SQLSTATE 23505.
+func TestCreateOrg_Admin_CreateOrgDuplicateTOCTOU_Returns409(t *testing.T) {
+	store := newMockOrgStore()
+	store.usersByEmail["owner@example.com"] = "owner-1"
+	store.createErr = &pgconn.PgError{Code: "23505"}
+
+	router, _ := setupAdminCreateRouter(t, store, true, nil)
+
+	w := doRequest(router, "POST", "/api/v1/orgs",
+		`{"name":"Acme","slug":"acme","ownerEmail":"owner@example.com"}`)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409 on TOCTOU duplicate insert, got %d: %s", w.Code, w.Body.String())
+	}
 }

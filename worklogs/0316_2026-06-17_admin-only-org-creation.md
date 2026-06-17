@@ -189,6 +189,19 @@ None.
 ### Additional findings caught by the lint/tsc gates
 - **staticcheck SA1012 (nil context):** the new test passed `nil` as the context to the mock's `GetOrgMember`; golangci-lint flagged it. Fixed by passing `context.Background()` (the mock ignores it, but the lint rule is correct — never pass a nil Context).
 - **tsc TS2532 (possibly-undefined array index):** `mockCreate.mock.calls[0][0]` failed strict tsc even though vitest (esbuild) accepted it. Fixed with a non-null assertion after an explicit length check.
+- **misspell (`behaviour` → `behavior`):** golangci-lint misspell caught the British spelling in a test comment. Fixed.
+
+### Automated reviewer round 1 (REQUEST CHANGES) — all addressed
+The CI reviewer requested changes for untested `Create` error paths and two minor issues. All resolved:
+- **Added `TestCreateOrg_Admin_UpdateOrgStatusFails_Returns500`** — exercises the partial-state path (create succeeds, activate fails → 500, org left `pending_activation`). Added `updateStatusErr` field to the mock.
+- **Added `TestCreateOrg_Admin_CreateOrgGenericError_Returns500`** — exercises the generic `createErr` branch via the existing mock field.
+- **Added `TestCreateOrg_Admin_CreateOrgDuplicateTOCTOU_Returns409`** — exercises the `isDuplicateErr` branch by returning a `*pgconn.PgError{Code:"23505"}` from the mock (simulates the race between `GetOrgBySlug` and insert).
+- **Fixed `CreateOrgResponse.UserRole` semantics:** previously hardcoded `OrgRoleAdmin`; now `""` when caller ≠ owner (caller is not a member) and `OrgRoleAdmin` only when caller == owner. Aligns with the `OrgResponse` doc ("the calling user's membership context"). Frontend ignores the field from the create response, so no functional impact. Locked in with assertions in the known-email and self-email tests.
+- **Fixed stale comment** in `org_billing.go:53` (`resolveCustomerID`) that referenced the removed self-service flow.
+
+Pre-existing concerns the reviewer flagged but that are explicitly out of scope (documented, not fixed here):
+- Two-step create+activate is not transactional; `pending_org_cleaner` may hard-delete a partially-created org. Pre-existing (same structure as the prior admin branch), tracked outside Story 2.
+- `OrgSettingsTab.slugify()` produces hyphens but `CreateOrgRequest.Slug` binding is `alphanum` — multi-word names would 400. Predates this PR; the slug field is editable so the user can correct it.
 
 ### Worklog numbering
 The task prompt stated the next free worklog was 0311, but `origin/main` kept advancing during this session. The renumber history:

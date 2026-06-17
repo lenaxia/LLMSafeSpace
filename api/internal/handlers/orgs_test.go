@@ -29,6 +29,7 @@ type mockOrgStore struct {
 	orgHasWorkspaces      bool
 	usersByEmail          map[string]string
 	userByEmailErr        error
+	updateStatusErr       error
 }
 
 func newMockOrgStore() *mockOrgStore {
@@ -260,6 +261,9 @@ func (m *mockOrgStore) GetStripeCustomerID(_ context.Context, orgID string) (str
 }
 
 func (m *mockOrgStore) UpdateOrgStatus(_ context.Context, orgID string, status *types.OrgStatus, sub *types.OrgSubscriptionStatus, plan *types.OrgPlan) error {
+	if m.updateStatusErr != nil {
+		return m.updateStatusErr
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if org, ok := m.orgs[orgID]; ok {

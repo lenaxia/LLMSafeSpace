@@ -163,10 +163,19 @@ func (h *OrgsHandler) Create(c *gin.Context) {
 	created.PlanID = plan
 	created.SubscriptionStatus = sub
 
+	// UserRole reflects the calling user's membership context (types.go OrgResponse).
+	// The caller is the creator (CreatedBy). When the admin creates the org for a
+	// different owner, the caller is not a member — so the role is empty unless
+	// the admin is also the resolved owner.
+	userRole := types.OrgRole("")
+	if ownerID == callerID {
+		userRole = types.OrgRoleAdmin
+	}
+
 	c.JSON(http.StatusCreated, types.CreateOrgResponse{
 		OrgResponse: types.OrgResponse{
 			Organization: *created,
-			UserRole:     types.OrgRoleAdmin,
+			UserRole:     userRole,
 			MemberCount:  1,
 		},
 	})
