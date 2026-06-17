@@ -188,13 +188,34 @@ On restart, opencode reads marker and logs event
 **Solution:** Emit synthetic `event: error` on abnormal EOF (heuristic: any data received before EOF)  
 **Files:** `api/internal/handlers/proxy.go:440-447`  
 **Acceptance:**
-- [ ] SSE emits error event on abnormal EOF (heuristic: `bytesReceived > 0` before EOF)
-- [ ] Frontend displays error message in terminal
-- [ ] Error event includes `type: "agent_died"` with `reason: "unknown"` (cannot reliably determine OOM vs crash vs session busy state from proxy)
-- [ ] Tests cover EOF detection and error emission
-- [ ] False positives (graceful close) are acceptable; false negatives (silent failures) are not
+- [x] SSE emits error event on abnormal EOF (heuristic: `bytesReceived > 0` before EOF on `text/event-stream` responses — scope-limiting refinement to avoid corrupting JSON/REST passthrough)
+- [ ] Frontend displays error message in terminal *(DEFERRED — see US-44.1c below; frontend listens on the broker stream, not the proxied SSE body)*
+- [x] Error event includes `type: "agent_died"` with `reason: "unknown"` (cannot reliably determine OOM vs crash vs session busy state from proxy)
+- [x] Tests cover EOF detection and error emission (13 tests in `proxy_terminal_events_test.go` — happy/unhappy/edge/multi-chunk/charset/n+EOF-same-read/false-positive-acceptance)
+- [x] False positives (graceful close on SSE) are acceptable; false negatives (silent failures) are not — pinned by `TestProxy_US44_1_SSECleanClose_AcceptableFalsePositive`
 
 **Design Limitation:** Proxy cannot determine if session was busy at time of death because session state lives in agentd and SSE stream is already closed. Solution: Emit error on any abnormal EOF.
+
+**Scope Refinement (2026-06-17, post skeptical-validator review):**
+The original US-44.1a estimate (1.5 days) covered the proxy only. Skeptical validation found that the frontend (`frontend/src/hooks/useEventStream.ts`) listens for events on `/workspaces/:id/session-events` (broker stream from `sseTracker.connectAndRead`), NOT on the proxied `POST /session/:id/message` SSE body. The proxy-side emission delivered here is therefore visible only to:
+- SDK clients using direct `POST /session/:id/message` streaming
+- Programmatic API consumers reading the SSE body
+
+To deliver the user-facing goal ("Frontend shows ⚠️ Agent was terminated"), the broker-side bridge must also emit `agent_died` when `sseTracker.connectAndRead` ends after receiving data. That work is split into US-44.1c.
+
+#### US-44.1c: Broker-side agent_died bridge (split from US-44.1b, 2026-06-17)
+**Problem:** Frontend listens on `/workspaces/:id/session-events` (broker), not on the proxied SSE body. The proxy-side emission (US-44.1a) is invisible to the frontend.  
+**Solution:** When `sseTracker.connectAndRead` exits after receiving data (the same bytesReceived>0 heuristic), publish a workspace-scoped `agent_died` event to the broker. Frontend then renders the "⚠️ Agent was terminated" message.  
+**Files:** `api/internal/services/sse/tracker.go`, `api/internal/handlers/proxy_events.go`, `frontend/src/pages/ChatPage.tsx`  
+**Acceptance:**
+- [ ] `sseTracker` tracks bytesReceived across `scanner.Scan()` iterations
+- [ ] On stream end (the existing `"SSE stream ended for workspace %s"` return path), if bytesReceived > 0, invoke a new `onAgentDied(workspaceID)` callback
+- [ ] ProxyHandler wires `onAgentDied` to publish `WorkspaceSSEEvent{Type: "agent_died", WorkspaceID: workspaceID, Data: {"reason":"unknown"}}` to the broker
+- [ ] Frontend ChatPage.tsx renders the terminal warning on receipt of `agent_died`
+- [ ] Unit tests for tracker callback invocation
+- [ ] Integration test: kill upstream SSE → broker publishes agent_died → frontend handler fires
+
+**Estimate:** 1.5 days (revised from US-44.1b's 0.5 days; the broker bridge + frontend handler is non-trivial)
 
 ---
 
