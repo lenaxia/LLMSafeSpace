@@ -31,6 +31,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/policy"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sessionindex"
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
+	"github.com/lenaxia/llmsafespace/api/internal/services/wsstate"
 	agentoc "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
 	"github.com/lenaxia/llmsafespace/pkg/billing"
 	emailpkg "github.com/lenaxia/llmsafespace/pkg/email"
@@ -108,6 +109,19 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	if cacheSvc, ok := svc.Cache.(*cache.Service); ok {
 		queueSvc := msgqueue.NewWithClient(cacheSvc.GetClient())
 		proxyHandler.SetMessageQueueService(queueSvc)
+
+		// US-45.2: swap the in-memory state store for a Redis-backed one
+		// so multi-replica deployments share active-session state. The
+		// RedisStore still serves the not-yet-migrated sections
+		// (deletedSessions, pwCache, wsConfig, priorPhase,
+		// parentBackfilled) via an embedded InMemoryStore; each section
+		// migrates to Redis in its own story (US-45.3+).
+		redisStateStore := wsstate.NewRedisStoreWithLogger(
+			cacheSvc.GetClient(),
+			wsstate.DefaultActiveSessTTL,
+			log.With("component", "wsstate"),
+		)
+		proxyHandler.SetStateStore(redisStateStore)
 	}
 
 	if svc.Metering != nil {

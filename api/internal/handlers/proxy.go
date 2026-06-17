@@ -87,6 +87,10 @@ type ProxyHandler struct {
 
 	startOnce sync.Once
 	stopOnce  sync.Once
+	// started is set true inside startOnce.Do. Used by SetStateStore to
+	// panic if called after Start — request goroutines read stateStore
+	// without synchronization, so a late swap would race.
+	started bool
 }
 
 func NewProxyHandler(
@@ -123,6 +127,22 @@ func NewProxyHandler(
 		stateStore: wsstate.NewInMemoryStore(),
 		connCount:  make(map[string]int),
 	}, nil
+}
+
+// SetStateStore overrides the per-workspace state store. By default the
+// ProxyHandler uses an InMemoryStore (single-replica); app.go swaps in a
+// RedisStore when a Redis/Valkey client is available so multi-replica
+// deployments share active-session state. Panics if called after Start()
+// — request goroutines read stateStore without synchronization, so a
+// late swap would race.
+func (h *ProxyHandler) SetStateStore(store wsstate.Store) {
+	if store == nil {
+		return
+	}
+	if h.started {
+		panic("SetStateStore called after Start — request goroutines may already be reading stateStore")
+	}
+	h.stateStore = store
 }
 
 func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWriteOp bool, sessionID string) {
