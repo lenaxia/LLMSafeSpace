@@ -6,6 +6,7 @@ package repolint
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -641,6 +642,252 @@ func TestFixWorklogs_SelfReferenceWriteFailureIsSilent(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// fixWorklogs with mainline awareness (the post-rebase auto-renumber path)
+// ---------------------------------------------------------------------------
+//
+// These tests exercise the unexported fixWorklogs(dir, remoteByVersion)
+// directly so they can control the "what's on origin/main" signal without
+// needing a real git repo in the test sandbox. The public FixWorklogs(dir)
+// is a thin wrapper that queries git then calls fixWorklogs — its git
+// integration is covered by TestLive_Worklogs_NoMainlineCollisions.
+
+// TestFixWorklogs_PrefersMainlineIncumbent is the core correctness test:
+// when two local files share a version and one of them is on origin/main,
+// the mainline file MUST stay and the local-only file MUST be renamed.
+// This is the bug behind the repeated "chore: fix worklog number collision"
+// commits — lexical tie-breaking renamed the wrong file half the time.
+func TestFixWorklogs_PrefersMainlineIncumbent(t *testing.T) {
+	dir := t.TempDir()
+	// 0311_aaa is on mainline (incumbent); 0311_zzz is unique to this branch.
+	mustWrite(t, filepath.Join(dir, "0310_2026-06-11_prev.md"), "")
+	mustWrite(t, filepath.Join(dir, "0311_2026-06-11_aaa.md"), "")
+	mustWrite(t, filepath.Join(dir, "0311_2026-06-11_zzz.md"), "")
+
+	remoteByVersion := map[int][]string{
+		311: {"0311_2026-06-11_aaa.md"},
+	}
+
+	renames, err := fixWorklogs(dir, remoteByVersion)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(renames) != 1 {
+		t.Fatalf("expected 1 rename, got %d: %v", len(renames), renames)
+	}
+	if renames[0].From != "0311_2026-06-11_zzz.md" {
+		t.Errorf("expected the mainline-UNAWARE file (zzz.md) to be renamed, got From=%s",
+			renames[0].From)
+	}
+	if renames[0].To != "0312_2026-06-11_zzz.md" {
+		t.Errorf("expected To=0312_2026-06-11_zzz.md (max local+remote + 1), got %s",
+			renames[0].To)
+	}
+	// The incumbent must still exist, untouched.
+	if _, err := os.Stat(filepath.Join(dir, "0311_2026-06-11_aaa.md")); err != nil {
+		t.Errorf("incumbent mainline file was renamed/removed: %v", err)
+	}
+}
+
+// TestFixWorklogs_ResolvesPureMainlineCollision covers the pre-rebase case:
+// there is NO local duplicate — only a collision between a local file and a
+// mainline file with a different slug. Locally, version 311 has exactly one
+// file. Without mainline awareness, FixWorklogs would do nothing; the
+// collision would only be caught later by MainlineCheck. With mainline
+// awareness, the local file gets renumbered proactively.
+func TestFixWorklogs_ResolvesPureMainlineCollision(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0310_2026-06-11_local.md"), "")
+	mustWrite(t, filepath.Join(dir, "0311_2026-06-11_yours.md"), "")
+
+	remoteByVersion := map[int][]string{
+		311: {"0311_2026-06-11_mainline.md"},
+	}
+
+	renames, err := fixWorklogs(dir, remoteByVersion)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(renames) != 1 {
+		t.Fatalf("expected 1 rename (the local file), got %d: %v", len(renames), renames)
+	}
+	if renames[0].From != "0311_2026-06-11_yours.md" {
+		t.Errorf("expected yours.md to be renamed, got From=%s", renames[0].From)
+	}
+	if renames[0].To != "0312_2026-06-11_yours.md" {
+		t.Errorf("expected To=0312_yours.md, got %s", renames[0].To)
+	}
+}
+
+// TestFixWorklogs_AvoidsNumbersTakenOnMainline verifies that the next-free
+// computation skips numbers that exist only on origin/main. Without this,
+// renumbering 0311 → 0312 would just move the collision by one when
+// mainline already has 0312.
+func TestFixWorklogs_AvoidsNumbersTakenOnMainline(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0310_2026-06-11_a.md"), "")
+	mustWrite(t, filepath.Join(dir, "0311_2026-06-11_yours.md"), "")
+
+	remoteByVersion := map[int][]string{
+		311: {"0311_2026-06-11_main.md"},
+		312: {"0312_2026-06-11_taken.md"},
+	}
+
+	renames, err := fixWorklogs(dir, remoteByVersion)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(renames) != 1 {
+		t.Fatalf("expected 1 rename, got %d: %v", len(renames), renames)
+	}
+	if renames[0].To != "0313_2026-06-11_yours.md" {
+		t.Errorf("expected To=0313 (skip 0312 taken on mainline), got %s", renames[0].To)
+	}
+}
+
+// TestFixWorklogs_MultipleLocalNewcomers covers the case where the local
+// branch has multiple worklogs at the colliding version (e.g. you wrote
+// several worklogs in one session and numbered them all 0311 by mistake)
+// AND mainline also has 0311. Every local file at 0311 must move, because
+// none of the local slugs match mainline's incumbent slug. The mainline
+// incumbent stays.
+func TestFixWorklogs_MultipleLocalNewcomersAgainstMainline(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0311_2026-06-11_aaa.md"), "")
+	mustWrite(t, filepath.Join(dir, "0311_2026-06-11_bbb.md"), "")
+	mustWrite(t, filepath.Join(dir, "0311_2026-06-11_ccc.md"), "")
+
+	remoteByVersion := map[int][]string{
+		311: {"0311_2026-06-11_incumbent.md"},
+	}
+
+	renames, err := fixWorklogs(dir, remoteByVersion)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(renames) != 3 {
+		t.Fatalf("expected 3 renames (all 3 local files at v=311 collide with mainline), got %d: %v",
+			len(renames), renames)
+	}
+	for _, r := range renames {
+		if strings.Contains(r.From, "incumbent") {
+			t.Errorf("mainline incumbent must never be renamed; got: %v", r)
+		}
+	}
+	// Verify each local file was renamed away from 0311 and now exists at
+	// its new path. (The incumbent itself is a mainline phantom — it was
+	// never on disk locally; that's the point of the remoteByVersion map.)
+	seenNew := map[string]bool{}
+	for _, r := range renames {
+		seenNew[r.To] = true
+		if _, err := os.Stat(filepath.Join(dir, r.From)); err == nil {
+			t.Errorf("old file %s should be gone after rename", r.From)
+		}
+		if _, err := os.Stat(filepath.Join(dir, r.To)); err != nil {
+			t.Errorf("new file %s missing after rename: %v", r.To, err)
+		}
+	}
+	if len(seenNew) != 3 {
+		t.Errorf("expected 3 distinct rename targets, got %d: %v", len(seenNew), seenNew)
+	}
+}
+
+// TestFixWorklogs_NilRemoteFallsBackToLexical locks in the
+// pre-mainline-aware behavior: when origin/main is unavailable (nil remote
+// map), the lexically-last file at each duplicate version is renamed. This
+// preserves the contract of every existing TestFixWorklogs_* test that
+// calls the public FixWorklogs(dir) in a temp dir with no git.
+func TestFixWorklogs_NilRemoteFallsBackToLexical(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0097_2026-01-01_aaa.md"), "")
+	mustWrite(t, filepath.Join(dir, "0098_2026-01-01_aaa.md"), "")
+	mustWrite(t, filepath.Join(dir, "0098_2026-01-01_zzz.md"), "")
+
+	renames, err := fixWorklogs(dir, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(renames) != 1 {
+		t.Fatalf("expected 1 rename, got %d: %v", len(renames), renames)
+	}
+	if renames[0].From != "0098_2026-01-01_zzz.md" {
+		t.Errorf("expected lexical-last (zzz) to be renamed when no mainline signal, got %s",
+			renames[0].From)
+	}
+}
+
+// TestFixWorklogs_AllOnMainlineFallsBackToLexical is the defensive edge
+// case: every local file at version V also exists on origin/main. This
+// shouldn't happen in practice (origin/main enforces uniqueness at >= 97),
+// but if it does, fixWorklogs must still make progress by falling back to
+// lexical tie-breaking rather than looping forever or refusing to fix.
+func TestFixWorklogs_AllOnMainlineFallsBackToLexical(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0311_2026-06-11_aaa.md"), "")
+	mustWrite(t, filepath.Join(dir, "0311_2026-06-11_zzz.md"), "")
+
+	remoteByVersion := map[int][]string{
+		311: {
+			"0311_2026-06-11_aaa.md",
+			"0311_2026-06-11_zzz.md",
+		},
+	}
+
+	renames, err := fixWorklogs(dir, remoteByVersion)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(renames) != 1 {
+		t.Fatalf("expected 1 rename (lexical fallback), got %d: %v", len(renames), renames)
+	}
+	if renames[0].From != "0311_2026-06-11_zzz.md" {
+		t.Errorf("expected lexical-last (zzz) as fallback, got %s", renames[0].From)
+	}
+}
+
+// TestFixWorklogs_LocalIncumbentWithMainlinePhantom is the regression test
+// for the infinite-loop guard at sequence.go:522 (the `!remoteSet[locals[0]]`
+// clause). Without that guard, fixWorklogs would treat "local has the
+// incumbent, mainline has incumbent + a phantom" as a fixable collision
+// and renumber the incumbent — diverging from mainline and re-introducing
+// the collision on the next merge, looping forever.
+//
+// Setup: local has exactly one file at v=311, and that file IS on
+// origin/main. origin/main also has a different file at v=311 (the
+// phantom). Expected behavior: 0 renames. The phantom is mainline's
+// problem — SequenceCheck on mainline itself will flag it; a local tool
+// must never rename a file that's already on mainline.
+//
+// No other existing test covers this branch:
+//   - ResolvesPureMainlineCollision has a local file NOT on mainline.
+//   - PrefersMainlineIncumbent / AllOnMainlineFallsBackToLexical use
+//     len(locals) > 1, which takes the earlier branch at line 512.
+func TestFixWorklogs_LocalIncumbentWithMainlinePhantom(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0310_2026-06-11_prev.md"), "")
+	mustWrite(t, filepath.Join(dir, "0311_2026-06-11_incumbent.md"), "")
+
+	remoteByVersion := map[int][]string{
+		311: {
+			"0311_2026-06-11_incumbent.md",
+			"0311_2026-06-11_other.md", // phantom — exists on mainline but not locally
+		},
+	}
+
+	renames, err := fixWorklogs(dir, remoteByVersion)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(renames) != 0 {
+		t.Fatalf("expected 0 renames (local file is the incumbent; phantom is mainline's problem), got %d: %v",
+			len(renames), renames)
+	}
+	// The incumbent must be untouched.
+	if _, err := os.Stat(filepath.Join(dir, "0311_2026-06-11_incumbent.md")); err != nil {
+		t.Errorf("incumbent file was renamed/removed: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 
@@ -740,7 +987,7 @@ func TestMainlineCheck_CollisionDetection(t *testing.T) {
 		sort.Strings(remoteNames)
 		var newLocal []string
 		for _, f := range localNames {
-			if !fileInList(f, remoteNames) {
+			if !slices.Contains(remoteNames, f) {
 				newLocal = append(newLocal, f)
 			}
 		}
@@ -791,7 +1038,7 @@ func TestMainlineCheck_SharedAncestryNotCollision(t *testing.T) {
 		sort.Strings(remoteNames)
 		var newLocal []string
 		for _, f := range localNames {
-			if !fileInList(f, remoteNames) {
+			if !slices.Contains(remoteNames, f) {
 				newLocal = append(newLocal, f)
 			}
 		}
