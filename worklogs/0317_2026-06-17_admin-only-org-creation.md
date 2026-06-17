@@ -209,12 +209,13 @@ Pre-existing concerns the reviewer flagged but that are explicitly out of scope 
 - `OrgSettingsTab.slugify()` produces hyphens but `CreateOrgRequest.Slug` binding is `alphanum` — multi-word names would 400. Predates this PR; the slug field is editable so the user can correct it.
 
 ### Worklog numbering
-The task prompt stated the next free worklog was 0311, but `origin/main` kept advancing during this session. The renumber history:
+The task prompt stated the next free worklog was 0311, but `origin/main` kept advancing during this session as parallel PRs landed worklogs. The renumber history:
 - 0311 (initial pick) — `origin/main` had a `0311_…_placeholder.md`; renumbered to **0313**.
-- 0313 (first push) — by the time CI ran, main had merged `0313_…_epic-44-design.md`, `0314_…_epic-45-design.md`, and `0315_…_repolint-auto-renumber-post-rebase.md`. CI Lint failed on the 0313 collision.
-- Merged `origin/main` (which also landed PR #200 — repolint auto-renumber-on-rebase) and renumbered to **0316** (`bin/repolint` confirmed next free).
+- 0313 (first push) — by CI time, main had merged `0313_…_epic-44-design.md`, `0314_…_epic-45-design.md`, `0315_…_repolint-auto-renumber-post-rebase.md`. CI Lint failed on 0313 collision. Merged main + renumbered to **0316**.
+- 0316 (second push) — main merged `0316_…_us-44.1-terminal-sse-events.md` during the CI window. CI Lint failed on 0316 collision. Merged main + renumbered to **0317**.
+- **0317** (this revision) — `bin/repolint` confirms next free.
 
-All renames used `git mv` (no force-push; main's history untouched per Rule 10 — used a merge + normal push rather than rebase + force-push).
+This is the recurring parallel-merge worklog-collision race documented in PR #200 (repolint auto-renumber-on-rebase). All renames used `git mv` + normal push (no force-push; main's history untouched per Rule 10).
 
 ### Branch
 `feat/epic43-0031-story2-admin-org-creation` (from `main`)
