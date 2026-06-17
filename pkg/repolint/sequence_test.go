@@ -6,6 +6,7 @@ package repolint
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -843,6 +844,49 @@ func TestFixWorklogs_AllOnMainlineFallsBackToLexical(t *testing.T) {
 	}
 }
 
+// TestFixWorklogs_LocalIncumbentWithMainlinePhantom is the regression test
+// for the infinite-loop guard at sequence.go:522 (the `!remoteSet[locals[0]]`
+// clause). Without that guard, fixWorklogs would treat "local has the
+// incumbent, mainline has incumbent + a phantom" as a fixable collision
+// and renumber the incumbent — diverging from mainline and re-introducing
+// the collision on the next merge, looping forever.
+//
+// Setup: local has exactly one file at v=311, and that file IS on
+// origin/main. origin/main also has a different file at v=311 (the
+// phantom). Expected behaviour: 0 renames. The phantom is mainline's
+// problem — SequenceCheck on mainline itself will flag it; a local tool
+// must never rename a file that's already on mainline.
+//
+// No other existing test covers this branch:
+//   - ResolvesPureMainlineCollision has a local file NOT on mainline.
+//   - PrefersMainlineIncumbent / AllOnMainlineFallsBackToLexical use
+//     len(locals) > 1, which takes the earlier branch at line 512.
+func TestFixWorklogs_LocalIncumbentWithMainlinePhantom(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0310_2026-06-11_prev.md"), "")
+	mustWrite(t, filepath.Join(dir, "0311_2026-06-11_incumbent.md"), "")
+
+	remoteByVersion := map[int][]string{
+		311: {
+			"0311_2026-06-11_incumbent.md",
+			"0311_2026-06-11_other.md", // phantom — exists on mainline but not locally
+		},
+	}
+
+	renames, err := fixWorklogs(dir, remoteByVersion)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(renames) != 0 {
+		t.Fatalf("expected 0 renames (local file is the incumbent; phantom is mainline's problem), got %d: %v",
+			len(renames), renames)
+	}
+	// The incumbent must be untouched.
+	if _, err := os.Stat(filepath.Join(dir, "0311_2026-06-11_incumbent.md")); err != nil {
+		t.Errorf("incumbent file was renamed/removed: %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
@@ -943,7 +987,7 @@ func TestMainlineCheck_CollisionDetection(t *testing.T) {
 		sort.Strings(remoteNames)
 		var newLocal []string
 		for _, f := range localNames {
-			if !fileInList(f, remoteNames) {
+			if !slices.Contains(remoteNames, f) {
 				newLocal = append(newLocal, f)
 			}
 		}
@@ -994,7 +1038,7 @@ func TestMainlineCheck_SharedAncestryNotCollision(t *testing.T) {
 		sort.Strings(remoteNames)
 		var newLocal []string
 		for _, f := range localNames {
-			if !fileInList(f, remoteNames) {
+			if !slices.Contains(remoteNames, f) {
 				newLocal = append(newLocal, f)
 			}
 		}

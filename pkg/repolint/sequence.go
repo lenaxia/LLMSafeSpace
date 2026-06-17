@@ -25,6 +25,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -515,7 +516,7 @@ func fixWorklogs(dir string, remoteByVersion map[int][]string) ([]WorklogRename,
 			}
 			phantoms := 0
 			for _, r := range remoteByVersion[v] {
-				if !sliceContainsString(locals, r) {
+				if !slices.Contains(locals, r) {
 					phantoms++
 				}
 			}
@@ -537,7 +538,7 @@ func fixWorklogs(dir string, remoteByVersion map[int][]string) ([]WorklogRename,
 			// pickWorklogNewcomer walks to decide what to renumber.
 			effective := append([]string{}, locals...)
 			for _, r := range remoteByVersion[v] {
-				if !sliceContainsString(effective, r) {
+				if !slices.Contains(effective, r) {
 					effective = append(effective, r)
 				}
 			}
@@ -600,7 +601,7 @@ func pickWorklogNewcomer(locals, sortedEffective []string, incumbents map[string
 		if incumbents[f] {
 			continue
 		}
-		if sliceContainsString(locals, f) {
+		if slices.Contains(locals, f) {
 			return f
 		}
 	}
@@ -617,15 +618,6 @@ func nextFreeWorklogNumber(current int, localVersions, remoteVersions map[int]bo
 			return current
 		}
 	}
-}
-
-func sliceContainsString(list []string, s string) bool {
-	for _, x := range list {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }
 
 // remoteWorklogVersions returns worklog files on origin/main, indexed by
@@ -729,7 +721,7 @@ func MainlineCheck(dir string) (MainlineReport, error) {
 
 		var newLocal []string
 		for _, f := range localNames {
-			if !fileInList(f, remoteNames) {
+			if !slices.Contains(remoteNames, f) {
 				newLocal = append(newLocal, f)
 			}
 		}
@@ -780,15 +772,6 @@ func scanWorklogDir(dir string) (map[int]bool, map[int][]string, int, error) {
 		}
 	}
 	return versions, files, maxVer, nil
-}
-
-func fileInList(name string, list []string) bool {
-	for _, f := range list {
-		if f == name {
-			return true
-		}
-	}
-	return false
 }
 
 func scanWorklogGit(dir string) (map[int]bool, map[int][]string, int, error) {

@@ -217,9 +217,17 @@ openapi-validate:
 #     (apiserver silently drops unknown fields; see worklog 0118-0119)
 # See pkg/repolint/sequence_test.go and pkg/repolint/crd_drift_test.go for
 # the regression cases and worklog 0098 for the originating incident.
-repolint:
-	$(GOBUILD) -o bin/repolint ./cmd/repolint
+repolint: repolint-build
 	./bin/repolint
+
+# repolint-build: build the repolint binary WITHOUT running checks. Used by
+# .githooks/post-rewrite, which needs the binary available even when the
+# worklog sequence is currently broken (the exact state the hook fixes).
+# The plain `repolint` target builds THEN runs checks, so it returns
+# non-zero on a worklog collision — making it useless as a build step
+# inside the very hook that resolves the collision.
+repolint-build:
+	$(GOBUILD) -o bin/repolint ./cmd/repolint
 
 # chart-sync-migrations: copy api/migrations/*.sql into charts/llmsafespace/migrations/.
 # Run this every time you add a migration so the Helm-bundled copy stays in

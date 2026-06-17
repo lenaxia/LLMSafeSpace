@@ -50,6 +50,14 @@ cd "$REPO_ROOT"
 # Build silently; if it fails (no Go toolchain, network-restricted env,
 # etc.) skip — the user will hit the manual `make pre-commit-fix` path
 # via the pre-commit gate, which is the documented fallback.
+#
+# IMPORTANT: use `make repolint-build` (build-only), NOT `make repolint`
+# (build+check). The plain `repolint` target runs the full sequence
+# check after building; when a worklog collision exists — the exact
+# state this hook is meant to fix — the check exits non-zero, make
+# returns non-zero, and the hook would report "could not build" even
+# though the binary built fine. That false-negative silently disables
+# the auto-renumber in the precise scenario it exists for.
 repolint_build_needed() {
     [ -x bin/repolint ] || return 0
     [ pkg/repolint/sequence.go -nt bin/repolint ] && return 0
@@ -57,7 +65,7 @@ repolint_build_needed() {
     return 1
 }
 if repolint_build_needed; then
-    if ! make -s repolint >/dev/null 2>&1; then
+    if ! make -s repolint-build >/dev/null 2>&1; then
         echo "post-rewrite: could not build repolint; skipping worklog renumber" >&2
         echo "post-rewrite: run 'make pre-commit-fix' on your next commit to fix manually" >&2
         exit 0

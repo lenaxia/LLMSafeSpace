@@ -123,4 +123,4 @@ make pre-commit-fix
 - `.githooks/post-rewrite` — new hook
 - `.githooks/pre-commit` — `run_repolint_gate` with one-shot worklog auto-fix retry
 - `Makefile` — `install-hooks` chmods `post-rewrite`
-- `worklogs/0313_2026-06-17_repolint-auto-renumber-post-rebase.md` — this entry
+- `worklogs/0315_2026-06-17_repolint-auto-renumber-post-rebase.md` — this entry
