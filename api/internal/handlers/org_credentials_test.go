@@ -20,19 +20,21 @@ import (
 // fakeOrgCredStore implements orgCredentialStore for testing. It stores
 // ciphertext verbatim and tracks call counts so tests can assert side effects.
 type fakeOrgCredStore struct {
-	creds          map[string]*secrets.OrgCredentialRow
-	nextID         int
-	createErr      error
-	updateErr      error
-	getErr         error
-	bindErr        error
-	createCalls    int
-	updateCalls    int
-	bindCalls      int
-	lastCreateCT   []byte
-	lastUpdateCT   []byte
-	lastUpdateKV   int
-	lastUpdateName *string
+	creds            map[string]*secrets.OrgCredentialRow
+	nextID           int
+	createErr        error
+	updateErr        error
+	getErr           error
+	bindErr          error
+	createCalls      int
+	updateCalls      int
+	bindCalls        int
+	getCalls         int
+	getFailOnAttempt int // when >0, GetOrgCredential fails on this call number (1-indexed)
+	lastCreateCT     []byte
+	lastUpdateCT     []byte
+	lastUpdateKV     int
+	lastUpdateName   *string
 }
 
 func newFakeOrgCredStore() *fakeOrgCredStore {
@@ -67,8 +69,12 @@ func (f *fakeOrgCredStore) ListOrgCredentials(_ context.Context, _ string) ([]*s
 }
 
 func (f *fakeOrgCredStore) GetOrgCredential(_ context.Context, _, credID string) (*secrets.OrgCredentialRow, error) {
+	f.getCalls++
 	if f.getErr != nil {
 		return nil, f.getErr
+	}
+	if f.getFailOnAttempt > 0 && f.getCalls == f.getFailOnAttempt {
+		return nil, context.Canceled
 	}
 	c, ok := f.creds[credID]
 	if !ok {
@@ -718,4 +724,106 @@ func TestOrgCredentials_Update_FullResponse(t *testing.T) {
 	assert.Equal(t, "https://api.openai.com/v1", resp.BaseURL, "Update response must decrypt baseURL")
 	assert.Equal(t, []string{"gpt-4o"}, resp.ModelAllowlist)
 	assert.Equal(t, 128000, resp.ModelContextLimits["gpt-4o"])
+}
+
+// TestOrgCredentials_Update_BaseURLOnly_Persists verifies that updating baseURL
+// WITHOUT an apiKey still re-encrypts and persists the new baseURL. Regression
+// test for the silent-drop bug (old condition was `req.APIKey != nil` only).
+func TestOrgCredentials_Update_BaseURLOnly_Persists(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 8)
+	}
+	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "kept", BaseURL: "https://old.example.com/v1"})
+	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
+	require.NoError(t, err)
+	store.creds["cred-1"] = &secrets.OrgCredentialRow{
+		OrgCredentialMetadata: secrets.OrgCredentialMetadata{ID: "cred-1", OrgID: "org-1", Name: "k", Provider: "openai"},
+		Ciphertext:            existingCT,
+		KeyVersion:            1,
+	}
+
+	h := NewOrgCredentialsHandler(store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	body := `{"baseURL":"https://new.example.com/v1"}`
+	req, _ := http.NewRequest("PUT", "/api/v1/orgs/org-1/credentials/cred-1", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	require.Equal(t, 1, store.updateCalls, "Update must be called")
+	require.NotNil(t, store.lastUpdateCT, "ciphertext must be re-encrypted on baseURL-only update")
+	require.Equal(t, 2, store.lastUpdateKV, "key version must increment")
+
+	// Decrypt and verify the new baseURL persisted while apiKey survived.
+	pd, err := secrets.DecryptSecret(kek, store.lastUpdateCT)
+	require.NoError(t, err)
+	var decoded secrets.LLMProviderData
+	require.NoError(t, json.Unmarshal(pd, &decoded))
+	assert.Equal(t, "https://new.example.com/v1", decoded.BaseURL, "new baseURL must persist")
+	assert.Equal(t, "kept", decoded.APIKey, "apiKey must survive baseURL-only update")
+
+	// Response must reflect the new baseURL.
+	var resp OrgCredentialResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "https://new.example.com/v1", resp.BaseURL)
+}
+
+// TestOrgCredentials_Create_GetFails_GracefulFallback verifies that when the
+// post-create GetOrgCredential fails, Create still returns 201 with a minimal
+// response (the credential was stored).
+func TestOrgCredentials_Create_GetFails_GracefulFallback(t *testing.T) {
+	store := newFakeOrgCredStore()
+	store.getFailOnAttempt = 1 // first GetOrgCredential call (post-create) fails
+	kek := make([]byte, 32)
+	h := NewOrgCredentialsHandler(store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	body := `{"name":"x","provider":"openai","apiKey":"sk-1"}`
+	req, _ := http.NewRequest("POST", "/api/v1/orgs/org-1/credentials", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code, "credential was stored; must still return 201")
+	require.Equal(t, 1, store.createCalls, "credential must be created")
+	var resp OrgCredentialResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.NotEmpty(t, resp.ID, "fallback response must still carry the ID")
+	assert.Equal(t, "org-1", resp.OrgID)
+}
+
+// TestOrgCredentials_Update_GetFails_GracefulFallback verifies that when the
+// post-update GetOrgCredential fails, Update still returns 200 with a minimal
+// response (the metadata update was persisted).
+func TestOrgCredentials_Update_GetFails_GracefulFallback(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "k"})
+	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
+	require.NoError(t, err)
+	store.creds["cred-1"] = &secrets.OrgCredentialRow{
+		OrgCredentialMetadata: secrets.OrgCredentialMetadata{ID: "cred-1", OrgID: "org-1", Name: "old", Provider: "openai"},
+		Ciphertext:            existingCT,
+		KeyVersion:            1,
+	}
+	store.getFailOnAttempt = 2 // 1st Get (existing) succeeds; 2nd Get (post-update) fails
+
+	h := NewOrgCredentialsHandler(store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	body := `{"name":"renamed"}`
+	req, _ := http.NewRequest("PUT", "/api/v1/orgs/org-1/credentials/cred-1", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "update was persisted; must still return 200")
+	require.Equal(t, 1, store.updateCalls, "Update must be called")
+	var resp OrgCredentialResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "cred-1", resp.ID, "fallback response must still carry the ID")
 }

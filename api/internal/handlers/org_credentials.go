@@ -111,6 +111,9 @@ func buildOrgCredResponse(row *secrets.OrgCredentialRow, kek []byte) OrgCredenti
 			if json.Unmarshal(plain, &pd) == nil {
 				resp.BaseURL = pd.BaseURL
 			}
+			// Zero the decrypted plaintext (contains the API key) so it does
+			// not linger in heap memory longer than necessary.
+			zeroBytes(plain)
 		}
 	}
 	return resp
@@ -127,7 +130,7 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 		return
 	}
 
-	orgKEK := h.orgKeyDeriver("org-credentials")
+	orgKEK := h.orgKEK()
 	if orgKEK == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "server key not configured"})
 		return
@@ -225,8 +228,12 @@ func (h *OrgCredentialsHandler) Update(c *gin.Context) {
 
 	var newCiphertext []byte
 	newKeyVersion := existing.KeyVersion
-	if req.APIKey != nil {
-		orgKEK := h.orgKeyDeriver("org-credentials")
+	// Re-encrypt whenever an encrypted field (apiKey OR baseURL) changes.
+	// A baseURL-only update must still rewrite the ciphertext, since baseURL
+	// lives inside the encrypted LLMProviderData blob — matching the admin
+	// handler (admin_provider_credentials.go:267).
+	if req.APIKey != nil || req.BaseURL != nil {
+		orgKEK := h.orgKEK()
 		if orgKEK == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "server key not configured"})
 			return
@@ -242,7 +249,9 @@ func (h *OrgCredentialsHandler) Update(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to decode credential"})
 			return
 		}
-		pd.APIKey = *req.APIKey
+		if req.APIKey != nil {
+			pd.APIKey = *req.APIKey
+		}
 		if req.BaseURL != nil {
 			pd.BaseURL = *req.BaseURL
 		}

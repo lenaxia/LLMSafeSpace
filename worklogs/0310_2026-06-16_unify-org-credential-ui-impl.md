@@ -1,14 +1,14 @@
 # Worklog: Unify Org Provider Credential UI — Backend + Frontend Implementation
 
 **Date:** 2026-06-16
-**Session:** Implement worklog 0307's scope — close 3 backend gaps (B-1/B-2/B-3) and 5 frontend gaps (F-1..F-5) so org credentials reach parity with admin/user credentials
-**Status:** Complete — implemented, TDD tests pass (8 new backend, 11 new frontend), builds + vet + typecheck clean
+**Session:** Implement worklog 0309's scope — close 3 backend gaps (B-1/B-2/B-3) and 5 frontend gaps (F-1..F-5) so org credentials reach parity with admin/user credentials
+**Status:** Complete — implemented, TDD tests pass (11 backend, 11 frontend), builds + vet + typecheck clean, reviewer round-1 findings remediated
 
 ---
 
 ## Objective
 
-Close the gaps identified in worklog 0307 so the org credentials tab matches the capability of the admin and user provider credential tabs: model probing, context-limit editing, full create/update responses with baseURL, and an expandable row UI.
+Close the gaps identified in worklog 0309 so the org credentials tab matches the capability of the admin and user provider credential tabs: model probing, context-limit editing, full create/update responses with baseURL, and an expandable row UI.
 
 A latent bug surfaced during implementation: `OrgCredentialMetadata` had **no JSON tags**, so the List endpoint serialized PascalCase (`ID`, `ModelAllowlist`) while the frontend expected camelCase. This is fixed as part of B-2/B-3 via a dedicated response DTO (mirroring the long-standing `AdminCredentialResponse` pattern).
 
@@ -168,5 +168,43 @@ None.
 ## Next Steps
 
 1. Commit on a `feat/` branch and open a PR.
-2. (Optional, lower priority per worklog 0307) Extract `ModelConfigTable` + `CredentialRow` into `frontend/src/components/shared/` and rewire the admin and user tabs to consume the shared components — they already work, so this is pure de-duplication.
+2. (Optional, lower priority per worklog 0309) Extract `ModelConfigTable` + `CredentialRow` into `frontend/src/components/shared/` and rewire the admin and user tabs to consume the shared components — they already work, so this is pure de-duplication.
 3. Verify against a live cluster: create an org credential with a baseURL, confirm the model probe returns the provider's model list, set context limits, and confirm they persist across reload.
+
+---
+
+## Reviewer Round 1 — Findings & Remediation (PR #199)
+
+The automated reviewer returned **REQUEST CHANGES** with 1 real correctness bug, 1 consistency issue, and 3 missing test cases. All remediated.
+
+### F1: baseURL-only update silently dropped — REAL BUG (fixed)
+
+**Root cause:** the Update re-encryption condition was `if req.APIKey != nil` (`org_credentials.go:228`). A baseURL-only update (no apiKey) skipped re-encryption entirely, so the new baseURL was discarded. The admin handler correctly uses `if req.APIKey != nil || req.BaseURL != nil` (`admin_provider_credentials.go:267`). The frontend edit form exposes this path (always sends baseURL on submit), making it user-visible.
+
+**Fix:** changed condition to `if req.APIKey != nil || req.BaseURL != nil`; guarded `pd.APIKey = *req.APIKey` behind `if req.APIKey != nil` so a baseURL-only update decrypts, updates `pd.BaseURL`, and re-encrypts without panicking.
+
+**Regression test:** `TestOrgCredentials_Update_BaseURLOnly_Persists` — seeds `baseURL:"old"`, sends `{baseURL:"new"}`, asserts the decrypted ciphertext contains the new baseURL and the apiKey survived.
+
+### F2: Inconsistent KEK access in Create — consistency (fixed)
+
+`Create` called `h.orgKeyDeriver("org-credentials")` directly, bypassing the new `h.orgKEK()` nil-guard helper. Changed to `h.orgKEK()` for consistency with List/ProbeModels/buildOrgCredResponse.
+
+### F3: Plaintext not zeroed in buildOrgCredResponse — defense-in-depth (fixed)
+
+`buildOrgCredResponse` decrypted ciphertext (containing the apiKey) to extract baseURL but never called `zeroBytes()`. Added `zeroBytes(plain)` after unmarshal. (The admin handler has the same gap — tracked as pre-existing tech debt to address separately.)
+
+### F4–F5: Missing unhappy-path tests (added)
+
+- `TestOrgCredentials_Create_GetFails_GracefulFallback` — post-create Get fails → 201 with minimal response
+- `TestOrgCredentials_Update_GetFails_GracefulFallback` — post-update Get fails → 200 with minimal response
+
+Added `getCalls` counter + `getFailOnAttempt` field to the fake store to simulate a failure on the Nth GetOrgCredential call (needed because both Create and Update call Get twice — once before, once after).
+
+### Worklog number collision — CI blocker (fixed)
+
+Main advanced with `0307_relay-ux-secrets-pattern-redesign` and `0308_aws-iam-access-key-not-irwa`. Renumbered this session's worklogs 0307→0309, 0308→0310 (next available per repolint).
+
+### Test count after round 1
+
+- Backend: 11 new tests (was 8) + 3 updated
+- Frontend: 11 new tests (unchanged)
