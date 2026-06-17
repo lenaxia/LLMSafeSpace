@@ -454,7 +454,6 @@ func TestRedisStore_LoadTest_1000ConcurrentOps_NoDoubleCounting(t *testing.T) {
 	defer cleanup()
 	const maxSessions = 10
 	const ops = 1000
-	const distinctSessions = 1000
 
 	var wg sync.WaitGroup
 	results := make(chan bool, ops)
