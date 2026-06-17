@@ -13,7 +13,7 @@ BINARY_UNIX=$(BINARY_NAME)_unix
         helm-lint helm-template helm-template-debug helm-install-dry-run helm-package helm-render \
         helm-chart-test helm-deploy \
         openapi-validate \
-        repolint chart-sync-migrations install-hooks \
+        repolint repolint-build chart-sync-migrations install-hooks \
         relay-bin \
         check tools-install \
         gitleaks govulncheck trivy-fs trivy-config security-scan \
