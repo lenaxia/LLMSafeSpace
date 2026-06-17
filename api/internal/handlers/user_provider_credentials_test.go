@@ -21,7 +21,7 @@ import (
 )
 
 type fakeUserCredStore struct {
-	creds      map[string]*secrets.UserCredentialRow
+	creds      map[string]*secrets.CredentialRow
 	bindings   map[string][]string // credID -> []wsID
 	autoBinds  map[string]bool     // wsID -> true if auto-bound (for protection test)
 	nextErr    error
@@ -30,13 +30,13 @@ type fakeUserCredStore struct {
 
 func newFakeUserCredStore() *fakeUserCredStore {
 	return &fakeUserCredStore{
-		creds:     make(map[string]*secrets.UserCredentialRow),
+		creds:     make(map[string]*secrets.CredentialRow),
 		bindings:  make(map[string][]string),
 		autoBinds: make(map[string]bool),
 	}
 }
 
-func (f *fakeUserCredStore) CreateUserCredential(_ context.Context, row *secrets.UserCredentialRow) error {
+func (f *fakeUserCredStore) CreateUserCredential(_ context.Context, row *secrets.CredentialRow) error {
 	if f.nextErr != nil {
 		err := f.nextErr
 		f.nextErr = nil
@@ -46,8 +46,8 @@ func (f *fakeUserCredStore) CreateUserCredential(_ context.Context, row *secrets
 	return nil
 }
 
-func (f *fakeUserCredStore) ListUserCredentials(_ context.Context, userID string) ([]*secrets.UserCredentialRow, error) {
-	var out []*secrets.UserCredentialRow
+func (f *fakeUserCredStore) ListUserCredentials(_ context.Context, userID string) ([]*secrets.CredentialRow, error) {
+	var out []*secrets.CredentialRow
 	for _, c := range f.creds {
 		if c.OwnerID == userID {
 			out = append(out, c)
@@ -56,7 +56,7 @@ func (f *fakeUserCredStore) ListUserCredentials(_ context.Context, userID string
 	return out, nil
 }
 
-func (f *fakeUserCredStore) GetUserCredential(_ context.Context, userID, id string) (*secrets.UserCredentialRow, error) {
+func (f *fakeUserCredStore) GetUserCredential(_ context.Context, userID, id string) (*secrets.CredentialRow, error) {
 	c, ok := f.creds[id]
 	if !ok || c.OwnerID != userID {
 		return nil, nil
@@ -197,7 +197,7 @@ func TestUserProviderCredentials_Create_Success(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusCreated, w.Code)
-	var resp AdminCredentialResponse
+	var resp CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "my-anthropic", resp.Name)
 	assert.Equal(t, "anthropic", resp.Provider)
@@ -260,7 +260,7 @@ func TestUserProviderCredentials_Create_Duplicate(t *testing.T) {
 
 func TestUserProviderCredentials_List(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.UserCredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai", CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	h := &UserProviderCredentialsHandler{store: store}
 	router := setupUserCredRouter(h)
 
@@ -269,7 +269,7 @@ func TestUserProviderCredentials_List(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var list []AdminCredentialResponse
+	var list []CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &list))
 	assert.Len(t, list, 1)
 }
@@ -288,7 +288,7 @@ func TestUserProviderCredentials_Get_NotFound(t *testing.T) {
 
 func TestUserProviderCredentials_Get_WrongOwner(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.UserCredentialRow{ID: "c1", OwnerID: "other-user", Name: "test", Provider: "openai"}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerID: "other-user", Name: "test", Provider: "openai"}
 	h := &UserProviderCredentialsHandler{store: store}
 	router := setupUserCredRouter(h)
 
@@ -301,7 +301,7 @@ func TestUserProviderCredentials_Get_WrongOwner(t *testing.T) {
 
 func TestUserProviderCredentials_Bind_OwnershipCheck(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.UserCredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
 	h := &UserProviderCredentialsHandler{
 		store: store,
 		wsOwnerCheck: func(_ context.Context, _, _ string) error {
@@ -319,7 +319,7 @@ func TestUserProviderCredentials_Bind_OwnershipCheck(t *testing.T) {
 
 func TestUserProviderCredentials_Bind_CredentialNotOwned(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.UserCredentialRow{ID: "c1", OwnerID: "other-user", Name: "test", Provider: "openai"}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerID: "other-user", Name: "test", Provider: "openai"}
 	h := &UserProviderCredentialsHandler{store: store}
 	router := setupUserCredRouter(h)
 
@@ -332,7 +332,7 @@ func TestUserProviderCredentials_Bind_CredentialNotOwned(t *testing.T) {
 
 func TestUserProviderCredentials_Bind_Success(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.UserCredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
 	h := &UserProviderCredentialsHandler{
 		store: store,
 		wsOwnerCheck: func(_ context.Context, _, _ string) error {
@@ -351,7 +351,7 @@ func TestUserProviderCredentials_Bind_Success(t *testing.T) {
 
 func TestUserProviderCredentials_Delete(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.UserCredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
 	h := &UserProviderCredentialsHandler{store: store}
 	router := setupUserCredRouter(h)
 
@@ -365,7 +365,7 @@ func TestUserProviderCredentials_Delete(t *testing.T) {
 
 func TestUserProviderCredentials_ListBindings_ReturnsWorkspaceIDs(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.UserCredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
 	store.bindings["c1"] = []string{"ws-1", "ws-2"}
 	h := &UserProviderCredentialsHandler{store: store}
 	router := setupUserCredRouter(h)
@@ -390,7 +390,7 @@ func TestUserProviderCredentials_ListBindings_ReturnsWorkspaceIDs(t *testing.T) 
 // panel to show every workspace as "Bind" regardless of actual binding state.
 func TestUserProviderCredentials_ListBindings_JSONShape_CamelCase(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.UserCredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
 	store.bindings["c1"] = []string{"ws-explicit"}
 	// ws-auto is in autoBinds so GetCredentialBindingsWithSource returns sourceType="auto"
 	store.autoBinds["ws-auto"] = true
@@ -445,7 +445,7 @@ func TestUserProviderCredentials_ListBindings_JSONShape_CamelCase(t *testing.T) 
 
 func TestUserProviderCredentials_ListBindings_EmptyWhenNoneBound(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.UserCredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
 	h := &UserProviderCredentialsHandler{store: store}
 	router := setupUserCredRouter(h)
 
@@ -463,7 +463,7 @@ func TestUserProviderCredentials_ListBindings_EmptyWhenNoneBound(t *testing.T) {
 
 func TestUserProviderCredentials_ListBindings_NotFoundForWrongOwner(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.UserCredentialRow{ID: "c1", OwnerID: "other-user", Name: "test", Provider: "openai"}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerID: "other-user", Name: "test", Provider: "openai"}
 	h := &UserProviderCredentialsHandler{store: store}
 	router := setupUserCredRouter(h)
 
@@ -476,7 +476,7 @@ func TestUserProviderCredentials_ListBindings_NotFoundForWrongOwner(t *testing.T
 
 func TestUserProviderCredentials_Unbind_RemovesBinding(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.UserCredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
 	store.bindings["c1"] = []string{"ws-1", "ws-2"}
 	h := &UserProviderCredentialsHandler{
 		store:        store,
@@ -497,7 +497,7 @@ func TestUserProviderCredentials_Unbind_RemovesBinding(t *testing.T) {
 // auto-bindings (seeded by SeedWorkspaceCredentials) return 409, not 204.
 func TestUserProviderCredentials_Unbind_RejectsAutoBinding(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.UserCredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
 	store.bindings["c1"] = []string{"ws-auto"}
 	store.autoBinds["ws-auto"] = true // simulate auto-bound
 	h := &UserProviderCredentialsHandler{
@@ -517,7 +517,7 @@ func TestUserProviderCredentials_Unbind_RejectsAutoBinding(t *testing.T) {
 // deleting a credential marks all previously-bound workspaces as credential-changed.
 func TestUserProviderCredentials_Delete_NotifiesBoundWorkspaces(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.UserCredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerID: "user-1", Name: "test", Provider: "openai"}
 	store.bindings["c1"] = []string{"ws-1", "ws-2"}
 
 	notified := make(map[string]bool)
@@ -715,7 +715,7 @@ func TestUserProviderCredentials_ProbeModels_NoBaseURL(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusCreated, w.Code)
-	var created AdminCredentialResponse
+	var created CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
 
 	// Probe models — must return 200 with warning, not 500.
@@ -766,7 +766,7 @@ func TestUserProviderCredentials_ProbeModels_WithBaseURL_Success(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusCreated, w.Code)
-	var created AdminCredentialResponse
+	var created CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
 
 	req, _ = http.NewRequest("GET", "/api/v1/provider-credentials/"+created.ID+"/models", nil)

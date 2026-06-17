@@ -5,6 +5,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -127,7 +128,7 @@ func (h *OrgsHandler) Create(c *gin.Context) {
 
 	created, err := h.orgStore.CreateOrgWithAdmin(ctx, newOrg, userID)
 	if err != nil {
-		if isDuplicateErr(err) {
+		if errors.Is(ClassifyPostgresError(err), ErrDuplicateCredential) {
 			c.JSON(http.StatusConflict, gin.H{"error": "slug already in use"})
 			return
 		}
@@ -283,7 +284,7 @@ func (h *OrgsHandler) Update(c *gin.Context) {
 
 	updated, err := h.orgStore.UpdateOrg(ctx, orgID, req)
 	if err != nil {
-		if isDuplicateErr(err) {
+		if errors.Is(ClassifyPostgresError(err), ErrDuplicateCredential) {
 			c.JSON(http.StatusConflict, gin.H{"error": "slug already in use"})
 			return
 		}

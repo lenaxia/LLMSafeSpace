@@ -20,7 +20,7 @@ import (
 // fakeOrgCredStore implements orgCredentialStore for testing. It stores
 // ciphertext verbatim and tracks call counts so tests can assert side effects.
 type fakeOrgCredStore struct {
-	creds            map[string]*secrets.OrgCredentialRow
+	creds            map[string]*secrets.CredentialRow
 	nextID           int
 	createErr        error
 	updateErr        error
@@ -38,7 +38,7 @@ type fakeOrgCredStore struct {
 }
 
 func newFakeOrgCredStore() *fakeOrgCredStore {
-	return &fakeOrgCredStore{creds: make(map[string]*secrets.OrgCredentialRow)}
+	return &fakeOrgCredStore{creds: make(map[string]*secrets.CredentialRow)}
 }
 
 func (f *fakeOrgCredStore) CreateOrgCredential(_ context.Context, orgID, name, provider string, ciphertext []byte, modelAllowlist []string, modelContextLimits map[string]int) (string, error) {
@@ -49,26 +49,23 @@ func (f *fakeOrgCredStore) CreateOrgCredential(_ context.Context, orgID, name, p
 	f.nextID++
 	id := "cred-" + itoa(f.nextID)
 	f.lastCreateCT = ciphertext
-	f.creds[id] = &secrets.OrgCredentialRow{
-		OrgCredentialMetadata: secrets.OrgCredentialMetadata{
-			ID: id, OrgID: orgID, Name: name, Provider: provider,
-			ModelAllowlist: modelAllowlist, ModelContextLimits: modelContextLimits,
-		},
+	f.creds[id] = &secrets.CredentialRow{
+		ID: id, OwnerID: orgID, Name: name, Provider: provider, ModelAllowlist: modelAllowlist, ModelContextLimits: modelContextLimits,
 		Ciphertext: ciphertext,
 		KeyVersion: 1,
 	}
 	return id, nil
 }
 
-func (f *fakeOrgCredStore) ListOrgCredentials(_ context.Context, _ string) ([]*secrets.OrgCredentialRow, error) {
-	out := make([]*secrets.OrgCredentialRow, 0, len(f.creds))
+func (f *fakeOrgCredStore) ListOrgCredentials(_ context.Context, _ string) ([]*secrets.CredentialRow, error) {
+	out := make([]*secrets.CredentialRow, 0, len(f.creds))
 	for _, c := range f.creds {
 		out = append(out, c)
 	}
 	return out, nil
 }
 
-func (f *fakeOrgCredStore) GetOrgCredential(_ context.Context, _, credID string) (*secrets.OrgCredentialRow, error) {
+func (f *fakeOrgCredStore) GetOrgCredential(_ context.Context, _, credID string) (*secrets.CredentialRow, error) {
 	f.getCalls++
 	if f.getErr != nil {
 		return nil, f.getErr
@@ -179,7 +176,7 @@ func TestOrgCredentials_Create_Success(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusCreated, w.Code, "body=%s", w.Body.String())
-	var resp OrgCredentialResponse
+	var resp CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "team-anthropic", resp.Name)
 	assert.Equal(t, "anthropic", resp.Provider)
@@ -253,7 +250,7 @@ func TestOrgCredentials_Create_BindFails_Returns201WithWarning(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusCreated, w.Code, "credential must still be created on bind failure")
-	var resp OrgCredentialResponse
+	var resp CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.NotEmpty(t, resp.BindWarning, "bind failure must surface a warning")
 }
@@ -272,10 +269,8 @@ func TestOrgCredentials_Update_APIKeyRotation_Success(t *testing.T) {
 	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "anthropic", APIKey: "old-key"}) //nolint:gosec
 	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
 	require.NoError(t, err)
-	store.creds["cred-1"] = &secrets.OrgCredentialRow{
-		OrgCredentialMetadata: secrets.OrgCredentialMetadata{
-			ID: "cred-1", OrgID: "org-1", Name: "old-name", Provider: "anthropic",
-		},
+	store.creds["cred-1"] = &secrets.CredentialRow{
+		ID: "cred-1", OwnerID: "org-1", Name: "old-name", Provider: "anthropic",
 		Ciphertext: existingCT,
 		KeyVersion: 1,
 	}
@@ -318,8 +313,8 @@ func TestOrgCredentials_Update_NilKEK_503(t *testing.T) {
 	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "old"}) //nolint:gosec
 	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
 	require.NoError(t, err)
-	store.creds["cred-1"] = &secrets.OrgCredentialRow{
-		OrgCredentialMetadata: secrets.OrgCredentialMetadata{ID: "cred-1", OrgID: "org-1", Provider: "openai"},
+	store.creds["cred-1"] = &secrets.CredentialRow{
+		ID: "cred-1", OwnerID: "org-1", Provider: "openai",
 		Ciphertext:            existingCT,
 		KeyVersion:            1,
 	}
@@ -367,8 +362,8 @@ func TestOrgCredentials_Update_NameOnly_NoReEncrypt(t *testing.T) {
 	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "kept"}) //nolint:gosec
 	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
 	require.NoError(t, err)
-	store.creds["cred-1"] = &secrets.OrgCredentialRow{
-		OrgCredentialMetadata: secrets.OrgCredentialMetadata{ID: "cred-1", OrgID: "org-1", Name: "old", Provider: "openai"},
+	store.creds["cred-1"] = &secrets.CredentialRow{
+		ID: "cred-1", OwnerID: "org-1", Name: "old", Provider: "openai",
 		Ciphertext:            existingCT,
 		KeyVersion:            3,
 	}
@@ -405,8 +400,8 @@ func TestOrgCredentials_Update_CorruptCiphertext_500(t *testing.T) {
 	corruptCT, err := secrets.EncryptSecret(differentKEK,
 		[]byte(`{"provider":"openai","apiKey":"original"}`))
 	require.NoError(t, err)
-	store.creds["cred-1"] = &secrets.OrgCredentialRow{
-		OrgCredentialMetadata: secrets.OrgCredentialMetadata{ID: "cred-1", OrgID: "org-1", Provider: "openai"},
+	store.creds["cred-1"] = &secrets.CredentialRow{
+		ID: "cred-1", OwnerID: "org-1", Provider: "openai",
 		Ciphertext:            corruptCT,
 		KeyVersion:            1,
 	}
@@ -451,8 +446,8 @@ func TestOrgCredentials_ProbeModels_NilKEK_503(t *testing.T) {
 	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "sk-x", BaseURL: "http://localhost:19998/v1"})
 	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
 	require.NoError(t, err)
-	store.creds["cred-1"] = &secrets.OrgCredentialRow{
-		OrgCredentialMetadata: secrets.OrgCredentialMetadata{ID: "cred-1", OrgID: "org-1", Provider: "openai"},
+	store.creds["cred-1"] = &secrets.CredentialRow{
+		ID: "cred-1", OwnerID: "org-1", Provider: "openai",
 		Ciphertext:            existingCT,
 		KeyVersion:            1,
 	}
@@ -487,7 +482,7 @@ func TestOrgCredentials_ProbeModels_NoBaseURL(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusCreated, w.Code)
-	var created OrgCredentialResponse
+	var created CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
 
 	req, _ = http.NewRequest("GET", "/api/v1/orgs/org-1/credentials/"+created.ID+"/models", nil)
@@ -532,7 +527,7 @@ func TestOrgCredentials_ProbeModels_Success(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusCreated, w.Code)
-	var created OrgCredentialResponse
+	var created CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
 
 	req, _ = http.NewRequest("GET", "/api/v1/orgs/org-1/credentials/"+created.ID+"/models", nil)
@@ -577,11 +572,8 @@ func TestOrgCredentials_List_CamelCaseAndBaseURL(t *testing.T) {
 		plain, _ := json.Marshal(pd)
 		ct, err := secrets.EncryptSecret(kek, plain)
 		require.NoError(t, err)
-		store.creds[tc.id] = &secrets.OrgCredentialRow{
-			OrgCredentialMetadata: secrets.OrgCredentialMetadata{
-				ID: tc.id, OrgID: "org-1", Name: tc.id, Provider: "custom",
-				ModelAllowlist: []string{}, ModelContextLimits: tc.limits,
-			},
+		store.creds[tc.id] = &secrets.CredentialRow{
+			ID: tc.id, OwnerID: "org-1", Name: tc.id, Provider: "custom", ModelAllowlist: []string{}, ModelContextLimits: tc.limits,
 			Ciphertext: ct,
 			KeyVersion: 1,
 		}
@@ -619,9 +611,9 @@ func TestOrgCredentials_List_CamelCaseAndBaseURL(t *testing.T) {
 	}
 
 	// Typed decode to verify baseURL extraction per credential.
-	var typed []OrgCredentialResponse
+	var typed []CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &typed))
-	byID := map[string]OrgCredentialResponse{}
+	byID := map[string]CredentialResponse{}
 	for _, c := range typed {
 		byID[c.ID] = c
 	}
@@ -647,7 +639,7 @@ func TestOrgCredentials_List_Empty(t *testing.T) {
 // --- Create / Update (B-3): full responses ---
 
 // TestOrgCredentials_Create_FullResponse verifies that Create returns the full
-// OrgCredentialResponse (not the old sparse {id,orgId,name,provider}), including
+// CredentialResponse (not the old sparse {id,orgId,name,provider}), including
 // modelAllowlist, modelContextLimits, baseURL, and timestamps.
 func TestOrgCredentials_Create_FullResponse(t *testing.T) {
 	store := newFakeOrgCredStore()
@@ -672,7 +664,7 @@ func TestOrgCredentials_Create_FullResponse(t *testing.T) {
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusCreated, w.Code)
 
-	var resp OrgCredentialResponse
+	var resp CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.NotEmpty(t, resp.ID)
 	assert.Equal(t, "org-1", resp.OrgID)
@@ -686,7 +678,7 @@ func TestOrgCredentials_Create_FullResponse(t *testing.T) {
 }
 
 // TestOrgCredentials_Update_FullResponse verifies that Update returns the full
-// OrgCredentialResponse (not the old sparse {id,message}) after a metadata-only
+// CredentialResponse (not the old sparse {id,message}) after a metadata-only
 // update (no re-encryption).
 func TestOrgCredentials_Update_FullResponse(t *testing.T) {
 	store := newFakeOrgCredStore()
@@ -697,11 +689,8 @@ func TestOrgCredentials_Update_FullResponse(t *testing.T) {
 	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "kept", BaseURL: "https://api.openai.com/v1"})
 	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
 	require.NoError(t, err)
-	store.creds["cred-1"] = &secrets.OrgCredentialRow{
-		OrgCredentialMetadata: secrets.OrgCredentialMetadata{
-			ID: "cred-1", OrgID: "org-1", Name: "old", Provider: "openai",
-			ModelAllowlist: []string{}, ModelContextLimits: map[string]int{},
-		},
+	store.creds["cred-1"] = &secrets.CredentialRow{
+		ID: "cred-1", OwnerID: "org-1", Name: "old", Provider: "openai", ModelAllowlist: []string{}, ModelContextLimits: map[string]int{},
 		Ciphertext: existingCT,
 		KeyVersion: 1,
 	}
@@ -716,7 +705,7 @@ func TestOrgCredentials_Update_FullResponse(t *testing.T) {
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
 
-	var resp OrgCredentialResponse
+	var resp CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "cred-1", resp.ID)
 	assert.Equal(t, "renamed", resp.Name)
@@ -738,8 +727,8 @@ func TestOrgCredentials_Update_BaseURLOnly_Persists(t *testing.T) {
 	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "kept", BaseURL: "https://old.example.com/v1"})
 	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
 	require.NoError(t, err)
-	store.creds["cred-1"] = &secrets.OrgCredentialRow{
-		OrgCredentialMetadata: secrets.OrgCredentialMetadata{ID: "cred-1", OrgID: "org-1", Name: "k", Provider: "openai"},
+	store.creds["cred-1"] = &secrets.CredentialRow{
+		ID: "cred-1", OwnerID: "org-1", Name: "k", Provider: "openai",
 		Ciphertext:            existingCT,
 		KeyVersion:            1,
 	}
@@ -767,7 +756,7 @@ func TestOrgCredentials_Update_BaseURLOnly_Persists(t *testing.T) {
 	assert.Equal(t, "kept", decoded.APIKey, "apiKey must survive baseURL-only update")
 
 	// Response must reflect the new baseURL.
-	var resp OrgCredentialResponse
+	var resp CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "https://new.example.com/v1", resp.BaseURL)
 }
@@ -790,7 +779,7 @@ func TestOrgCredentials_Create_GetFails_GracefulFallback(t *testing.T) {
 
 	require.Equal(t, http.StatusCreated, w.Code, "credential was stored; must still return 201")
 	require.Equal(t, 1, store.createCalls, "credential must be created")
-	var resp OrgCredentialResponse
+	var resp CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.NotEmpty(t, resp.ID, "fallback response must still carry the ID")
 	assert.Equal(t, "org-1", resp.OrgID)
@@ -805,8 +794,8 @@ func TestOrgCredentials_Update_GetFails_GracefulFallback(t *testing.T) {
 	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "k"})
 	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
 	require.NoError(t, err)
-	store.creds["cred-1"] = &secrets.OrgCredentialRow{
-		OrgCredentialMetadata: secrets.OrgCredentialMetadata{ID: "cred-1", OrgID: "org-1", Name: "old", Provider: "openai"},
+	store.creds["cred-1"] = &secrets.CredentialRow{
+		ID: "cred-1", OwnerID: "org-1", Name: "old", Provider: "openai",
 		Ciphertext:            existingCT,
 		KeyVersion:            1,
 	}
@@ -823,7 +812,7 @@ func TestOrgCredentials_Update_GetFails_GracefulFallback(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code, "update was persisted; must still return 200")
 	require.Equal(t, 1, store.updateCalls, "Update must be called")
-	var resp OrgCredentialResponse
+	var resp CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "cred-1", resp.ID, "fallback response must still carry the ID")
 }
@@ -840,8 +829,8 @@ func TestOrgCredentials_Update_APIKeyAndBaseURL_Combined(t *testing.T) {
 	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "old-key", BaseURL: "https://old.example.com/v1"})
 	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
 	require.NoError(t, err)
-	store.creds["cred-1"] = &secrets.OrgCredentialRow{
-		OrgCredentialMetadata: secrets.OrgCredentialMetadata{ID: "cred-1", OrgID: "org-1", Name: "k", Provider: "openai"},
+	store.creds["cred-1"] = &secrets.CredentialRow{
+		ID: "cred-1", OwnerID: "org-1", Name: "k", Provider: "openai",
 		Ciphertext:            existingCT,
 		KeyVersion:            1,
 	}
@@ -881,8 +870,8 @@ func TestOrgCredentials_List_PartialDecryptFailure_NonFatal(t *testing.T) {
 	goodPlain, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "k1", BaseURL: "https://good.example.com/v1"})
 	goodCT, err := secrets.EncryptSecret(kek, goodPlain)
 	require.NoError(t, err)
-	store.creds["cred-good"] = &secrets.OrgCredentialRow{
-		OrgCredentialMetadata: secrets.OrgCredentialMetadata{ID: "cred-good", OrgID: "org-1", Name: "good", Provider: "openai"},
+	store.creds["cred-good"] = &secrets.CredentialRow{
+		ID: "cred-good", OwnerID: "org-1", Name: "good", Provider: "openai",
 		Ciphertext:            goodCT,
 		KeyVersion:            1,
 	}
@@ -890,8 +879,8 @@ func TestOrgCredentials_List_PartialDecryptFailure_NonFatal(t *testing.T) {
 	otherKEK := make([]byte, 32)
 	corruptCT, err := secrets.EncryptSecret(otherKEK, []byte(`{"provider":"openai","apiKey":"k2","baseURL":"https://corrupt.example.com/v1"}`))
 	require.NoError(t, err)
-	store.creds["cred-corrupt"] = &secrets.OrgCredentialRow{
-		OrgCredentialMetadata: secrets.OrgCredentialMetadata{ID: "cred-corrupt", OrgID: "org-1", Name: "corrupt", Provider: "openai"},
+	store.creds["cred-corrupt"] = &secrets.CredentialRow{
+		ID: "cred-corrupt", OwnerID: "org-1", Name: "corrupt", Provider: "openai",
 		Ciphertext:            corruptCT,
 		KeyVersion:            1,
 	}
@@ -904,10 +893,10 @@ func TestOrgCredentials_List_PartialDecryptFailure_NonFatal(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusOK, w.Code, "partial decrypt failure must not fail the whole list")
-	var resp []OrgCredentialResponse
+	var resp []CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Len(t, resp, 2)
-	byID := map[string]OrgCredentialResponse{}
+	byID := map[string]CredentialResponse{}
 	for _, r := range resp {
 		byID[r.ID] = r
 	}

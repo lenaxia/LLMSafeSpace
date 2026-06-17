@@ -21,16 +21,16 @@ import (
 
 // fakeAdminCredStore implements AdminCredentialStore for testing.
 type fakeAdminCredStore struct {
-	creds     map[string]*secrets.AdminCredentialRow
+	creds     map[string]*secrets.CredentialRow
 	nextErr   error
 	updateErr error // returned specifically by UpdateAdminCredential
 }
 
 func newFakeAdminCredStore() *fakeAdminCredStore {
-	return &fakeAdminCredStore{creds: make(map[string]*secrets.AdminCredentialRow)}
+	return &fakeAdminCredStore{creds: make(map[string]*secrets.CredentialRow)}
 }
 
-func (f *fakeAdminCredStore) CreateAdminCredential(_ context.Context, row *secrets.AdminCredentialRow) error {
+func (f *fakeAdminCredStore) CreateAdminCredential(_ context.Context, row *secrets.CredentialRow) error {
 	if f.nextErr != nil {
 		err := f.nextErr
 		f.nextErr = nil
@@ -40,20 +40,20 @@ func (f *fakeAdminCredStore) CreateAdminCredential(_ context.Context, row *secre
 	return nil
 }
 
-func (f *fakeAdminCredStore) ListAdminCredentials(_ context.Context) ([]*secrets.AdminCredentialRow, error) {
+func (f *fakeAdminCredStore) ListAdminCredentials(_ context.Context) ([]*secrets.CredentialRow, error) {
 	if f.nextErr != nil {
 		err := f.nextErr
 		f.nextErr = nil
 		return nil, err
 	}
-	var out []*secrets.AdminCredentialRow
+	var out []*secrets.CredentialRow
 	for _, c := range f.creds {
 		out = append(out, c)
 	}
 	return out, nil
 }
 
-func (f *fakeAdminCredStore) GetAdminCredential(_ context.Context, id string) (*secrets.AdminCredentialRow, error) {
+func (f *fakeAdminCredStore) GetAdminCredential(_ context.Context, id string) (*secrets.CredentialRow, error) {
 	if f.nextErr != nil {
 		err := f.nextErr
 		f.nextErr = nil
@@ -66,7 +66,7 @@ func (f *fakeAdminCredStore) GetAdminCredential(_ context.Context, id string) (*
 	return c, nil
 }
 
-func (f *fakeAdminCredStore) UpdateAdminCredential(_ context.Context, row *secrets.AdminCredentialRow) error {
+func (f *fakeAdminCredStore) UpdateAdminCredential(_ context.Context, row *secrets.CredentialRow) error {
 	if f.updateErr != nil {
 		err := f.updateErr
 		f.updateErr = nil
@@ -123,7 +123,7 @@ func TestAdminProviderCredentials_Create_Success(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusCreated, w.Code)
-	var resp AdminCredentialResponse
+	var resp CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "my-anthropic", resp.Name)
 	assert.Equal(t, "anthropic", resp.Provider)
@@ -166,7 +166,7 @@ func TestAdminProviderCredentials_List(t *testing.T) {
 	router := setupAdminCredRouter(h)
 
 	// Create one first.
-	store.creds["id1"] = &secrets.AdminCredentialRow{
+	store.creds["id1"] = &secrets.CredentialRow{
 		ID: "id1", Name: "test", Provider: "openai",
 		Ciphertext: mustEncrypt(t, kek, `{"provider":"openai","apiKey":"sk-123"}`),
 	}
@@ -176,7 +176,7 @@ func TestAdminProviderCredentials_List(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var list []AdminCredentialResponse
+	var list []CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &list))
 	assert.Len(t, list, 1)
 	assert.Equal(t, "openai", list[0].Provider)
@@ -196,7 +196,7 @@ func TestAdminProviderCredentials_Get_NotFound(t *testing.T) {
 
 func TestAdminProviderCredentials_Delete(t *testing.T) {
 	store := newFakeAdminCredStore()
-	store.creds["del-id"] = &secrets.AdminCredentialRow{ID: "del-id", Name: "x", Provider: "anthropic"}
+	store.creds["del-id"] = &secrets.CredentialRow{ID: "del-id", Name: "x", Provider: "anthropic"}
 	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return make([]byte, 32) })
 	router := setupAdminCredRouter(h)
 
@@ -214,7 +214,7 @@ func TestAdminProviderCredentials_Update_Success(t *testing.T) {
 	for i := range kek {
 		kek[i] = byte(i)
 	}
-	store.creds["upd-id"] = &secrets.AdminCredentialRow{
+	store.creds["upd-id"] = &secrets.CredentialRow{
 		ID: "upd-id", Name: "old", Provider: "anthropic",
 		Ciphertext: mustEncrypt(t, kek, `{"provider":"anthropic","apiKey":"old-key"}`),
 	}
@@ -228,7 +228,7 @@ func TestAdminProviderCredentials_Update_Success(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var resp AdminCredentialResponse
+	var resp CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "new-name", resp.Name)
 	// BaseURL is stored encrypted; not returned in response (verify via decrypt if needed)
@@ -267,7 +267,7 @@ func TestAdminProviderCredentials_Update_CorruptCiphertext_Returns500(t *testing
 	// Store a credential whose ciphertext was encrypted with a DIFFERENT key — simulates
 	// the "unreadable ciphertext" scenario (wrong KEK, DB corruption, etc.).
 	differentKEK := make([]byte, 32)
-	store.creds["c1"] = &secrets.AdminCredentialRow{
+	store.creds["c1"] = &secrets.CredentialRow{
 		ID:         "c1",
 		Name:       "test",
 		Provider:   "openai",
@@ -294,7 +294,7 @@ func TestAdminProviderCredentials_Update_CorruptCiphertext_Returns500(t *testing
 func TestAdminProviderCredentials_Update_DuplicateProvider_Returns409(t *testing.T) {
 	store := newFakeAdminCredStore()
 	kek := make([]byte, 32)
-	store.creds["c1"] = &secrets.AdminCredentialRow{
+	store.creds["c1"] = &secrets.CredentialRow{
 		ID: "c1", Name: "existing", Provider: "openai",
 		Ciphertext: mustEncrypt(t, kek, `{"provider":"openai","apiKey":"key1"}`),
 	}
@@ -371,7 +371,7 @@ func TestAdminProviderCredentials_Create_ModelContextLimits(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusCreated, w.Code)
-	var resp AdminCredentialResponse
+	var resp CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Equal(t, []string{"glm-5.1", "gpt-4o"}, resp.ModelAllowlist)
 	require.Equal(t, 200000, resp.ModelContextLimits["glm-5.1"])
@@ -396,7 +396,7 @@ func TestAdminProviderCredentials_Update_ModelContextLimits(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusCreated, w.Code)
-	var created AdminCredentialResponse
+	var created CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
 
 	// Update context limits.
@@ -407,7 +407,7 @@ func TestAdminProviderCredentials_Update_ModelContextLimits(t *testing.T) {
 	w = httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusOK, w.Code)
-	var updated AdminCredentialResponse
+	var updated CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &updated))
 	assert.Equal(t, []string{"glm-5.2"}, updated.ModelAllowlist)
 	assert.Equal(t, 1000000, updated.ModelContextLimits["glm-5.2"])
@@ -432,7 +432,7 @@ func TestAdminProviderCredentials_ProbeModels_NoBaseURL(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusCreated, w.Code)
-	var created AdminCredentialResponse
+	var created CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
 
 	// Probe models — must return 200 with a warning, not 500.
@@ -478,7 +478,7 @@ func TestAdminProviderCredentials_ProbeModels_WithBaseURL_CallsProvider(t *testi
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusCreated, w.Code)
-	var created AdminCredentialResponse
+	var created CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
 
 	// Probe — provider unreachable, must return 200 with warning.
@@ -526,7 +526,7 @@ func TestAdminProviderCredentials_ProbeModels_WithBaseURL_Success(t *testing.T) 
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	require.Equal(t, http.StatusCreated, w.Code)
-	var created AdminCredentialResponse
+	var created CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
 
 	// Probe — should return all 3 models from the fake provider,

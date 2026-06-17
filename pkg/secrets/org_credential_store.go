@@ -7,35 +7,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 )
 
-// OrgCredentialMetadata is the list-view of an org credential (no ciphertext).
-type OrgCredentialMetadata struct {
-	ID                 string
-	OrgID              string
-	Name               string
-	Provider           string
-	ModelAllowlist     []string
-	ModelContextLimits map[string]int // model_id → context window size in tokens
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
-}
-
-// OrgCredentialRow is the full row including ciphertext (for update operations).
-type OrgCredentialRow struct {
-	OrgCredentialMetadata
-	Ciphertext []byte
-	KeyVersion int
-}
-
 // OrgCredentialStore is the DB interface for org-scoped credential operations.
 type OrgCredentialStore interface {
 	CreateOrgCredential(ctx context.Context, orgID, name, provider string, ciphertext []byte, modelAllowlist []string, modelContextLimits map[string]int) (string, error)
-	ListOrgCredentials(ctx context.Context, orgID string) ([]*OrgCredentialRow, error)
-	GetOrgCredential(ctx context.Context, orgID, credID string) (*OrgCredentialRow, error)
+	ListOrgCredentials(ctx context.Context, orgID string) ([]*CredentialRow, error)
+	GetOrgCredential(ctx context.Context, orgID, credID string) (*CredentialRow, error)
 	UpdateOrgCredential(ctx context.Context, orgID, credID string, name *string, ciphertext []byte, modelAllowlist []string, modelContextLimits map[string]int, keyVersion int) error
 	DeleteOrgCredential(ctx context.Context, orgID, credID string) error
 	BindCredentialToAllOrgWorkspaces(ctx context.Context, credentialID, orgID string) error
@@ -63,7 +43,7 @@ func (s *PgSecretStore) CreateOrgCredential(ctx context.Context, orgID, name, pr
 	return id, nil
 }
 
-func (s *PgSecretStore) ListOrgCredentials(ctx context.Context, orgID string) ([]*OrgCredentialRow, error) {
+func (s *PgSecretStore) ListOrgCredentials(ctx context.Context, orgID string) ([]*CredentialRow, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, owner_id, name, provider, model_allowlist, model_context_limits, created_at, updated_at, ciphertext, key_version
 		FROM provider_credentials
@@ -75,10 +55,10 @@ func (s *PgSecretStore) ListOrgCredentials(ctx context.Context, orgID string) ([
 	}
 	defer rows.Close()
 
-	var out []*OrgCredentialRow
+	var out []*CredentialRow
 	for rows.Next() {
-		var r OrgCredentialRow
-		if err := rows.Scan(&r.ID, &r.OrgID, &r.Name, &r.Provider, &r.ModelAllowlist, &r.ModelContextLimits, &r.CreatedAt, &r.UpdatedAt, &r.Ciphertext, &r.KeyVersion); err != nil {
+		var r CredentialRow
+		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Name, &r.Provider, &r.ModelAllowlist, &r.ModelContextLimits, &r.CreatedAt, &r.UpdatedAt, &r.Ciphertext, &r.KeyVersion); err != nil {
 			return nil, fmt.Errorf("scan org credential: %w", err)
 		}
 		if r.ModelContextLimits == nil {
@@ -89,14 +69,14 @@ func (s *PgSecretStore) ListOrgCredentials(ctx context.Context, orgID string) ([
 	return out, rows.Err()
 }
 
-func (s *PgSecretStore) GetOrgCredential(ctx context.Context, orgID, credID string) (*OrgCredentialRow, error) {
-	var r OrgCredentialRow
+func (s *PgSecretStore) GetOrgCredential(ctx context.Context, orgID, credID string) (*CredentialRow, error) {
+	var r CredentialRow
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, owner_id, name, provider, model_allowlist, model_context_limits, created_at, updated_at, ciphertext, key_version
 		FROM provider_credentials
 		WHERE owner_type = 'org' AND owner_id = $1 AND id = $2
 	`, orgID, credID).Scan(
-		&r.ID, &r.OrgID, &r.Name, &r.Provider, &r.ModelAllowlist, &r.ModelContextLimits,
+		&r.ID, &r.OwnerID, &r.Name, &r.Provider, &r.ModelAllowlist, &r.ModelContextLimits,
 		&r.CreatedAt, &r.UpdatedAt, &r.Ciphertext, &r.KeyVersion,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {

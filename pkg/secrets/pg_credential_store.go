@@ -194,10 +194,15 @@ func (s *PgSecretStore) HasUserProviderCredential(ctx context.Context, userID, p
 	return exists, nil
 }
 
-// AdminCredentialRow mirrors the handler's AdminCredentialRow for DB operations.
-// Defined here to avoid an import cycle (handlers → secrets → handlers).
-type AdminCredentialRow struct {
+// CredentialRow is the DB row shape for all provider credential types.
+// Maps to the provider_credentials table; owner_type discriminates the owner
+// scope ("admin", "user", "org") and owner_id the concrete owner
+// ("_platform", a user id, or an org id). Defined here to avoid an import
+// cycle (handlers → secrets → handlers).
+type CredentialRow struct {
 	ID                 string
+	OwnerType          string
+	OwnerID            string
 	Name               string
 	Provider           string
 	Ciphertext         []byte
@@ -209,7 +214,7 @@ type AdminCredentialRow struct {
 }
 
 // CreateAdminCredential inserts a new admin-owned provider credential.
-func (s *PgSecretStore) CreateAdminCredential(ctx context.Context, row *AdminCredentialRow) error {
+func (s *PgSecretStore) CreateAdminCredential(ctx context.Context, row *CredentialRow) error {
 	if row.ModelContextLimits == nil {
 		row.ModelContextLimits = map[string]int{}
 	}
@@ -221,7 +226,7 @@ func (s *PgSecretStore) CreateAdminCredential(ctx context.Context, row *AdminCre
 }
 
 // ListAdminCredentials returns all admin-owned credentials.
-func (s *PgSecretStore) ListAdminCredentials(ctx context.Context) ([]*AdminCredentialRow, error) {
+func (s *PgSecretStore) ListAdminCredentials(ctx context.Context) ([]*CredentialRow, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, name, provider, ciphertext, key_version, model_allowlist, model_context_limits, created_at, updated_at
 		FROM provider_credentials WHERE owner_type = 'admin' AND owner_id = '_platform'
@@ -232,9 +237,9 @@ func (s *PgSecretStore) ListAdminCredentials(ctx context.Context) ([]*AdminCrede
 	}
 	defer rows.Close()
 
-	var out []*AdminCredentialRow
+	var out []*CredentialRow
 	for rows.Next() {
-		var r AdminCredentialRow
+		var r CredentialRow
 		if err := rows.Scan(&r.ID, &r.Name, &r.Provider, &r.Ciphertext, &r.KeyVersion, &r.ModelAllowlist, &r.ModelContextLimits, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -248,8 +253,8 @@ func (s *PgSecretStore) ListAdminCredentials(ctx context.Context) ([]*AdminCrede
 
 // GetAdminCredential returns a single admin credential by ID, or nil if not found.
 // Filters on both owner_type AND owner_id (L-4 fix: safer against future multi-admin).
-func (s *PgSecretStore) GetAdminCredential(ctx context.Context, id string) (*AdminCredentialRow, error) {
-	var r AdminCredentialRow
+func (s *PgSecretStore) GetAdminCredential(ctx context.Context, id string) (*CredentialRow, error) {
+	var r CredentialRow
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, name, provider, ciphertext, key_version, model_allowlist, model_context_limits, created_at, updated_at
 		FROM provider_credentials WHERE id = $1 AND owner_type = 'admin' AND owner_id = '_platform'
@@ -270,7 +275,7 @@ func (s *PgSecretStore) GetAdminCredential(ctx context.Context, id string) (*Adm
 // Omits updated_at from the SET clause so the DB trigger sets it to now(),
 // then reads it back via RETURNING (M-8 fix).
 // Filters on owner_id='_platform' for defensive consistency with Get/Delete (L-4 fix).
-func (s *PgSecretStore) UpdateAdminCredential(ctx context.Context, row *AdminCredentialRow) error {
+func (s *PgSecretStore) UpdateAdminCredential(ctx context.Context, row *CredentialRow) error {
 	if row.ModelContextLimits == nil {
 		row.ModelContextLimits = map[string]int{}
 	}
@@ -351,22 +356,8 @@ func (s *PgSecretStore) ListAutoApply(ctx context.Context, credentialID string) 
 	return out, rows.Err()
 }
 
-// UserCredentialRow is the DB row shape for user-owned provider credentials.
-type UserCredentialRow struct {
-	ID                 string
-	OwnerID            string
-	Name               string
-	Provider           string
-	Ciphertext         []byte
-	KeyVersion         int
-	ModelAllowlist     []string
-	ModelContextLimits map[string]int // model_id → context window size in tokens
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
-}
-
 // CreateUserCredential inserts a user-owned provider credential.
-func (s *PgSecretStore) CreateUserCredential(ctx context.Context, row *UserCredentialRow) error {
+func (s *PgSecretStore) CreateUserCredential(ctx context.Context, row *CredentialRow) error {
 	if row.ModelContextLimits == nil {
 		row.ModelContextLimits = map[string]int{}
 	}
@@ -378,7 +369,7 @@ func (s *PgSecretStore) CreateUserCredential(ctx context.Context, row *UserCrede
 }
 
 // ListUserCredentials returns all credentials owned by a user.
-func (s *PgSecretStore) ListUserCredentials(ctx context.Context, userID string) ([]*UserCredentialRow, error) {
+func (s *PgSecretStore) ListUserCredentials(ctx context.Context, userID string) ([]*CredentialRow, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, owner_id, name, provider, ciphertext, key_version, model_allowlist, model_context_limits, created_at, updated_at
 		FROM provider_credentials WHERE owner_type = 'user' AND owner_id = $1
@@ -388,9 +379,9 @@ func (s *PgSecretStore) ListUserCredentials(ctx context.Context, userID string) 
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*UserCredentialRow
+	var out []*CredentialRow
 	for rows.Next() {
-		var r UserCredentialRow
+		var r CredentialRow
 		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Name, &r.Provider, &r.Ciphertext, &r.KeyVersion, &r.ModelAllowlist, &r.ModelContextLimits, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -403,8 +394,8 @@ func (s *PgSecretStore) ListUserCredentials(ctx context.Context, userID string) 
 }
 
 // GetUserCredential returns a single user credential by ID, or nil if not found/not owned.
-func (s *PgSecretStore) GetUserCredential(ctx context.Context, userID, id string) (*UserCredentialRow, error) {
-	var r UserCredentialRow
+func (s *PgSecretStore) GetUserCredential(ctx context.Context, userID, id string) (*CredentialRow, error) {
+	var r CredentialRow
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, owner_id, name, provider, ciphertext, key_version, model_allowlist, model_context_limits, created_at, updated_at
 		FROM provider_credentials WHERE id = $1 AND owner_type = 'user' AND owner_id = $2

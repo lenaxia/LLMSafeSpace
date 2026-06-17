@@ -18,9 +18,9 @@ import (
 
 // UserCredentialStore abstracts DB operations for user provider credentials.
 type UserCredentialStore interface {
-	CreateUserCredential(ctx context.Context, row *secrets.UserCredentialRow) error
-	ListUserCredentials(ctx context.Context, userID string) ([]*secrets.UserCredentialRow, error)
-	GetUserCredential(ctx context.Context, userID, id string) (*secrets.UserCredentialRow, error)
+	CreateUserCredential(ctx context.Context, row *secrets.CredentialRow) error
+	ListUserCredentials(ctx context.Context, userID string) ([]*secrets.CredentialRow, error)
+	GetUserCredential(ctx context.Context, userID, id string) (*secrets.CredentialRow, error)
 	DeleteUserCredential(ctx context.Context, userID, id string) error
 	BindCredentialToWorkspace(ctx context.Context, credentialID, workspaceID string) error
 	// UnbindCredentialFromWorkspace removes an EXPLICIT binding.
@@ -119,7 +119,7 @@ func (h *UserProviderCredentialsHandler) Create(c *gin.Context) {
 	}
 
 	now := time.Now()
-	row := &secrets.UserCredentialRow{
+	row := &secrets.CredentialRow{
 		ID:                 uuid.New().String(),
 		OwnerID:            userID,
 		Name:               req.Name,
@@ -147,7 +147,7 @@ func (h *UserProviderCredentialsHandler) Create(c *gin.Context) {
 		return
 	}
 
-	resp := AdminCredentialResponse{
+	resp := CredentialResponse{
 		ID:                 row.ID,
 		Name:               row.Name,
 		Provider:           row.Provider,
@@ -183,9 +183,9 @@ func (h *UserProviderCredentialsHandler) List(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list credentials"})
 		return
 	}
-	resp := make([]AdminCredentialResponse, 0, len(rows))
+	resp := make([]CredentialResponse, 0, len(rows))
 	for _, row := range rows {
-		r := AdminCredentialResponse{
+		r := CredentialResponse{
 			ID:                 row.ID,
 			Name:               row.Name,
 			Provider:           row.Provider,
@@ -221,7 +221,7 @@ func (h *UserProviderCredentialsHandler) Get(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "credential not found"})
 		return
 	}
-	c.JSON(http.StatusOK, AdminCredentialResponse{
+	c.JSON(http.StatusOK, CredentialResponse{
 		ID:                 row.ID,
 		Name:               row.Name,
 		Provider:           row.Provider,
