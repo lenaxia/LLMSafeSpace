@@ -792,7 +792,7 @@ func TestFixWorklogs_MultipleLocalNewcomersAgainstMainline(t *testing.T) {
 }
 
 // TestFixWorklogs_NilRemoteFallsBackToLexical locks in the
-// pre-mainline-aware behaviour: when origin/main is unavailable (nil remote
+// pre-mainline-aware behavior: when origin/main is unavailable (nil remote
 // map), the lexically-last file at each duplicate version is renamed. This
 // preserves the contract of every existing TestFixWorklogs_* test that
 // calls the public FixWorklogs(dir) in a temp dir with no git.
@@ -853,7 +853,7 @@ func TestFixWorklogs_AllOnMainlineFallsBackToLexical(t *testing.T) {
 //
 // Setup: local has exactly one file at v=311, and that file IS on
 // origin/main. origin/main also has a different file at v=311 (the
-// phantom). Expected behaviour: 0 renames. The phantom is mainline's
+// phantom). Expected behavior: 0 renames. The phantom is mainline's
 // problem — SequenceCheck on mainline itself will flag it; a local tool
 // must never rename a file that's already on mainline.
 //

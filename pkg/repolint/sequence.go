@@ -422,7 +422,7 @@ type WorklogRename struct {
 // When origin/main is not reachable (fresh clone without fetch, detached
 // HEAD, network error, no git in this tree), the lexically-last file at
 // each duplicated version is treated as the newcomer — the original
-// pre-mainline-aware behaviour.
+// pre-mainline-aware behavior.
 //
 // The function iterates until no duplicates or mainline collisions remain,
 // handling the pathological case where multiple files all collide on the
@@ -445,7 +445,7 @@ func FixWorklogs(dir string) ([]WorklogRename, error) {
 // shape returned by scanWorklogGit). An empty or nil map means "no
 // mainline knowledge" — the function falls back to local-only duplicate
 // detection with lexical tie-breaking, preserving the pre-mainline-aware
-// behaviour.
+// behavior.
 //
 // Tests drive this directly so they can control the mainline signal
 // without standing up a real git repo in the sandbox.
@@ -591,7 +591,7 @@ func fixWorklogs(dir string, remoteByVersion map[int][]string) ([]WorklogRename,
 //     branch). Mainline files stay.
 //  2. If every local file is an incumbent (mainline itself has the dup)
 //     or incumbents is empty (no mainline knowledge), the lexically-last
-//     local file overall — the original pre-mainline-aware behaviour.
+//     local file overall — the original pre-mainline-aware behavior.
 //
 // The function always returns a member of locals, so the caller can
 // always perform the rename and the outer loop always makes progress.

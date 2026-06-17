@@ -58,7 +58,7 @@ Now also `chmod +x .githooks/post-rewrite` and prints a line documenting both ho
 |---|---|
 | `git rebase` fires `post-rewrite` once at the end with all rewritten SHAs on stdin | Validated via end-to-end test in `/tmp/opencode/rebase-smoke5` — hook fired and renamed `0098_user-feature.md → 0099` while keeping mainline's `0098_mainline.md` |
 | `cmd/repolint` emits `FAIL  worklogs sequence…` and `FAIL  worklogs collide…` for the two worklog failure modes | Verified by grepping `main.go:142` and `main.go:159`; matched by `run_repolint_gate`'s `grep -qE 'FAIL  worklogs (sequence\|collide)'` |
-| `FixWorklogs(dir)`'s pre-mainline-aware behaviour is preserved when origin/main is unavailable | Validated by `TestFixWorklogs_NilRemoteFallsBackToLexical` + all 10 pre-existing `TestFixWorklogs_*` tests still passing |
+| `FixWorklogs(dir)`'s pre-mainline-aware behavior is preserved when origin/main is unavailable | Validated by `TestFixWorklogs_NilRemoteFallsBackToLexical` + all 10 pre-existing `TestFixWorklogs_*` tests still passing |
 | `scanWorklogGit` returns an empty map (not an error) when origin/main is missing | Verified at `sequence.go:667-669` — returns `nil, nil, 0, nil` on git error; `remoteWorklogVersions` translates that to `nil` |
 | Grandfather threshold (97) still respected | Verified by `TestFixWorklogs_GrandfatheredVersionsUntouched` (unchanged) |
 
