@@ -693,12 +693,7 @@ func TestReconcileSessionState_ClearsStaleActiveSess(t *testing.T) {
 
 	// Simulate the stuck state: both sessions marked active locally, but
 	// "stuck-session" is actually idle in opencode (the bug condition).
-	handler.activeMu.Lock()
-	handler.activeSess["ws-1"] = map[string]bool{
-		"stuck-session":  true,
-		"active-session": true,
-	}
-	handler.activeMu.Unlock()
+	handler.SetActiveSessionsForTest("ws-1", []string{"stuck-session", "active-session"})
 
 	require.True(t, handler.isSessionActive("ws-1", "stuck-session"),
 		"precondition: stuck-session should be marked active before reconcile")
@@ -730,9 +725,7 @@ func TestReconcileSessionState_NoStalenessNoOp(t *testing.T) {
 	})
 	defer cleanup()
 
-	handler.activeMu.Lock()
-	handler.activeSess["ws-1"] = map[string]bool{"ses-busy": true}
-	handler.activeMu.Unlock()
+	handler.SetActiveSessionsForTest("ws-1", []string{"ses-busy"})
 
 	handler.reconcileSessionState("ws-1", "127.0.0.1", "test-pw")
 
@@ -762,9 +755,7 @@ func TestReconcileSessionState_PublishesIdleEventOnStaleClear(t *testing.T) {
 	defer cleanup()
 
 	// Set up the stuck state.
-	handler.activeMu.Lock()
-	handler.activeSess["ws-1"] = map[string]bool{"stuck-session": true}
-	handler.activeMu.Unlock()
+	handler.SetActiveSessionsForTest("ws-1", []string{"stuck-session"})
 
 	// Subscribe BEFORE triggering reconcile so we don't miss the event.
 	sub := handler.broker.Subscribe("ws-1")

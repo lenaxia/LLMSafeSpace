@@ -23,6 +23,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
+	"github.com/lenaxia/llmsafespace/api/internal/services/wsstate"
 	"github.com/lenaxia/llmsafespace/pkg/agent"
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
@@ -43,11 +44,6 @@ const (
 	phaseTerminated  = "Terminated"
 )
 
-type workspaceConfig struct {
-	maxActiveSessions      int
-	autoApprovePermissions bool
-}
-
 type ProxyHandler struct {
 	k8sClient         pkginterfaces.KubernetesClient
 	httpClient        *http.Client
@@ -56,18 +52,19 @@ type ProxyHandler struct {
 	dialect           agent.Dialect
 	agentStateChecker AgentStateChecker
 
-	pwCache   map[string]string
-	pwCacheMu sync.RWMutex
+	// stateStore holds the per-workspace state that was previously kept
+	// in process-local maps on ProxyHandler (activeSess, deletedSessions,
+	// pwCache, wsConfig, priorPhase, parentBackfilled). Externalizing it
+	// via an interface is the foundation for moving the state to a
+	// shared Redis backend in subsequent Epic 45 stories, which
+	// eliminates the multi-replica drift that caused the 2026-06-16
+	// stuck-session incident. The InMemoryStore used today preserves
+	// single-replica behavior exactly.
+	stateStore wsstate.Store
 
-	wsConfig   map[string]workspaceConfig
-	wsConfigMu sync.RWMutex
-
-	priorPhase   map[string]string
-	priorPhaseMu sync.Mutex
-
-	activeSess map[string]map[string]bool
-	activeMu   sync.RWMutex
-
+	// connCount is intentionally NOT in stateStore — it represents a
+	// per-replica resource (HTTP file descriptors, memory) that must
+	// remain local even after the Redis migration. See US-45 design.
 	connCount map[string]int
 	connMu    sync.RWMutex
 
@@ -78,16 +75,6 @@ type ProxyHandler struct {
 	broker          *eventbroker.WorkspaceEventBroker
 	userBroker      *eventbroker.UserEventBroker
 	sessionParents  *sessionParentCache
-
-	parentBackfilled   map[string]struct{}
-	parentBackfilledMu sync.Mutex
-
-	// deletedSessions tracks sessions that were explicitly deleted via the API.
-	// Late SSE events (session.updated, idle, step.ended) from opencode that
-	// arrive after deletion are suppressed to prevent re-inserting the session
-	// into session_index. Keyed by "workspaceID/sessionID".
-	deletedSessions   map[string]struct{}
-	deletedSessionsMu sync.RWMutex
 
 	meteringSvc interfaces.MeteringService
 
@@ -128,18 +115,13 @@ func NewProxyHandler(
 		}
 	}
 	return &ProxyHandler{
-		k8sClient:        k8sClient,
-		httpClient:       httpClient,
-		logger:           logger,
-		namespace:        namespace,
-		dialect:          dialect,
-		pwCache:          make(map[string]string),
-		wsConfig:         make(map[string]workspaceConfig),
-		priorPhase:       make(map[string]string),
-		activeSess:       make(map[string]map[string]bool),
-		connCount:        make(map[string]int),
-		parentBackfilled: make(map[string]struct{}),
-		deletedSessions:  make(map[string]struct{}),
+		k8sClient:  k8sClient,
+		httpClient: httpClient,
+		logger:     logger,
+		namespace:  namespace,
+		dialect:    dialect,
+		stateStore: wsstate.NewInMemoryStore(),
+		connCount:  make(map[string]int),
 	}, nil
 }
 
