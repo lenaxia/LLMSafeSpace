@@ -568,7 +568,7 @@ REQUEST_BUFFER_SIZE_PER_WORKSPACE=10    # Max buffered requests per workspace
 REQUEST_BUFFER_TIMEOUT_SECONDS=30       # Timeout for buffered requests
 ```
 
-**opencode:** (cannot modify, documenting expected behavior)
+**agentd:** (opencode is third-party and cannot be modified; agentd implements all monitoring)
 ```bash
 # Memory monitoring
 MEMORY_WARNING_THRESHOLD=0.85           # Warn at 85% of cgroup limit (changed from 0.75)
