@@ -270,7 +270,7 @@ On restart, opencode reads marker and logs event
 - [ ] Use cgroup v2 paths exclusively (this codebase uses cgroup v2; never references v1 `memory.limit_in_bytes`)
 - [ ] Config: `MEMORY_WARNING_THRESHOLD=0.85`, `MEMORY_CHECK_INTERVAL_MS=60000`
 
-**Note:** Cannot modify opencode (constraint), but documenting expected behavior for future implementation.
+**Note:** Implemented in agentd since opencode cannot be modified. agentd has full visibility into pod-level cgroup metrics and can emit warnings via the existing SSE channel.
 
 ---
 
@@ -454,11 +454,11 @@ Per requirements analysis and user feedback:
 ### Phase 2: Observability (P1) - Week 3
 
 8. **US-44.5** - Memory pressure warnings (2 days)
-   - Cannot modify opencode, documenting for future
+   - Implemented in agentd (opencode cannot be modified); reads pod cgroup v2 metrics
    - 85% threshold (changed from 75%)
    
 9. **US-44.6** - Per-session memory attribution (1 day)
-   - Cannot modify opencode, documenting for future
+   - Implemented in agentd; estimate computed from contextTokens already exposed via opencode `/session` API
    
 10. **US-44.7** - Restart reason logging (1 day)
     - Write `/home/workspace/.opencode-restart-reason` marker files
@@ -479,7 +479,7 @@ Per requirements analysis and user feedback:
 
 **Total Phase 3:** 6 days
 
-**Grand Total:** 23 days (~4.5 weeks, up from 14.5 days)**
+**Grand Total:** 23 days (~4.5 weeks, up from 14.5 days)
 
 ---
 
@@ -487,7 +487,7 @@ Per requirements analysis and user feedback:
 - Phase 1 is P0 (critical path), must ship together
 - Phases 2 & 3 can ship independently after Phase 1 stabilizes
 - US-44.8 moved from Phase 3 to Phase 1 per user requirement: "Ops monitoring is P0"
-- US-44.5 and US-44.6 cannot be implemented (opencode cannot be modified), but documented for awareness
+- US-44.5 and US-44.6 are implemented in agentd (opencode cannot be modified). agentd has pod-level cgroup visibility and can compute per-session memory estimates from data already exposed via opencode's `/session` API.
 
 ---
 

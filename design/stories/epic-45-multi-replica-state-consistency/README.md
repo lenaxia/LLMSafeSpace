@@ -374,7 +374,8 @@ Per user decision: no feature flags, no rollback switch. Each story ships fully 
 
 **Mitigation:**
 - Prometheus alert on `ws_state_errors_total` rate
-- Valkey deployed as HA (sentinel) before this Epic ships
+- Fail-open behavior on `activeSess` + k8s fallback for caches tolerate brief Valkey outages (per "Open Questions" decision: ship without HA initially)
+- Valkey HA (sentinel) is a separate follow-up effort — not a prerequisite for this Epic
 - Documented runbook: restart Valkey, restart API pods if needed
 
 ### Scenario 2: Valkey Slow (P99 > 100ms)
