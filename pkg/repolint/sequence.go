@@ -408,13 +408,25 @@ type WorklogRename struct {
 }
 
 // FixWorklogs resolves duplicate worklog numbers in dir by renaming the
-// conflicting file(s) to the next available number above the current
-// maximum. It never touches the older file (determined lexically — the
-// earlier slug is considered the incumbent) — only the newcomer is moved.
+// conflicting file(s) to the next available number.
 //
-// The function iterates until no duplicates remain, handling the
-// pathological case where multiple files all collide on the same number.
-// It returns the list of renames performed (empty if nothing was needed).
+// When origin/main is reachable, files that exist there are treated as
+// incumbents — they stay; files unique to this working copy are renumbered.
+// This is the correct signal after `git rebase origin/main`: mainline's
+// worklog and yours both end up in worklogs/, and mainline's was merged
+// first. Mainline files also participate in collision detection as
+// "phantoms" — if a local file's number matches a mainline file with a
+// different slug (the pre-rebase case), the local file is renumbered.
+//
+// When origin/main is not reachable (fresh clone without fetch, detached
+// HEAD, network error, no git in this tree), the lexically-last file at
+// each duplicated version is treated as the newcomer — the original
+// pre-mainline-aware behaviour.
+//
+// The function iterates until no duplicates or mainline collisions remain,
+// handling the pathological case where multiple files all collide on the
+// same number. It returns the list of renames performed (empty if nothing
+// was needed).
 //
 // Only files matching WorklogPattern are considered; other files in dir
 // are ignored. Versions below the grandfather threshold (97) are never
@@ -424,8 +436,30 @@ type WorklogRename struct {
 // own content is replaced with the new basename, so self-referential
 // lines like "worklogs/0140_..._foo.md — This worklog" stay accurate.
 func FixWorklogs(dir string) ([]WorklogRename, error) {
+	return fixWorklogs(dir, remoteWorklogVersions(dir))
+}
+
+// fixWorklogs is the testable core of FixWorklogs. remoteByVersion is the
+// set of worklog files on origin/main, indexed by version number (the
+// shape returned by scanWorklogGit). An empty or nil map means "no
+// mainline knowledge" — the function falls back to local-only duplicate
+// detection with lexical tie-breaking, preserving the pre-mainline-aware
+// behaviour.
+//
+// Tests drive this directly so they can control the mainline signal
+// without standing up a real git repo in the sandbox.
+func fixWorklogs(dir string, remoteByVersion map[int][]string) ([]WorklogRename, error) {
 	const grandfatherBelow = 97
 	var renames []WorklogRename
+
+	// remoteSet is the "is this basename on origin/main?" lookup used by
+	// pickWorklogNewcomer to prefer keeping incumbents.
+	remoteSet := map[string]bool{}
+	for _, list := range remoteByVersion {
+		for _, f := range list {
+			remoteSet[f] = true
+		}
+	}
 
 	for {
 		entries, err := os.ReadDir(dir)
@@ -433,7 +467,8 @@ func FixWorklogs(dir string) ([]WorklogRename, error) {
 			return renames, fmt.Errorf("read %s: %w", dir, err)
 		}
 
-		byVersion := map[int][]string{}
+		localByVersion := map[int][]string{}
+		localVersions := map[int]bool{}
 		maxVer := 0
 		for _, e := range entries {
 			if e.IsDir() {
@@ -451,13 +486,40 @@ func FixWorklogs(dir string) ([]WorklogRename, error) {
 				maxVer = v
 			}
 			if v >= grandfatherBelow {
-				byVersion[v] = append(byVersion[v], e.Name())
+				localByVersion[v] = append(localByVersion[v], e.Name())
+				localVersions[v] = true
+			}
+		}
+		remoteVersions := map[int]bool{}
+		for v := range remoteByVersion {
+			remoteVersions[v] = true
+			if v > maxVer {
+				maxVer = v
 			}
 		}
 
+		// Find versions with fixable duplicates. A version v is fixable if:
+		//   - more than one local file claims it (a local dup), OR
+		//   - exactly one local file claims it AND origin/main also has a
+		//     file at v with a different slug (a pre-rebase mainline
+		//     collision) AND the local file is NOT itself on mainline.
+		// The last clause guards the "all locals are incumbents" case
+		// (mainline itself has a dup, which SequenceCheck catches at the
+		// mainline level); renumbering an incumbent would diverge from
+		// mainline for no benefit and would loop forever.
 		dupVers := []int{}
-		for v, files := range byVersion {
-			if len(files) > 1 {
+		for v, locals := range localByVersion {
+			if len(locals) > 1 {
+				dupVers = append(dupVers, v)
+				continue
+			}
+			phantoms := 0
+			for _, r := range remoteByVersion[v] {
+				if !sliceContainsString(locals, r) {
+					phantoms++
+				}
+			}
+			if len(locals) == 1 && phantoms > 0 && !remoteSet[locals[0]] {
 				dupVers = append(dupVers, v)
 			}
 		}
@@ -467,10 +529,22 @@ func FixWorklogs(dir string) ([]WorklogRename, error) {
 		sort.Ints(dupVers)
 
 		for _, v := range dupVers {
-			files := byVersion[v]
-			sort.Strings(files)
+			locals := localByVersion[v]
+			sort.Strings(locals)
 
-			newcomer := files[len(files)-1]
+			// Build the effective file list at v for newcomer selection:
+			// locals + mainline phantoms not present locally. This is what
+			// pickWorklogNewcomer walks to decide what to renumber.
+			effective := append([]string{}, locals...)
+			for _, r := range remoteByVersion[v] {
+				if !sliceContainsString(effective, r) {
+					effective = append(effective, r)
+				}
+			}
+			sort.Strings(effective)
+
+			newcomer := pickWorklogNewcomer(locals, effective, remoteSet)
+
 			m := WorklogPattern.FindStringSubmatch(newcomer)
 			if m == nil {
 				continue
@@ -478,8 +552,13 @@ func FixWorklogs(dir string) ([]WorklogRename, error) {
 			datePart := m[2]
 			slugPart := m[3]
 
-			maxVer++
-			newName := fmt.Sprintf("%04d_%s_%s.md", maxVer, datePart, slugPart)
+			nextNum := nextFreeWorklogNumber(maxVer, localVersions, remoteVersions)
+			newName := fmt.Sprintf("%04d_%s_%s.md", nextNum, datePart, slugPart)
+			// Advance maxVer so a second rename in the same pass does not
+			// collide with the one we just performed. (The outer loop
+			// re-scans the directory each iteration, so this is only
+			// relevant within a single dupVers sweep.)
+			maxVer = nextNum
 
 			if err := os.Rename(
 				filepath.Join(dir, newcomer),
@@ -500,6 +579,65 @@ func FixWorklogs(dir string) ([]WorklogRename, error) {
 		}
 	}
 	return renames, nil
+}
+
+// pickWorklogNewcomer selects which file at a duplicated version should be
+// renumbered. locals and sortedEffective MUST both be sorted lexically;
+// sortedEffective MUST be a superset of locals (it adds mainline phantoms).
+//
+// Preference order:
+//  1. The lexically-last LOCAL file NOT in incumbents (unique to this
+//     branch). Mainline files stay.
+//  2. If every local file is an incumbent (mainline itself has the dup)
+//     or incumbents is empty (no mainline knowledge), the lexically-last
+//     local file overall — the original pre-mainline-aware behaviour.
+//
+// The function always returns a member of locals, so the caller can
+// always perform the rename and the outer loop always makes progress.
+func pickWorklogNewcomer(locals, sortedEffective []string, incumbents map[string]bool) string {
+	for i := len(sortedEffective) - 1; i >= 0; i-- {
+		f := sortedEffective[i]
+		if incumbents[f] {
+			continue
+		}
+		if sliceContainsString(locals, f) {
+			return f
+		}
+	}
+	return locals[len(locals)-1]
+}
+
+// nextFreeWorklogNumber returns the smallest int strictly greater than
+// current that is unused in either localVersions or remoteVersions. Used
+// to pick a rename target that won't immediately re-collide with mainline.
+func nextFreeWorklogNumber(current int, localVersions, remoteVersions map[int]bool) int {
+	for {
+		current++
+		if !localVersions[current] && !remoteVersions[current] {
+			return current
+		}
+	}
+}
+
+func sliceContainsString(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// remoteWorklogVersions returns worklog files on origin/main, indexed by
+// version number. Empty map if origin/main is unavailable (no git, fresh
+// clone without fetch, detached HEAD, network error). The empty-map case
+// is the signal to fixWorklogs to fall back to lexical tie-breaking.
+func remoteWorklogVersions(dir string) map[int][]string {
+	_, files, _, err := scanWorklogGit(dir)
+	if err != nil {
+		return nil
+	}
+	return files
 }
 
 // MainlineCollision reports worklog version numbers that exist both locally

@@ -13,9 +13,12 @@
 //
 // Usage:
 //
-//	repolint                # run all checks against the repo root
-//	repolint -repo /path    # run checks against an alternate root
-//	repolint -fix-drift     # also: copy api/migrations/ → charts/llmsafespace/migrations/
+//	repolint                       # run all checks against the repo root
+//	repolint -repo /path           # run checks against an alternate root
+//	repolint -fix-drift            # also: copy api/migrations/ → charts/llmsafespace/migrations/
+//	repolint -fix-worklogs         # also: auto-renumber duplicate worklog files, then run all checks
+//	repolint -fix-worklogs-only    # ONLY auto-renumber; skip checks. For .githooks/post-rewrite
+//	                               # where the tree may be mid-rebase and checks would be noisy.
 package main
 
 import (
@@ -42,7 +45,8 @@ const (
 func main() {
 	repoFlag := flag.String("repo", "", "repository root to lint (default: auto-detect from CWD)")
 	fixDrift := flag.Bool("fix-drift", false, "copy api/migrations/*.sql into charts/llmsafespace/migrations/ to resolve drift")
-	fixWorklogs := flag.Bool("fix-worklogs", false, "auto-renumber duplicate worklog files to the next available number")
+	fixWorklogs := flag.Bool("fix-worklogs", false, "auto-renumber duplicate worklog files to the next available number, then run all checks")
+	fixWorklogsOnly := flag.Bool("fix-worklogs-only", false, "auto-renumber duplicate worklog files and exit (no checks). Used by .githooks/post-rewrite.")
 	flag.Parse()
 
 	root, err := resolveRoot(*repoFlag)
@@ -59,19 +63,26 @@ func main() {
 		fmt.Println("ok: synced charts/llmsafespace/migrations/ from api/migrations/")
 	}
 
-	if *fixWorklogs {
-		wlDir := filepath.Join(root, "worklogs")
-		renames, err := repolint.FixWorklogs(wlDir)
+	// -fix-worklogs-only is the hook mode: do the rename pass and exit
+	// without running checks. The post-rewrite hook fires after a rebase
+	// (or --amend), at which point the working tree may not yet reflect
+	// every replayed commit and the sequence checks would produce
+	// confusing output. The pre-commit hook runs the full check separately
+	// on the next commit.
+	if *fixWorklogsOnly {
+		renames, err := runFixWorklogs(root)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "fix-worklogs failed: %v\n", err)
 			os.Exit(exitInternal)
 		}
-		if len(renames) == 0 {
-			fmt.Println("fix-worklogs: no duplicates found, nothing to rename")
-		} else {
-			for _, r := range renames {
-				fmt.Printf("fix-worklogs: renamed %s → %s\n", r.From, r.To)
-			}
+		_ = renames // runFixWorklogs already printed
+		os.Exit(exitOK)
+	}
+
+	if *fixWorklogs {
+		if _, err := runFixWorklogs(root); err != nil {
+			fmt.Fprintf(os.Stderr, "fix-worklogs failed: %v\n", err)
+			os.Exit(exitInternal)
 		}
 	}
 
@@ -88,6 +99,26 @@ func main() {
 	}
 	fmt.Println("repolint: all checks passed")
 	os.Exit(exitOK)
+}
+
+// runFixWorklogs executes the worklog auto-renumber pass against
+// <root>/worklogs and prints one "renamed X → Y" line per rename (or a
+// "no duplicates found" line when clean). Returns the renames so callers
+// can decide whether to re-run checks, stage, etc.
+func runFixWorklogs(root string) ([]repolint.WorklogRename, error) {
+	wlDir := filepath.Join(root, "worklogs")
+	renames, err := repolint.FixWorklogs(wlDir)
+	if err != nil {
+		return nil, err
+	}
+	if len(renames) == 0 {
+		fmt.Println("fix-worklogs: no duplicates found, nothing to rename")
+	} else {
+		for _, r := range renames {
+			fmt.Printf("fix-worklogs: renamed %s → %s\n", r.From, r.To)
+		}
+	}
+	return renames, nil
 }
 
 func resolveRoot(explicit string) (string, error) {

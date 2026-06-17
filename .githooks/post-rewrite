@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# .githooks/post-rewrite
+#
+# Runs after `git rebase` and `git commit --amend`. Detects worklog
+# numbering collisions introduced by the rewrite (the typical case: two
+# branches each claimed the next worklog number N, one merged to mainline,
+# the other rebased on top — both files now sit side-by-side in worklogs/)
+# and auto-renumbers the local-only files to the next free number.
+#
+# Why this hook exists:
+#   The repo's history is littered with "chore: fix worklog number
+#   collision (XXXX → YYYY)" commits — exactly the manual fix this hook
+#   automates. Without it, every rebase onto a mainline that has touched
+#   worklogs/ in the same range requires the human to:
+#     1. notice the pre-commit block,
+#     2. run `make pre-commit-fix`,
+#     3. re-stage,
+#     4. retry the commit.
+#   With this hook, the rename happens before the user even tries to
+#   commit. The pre-commit hook is still a hard gate (catches the rare
+#   un-rebased case), but the common path is now zero-touch.
+#
+# Incumbent selection:
+#   When a number collides, the file that exists on origin/main stays and
+#   the file unique to this branch is renumbered. This is the correct
+#   signal after `git rebase origin/main`: mainline's worklog was merged
+#   first. If origin/main is unavailable (fresh clone, network error),
+#   repolint falls back to lexical tie-breaking — see FixWorklogs in
+#   pkg/repolint/sequence.go.
+#
+# Wired up by `make install-hooks`. Reuses bin/repolint so the algorithm
+# has one source of truth.
+#
+# stdin: lines of "<old-sha> <new-sha>" (ignored — we always re-scan).
+# stdout: one "== post-rewrite: ..." banner per rewrite that changed
+#         something, plus the repolint "renamed X → Y" lines.
+# exit: always 0. A hook failure must never block a rebase — the
+#       pre-commit gate is the safety net.
+
+set -uo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+cd "$REPO_ROOT"
+
+# Skip if there is no worklogs/ tree to fix (e.g. subtree checkout).
+[ -d worklogs/ ] || exit 0
+
+# Ensure bin/repolint exists. The post-rewrite hook may fire on a fresh
+# clone where `make install-hooks` has run but `make repolint` has not.
+# Build silently; if it fails (no Go toolchain, network-restricted env,
+# etc.) skip — the user will hit the manual `make pre-commit-fix` path
+# via the pre-commit gate, which is the documented fallback.
+repolint_build_needed() {
+    [ -x bin/repolint ] || return 0
+    [ pkg/repolint/sequence.go -nt bin/repolint ] && return 0
+    [ cmd/repolint/main.go -nt bin/repolint ] && return 0
+    return 1
+}
+if repolint_build_needed; then
+    if ! make -s repolint >/dev/null 2>&1; then
+        echo "post-rewrite: could not build repolint; skipping worklog renumber" >&2
+        echo "post-rewrite: run 'make pre-commit-fix' on your next commit to fix manually" >&2
+        exit 0
+    fi
+fi
+
+# Capture repolint output. With -fix-worklogs-only it prints:
+#   "fix-worklogs: renamed X → Y"   (one line per rename)
+#   "fix-worklogs: no duplicates found, nothing to rename"  (clean case)
+# Exit code is 0 on success, 2 on internal error.
+out="$(./bin/repolint -fix-worklogs-only 2>&1)" || {
+    echo "post-rewrite: repolint -fix-worklogs-only failed; leaving worklogs as-is" >&2
+    echo "$out" >&2
+    exit 0
+}
+
+# Only act if at least one rename happened. The "no duplicates" line is
+# the common case — silent success.
+if ! echo "$out" | grep -q '^fix-worklogs: renamed '; then
+    exit 0
+fi
+
+echo "== post-rewrite: auto-renumbered worklog(s) after rebase =="
+echo "$out" | grep '^fix-worklogs: renamed '
+
+# Stage the renames so the next `git rebase --continue` (or the user's
+# follow-up commit / amend) picks them up. We touch only worklogs/ —
+# nothing else in the working tree.
+git add worklogs/ 2>/dev/null || true
+echo "== post-rewrite: staged the renames in worklogs/ =="
+echo "== post-rewrite: commit them (or 'git commit --amend' if appropriate) =="

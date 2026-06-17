@@ -230,12 +230,17 @@ chart-sync-migrations:
 
 # install-hooks: wire .githooks/ into git's hook path. Run once per fresh
 # clone. After this, every `git commit` runs `make repolint` and rejects the
-# commit on failure.
+# commit on failure, and every `git rebase` / `git commit --amend` runs
+# the post-rewrite hook which auto-renumbers any worklog that collides
+# with origin/main (the failure mode behind the long string of
+# "chore: fix worklog number collision" commits in this repo's history).
 install-hooks:
 	git config core.hooksPath .githooks
 	chmod +x .githooks/pre-commit
+	chmod +x .githooks/post-rewrite
 	@echo "Installed: git core.hooksPath = .githooks"
-	@echo "Pre-commit hook will now run repolint on every commit."
+	@echo "Pre-commit hook runs repolint on every commit (worklog collisions auto-fix)."
+	@echo "Post-rewrite hook auto-renumbers worklogs after every rebase / --amend."
 
 # ---------------------------------------------------------------------------
 # Quality gates (Epic 19: pre-merge automation)
