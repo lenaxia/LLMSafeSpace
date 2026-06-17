@@ -303,13 +303,21 @@ function CredentialForm({
         }
       }
       if (isEdit) {
-        await orgsApi.updateCredential(orgId, existing!.id, {
+        // Only send baseURL when it changed from the stored value. This avoids
+        // triggering a ciphertext re-encryption on every save (baseURL lives in
+        // the encrypted blob). Sending "" explicitly clears a previously-set URL.
+        const updateReq: Record<string, unknown> = {
           name: name.trim(),
-          ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
-          baseURL: baseURL.trim() || undefined,
           modelAllowlist: allowlist,
           modelContextLimits: limits,
-        });
+        };
+        if (apiKey.trim()) updateReq.apiKey = apiKey.trim();
+        const prevBaseURL = existing?.baseURL ?? "";
+        const nextBaseURL = baseURL.trim();
+        if (nextBaseURL !== prevBaseURL) {
+          updateReq.baseURL = nextBaseURL;
+        }
+        await orgsApi.updateCredential(orgId, existing!.id, updateReq);
         onDone();
         return;
       }

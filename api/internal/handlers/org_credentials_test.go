@@ -827,3 +827,91 @@ func TestOrgCredentials_Update_GetFails_GracefulFallback(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "cred-1", resp.ID, "fallback response must still carry the ID")
 }
+
+// TestOrgCredentials_Update_APIKeyAndBaseURL_Combined verifies that updating
+// both apiKey and baseURL in a single request re-encrypts once with both
+// fields applied (covers the combined-change path the reviewer requested).
+func TestOrgCredentials_Update_APIKeyAndBaseURL_Combined(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 9)
+	}
+	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "old-key", BaseURL: "https://old.example.com/v1"})
+	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
+	require.NoError(t, err)
+	store.creds["cred-1"] = &secrets.OrgCredentialRow{
+		OrgCredentialMetadata: secrets.OrgCredentialMetadata{ID: "cred-1", OrgID: "org-1", Name: "k", Provider: "openai"},
+		Ciphertext:            existingCT,
+		KeyVersion:            1,
+	}
+
+	h := NewOrgCredentialsHandler(store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	body := `{"apiKey":"new-key","baseURL":"https://new.example.com/v1"}`
+	req, _ := http.NewRequest("PUT", "/api/v1/orgs/org-1/credentials/cred-1", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NotNil(t, store.lastUpdateCT, "must re-encrypt once for both fields")
+	require.Equal(t, 2, store.lastUpdateKV, "single key-version increment for the combined update")
+
+	pd, err := secrets.DecryptSecret(kek, store.lastUpdateCT)
+	require.NoError(t, err)
+	var decoded secrets.LLMProviderData
+	require.NoError(t, json.Unmarshal(pd, &decoded))
+	assert.Equal(t, "new-key", decoded.APIKey)
+	assert.Equal(t, "https://new.example.com/v1", decoded.BaseURL)
+}
+
+// TestOrgCredentials_List_PartialDecryptFailure_NonFatal verifies that when
+// one credential's ciphertext is unreadable (corrupt / wrong key), List still
+// returns all rows with that row's baseURL omitted rather than failing the
+// whole response. This is the non-fatal-decrypt contract.
+func TestOrgCredentials_List_PartialDecryptFailure_NonFatal(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 10)
+	}
+	// cred-good: encrypted with the matching KEK → decrypts, baseURL extracted.
+	goodPlain, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "k1", BaseURL: "https://good.example.com/v1"})
+	goodCT, err := secrets.EncryptSecret(kek, goodPlain)
+	require.NoError(t, err)
+	store.creds["cred-good"] = &secrets.OrgCredentialRow{
+		OrgCredentialMetadata: secrets.OrgCredentialMetadata{ID: "cred-good", OrgID: "org-1", Name: "good", Provider: "openai"},
+		Ciphertext:            goodCT,
+		KeyVersion:            1,
+	}
+	// cred-corrupt: ciphertext encrypted with a DIFFERENT key → decrypt fails.
+	otherKEK := make([]byte, 32)
+	corruptCT, err := secrets.EncryptSecret(otherKEK, []byte(`{"provider":"openai","apiKey":"k2","baseURL":"https://corrupt.example.com/v1"}`))
+	require.NoError(t, err)
+	store.creds["cred-corrupt"] = &secrets.OrgCredentialRow{
+		OrgCredentialMetadata: secrets.OrgCredentialMetadata{ID: "cred-corrupt", OrgID: "org-1", Name: "corrupt", Provider: "openai"},
+		Ciphertext:            corruptCT,
+		KeyVersion:            1,
+	}
+
+	h := NewOrgCredentialsHandler(store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	req, _ := http.NewRequest("GET", "/api/v1/orgs/org-1/credentials", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "partial decrypt failure must not fail the whole list")
+	var resp []OrgCredentialResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp, 2)
+	byID := map[string]OrgCredentialResponse{}
+	for _, r := range resp {
+		byID[r.ID] = r
+	}
+	assert.Equal(t, "https://good.example.com/v1", byID["cred-good"].BaseURL, "good credential must have baseURL")
+	assert.Equal(t, "", byID["cred-corrupt"].BaseURL, "corrupt credential must omit baseURL but still appear")
+	assert.Equal(t, "corrupt", byID["cred-corrupt"].Name, "corrupt credential metadata must still be returned")
+}
