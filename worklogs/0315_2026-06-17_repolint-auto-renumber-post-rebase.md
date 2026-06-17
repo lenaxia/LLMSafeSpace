@@ -68,8 +68,8 @@ Now also `chmod +x .githooks/post-rewrite` and prints a line documenting both ho
 
 ```
 go test -timeout 30s -race ./pkg/repolint/...
-ok  github.com/lenaxia/llmsafespace/pkg/repolint  1.171s
-# 22/22 pass (16 pre-existing + 6 new)
+ok  github.com/lenaxia/llmsafespace/pkg/repolint  1.226s
+# 40/40 pass (33 pre-existing + 7 new mainline-aware)
 
 make repolint
 ok    migrations sequence (35 migrations, max version 35)
