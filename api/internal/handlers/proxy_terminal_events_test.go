@@ -270,7 +270,7 @@ func TestProxy_US44_1_EOFZeroBytes_NoErrorEvent(t *testing.T) {
 }
 
 // TestProxy_US44_1_MidStreamNonEOFError_KeepsUpstreamConnectionLost verifies
-// that the pre-existing Epic 25 B2 behaviour (non-EOF errors emit
+// that the pre-existing Epic 25 B2 behavior (non-EOF errors emit
 // "upstream connection lost") is preserved and not retroactively re-typed
 // as agent_died. Non-EOF errors are network failures (TCP RST, timeout),
 // not process death.

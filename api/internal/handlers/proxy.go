@@ -462,8 +462,8 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 			// (TCP RST, timeout). Keep the existing wire format — it is
 			// intentionally distinct from agent_died so clients can
 			// distinguish "network problem" from "process gone". Both
-			// shapes are pinned by canary scenario s-error-format and
-			// by TestProxy_US44_1_ErrorShapesAreDocumented.
+			// shapes are pinned by TestProxy_US44_1_ErrorShapesAreDocumented
+			// and TestProxy_B2_MidStreamReadError_WritesSSEErrorEvent.
 			const sseErrEvent = "event: error\ndata: {\"error\":\"upstream connection lost\"}\n\n"
 			_, _ = c.Writer.Write([]byte(sseErrEvent))
 			if canFlush {
