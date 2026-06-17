@@ -1567,14 +1567,21 @@ func TestProxy_B2_MidStreamReadError_WritesSSEErrorEvent(t *testing.T) {
 	assert.Contains(t, body, "upstream connection lost", "SSE error event must describe the failure")
 }
 
-// TestProxy_B2_CleanStreamEnd_NoSSEError verifies that normal stream completion
-// (EOF) does NOT produce a spurious SSE error event.
+// TestProxy_B2_CleanStreamEnd_NoSSEError verifies that normal stream
+// completion for a non-SSE response (JSON REST) does NOT emit a spurious
+// SSE error event. US-44.1 scope-limits the agent_died heuristic to
+// text/event-stream responses, so JSON/REST passthrough is unaffected.
+//
+// The SSE false-positive case (clean SSE completion DOES emit agent_died
+// per US-44.1 design) is asserted by
+// TestProxy_US44_1_SSECleanClose_AcceptableFalsePositive in
+// proxy_terminal_events_test.go.
 func TestProxy_B2_CleanStreamEnd_NoSSEError(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("data: {\"type\":\"session.done\"}\n\n"))
-		// Clean completion — connection closes normally (EOF on reader side)
+		_, _ = w.Write([]byte(`{"method":"GET","path":"/session"}`))
+		// Backend closes after writing — EOF on reader side after data.
 	}))
 	defer backend.Close()
 
@@ -1609,7 +1616,8 @@ func TestProxy_B2_CleanStreamEnd_NoSSEError(t *testing.T) {
 
 	body := w.Body.String()
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.NotContains(t, body, "event: error", "clean stream completion must not emit SSE error event")
+	assert.NotContains(t, body, "event: error",
+		"non-SSE JSON stream completion must not emit SSE error event")
 }
 
 // --- Epic 25 B5: activity tracker map growth on NotFound ---

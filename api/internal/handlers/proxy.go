@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -428,9 +429,19 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 
 	flusher, canFlush := c.Writer.(http.Flusher)
 	buf := make([]byte, 32*1024)
+	// US-44.1: terminal event on agent death. Scope: SSE responses only
+	// (Content-Type: text/event-stream). On EOF after data on an SSE
+	// stream, the agent process disappeared (OOM/SIGTERM/crash); emit a
+	// terminal `agent_died` event so clients can surface it instead of
+	// seeing a silent close. Non-SSE responses legitimately EOF after
+	// data (normal HTTP), so the heuristic MUST be SSE-scoped or JSON
+	// parsers downstream would be corrupted.
+	isSSEStream := strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream")
+	var bytesReceived int64
 	for {
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
+			bytesReceived += int64(n)
 			_, _ = c.Writer.Write(buf[:n])
 			if canFlush {
 				flusher.Flush()
@@ -438,8 +449,21 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 		}
 		if readErr != nil {
 			if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
+				if isSSEStream && bytesReceived > 0 {
+					const agentDiedEvent = "event: error\ndata: {\"type\":\"agent_died\",\"reason\":\"unknown\"}\n\n"
+					_, _ = c.Writer.Write([]byte(agentDiedEvent))
+					if canFlush {
+						flusher.Flush()
+					}
+				}
 				break
 			}
+			// Epic 25 B2: non-EOF errors are network-level failures
+			// (TCP RST, timeout). Keep the existing wire format — it is
+			// intentionally distinct from agent_died so clients can
+			// distinguish "network problem" from "process gone". Both
+			// shapes are pinned by canary scenario s-error-format and
+			// by TestProxy_US44_1_ErrorShapesAreDocumented.
 			const sseErrEvent = "event: error\ndata: {\"error\":\"upstream connection lost\"}\n\n"
 			_, _ = c.Writer.Write([]byte(sseErrEvent))
 			if canFlush {
