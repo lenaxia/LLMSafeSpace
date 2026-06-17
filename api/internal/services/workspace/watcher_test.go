@@ -167,8 +167,13 @@ func TestWorkspaceWatcher_HandleEvent_Deleted(t *testing.T) {
 		return !ok
 	}, testTimeout, testPollInterval)
 
-	// Verify broker ownership cleaned up
-	assert.Equal(t, "", broker.WorkspaceOwner("ws-del"))
+	// Verify broker ownership cleaned up. The delete handler clears
+	// knownPhases first, then calls CleanupWorkspace after releasing the
+	// mutex (watcher.go:306-316), so the broker cleanup can lag the phase
+	// cleanup — poll for it rather than asserting immediately.
+	assert.Eventually(t, func() bool {
+		return broker.WorkspaceOwner("ws-del") == ""
+	}, testTimeout, testPollInterval)
 }
 
 func TestWorkspaceWatcher_GetAllKnownPhases(t *testing.T) {
