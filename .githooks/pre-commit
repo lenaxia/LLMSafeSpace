@@ -6,6 +6,9 @@
 #
 #   - duplicate / non-sequential migration version numbers (repolint)
 #   - duplicate worklog numbers (>= 0097) (repolint)
+#       • mainline collisions and post-rebase dups are AUTO-FIXED in
+#         this hook (run_repolint_gate) and in .githooks/post-rewrite;
+#         see pkg/repolint/sequence.go FixWorklogs.
 #   - drift between api/migrations/ and charts/llmsafespace/migrations/ (repolint)
 #   - drift between Go CRD struct fields and chart CRD schema (repolint)
 #   - un-gofmt'd Go source                              (fmt-check)
@@ -90,8 +93,72 @@ EOF
     fi
 }
 
+# run_repolint_gate: the repolint gate with a one-shot worklog auto-fix
+# retry. This is the safety net for the "I forgot to rebase before
+# committing" case — .githooks/post-rewrite handles the common
+# post-rebase case proactively, but a commit made on a stale branch with
+# a worklog number that mainline has since claimed would still trip the
+# gate. Auto-fixing it here turns that failure into a silent success.
+#
+# repolint runs ALL layout checks (migrations, worklogs, chart drift,
+# CRD drift). When it fails specifically on worklog numbering — local
+# duplicates or mainline collisions — the fix is mechanical and
+# deterministic: bump the local-only file to the next free number,
+# keeping any file that's on origin/main as the incumbent. So we apply
+# the fix, re-stage worklogs/, and retry the check. If the retry passes,
+# the commit proceeds.
+#
+# Other failures (migrations, CRD drift, chart drift, gitleaks) require
+# human judgement and are NEVER auto-fixed here — they fall through to
+# the standard failure path with the remediation hint.
+run_repolint_gate() {
+    local hint="$1"
+    echo "== pre-commit: repolint =="
+    local out
+    if out=$(make -s repolint 2>&1); then
+        return 0
+    fi
+
+    # Auto-fix only when the failure is worklog numbering. Match the
+    # exact "FAIL  worklogs …" prefixes that cmd/repolint emits.
+    if echo "$out" | grep -qE 'FAIL  worklogs (sequence|collide)' && [ -x bin/repolint ]; then
+        local fix_out
+        fix_out=$(./bin/repolint -fix-worklogs-only 2>&1 || true)
+        if echo "$fix_out" | grep -q '^fix-worklogs: renamed '; then
+            echo "== pre-commit: worklog collision auto-fix ==" >&2
+            echo "$fix_out" | grep '^fix-worklogs: renamed ' >&2
+            git add worklogs/ 2>/dev/null || true
+            echo "== pre-commit: re-staged worklogs/; retrying repolint ==" >&2
+            local retry
+            if retry=$(make -s repolint 2>&1); then
+                echo "== pre-commit: repolint passed after worklog auto-fix ==" >&2
+                return 0
+            fi
+            # Retry failed — surface the NEW failure state (the worklog
+            # issue is resolved but something else may remain).
+            out="$retry"
+        fi
+    fi
+
+    cat >&2 <<EOF
+
+${out}
+
+Pre-commit blocked: repolint failed (see above).
+
+Quick fix (handles most mechanical issues automatically):
+  make pre-commit-fix && git commit ...
+
+Manual fix:
+  ${hint}
+
+To bypass in an emergency: git commit --no-verify
+EOF
+    exit 1
+}
+
 # Cheap, always-on gates first, fail fast.
-run_gate "repolint" "repolint" \
+run_repolint_gate \
     "duplicate migration: rename to next 6-digit number (ls api/migrations/).
   chart migrations drift: run 'make chart-sync-migrations' and stage the result.
   duplicate worklog: pick the next 4-digit number (ls worklogs/).

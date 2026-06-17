@@ -13,7 +13,7 @@ BINARY_UNIX=$(BINARY_NAME)_unix
         helm-lint helm-template helm-template-debug helm-install-dry-run helm-package helm-render \
         helm-chart-test helm-deploy \
         openapi-validate \
-        repolint chart-sync-migrations install-hooks \
+        repolint repolint-build chart-sync-migrations install-hooks \
         relay-bin \
         check tools-install \
         gitleaks govulncheck trivy-fs trivy-config security-scan \
@@ -217,9 +217,17 @@ openapi-validate:
 #     (apiserver silently drops unknown fields; see worklog 0118-0119)
 # See pkg/repolint/sequence_test.go and pkg/repolint/crd_drift_test.go for
 # the regression cases and worklog 0098 for the originating incident.
-repolint:
-	$(GOBUILD) -o bin/repolint ./cmd/repolint
+repolint: repolint-build
 	./bin/repolint
+
+# repolint-build: build the repolint binary WITHOUT running checks. Used by
+# .githooks/post-rewrite, which needs the binary available even when the
+# worklog sequence is currently broken (the exact state the hook fixes).
+# The plain `repolint` target builds THEN runs checks, so it returns
+# non-zero on a worklog collision — making it useless as a build step
+# inside the very hook that resolves the collision.
+repolint-build:
+	$(GOBUILD) -o bin/repolint ./cmd/repolint
 
 # chart-sync-migrations: copy api/migrations/*.sql into charts/llmsafespace/migrations/.
 # Run this every time you add a migration so the Helm-bundled copy stays in
@@ -230,12 +238,17 @@ chart-sync-migrations:
 
 # install-hooks: wire .githooks/ into git's hook path. Run once per fresh
 # clone. After this, every `git commit` runs `make repolint` and rejects the
-# commit on failure.
+# commit on failure, and every `git rebase` / `git commit --amend` runs
+# the post-rewrite hook which auto-renumbers any worklog that collides
+# with origin/main (the failure mode behind the long string of
+# "chore: fix worklog number collision" commits in this repo's history).
 install-hooks:
 	git config core.hooksPath .githooks
 	chmod +x .githooks/pre-commit
+	chmod +x .githooks/post-rewrite
 	@echo "Installed: git core.hooksPath = .githooks"
-	@echo "Pre-commit hook will now run repolint on every commit."
+	@echo "Pre-commit hook runs repolint on every commit (worklog collisions auto-fix)."
+	@echo "Post-rewrite hook auto-renumbers worklogs after every rebase / --amend."
 
 # ---------------------------------------------------------------------------
 # Quality gates (Epic 19: pre-merge automation)
