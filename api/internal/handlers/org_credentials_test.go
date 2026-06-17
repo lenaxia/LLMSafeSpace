@@ -20,19 +20,21 @@ import (
 // fakeOrgCredStore implements orgCredentialStore for testing. It stores
 // ciphertext verbatim and tracks call counts so tests can assert side effects.
 type fakeOrgCredStore struct {
-	creds          map[string]*secrets.OrgCredentialRow
-	nextID         int
-	createErr      error
-	updateErr      error
-	getErr         error
-	bindErr        error
-	createCalls    int
-	updateCalls    int
-	bindCalls      int
-	lastCreateCT   []byte
-	lastUpdateCT   []byte
-	lastUpdateKV   int
-	lastUpdateName *string
+	creds            map[string]*secrets.OrgCredentialRow
+	nextID           int
+	createErr        error
+	updateErr        error
+	getErr           error
+	bindErr          error
+	createCalls      int
+	updateCalls      int
+	bindCalls        int
+	getCalls         int
+	getFailOnAttempt int // when >0, GetOrgCredential fails on this call number (1-indexed)
+	lastCreateCT     []byte
+	lastUpdateCT     []byte
+	lastUpdateKV     int
+	lastUpdateName   *string
 }
 
 func newFakeOrgCredStore() *fakeOrgCredStore {
@@ -58,17 +60,21 @@ func (f *fakeOrgCredStore) CreateOrgCredential(_ context.Context, orgID, name, p
 	return id, nil
 }
 
-func (f *fakeOrgCredStore) ListOrgCredentials(_ context.Context, _ string) ([]*secrets.OrgCredentialMetadata, error) {
-	out := make([]*secrets.OrgCredentialMetadata, 0, len(f.creds))
+func (f *fakeOrgCredStore) ListOrgCredentials(_ context.Context, _ string) ([]*secrets.OrgCredentialRow, error) {
+	out := make([]*secrets.OrgCredentialRow, 0, len(f.creds))
 	for _, c := range f.creds {
-		out = append(out, &c.OrgCredentialMetadata)
+		out = append(out, c)
 	}
 	return out, nil
 }
 
 func (f *fakeOrgCredStore) GetOrgCredential(_ context.Context, _, credID string) (*secrets.OrgCredentialRow, error) {
+	f.getCalls++
 	if f.getErr != nil {
 		return nil, f.getErr
+	}
+	if f.getFailOnAttempt > 0 && f.getCalls == f.getFailOnAttempt {
+		return nil, context.Canceled
 	}
 	c, ok := f.creds[credID]
 	if !ok {
@@ -146,6 +152,7 @@ func setupOrgCredRouter(h *OrgCredentialsHandler) *gin.Engine {
 	g.GET("", h.List)
 	g.PUT("/:credID", h.Update)
 	g.DELETE("/:credID", h.Delete)
+	g.GET("/:credID/models", h.ProbeModels)
 	return r
 }
 
@@ -172,12 +179,12 @@ func TestOrgCredentials_Create_Success(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusCreated, w.Code, "body=%s", w.Body.String())
-	var resp map[string]string
+	var resp OrgCredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "team-anthropic", resp["name"])
-	assert.Equal(t, "anthropic", resp["provider"])
-	assert.Equal(t, "org-1", resp["orgId"])
-	assert.NotEmpty(t, resp["id"])
+	assert.Equal(t, "team-anthropic", resp.Name)
+	assert.Equal(t, "anthropic", resp.Provider)
+	assert.Equal(t, "org-1", resp.OrgID)
+	assert.NotEmpty(t, resp.ID)
 
 	require.Equal(t, 1, store.createCalls, "credential must be stored")
 	require.Equal(t, 1, store.bindCalls, "credential must be bound to org workspaces")
@@ -246,9 +253,9 @@ func TestOrgCredentials_Create_BindFails_Returns201WithWarning(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusCreated, w.Code, "credential must still be created on bind failure")
-	var resp map[string]string
+	var resp OrgCredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.NotEmpty(t, resp["bindWarning"], "bind failure must surface a warning")
+	assert.NotEmpty(t, resp.BindWarning, "bind failure must surface a warning")
 }
 
 // TestOrgCredentials_Update_APIKeyRotation_Success verifies the re-encryption
@@ -350,8 +357,10 @@ func TestOrgCredentials_Update_NotFound_404(t *testing.T) {
 }
 
 // TestOrgCredentials_Update_NameOnly_NoReEncrypt verifies that updating only
-// metadata (name) without an apiKey does NOT invoke the deriver or re-encrypt.
-// This anchors the conditional-re-encryption contract in org_credentials.go:155.
+// metadata (name) without an apiKey does NOT re-encrypt the ciphertext or bump
+// the key version. The handler may still derive the KEK for read-only baseURL
+// display decryption (which never writes ciphertext). This anchors the
+// conditional-re-encryption contract in org_credentials.go.
 func TestOrgCredentials_Update_NameOnly_NoReEncrypt(t *testing.T) {
 	store := newFakeOrgCredStore()
 	kek := make([]byte, 32)
@@ -364,10 +373,7 @@ func TestOrgCredentials_Update_NameOnly_NoReEncrypt(t *testing.T) {
 		KeyVersion:            3,
 	}
 
-	deriver := func(string) []byte {
-		t.Fatal("deriver must not be called when apiKey is absent")
-		return nil
-	}
+	deriver := func(string) []byte { return kek }
 	h := NewOrgCredentialsHandler(store, deriver, &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
@@ -379,7 +385,7 @@ func TestOrgCredentials_Update_NameOnly_NoReEncrypt(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Equal(t, 1, store.updateCalls)
-	require.Nil(t, store.lastUpdateCT, "no re-encryption when apiKey absent")
+	require.Nil(t, store.lastUpdateCT, "no re-encryption (ciphertext write) when apiKey absent")
 	require.Equal(t, "renamed", store.creds["cred-1"].Name)
 	assert.Equal(t, 3, store.creds["cred-1"].KeyVersion, "key version must not change without re-encryption")
 }
@@ -416,4 +422,496 @@ func TestOrgCredentials_Update_CorruptCiphertext_500(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assert.Equal(t, 0, store.updateCalls, "corrupt ciphertext must not be written back")
+}
+
+// --- ProbeModels (B-1) ---
+
+// TestOrgCredentials_ProbeModels_NotFound verifies 404 for an unknown credID.
+func TestOrgCredentials_ProbeModels_NotFound(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	h := NewOrgCredentialsHandler(store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	req, _ := http.NewRequest("GET", "/api/v1/orgs/org-1/credentials/missing/models", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// TestOrgCredentials_ProbeModels_NilKEK_503 verifies that probing when the
+// server KEK is unavailable returns 503 (fail-closed — cannot decrypt).
+func TestOrgCredentials_ProbeModels_NilKEK_503(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 1)
+	}
+	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "sk-x", BaseURL: "http://localhost:19998/v1"})
+	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
+	require.NoError(t, err)
+	store.creds["cred-1"] = &secrets.OrgCredentialRow{
+		OrgCredentialMetadata: secrets.OrgCredentialMetadata{ID: "cred-1", OrgID: "org-1", Provider: "openai"},
+		Ciphertext:            existingCT,
+		KeyVersion:            1,
+	}
+
+	h := NewOrgCredentialsHandler(store, func(string) []byte { return nil }, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	req, _ := http.NewRequest("GET", "/api/v1/orgs/org-1/credentials/cred-1/models", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+// TestOrgCredentials_ProbeModels_NoBaseURL verifies a graceful warning (200)
+// when the credential has no baseURL (native provider).
+func TestOrgCredentials_ProbeModels_NoBaseURL(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 2)
+	}
+	h := NewOrgCredentialsHandler(store, func(label string) []byte {
+		assert.Equal(t, "org-credentials", label)
+		return kek
+	}, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	createBody := `{"name":"native","provider":"anthropic","apiKey":"sk-ant-123"}`
+	req, _ := http.NewRequest("POST", "/api/v1/orgs/org-1/credentials", bytes.NewBufferString(createBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+	var created OrgCredentialResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+
+	req, _ = http.NewRequest("GET", "/api/v1/orgs/org-1/credentials/"+created.ID+"/models", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var probe ProbeModelsResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &probe))
+	assert.NotEmpty(t, probe.Warning, "no-baseURL credential must return a warning")
+	assert.Empty(t, probe.Models)
+}
+
+// TestOrgCredentials_ProbeModels_Success verifies that with a reachable fake
+// provider, the probe returns the model list with saved context limits merged.
+func TestOrgCredentials_ProbeModels_Success(t *testing.T) {
+	fakeProvider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/models", r.URL.Path)
+		assert.Equal(t, "Bearer sk-probe-key", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"glm-5.1"},{"id":"glm-5.2"},{"id":"classifier"}]}`))
+	}))
+	defer fakeProvider.Close()
+
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 4)
+	}
+	h := NewOrgCredentialsHandler(store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	createBody, _ := json.Marshal(map[string]interface{}{
+		"name":               "thekao",
+		"provider":           "thekao cloud",
+		"apiKey":             "sk-probe-key",
+		"baseURL":            fakeProvider.URL + "/v1",
+		"modelAllowlist":     []string{"glm-5.1", "glm-5.2"},
+		"modelContextLimits": map[string]int{"glm-5.1": 200000, "glm-5.2": 1000000},
+	})
+	req, _ := http.NewRequest("POST", "/api/v1/orgs/org-1/credentials", bytes.NewReader(createBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+	var created OrgCredentialResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+
+	req, _ = http.NewRequest("GET", "/api/v1/orgs/org-1/credentials/"+created.ID+"/models", nil)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var probe ProbeModelsResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &probe))
+
+	assert.Empty(t, probe.Warning)
+	require.Len(t, probe.Models, 3)
+	byID := map[string]ProbeModelEntry{}
+	for _, m := range probe.Models {
+		byID[m.ID] = m
+	}
+	assert.Equal(t, 200000, byID["glm-5.1"].ContextLimit)
+	assert.Equal(t, 1000000, byID["glm-5.2"].ContextLimit)
+	assert.Equal(t, 0, byID["classifier"].ContextLimit, "unsaved model has no limit")
+}
+
+// --- List (B-2): camelCase keys + baseURL extraction ---
+
+// TestOrgCredentials_List_CamelCaseAndBaseURL verifies that the List response
+// uses camelCase JSON keys (fixing the latent PascalCase serialization bug) and
+// that baseURL is extracted from each credential's ciphertext via decryption.
+func TestOrgCredentials_List_CamelCaseAndBaseURL(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 5)
+	}
+
+	// Seed two credentials: one with a baseURL, one without.
+	for _, tc := range []struct {
+		id, baseURL string
+		limits      map[string]int
+	}{
+		{"cred-a", "https://api.example.com/v1", map[string]int{"glm-5.1": 200000}},
+		{"cred-b", "", nil},
+	} {
+		pd := secrets.LLMProviderData{Provider: "custom", APIKey: "sk-" + tc.id, BaseURL: tc.baseURL}
+		plain, _ := json.Marshal(pd)
+		ct, err := secrets.EncryptSecret(kek, plain)
+		require.NoError(t, err)
+		store.creds[tc.id] = &secrets.OrgCredentialRow{
+			OrgCredentialMetadata: secrets.OrgCredentialMetadata{
+				ID: tc.id, OrgID: "org-1", Name: tc.id, Provider: "custom",
+				ModelAllowlist: []string{}, ModelContextLimits: tc.limits,
+			},
+			Ciphertext: ct,
+			KeyVersion: 1,
+		}
+	}
+
+	h := NewOrgCredentialsHandler(store, func(label string) []byte {
+		assert.Equal(t, "org-credentials", label)
+		return kek
+	}, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	req, _ := http.NewRequest("GET", "/api/v1/orgs/org-1/credentials", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	// Unmarshal into a generic map to assert the raw JSON keys are camelCase
+	// (not Go struct field names like "ModelAllowlist").
+	var raw []map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
+	require.Len(t, raw, 2)
+
+	// Every entry must expose camelCase keys.
+	keys := map[string]bool{}
+	for _, entry := range raw {
+		for k := range entry {
+			keys[k] = true
+		}
+	}
+	for _, want := range []string{"id", "orgId", "name", "provider", "baseURL", "modelAllowlist", "modelContextLimits", "createdAt", "updatedAt"} {
+		assert.True(t, keys[want], "List JSON must include camelCase key %q (got %v)", want, keys)
+	}
+	for _, forbidden := range []string{"ID", "OrgID", "ModelAllowlist", "ModelContextLimits", "CreatedAt"} {
+		assert.False(t, keys[forbidden], "List JSON must NOT include PascalCase key %q", forbidden)
+	}
+
+	// Typed decode to verify baseURL extraction per credential.
+	var typed []OrgCredentialResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &typed))
+	byID := map[string]OrgCredentialResponse{}
+	for _, c := range typed {
+		byID[c.ID] = c
+	}
+	assert.Equal(t, "https://api.example.com/v1", byID["cred-a"].BaseURL, "baseURL must be decrypted for cred-a")
+	assert.Equal(t, "", byID["cred-b"].BaseURL, "cred-b has no baseURL")
+	assert.Equal(t, 200000, byID["cred-a"].ModelContextLimits["glm-5.1"])
+}
+
+// TestOrgCredentials_List_Empty verifies the empty-list contract returns [] not null.
+func TestOrgCredentials_List_Empty(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	h := NewOrgCredentialsHandler(store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	req, _ := http.NewRequest("GET", "/api/v1/orgs/org-1/credentials", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "[]", w.Body.String(), "empty list must serialize as []")
+}
+
+// --- Create / Update (B-3): full responses ---
+
+// TestOrgCredentials_Create_FullResponse verifies that Create returns the full
+// OrgCredentialResponse (not the old sparse {id,orgId,name,provider}), including
+// modelAllowlist, modelContextLimits, baseURL, and timestamps.
+func TestOrgCredentials_Create_FullResponse(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 6)
+	}
+	h := NewOrgCredentialsHandler(store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	createBody, _ := json.Marshal(map[string]interface{}{
+		"name":               "thekao",
+		"provider":           "thekao cloud",
+		"apiKey":             "sk-x",
+		"baseURL":            "https://api.example.com/v1",
+		"modelAllowlist":     []string{"glm-5.1"},
+		"modelContextLimits": map[string]int{"glm-5.1": 200000},
+	})
+	req, _ := http.NewRequest("POST", "/api/v1/orgs/org-1/credentials", bytes.NewReader(createBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	var resp OrgCredentialResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.NotEmpty(t, resp.ID)
+	assert.Equal(t, "org-1", resp.OrgID)
+	assert.Equal(t, "thekao", resp.Name)
+	assert.Equal(t, "thekao cloud", resp.Provider)
+	assert.Equal(t, "https://api.example.com/v1", resp.BaseURL, "Create response must echo baseURL")
+	assert.Equal(t, []string{"glm-5.1"}, resp.ModelAllowlist)
+	assert.Equal(t, 200000, resp.ModelContextLimits["glm-5.1"])
+	assert.NotEmpty(t, resp.CreatedAt, "Create response must include createdAt")
+	assert.NotEmpty(t, resp.UpdatedAt, "Create response must include updatedAt")
+}
+
+// TestOrgCredentials_Update_FullResponse verifies that Update returns the full
+// OrgCredentialResponse (not the old sparse {id,message}) after a metadata-only
+// update (no re-encryption).
+func TestOrgCredentials_Update_FullResponse(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 7)
+	}
+	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "kept", BaseURL: "https://api.openai.com/v1"})
+	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
+	require.NoError(t, err)
+	store.creds["cred-1"] = &secrets.OrgCredentialRow{
+		OrgCredentialMetadata: secrets.OrgCredentialMetadata{
+			ID: "cred-1", OrgID: "org-1", Name: "old", Provider: "openai",
+			ModelAllowlist: []string{}, ModelContextLimits: map[string]int{},
+		},
+		Ciphertext: existingCT,
+		KeyVersion: 1,
+	}
+
+	h := NewOrgCredentialsHandler(store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	body := `{"name":"renamed","modelAllowlist":["gpt-4o"],"modelContextLimits":{"gpt-4o":128000}}`
+	req, _ := http.NewRequest("PUT", "/api/v1/orgs/org-1/credentials/cred-1", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp OrgCredentialResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "cred-1", resp.ID)
+	assert.Equal(t, "renamed", resp.Name)
+	assert.Equal(t, "openai", resp.Provider)
+	assert.Equal(t, "https://api.openai.com/v1", resp.BaseURL, "Update response must decrypt baseURL")
+	assert.Equal(t, []string{"gpt-4o"}, resp.ModelAllowlist)
+	assert.Equal(t, 128000, resp.ModelContextLimits["gpt-4o"])
+}
+
+// TestOrgCredentials_Update_BaseURLOnly_Persists verifies that updating baseURL
+// WITHOUT an apiKey still re-encrypts and persists the new baseURL. Regression
+// test for the silent-drop bug (old condition was `req.APIKey != nil` only).
+func TestOrgCredentials_Update_BaseURLOnly_Persists(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 8)
+	}
+	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "kept", BaseURL: "https://old.example.com/v1"})
+	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
+	require.NoError(t, err)
+	store.creds["cred-1"] = &secrets.OrgCredentialRow{
+		OrgCredentialMetadata: secrets.OrgCredentialMetadata{ID: "cred-1", OrgID: "org-1", Name: "k", Provider: "openai"},
+		Ciphertext:            existingCT,
+		KeyVersion:            1,
+	}
+
+	h := NewOrgCredentialsHandler(store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	body := `{"baseURL":"https://new.example.com/v1"}`
+	req, _ := http.NewRequest("PUT", "/api/v1/orgs/org-1/credentials/cred-1", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	require.Equal(t, 1, store.updateCalls, "Update must be called")
+	require.NotNil(t, store.lastUpdateCT, "ciphertext must be re-encrypted on baseURL-only update")
+	require.Equal(t, 2, store.lastUpdateKV, "key version must increment")
+
+	// Decrypt and verify the new baseURL persisted while apiKey survived.
+	pd, err := secrets.DecryptSecret(kek, store.lastUpdateCT)
+	require.NoError(t, err)
+	var decoded secrets.LLMProviderData
+	require.NoError(t, json.Unmarshal(pd, &decoded))
+	assert.Equal(t, "https://new.example.com/v1", decoded.BaseURL, "new baseURL must persist")
+	assert.Equal(t, "kept", decoded.APIKey, "apiKey must survive baseURL-only update")
+
+	// Response must reflect the new baseURL.
+	var resp OrgCredentialResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "https://new.example.com/v1", resp.BaseURL)
+}
+
+// TestOrgCredentials_Create_GetFails_GracefulFallback verifies that when the
+// post-create GetOrgCredential fails, Create still returns 201 with a minimal
+// response (the credential was stored).
+func TestOrgCredentials_Create_GetFails_GracefulFallback(t *testing.T) {
+	store := newFakeOrgCredStore()
+	store.getFailOnAttempt = 1 // first GetOrgCredential call (post-create) fails
+	kek := make([]byte, 32)
+	h := NewOrgCredentialsHandler(store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	body := `{"name":"x","provider":"openai","apiKey":"sk-1"}`
+	req, _ := http.NewRequest("POST", "/api/v1/orgs/org-1/credentials", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code, "credential was stored; must still return 201")
+	require.Equal(t, 1, store.createCalls, "credential must be created")
+	var resp OrgCredentialResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.NotEmpty(t, resp.ID, "fallback response must still carry the ID")
+	assert.Equal(t, "org-1", resp.OrgID)
+}
+
+// TestOrgCredentials_Update_GetFails_GracefulFallback verifies that when the
+// post-update GetOrgCredential fails, Update still returns 200 with a minimal
+// response (the metadata update was persisted).
+func TestOrgCredentials_Update_GetFails_GracefulFallback(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "k"})
+	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
+	require.NoError(t, err)
+	store.creds["cred-1"] = &secrets.OrgCredentialRow{
+		OrgCredentialMetadata: secrets.OrgCredentialMetadata{ID: "cred-1", OrgID: "org-1", Name: "old", Provider: "openai"},
+		Ciphertext:            existingCT,
+		KeyVersion:            1,
+	}
+	store.getFailOnAttempt = 2 // 1st Get (existing) succeeds; 2nd Get (post-update) fails
+
+	h := NewOrgCredentialsHandler(store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	body := `{"name":"renamed"}`
+	req, _ := http.NewRequest("PUT", "/api/v1/orgs/org-1/credentials/cred-1", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "update was persisted; must still return 200")
+	require.Equal(t, 1, store.updateCalls, "Update must be called")
+	var resp OrgCredentialResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "cred-1", resp.ID, "fallback response must still carry the ID")
+}
+
+// TestOrgCredentials_Update_APIKeyAndBaseURL_Combined verifies that updating
+// both apiKey and baseURL in a single request re-encrypts once with both
+// fields applied (covers the combined-change path the reviewer requested).
+func TestOrgCredentials_Update_APIKeyAndBaseURL_Combined(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 9)
+	}
+	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "old-key", BaseURL: "https://old.example.com/v1"})
+	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
+	require.NoError(t, err)
+	store.creds["cred-1"] = &secrets.OrgCredentialRow{
+		OrgCredentialMetadata: secrets.OrgCredentialMetadata{ID: "cred-1", OrgID: "org-1", Name: "k", Provider: "openai"},
+		Ciphertext:            existingCT,
+		KeyVersion:            1,
+	}
+
+	h := NewOrgCredentialsHandler(store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	body := `{"apiKey":"new-key","baseURL":"https://new.example.com/v1"}`
+	req, _ := http.NewRequest("PUT", "/api/v1/orgs/org-1/credentials/cred-1", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NotNil(t, store.lastUpdateCT, "must re-encrypt once for both fields")
+	require.Equal(t, 2, store.lastUpdateKV, "single key-version increment for the combined update")
+
+	pd, err := secrets.DecryptSecret(kek, store.lastUpdateCT)
+	require.NoError(t, err)
+	var decoded secrets.LLMProviderData
+	require.NoError(t, json.Unmarshal(pd, &decoded))
+	assert.Equal(t, "new-key", decoded.APIKey)
+	assert.Equal(t, "https://new.example.com/v1", decoded.BaseURL)
+}
+
+// TestOrgCredentials_List_PartialDecryptFailure_NonFatal verifies that when
+// one credential's ciphertext is unreadable (corrupt / wrong key), List still
+// returns all rows with that row's baseURL omitted rather than failing the
+// whole response. This is the non-fatal-decrypt contract.
+func TestOrgCredentials_List_PartialDecryptFailure_NonFatal(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 10)
+	}
+	// cred-good: encrypted with the matching KEK → decrypts, baseURL extracted.
+	goodPlain, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "k1", BaseURL: "https://good.example.com/v1"})
+	goodCT, err := secrets.EncryptSecret(kek, goodPlain)
+	require.NoError(t, err)
+	store.creds["cred-good"] = &secrets.OrgCredentialRow{
+		OrgCredentialMetadata: secrets.OrgCredentialMetadata{ID: "cred-good", OrgID: "org-1", Name: "good", Provider: "openai"},
+		Ciphertext:            goodCT,
+		KeyVersion:            1,
+	}
+	// cred-corrupt: ciphertext encrypted with a DIFFERENT key → decrypt fails.
+	otherKEK := make([]byte, 32)
+	corruptCT, err := secrets.EncryptSecret(otherKEK, []byte(`{"provider":"openai","apiKey":"k2","baseURL":"https://corrupt.example.com/v1"}`))
+	require.NoError(t, err)
+	store.creds["cred-corrupt"] = &secrets.OrgCredentialRow{
+		OrgCredentialMetadata: secrets.OrgCredentialMetadata{ID: "cred-corrupt", OrgID: "org-1", Name: "corrupt", Provider: "openai"},
+		Ciphertext:            corruptCT,
+		KeyVersion:            1,
+	}
+
+	h := NewOrgCredentialsHandler(store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	req, _ := http.NewRequest("GET", "/api/v1/orgs/org-1/credentials", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "partial decrypt failure must not fail the whole list")
+	var resp []OrgCredentialResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp, 2)
+	byID := map[string]OrgCredentialResponse{}
+	for _, r := range resp {
+		byID[r.ID] = r
+	}
+	assert.Equal(t, "https://good.example.com/v1", byID["cred-good"].BaseURL, "good credential must have baseURL")
+	assert.Equal(t, "", byID["cred-corrupt"].BaseURL, "corrupt credential must omit baseURL but still appear")
+	assert.Equal(t, "corrupt", byID["cred-corrupt"].Name, "corrupt credential metadata must still be returned")
 }

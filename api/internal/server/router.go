@@ -1012,6 +1012,7 @@ func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *hand
 		orgAdminGroup.GET("/credentials", credH.List)
 		orgAdminGroup.PUT("/credentials/:credID", credH.Update)
 		orgAdminGroup.DELETE("/credentials/:credID", credH.Delete)
+		orgAdminGroup.GET("/credentials/:credID/models", credH.ProbeModels)
 		orgAdminGroup.POST("/credentials/:credID/auto-apply", credH.CreateAutoApply)
 		orgAdminGroup.GET("/credentials/:credID/auto-apply", credH.ListAutoApply)
 		orgAdminGroup.DELETE("/credentials/:credID/auto-apply", credH.DeleteAutoApply)
