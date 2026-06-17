@@ -139,18 +139,9 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 		return
 	}
 
-	plaintext, marshalErr := json.Marshal(secrets.LLMProviderData{ //nolint:gosec // marshaling for encryption, not API response
-		Provider: req.Provider,
-		APIKey:   req.APIKey,
-		BaseURL:  req.BaseURL,
-	})
-	if marshalErr != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode credential"})
-		return
-	}
-	ciphertext, err := secrets.EncryptSecret(kek, plaintext)
+	ciphertext, err := encryptCredentialData(kek, req.Provider, req.APIKey, req.BaseURL)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "encryption failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 

@@ -242,29 +242,19 @@ func probeCredentialModels(ctx context.Context, plaintext []byte, savedLimits ma
 // Admin variant — uses the platform KEK to decrypt.
 func (h *AdminProviderCredentialsHandler) ProbeModels(c *gin.Context) {
 	id := c.Param("id")
-	row, err := h.store.GetCredential(c.Request.Context(), "admin", "_platform", id)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get credential"})
+	resolveKey := func(_ context.Context) ([]byte, string, int) {
+		if k := h.kek(); k != nil {
+			return k, "", 0
+		}
+		return nil, "master secret not configured", http.StatusServiceUnavailable
+	}
+	plaintext, limits, perr := getCredentialForProbe(c.Request.Context(), c, h.store, "admin", "_platform", id, resolveKey)
+	if perr != nil {
+		c.JSON(perr.status, gin.H{"error": perr.msg})
 		return
 	}
-	if row == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "credential not found"})
-		return
-	}
-
-	kek := h.kek()
-	if kek == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "master secret not configured"})
-		return
-	}
-	plaintext, err := secrets.DecryptSecret(kek, row.Ciphertext)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to decrypt credential"})
-		return
-	}
-
-	result := probeCredentialModels(c.Request.Context(), plaintext, row.ModelContextLimits)
-	c.JSON(http.StatusOK, result)
+	defer zeroBytes(plaintext)
+	c.JSON(http.StatusOK, probeCredentialModels(c.Request.Context(), plaintext, limits))
 }
 
 // ProbeModels handles GET /api/v1/provider-credentials/:id/models.
@@ -276,27 +266,18 @@ func (h *UserProviderCredentialsHandler) ProbeModels(c *gin.Context) {
 		return
 	}
 
-	row, err := h.store.GetCredential(c.Request.Context(), "user", userID, c.Param("id"))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get credential"})
+	resolveKey := func(ctx context.Context) ([]byte, string, int) {
+		dek, err := h.keys.GetDEK(ctx, sessionID)
+		if err != nil {
+			return nil, "", http.StatusServiceUnavailable
+		}
+		return dek, "", 0
+	}
+	plaintext, limits, perr := getCredentialForProbe(c.Request.Context(), c, h.store, "user", userID, c.Param("id"), resolveKey)
+	if perr != nil {
+		c.JSON(perr.status, gin.H{"error": perr.msg})
 		return
 	}
-	if row == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "credential not found"})
-		return
-	}
-
-	dek, err := h.keys.GetDEK(c.Request.Context(), sessionID)
-	if err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "encryption unavailable"})
-		return
-	}
-	plaintext, err := secrets.DecryptSecret(dek, row.Ciphertext)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to decrypt credential"})
-		return
-	}
-
-	result := probeCredentialModels(c.Request.Context(), plaintext, row.ModelContextLimits)
-	c.JSON(http.StatusOK, result)
+	defer zeroBytes(plaintext)
+	c.JSON(http.StatusOK, probeCredentialModels(c.Request.Context(), plaintext, limits))
 }

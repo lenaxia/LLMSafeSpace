@@ -82,21 +82,11 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 		return
 	}
 
-	plaintext, err := json.Marshal(secrets.LLMProviderData{ //nolint:gosec // G117 false positive — APIKey is encrypted before storage
-		Provider: req.Provider,
-		APIKey:   req.APIKey,
-		BaseURL:  req.BaseURL,
-	})
+	ciphertext, err := encryptCredentialData(orgKEK, req.Provider, req.APIKey, req.BaseURL)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode credential"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	ciphertext, err := secrets.EncryptSecret(orgKEK, plaintext)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "encryption failed"})
-		return
-	}
-	zeroBytes(plaintext)
 
 	allowlist := req.ModelAllowlist
 	if allowlist == nil {
@@ -295,28 +285,19 @@ func (h *OrgCredentialsHandler) ProbeModels(c *gin.Context) {
 	credID := c.Param("credID")
 	ctx := c.Request.Context()
 
-	row, err := h.credStore.GetCredential(ctx, "org", orgID, credID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get credential"})
+	resolveKey := func(_ context.Context) ([]byte, string, int) {
+		if k := h.orgKEK(); k != nil {
+			return k, "", 0
+		}
+		return nil, "server key not configured", http.StatusServiceUnavailable
+	}
+	plaintext, limits, perr := getCredentialForProbe(ctx, c, h.credStore, "org", orgID, credID, resolveKey)
+	if perr != nil {
+		c.JSON(perr.status, gin.H{"error": perr.msg})
 		return
 	}
-	if row == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "credential not found"})
-		return
-	}
-
-	kek := h.orgKEK()
-	if kek == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "server key not configured"})
-		return
-	}
-	plaintext, err := secrets.DecryptSecret(kek, row.Ciphertext)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to decrypt credential"})
-		return
-	}
-
-	c.JSON(http.StatusOK, probeCredentialModels(ctx, plaintext, row.ModelContextLimits))
+	defer zeroBytes(plaintext)
+	c.JSON(http.StatusOK, probeCredentialModels(ctx, plaintext, limits))
 }
 
 // CreateAutoApply handles POST /api/v1/orgs/:id/credentials/:credID/auto-apply.
