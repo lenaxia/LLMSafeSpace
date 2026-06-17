@@ -4,6 +4,17 @@
 **Status:** Investigation Complete - Ready for Epic Planning  
 **Goal:** Prevent silent session failures and improve platform transparency
 
+> **⚠️ Outdated File Path References**
+>
+> This document was written during the initial investigation, before we confirmed that **opencode is a third-party binary that cannot be modified** in this repo. It contains references to file paths that do NOT exist in this codebase:
+>
+> - `cmd/opencode/main.go` — does not exist
+> - `packages/opencode/src/*.ts` — does not exist
+>
+> Subsequent design iteration moved all opencode-specific work into agentd (`cmd/workspace-agentd/`) which **can** be modified. The current canonical Epic 44 README has the corrected file paths. This file is preserved for the empirical incident evidence (root causes, kubectl observations, cgroup paths) — treat the "Implementation" sections as historical thinking, not as files-to-modify lists.
+>
+> Cgroup paths in this document also reference cgroup v1 (`memory.limit_in_bytes`) — the actual codebase uses cgroup v2 (`memory.max`). See `cmd/workspace-agentd/main.go:577-594` for the production paths.
+
 ---
 
 ## Executive Summary
@@ -17,7 +28,7 @@ Both incidents share common failure: **no terminal event notification** when age
 
 ### Key Findings
 
-- ✅ **api-key secret type is LEGACY** (superseded by llm-provider) but still actively used
+- ✅ **api-key secret type is LEGACY** (superseded by llm-provider). Code paths still handle the type (~250 references), but **no current users have api-key secrets defined** — confirmed by user (2026-06-16). Distinguish "code support exists" from "actively used by customers": the former is true, the latter is not, which justifies aggressive deprecation.
 - ⚠️ **api-key restart bug**: Type writes to env file but `shouldRestart()` only checks `env-secret`
 - ✅ **maxActiveSessions already exists** (default 5, range 1-20) - DO NOT reimplement
 - ⚠️ **Memory limit is configurable** via Workspace CRD but defaults are aggressive (512Mi base × 4 burst = 2 GiB)
@@ -112,7 +123,7 @@ func shouldRestart(batch []secrets.Secret) bool {
 **BUG:** Function only checks `env-secret`, missing `api-key` which also writes to env file (line 367, calls `applyAPIKey()` → writes `API_KEY_<NAME>` to `SecretsEnvPath`).
 
 **api-key Status:**
-- ✅ Still actively used (250+ references in codebase)
+- ⚠️ ~250 code references still handle the type, but **no customers have api-key secrets defined** — confirmed by user (2026-06-16)
 - ✅ Marked "legacy" in UI (frontend/src/components/settings/SecretsTab.tsx:14-18)
 - ✅ Cannot create new ones from UI (dropdown hidden)
 - ✅ Existing secrets still functional
@@ -527,7 +538,7 @@ Per user requirements:
 ## Appendix: api-key Secret Type Status
 
 **Current State:**
-- ✅ Functional and actively used (250+ code references)
+- ⚠️ Functional in code (~250 references handle the type) but **no customers have api-key secrets defined**
 - ✅ Marked "legacy" in UI (cannot create new ones)
 - ✅ Superseded by `llm-provider` for LLM credentials
 - ✅ Still useful for non-LLM API keys (generic `API_KEY_<NAME>` env vars)

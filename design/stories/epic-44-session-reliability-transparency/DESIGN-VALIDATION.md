@@ -364,9 +364,9 @@ The Epic touches 3 major subsystems with unclear boundaries:
 | Emit OOM SSE event | opencode | After reading marker |
 | Detect abnormal SSE close | Proxy | EOF handling in stream loop |
 | Emit terminal error event | Proxy | Synthetic SSE event |
-| Monitor process memory | opencode | Node.js `process.memoryUsage()` |
-| Read cgroup limit | opencode | `/sys/fs/cgroup/memory/memory.limit_in_bytes` |
-| Emit memory warning | opencode | SSE event when >threshold |
+| Monitor pod memory | agentd (opencode is third-party) | Read cgroup v2 `/sys/fs/cgroup/memory.current` |
+| Read cgroup limit | agentd | `/sys/fs/cgroup/memory.max` (cgroup v2 — codebase uses v2 exclusively, see `cmd/workspace-agentd/main.go:585`) |
+| Emit memory warning | agentd | SSE event when >threshold (85% per user requirement) |
 
 ### Changes Required
 
@@ -388,13 +388,13 @@ Add new section to README after "Architecture" (line 109):
 - Emits synthetic error events to client on abnormal closure
 - Has NO access to session state (lives in agentd)
 
-### opencode (opencode process)
+### opencode (opencode process — third-party, NOT modifiable)
 - Executes session logic
-- Monitors own memory usage via `process.memoryUsage()`
-- Reads cgroup memory limit from `/sys/fs/cgroup/memory/memory.limit_in_bytes`
-- Emits memory pressure warnings via SSE
-- Reads restart reason markers on startup
-- Emits OOM/crash events if markers present
+- Cannot be instrumented directly; all monitoring is in agentd
+- agentd reads pod cgroup v2 paths: `/sys/fs/cgroup/memory.current` and `/sys/fs/cgroup/memory.max` (`cmd/workspace-agentd/main.go:577-594`)
+- agentd emits memory pressure warnings via SSE
+- agentd reads restart reason markers on startup
+- agentd emits OOM/crash events if markers present
 
 **Key Insight:** agentd and opencode are in same pod; proxy is separate deployment.
 No direct communication between agentd and proxy (stateless HTTP only).

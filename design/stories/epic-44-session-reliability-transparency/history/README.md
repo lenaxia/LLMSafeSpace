@@ -19,6 +19,7 @@ For a chronological narrative, see worklog `0310_2026-06-16_epic-44-design.md`.
 | `VALIDATION-COMPLETE-root.md` | Session 2 | Same content (was duplicated at repo root) |
 | `EPIC-44-ACTION-REQUIRED.md` | Session 2 | Status report at validation completion |
 | `DESIGN-FINAL.md` | Session 4 | Consolidated final design summary |
+| `EPIC-45-RELATIONSHIP.md` | Session 4 | Analysis of how Epic 44 and Epic 45 relate (different symptoms, same root cause) |
 
 ## Files in Parent Directory
 

@@ -167,13 +167,13 @@ On restart, opencode reads marker and logs event
 - **Has NO access to session state** (lives in agentd)
 - **Cannot reliably determine if session was busy** at time of death (timing issue)
 
-### opencode (opencode process)
+### opencode (opencode process — third-party, NOT modifiable in this repo)
 - Executes session logic
-- Monitors own memory usage via Node.js `process.memoryUsage()`
-- Reads cgroup memory limit from `/sys/fs/cgroup/memory/memory.limit_in_bytes`
-- Emits memory pressure warnings via SSE when >threshold
-- Reads restart reason markers on startup
-- Emits OOM/crash events if markers present
+- We cannot modify opencode itself; the actual memory monitoring happens in **agentd** (`cmd/workspace-agentd/main.go:577-594`)
+- agentd reads cgroup v2 paths: `/sys/fs/cgroup/memory.current` (current usage) and `/sys/fs/cgroup/memory.max` (limit)
+- agentd emits memory pressure warnings via SSE when usage >threshold
+- agentd reads restart reason markers on startup
+- agentd emits OOM/crash events if markers present
 
 **Key Architecture Note:** agentd and opencode run in same pod; proxy runs in separate deployment. No direct communication between agentd and proxy (stateless HTTP only). Session state tracking happens in agentd via SSE subscription, NOT accessible to proxy.
 
@@ -240,7 +240,8 @@ On restart, opencode reads marker and logs event
 #### US-44.4: OOM Detection & User Notification
 **Problem:** Pod OOMKill leaves session "busy" with no indication  
 **Solution:** Detect exit 137, write marker file, surface in UI, emit metrics  
-**Files:** `cmd/workspace-agentd/main.go` (managedProcess supervisor), `cmd/opencode/main.go`, `api/internal/handlers/history.go`  
+**Files:** `cmd/workspace-agentd/main.go` (managedProcess supervisor), `api/internal/handlers/history.go`  
+*(opencode is third-party and cannot be modified — all detection is in agentd)*
 **Acceptance:**
 - [ ] agentd `managedProcess.supervise()` detects opencode exit code 137 (SIGKILL from OOM) via `cmd.Wait()`
 - [ ] agentd writes `/home/workspace/.opencode-oom-marker` with timestamp + memory limit
@@ -259,13 +260,14 @@ On restart, opencode reads marker and logs event
 
 #### US-44.5: Memory Pressure Warnings
 **Problem:** No early warning before OOM kill  
-**Solution:** opencode monitors memory usage, emits warning at 85% of limit  
-**Files:** `packages/opencode/src/metrics/memory-monitor.ts` (new), `packages/opencode/src/server.ts`  
+**Solution:** agentd monitors pod memory usage (cgroup v2), emits warning at 85% of limit  
+**Files:** `cmd/workspace-agentd/main.go` (extend existing memory reading at lines 577-594)  
+*(opencode is third-party and cannot be modified — agentd handles all monitoring; the file paths under `packages/opencode/src/` referenced in earlier drafts are NOT in this repo)*  
 **Acceptance:**
-- [ ] opencode checks `process.memoryUsage()` every 60s
-- [ ] When >85% of cgroup limit: emit warning SSE event (changed from 75% per user requirement)
+- [ ] agentd checks `/sys/fs/cgroup/memory.current` against `/sys/fs/cgroup/memory.max` every 60s
+- [ ] When >85% of cgroup limit: emit warning via existing SSE channel (changed from 75% per user requirement)
 - [ ] User sees: "⚠️ Memory usage high (1.7 GiB / 2 GiB). Consider reducing concurrent sessions or increasing workspace memory limit."
-- [ ] Read cgroup limit from `/sys/fs/cgroup/memory.max` (cgroup v2)
+- [ ] Use cgroup v2 paths exclusively (this codebase uses cgroup v2; never references v1 `memory.limit_in_bytes`)
 - [ ] Config: `MEMORY_WARNING_THRESHOLD=0.85`, `MEMORY_CHECK_INTERVAL_MS=60000`
 
 **Note:** Cannot modify opencode (constraint), but documenting expected behavior for future implementation.
@@ -274,11 +276,13 @@ On restart, opencode reads marker and logs event
 
 #### US-44.6: Per-Session Memory Attribution
 **Problem:** No visibility into which sessions are memory-heavy  
-**Solution:** Track estimated memory per session based on context tokens  
-**Files:** `packages/opencode/src/session-manager.ts`, `api/internal/handlers/history.go`  
+**Solution:** Estimate memory per session based on context tokens, computed in agentd from data observable via opencode's `/session` API  
+**Files:** `cmd/workspace-agentd/main.go` (extend statusz with per-session memory estimate), `api/internal/handlers/history.go`  
+*(opencode is third-party and cannot be modified — `packages/opencode/src/session-manager.ts` referenced in earlier drafts is NOT in this repo. agentd computes the estimate from contextTokens already available via the `/session` endpoint)*  
 **Acceptance:**
-- [ ] `estimatedMemoryMB` tracked per session: `(contextTokens × 2 bytes) + (historyTurns × 10KB overhead)`
-- [ ] Included in `GET /sessions/:id` response
+- [ ] `estimatedMemoryMB` computed per session in agentd: `(contextTokens × 2 bytes) + (historyTurns × 10KB overhead)`
+- [ ] Included in agentd `/v1/statusz` response (extends existing SessionInfo)
+- [ ] API `GET /sessions/:id` exposes the estimate
 - [ ] Terminal UI shows memory usage in session list
 - [ ] Helps users identify memory-heavy sessions
 
@@ -286,8 +290,9 @@ On restart, opencode reads marker and logs event
 
 #### US-44.7: Restart Reason Logging
 **Problem:** No record of WHY opencode restarted  
-**Solution:** agentd writes restart reason to marker file, opencode logs on startup  
-**Files:** `cmd/workspace-agentd/process.go`, `cmd/opencode/main.go`  
+**Solution:** agentd writes restart reason to marker file, then logs the reason itself when reading the marker on next start (opencode is not modifiable; the reason is observable via agentd logs and the marker file's persistence on the PVC)  
+**Files:** `cmd/workspace-agentd/process.go`, `cmd/workspace-agentd/main.go`  
+*(opencode is third-party and cannot be modified — all reason recording is in agentd)*  
 **Acceptance:**
 - [ ] agentd writes `/home/workspace/.opencode-restart-reason` before restart
 - [ ] Format: `{"reason": "env_secrets_changed", "timestamp": "2026-06-16T16:04:14Z", "secretNames": ["GH_TOKEN"]}`
@@ -381,12 +386,6 @@ On restart, opencode reads marker and logs event
 **Use Case:** Recovery from incidents like Incident A & B where workspaces were deleted but sessions persist in stuck state (see STUCK-SESSIONS-RECOVERY.md).
 
 **Estimate:** 3 days
-
----
-
-### P2: Operational Metrics (Backend Only) - DEPRECATED SECTION
-
-**Note:** US-44.8 was moved to P0 above. This section is now empty and can be removed.
 
 ---
 
