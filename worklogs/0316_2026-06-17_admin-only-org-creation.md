@@ -191,7 +191,12 @@ None.
 - **tsc TS2532 (possibly-undefined array index):** `mockCreate.mock.calls[0][0]` failed strict tsc even though vitest (esbuild) accepted it. Fixed with a non-null assertion after an explicit length check.
 
 ### Worklog numbering
-The task prompt stated the next free worklog was 0311, but `origin/main` had advanced — a placeholder reserved 0311 and 0312 was also taken. `bin/repolint` reported the next free number as **0313**. This worklog was therefore renumbered 0311 → **0313** (no force-push; main's history untouched per Rule 10).
+The task prompt stated the next free worklog was 0311, but `origin/main` kept advancing during this session. The renumber history:
+- 0311 (initial pick) — `origin/main` had a `0311_…_placeholder.md`; renumbered to **0313**.
+- 0313 (first push) — by the time CI ran, main had merged `0313_…_epic-44-design.md`, `0314_…_epic-45-design.md`, and `0315_…_repolint-auto-renumber-post-rebase.md`. CI Lint failed on the 0313 collision.
+- Merged `origin/main` (which also landed PR #200 — repolint auto-renumber-on-rebase) and renumbered to **0316** (`bin/repolint` confirmed next free).
+
+All renames used `git mv` (no force-push; main's history untouched per Rule 10 — used a merge + normal push rather than rebase + force-push).
 
 ### Branch
 `feat/epic43-0031-story2-admin-org-creation` (from `main`)
