@@ -69,7 +69,6 @@ func TestInMemoryStore_CheckAndAddActiveSession_AtLimit_AllowsExistingSession(t 
 func TestInMemoryStore_CheckAndAddActiveSession_Concurrent_AtLimitNoOversubscribe(t *testing.T) {
 	s := NewInMemoryStore()
 	const maxSessions = 5
-	const goroutines = 50
 	const distinctSessions = 50
 
 	var wg sync.WaitGroup
