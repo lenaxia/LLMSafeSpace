@@ -213,7 +213,8 @@ The task prompt stated the next free worklog was 0311, but `origin/main` kept ad
 - 0311 (initial pick) — `origin/main` had a `0311_…_placeholder.md`; renumbered to **0313**.
 - 0313 (first push) — by CI time, main had merged `0313_…_epic-44-design.md`, `0314_…_epic-45-design.md`, `0315_…_repolint-auto-renumber-post-rebase.md`. CI Lint failed on 0313 collision. Merged main + renumbered to **0316**.
 - 0316 (second push) — main merged `0316_…_us-44.1-terminal-sse-events.md` during the CI window. CI Lint failed on 0316 collision. Merged main + renumbered to **0317**.
-- **0317** (this revision) — `bin/repolint` confirms next free.
+- 0317 (third push) — main merged `0317_…_us-45.1-wsstate-abstraction.md` during the CI window. CI Lint failed on 0317 collision. Merged main + renumbered to **0318**.
+- **0318** (this revision) — `bin/repolint` confirms next free.
 
 This is the recurring parallel-merge worklog-collision race documented in PR #200 (repolint auto-renumber-on-rebase). All renames used `git mv` + normal push (no force-push; main's history untouched per Rule 10).
 
