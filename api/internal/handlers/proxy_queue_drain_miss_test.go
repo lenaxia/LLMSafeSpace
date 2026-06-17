@@ -311,7 +311,7 @@ func TestDrainMiss_SSEIdleTimeoutCausesReconnect(t *testing.T) {
 // SSE connection was down).
 //
 // The fix: on each connectAndRead attempt, the tracker calls the onReconnect
-// callback (wired to reconcileStrandedQueues), which calls GET /v1/statusz,
+// callback (wired to reconcileSessionState), which calls GET /v1/statusz,
 // finds idle sessions with non-empty queues, and calls onSessionIdle for each.
 func TestDrainMiss_QueueNotDrainedAfterReconnectWithNoNewIdleEvent(t *testing.T) {
 	var sseConnectionCount atomic.Int32
@@ -423,7 +423,7 @@ func TestDrainMiss_QueueNotDrainedAfterReconnectWithNoNewIdleEvent(t *testing.T)
 	tracker.SetOnSessionActive(func(workspaceID, sessionID string) {
 		handler.onSessionActive(workspaceID, sessionID)
 	})
-	tracker.SetOnReconnect(handler.reconcileStrandedQueues)
+	tracker.SetOnReconnect(handler.reconcileSessionState)
 	handler.sseTracker = tracker
 
 	// The message was queued while ses-1 was busy. It is now stranded.
@@ -479,7 +479,7 @@ func (rt *routingTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	return http.DefaultTransport.RoundTrip(r)
 }
 
-// --- reconcileStrandedQueues unhappy-path tests ---
+// --- reconcileSessionState unhappy-path tests ---
 
 func setupReconcileHandler(t *testing.T, statuszHandler http.HandlerFunc) (*ProxyHandler, *msgqueue.Service, *httptest.Server, func()) {
 	t.Helper()
@@ -526,7 +526,7 @@ func TestReconcileStrandedQueues_Non200Statusz(t *testing.T) {
 	defer handler.broker.Unsubscribe("ws-1", sub)
 
 	assert.NotPanics(t, func() {
-		handler.reconcileStrandedQueues("ws-1", "127.0.0.1", "test-pw")
+		handler.reconcileSessionState("ws-1", "127.0.0.1", "test-pw")
 	})
 
 	n, err := svc.Len(context.Background(), "ws-1", "ses-1")
@@ -554,7 +554,7 @@ func TestReconcileStrandedQueues_MalformedJSON(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.NotPanics(t, func() {
-		handler.reconcileStrandedQueues("ws-1", "127.0.0.1", "test-pw")
+		handler.reconcileSessionState("ws-1", "127.0.0.1", "test-pw")
 	})
 
 	n, err := svc.Len(context.Background(), "ws-1", "ses-1")
@@ -586,7 +586,7 @@ func TestReconcileStrandedQueues_NoIdleSessions(t *testing.T) {
 	_, err := svc.Enqueue(context.Background(), "ws-1", "ses-1", "queued msg")
 	require.NoError(t, err)
 
-	handler.reconcileStrandedQueues("ws-1", "127.0.0.1", "test-pw")
+	handler.reconcileSessionState("ws-1", "127.0.0.1", "test-pw")
 
 	select {
 	case <-promptCalled:
@@ -621,7 +621,7 @@ func TestReconcileStrandedQueues_IdleButEmptyQueue(t *testing.T) {
 	defer cleanup()
 
 	// Queue is empty — nothing to drain.
-	handler.reconcileStrandedQueues("ws-1", "127.0.0.1", "test-pw")
+	handler.reconcileSessionState("ws-1", "127.0.0.1", "test-pw")
 
 	select {
 	case <-promptCalled:
@@ -652,7 +652,7 @@ func TestReconcileStrandedQueues_StatuszUnavailable(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.NotPanics(t, func() {
-		handler.reconcileStrandedQueues("ws-1", "127.0.0.1", "test-pw")
+		handler.reconcileSessionState("ws-1", "127.0.0.1", "test-pw")
 	})
 
 	n, err := svc.Len(context.Background(), "ws-1", "ses-1")
@@ -660,8 +660,136 @@ func TestReconcileStrandedQueues_StatuszUnavailable(t *testing.T) {
 	assert.Equal(t, int64(1), n, "queue should be untouched when statusz is unreachable")
 }
 
+// TestReconcileSessionState_ClearsStaleActiveSess verifies the fix for the
+// 2026-06-16 stuck-session incident. When a session is idle in opencode (per
+// statusz) but still marked active in the local activeSess map, reconcileSessionState
+// must clean it up. Without this fix, POST to a stuck session returns 409
+// Conflict indefinitely (see incident: ses_13076538bffeYtLrhoZ2ccRM1E /
+// ses_130c14344ffeVF52UQ6QGPmB0P).
+//
+// Failure mode reproduced:
+//  1. opencode emits session.status=busy → onSessionActive → activeSess[ws][ses]=true
+//  2. opencode is OOMKilled or SIGTERMed mid-stream
+//  3. session.status=idle event is never emitted (process died first)
+//  4. activeSess retains stale entry forever
+//  5. POST /sessions/:id/prompt returns 409 "session is busy; retry after idle"
+//
+// Fix: on SSE reconnect, query statusz; for any session that is idle there
+// but active locally, remove from activeSess and publish session.status=idle.
+func TestReconcileSessionState_ClearsStaleActiveSess(t *testing.T) {
+	handler, _, _, cleanup := setupReconcileHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/statusz", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		body, _ := json.Marshal(map[string]interface{}{
+			"sessions": []map[string]interface{}{
+				{"id": "stuck-session", "status": "idle"},
+				{"id": "active-session", "status": "busy"},
+			},
+		})
+		_, _ = w.Write(body)
+	})
+	defer cleanup()
+
+	// Simulate the stuck state: both sessions marked active locally, but
+	// "stuck-session" is actually idle in opencode (the bug condition).
+	handler.activeMu.Lock()
+	handler.activeSess["ws-1"] = map[string]bool{
+		"stuck-session":  true,
+		"active-session": true,
+	}
+	handler.activeMu.Unlock()
+
+	require.True(t, handler.isSessionActive("ws-1", "stuck-session"),
+		"precondition: stuck-session should be marked active before reconcile")
+	require.True(t, handler.isSessionActive("ws-1", "active-session"),
+		"precondition: active-session should be marked active before reconcile")
+
+	handler.reconcileSessionState("ws-1", "127.0.0.1", "test-pw")
+
+	assert.False(t, handler.isSessionActive("ws-1", "stuck-session"),
+		"stuck-session should be cleared from activeSess (idle in opencode)")
+	assert.True(t, handler.isSessionActive("ws-1", "active-session"),
+		"active-session should remain (still busy in opencode)")
+}
+
+// TestReconcileSessionState_NoStalenessNoOp verifies that when there are no
+// stale entries in activeSess (all sessions match between local map and
+// statusz), reconcileSessionState makes no changes. Guards against accidental
+// removal of legitimately-active sessions.
+func TestReconcileSessionState_NoStalenessNoOp(t *testing.T) {
+	handler, _, _, cleanup := setupReconcileHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		body, _ := json.Marshal(map[string]interface{}{
+			"sessions": []map[string]interface{}{
+				{"id": "ses-busy", "status": "busy"},
+			},
+		})
+		_, _ = w.Write(body)
+	})
+	defer cleanup()
+
+	handler.activeMu.Lock()
+	handler.activeSess["ws-1"] = map[string]bool{"ses-busy": true}
+	handler.activeMu.Unlock()
+
+	handler.reconcileSessionState("ws-1", "127.0.0.1", "test-pw")
+
+	assert.True(t, handler.isSessionActive("ws-1", "ses-busy"),
+		"busy session should remain active after reconcile")
+}
+
+// TestReconcileSessionState_PublishesIdleEventOnStaleClear verifies that when
+// a stale activeSess entry is cleared, the function publishes session.status=idle
+// to the workspace event broker. This is what causes connected browsers to
+// update their UI from "busy" to "idle" without needing a page reload.
+//
+// Without this event, users would have to reload the page to see that the
+// session is no longer busy — even after the activeSess entry is cleared,
+// the frontend's local state would still show the busy indicator.
+func TestReconcileSessionState_PublishesIdleEventOnStaleClear(t *testing.T) {
+	handler, _, _, cleanup := setupReconcileHandler(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		body, _ := json.Marshal(map[string]interface{}{
+			"sessions": []map[string]interface{}{
+				{"id": "stuck-session", "status": "idle"},
+			},
+		})
+		_, _ = w.Write(body)
+	})
+	defer cleanup()
+
+	// Set up the stuck state.
+	handler.activeMu.Lock()
+	handler.activeSess["ws-1"] = map[string]bool{"stuck-session": true}
+	handler.activeMu.Unlock()
+
+	// Subscribe BEFORE triggering reconcile so we don't miss the event.
+	sub := handler.broker.Subscribe("ws-1")
+	defer handler.broker.Unsubscribe("ws-1", sub)
+
+	handler.reconcileSessionState("ws-1", "127.0.0.1", "test-pw")
+
+	// The function publishes the event synchronously via publishWorkspaceEvent.
+	// Use Eventually to handle any internal async fan-out without depending on
+	// internal broker timing.
+	require.Eventually(t, func() bool {
+		select {
+		case evt := <-sub.Ch:
+			return evt.Type == "session.status" &&
+				evt.SessionID == "stuck-session" &&
+				evt.Status == "idle"
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond,
+		"expected session.status=idle event to be published when stale activeSess is cleared")
+}
+
 // TestReconcileStrandedQueues_MultipleIdleSessions verifies that when multiple
-// sessions are idle and each has queued messages, reconcileStrandedQueues
+// sessions are idle and each has queued messages, reconcileSessionState
 // drains ALL of them — not just the first one found.
 func TestReconcileStrandedQueues_MultipleIdleSessions(t *testing.T) {
 	var promptMu sync.Mutex
@@ -703,7 +831,7 @@ func TestReconcileStrandedQueues_MultipleIdleSessions(t *testing.T) {
 	_, err = svc.Enqueue(ctx, "ws-1", "ses-2", "message for session 2")
 	require.NoError(t, err)
 
-	handler.reconcileStrandedQueues("ws-1", "127.0.0.1", "test-pw")
+	handler.reconcileSessionState("ws-1", "127.0.0.1", "test-pw")
 
 	require.Eventually(t, func() bool {
 		promptMu.Lock()
