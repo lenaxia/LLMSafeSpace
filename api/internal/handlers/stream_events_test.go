@@ -24,6 +24,7 @@ import (
 
 	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
+	"github.com/lenaxia/llmsafespace/api/internal/services/wsstate"
 	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
 	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
@@ -589,9 +590,7 @@ func TestStreamEvents_OnSessionActive_PublishesToBroker(t *testing.T) {
 	broker := eventbroker.NewWorkspaceEventBroker()
 	handler.broker = broker
 
-	handler.wsConfigMu.Lock()
-	handler.wsConfig["ws-1"] = workspaceConfig{maxActiveSessions: 5}
-	handler.wsConfigMu.Unlock()
+	handler.SetWorkspaceConfigForTest("ws-1", wsstate.Config{MaxActiveSessions: 5})
 
 	sub := broker.Subscribe("ws-1")
 	defer broker.Unsubscribe("ws-1", sub)
