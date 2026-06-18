@@ -54,7 +54,12 @@ func (b *UserEventBroker) SubscribeUser(userID string) (*Subscriber, error) {
 		return nil, ErrTooManySubscribers
 	}
 
-	s := &Subscriber{Ch: make(chan apitypes.WorkspaceSSEEvent, userChannelBuffer)}
+	s := &Subscriber{
+		Ch: make(chan apitypes.WorkspaceSSEEvent, userChannelBuffer),
+		onDrop: func(eventType string) {
+			brokerDroppedEvents.WithLabelValues("user", eventType).Inc()
+		},
+	}
 	sh.userSubs[userID] = append(sh.userSubs[userID], s)
 	return s, nil
 }
@@ -86,7 +91,12 @@ func (b *UserEventBroker) SubscribeWorkspace(workspaceID string) (*Subscriber, e
 		return nil, ErrTooManySubscribers
 	}
 
-	s := &Subscriber{Ch: make(chan apitypes.WorkspaceSSEEvent, userChannelBuffer)}
+	s := &Subscriber{
+		Ch: make(chan apitypes.WorkspaceSSEEvent, userChannelBuffer),
+		onDrop: func(eventType string) {
+			brokerDroppedEvents.WithLabelValues("workspace", eventType).Inc()
+		},
+	}
 	sh.wsSubs[workspaceID] = append(sh.wsSubs[workspaceID], s)
 	return s, nil
 }
@@ -107,6 +117,13 @@ func (b *UserEventBroker) UnsubscribeWorkspace(workspaceID string, s *Subscriber
 	if len(sh.wsSubs[workspaceID]) == 0 {
 		delete(sh.wsSubs, workspaceID)
 	}
+}
+
+func (b *UserEventBroker) WorkspaceSubscriberCount(workspaceID string) int {
+	sh := b.wsShard(workspaceID)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	return len(sh.wsSubs[workspaceID])
 }
 
 func (b *UserEventBroker) PublishToUser(userID string, evt apitypes.WorkspaceSSEEvent) {

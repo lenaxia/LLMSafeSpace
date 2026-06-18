@@ -254,7 +254,7 @@ func TestProxy_StreamingResponse(t *testing.T) {
 	// StreamEvents is now broker-based; it no longer proxies to the pod.
 	// Verify: with a broker attached, the endpoint sets SSE headers and returns 200.
 	env := newTestEnv(t)
-	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
+	env.handler.userBroker = eventbroker.NewUserEventBroker()
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 
 	cancel, body, header, code := doStreamingRequest(env.router, "/api/v1/workspaces/ws-1/events")
@@ -272,7 +272,7 @@ func TestProxy_StreamingResponse(t *testing.T) {
 func TestProxy_StreamEvents_NilBrokerReturns503(t *testing.T) {
 	// StreamEvents must not panic if broker is nil (Start() not called yet).
 	env := newTestEnv(t)
-	// Deliberately do NOT set env.handler.broker
+	// Deliberately do NOT set env.handler.userBroker
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 
 	w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/events", nil)
@@ -1951,13 +1951,13 @@ func TestProxy_DeleteSession_PublishesSSEEvent(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]bool{"deleted": true})
 	})
 	env.handler.SetSessionIndex(si)
-	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
+	env.handler.userBroker = eventbroker.NewUserEventBroker()
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	sub := env.handler.broker.Subscribe("ws-1")
-	defer env.handler.broker.Unsubscribe("ws-1", sub)
+	sub, _ := env.handler.userBroker.SubscribeWorkspace("ws-1")
+	defer env.handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	w := env.doRequestWithT(t, "DELETE", "/api/v1/workspaces/ws-1/sessions/s1", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -1978,13 +1978,13 @@ func TestProxy_DeleteSession_NoSSEWhenOpencodeFails(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 	env.handler.SetSessionIndex(si)
-	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
+	env.handler.userBroker = eventbroker.NewUserEventBroker()
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	sub := env.handler.broker.Subscribe("ws-1")
-	defer env.handler.broker.Unsubscribe("ws-1", sub)
+	sub, _ := env.handler.userBroker.SubscribeWorkspace("ws-1")
+	defer env.handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	w := env.doRequestWithT(t, "DELETE", "/api/v1/workspaces/ws-1/sessions/s1", nil)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -2005,7 +2005,7 @@ func TestProxy_DeleteSession_ConcurrentDeletesIdempotent(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]bool{"deleted": true})
 	})
 	env.handler.SetSessionIndex(si)
-	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
+	env.handler.userBroker = eventbroker.NewUserEventBroker()
 	env.handler.SetActiveSessionsForTest("ws-1", []string{"s1"})
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
@@ -2044,7 +2044,7 @@ func TestProxy_DeleteSession_NoSideEffectsWithoutBroker(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]bool{"deleted": true})
 	})
 	env.handler.SetSessionIndex(si)
-	env.handler.broker = nil
+	env.handler.userBroker = nil
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)

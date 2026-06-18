@@ -91,13 +91,13 @@ func TestE2E_StepEndedEvent_PersistsContextUsed(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 	env.handler.SetSessionIndex(si)
-	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
+	env.handler.userBroker = eventbroker.NewUserEventBroker()
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	sub := env.handler.broker.Subscribe("ws-1")
-	defer env.handler.broker.Unsubscribe("ws-1", sub)
+	sub, _ := env.handler.userBroker.SubscribeWorkspace("ws-1")
+	defer env.handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	env.handler.onRawEvent("ws-1", "session.next.step.ended", `{
 		"type": "session.next.step.ended",
@@ -131,7 +131,7 @@ func TestE2E_StepEndedEvent_MultipleSessions_TrackedIndependently(t *testing.T) 
 		w.WriteHeader(http.StatusOK)
 	})
 	env.handler.SetSessionIndex(si)
-	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
+	env.handler.userBroker = eventbroker.NewUserEventBroker()
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
@@ -165,7 +165,7 @@ func TestE2E_StepEndedEvent_OverwritesPreviousValue(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 	env.handler.SetSessionIndex(si)
-	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
+	env.handler.userBroker = eventbroker.NewUserEventBroker()
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
@@ -196,7 +196,7 @@ func TestE2E_StepEndedEvent_MissingTokens_NoPersistence(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 	env.handler.SetSessionIndex(si)
-	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
+	env.handler.userBroker = eventbroker.NewUserEventBroker()
 
 	env.handler.onRawEvent("ws-1", "session.next.step.ended", `{
 		"type": "session.next.step.ended",
@@ -235,7 +235,7 @@ func TestE2E_ContextUsed_JSONWireFormatThroughRouter(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 	env.handler.SetSessionIndex(si)
-	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
+	env.handler.userBroker = eventbroker.NewUserEventBroker()
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)

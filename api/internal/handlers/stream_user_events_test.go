@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -464,6 +465,76 @@ done2:
 	assert.Len(t, events, 1)
 	assert.Equal(t, "ws-known", events[0].WorkspaceID)
 	assert.Equal(t, "Active", events[0].Phase)
+}
+
+// TestStreamUserEvents_SnapshotListFailure_EmitsResync (S28.8) verifies that
+// when the k8s List call fails, the snapshot goroutine emits a `resync` event
+// instead of hanging or silently dropping the snapshot. The client receives
+// the resync and can trigger a full refetch.
+func TestStreamUserEvents_SnapshotListFailure_EmitsResync(t *testing.T) {
+	broker := eventbroker.NewUserEventBroker()
+
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	llmMock.On("Workspaces", "default").Return(wsMock)
+	wsMock.On("List", mock.Anything, mock.Anything).Return(
+		(*v1.WorkspaceList)(nil), fmt.Errorf("k8s api unavailable"),
+	)
+
+	h := &ProxyHandler{
+		k8sClient:  k8sMock,
+		logger:     &testLogger{},
+		namespace:  "default",
+		userBroker: broker,
+	}
+
+	router := gin.New()
+	router.GET("/api/v1/events", func(c *gin.Context) {
+		c.Set("userID", "user-resync")
+		h.StreamUserEvents(c)
+	})
+
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/api/v1/events", nil)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	scanner := bufio.NewScanner(resp.Body)
+	gotResync := false
+	deadline := time.After(2 * time.Second)
+
+	for {
+		select {
+		case <-deadline:
+			goto doneResync
+		default:
+		}
+		if !scanner.Scan() {
+			break
+		}
+		line := scanner.Text()
+		if strings.HasPrefix(line, "data: ") {
+			var evt apitypes.WorkspaceSSEEvent
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &evt); err == nil {
+				if evt.Type == "resync" {
+					gotResync = true
+					goto doneResync
+				}
+			}
+		}
+	}
+doneResync:
+	cancel()
+
+	assert.True(t, gotResync, "client should receive a resync event when k8s List fails")
 }
 
 // TestStreamUserEvents_GoroutineExitsOnClientDisconnect verifies that when the

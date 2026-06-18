@@ -31,7 +31,7 @@ This epic addresses all 12 prioritized findings from the deep dive as self-conta
 | US-38.5 | Fix nohtml validator | CRITICAL | Small (0.25d) | None |
 | US-38.6 | Fix controller metrics gauge drift | HIGH | Medium (1d) | None |
 | US-38.7 | Remove dead code | MEDIUM | Small (0.5d) | None |
-| US-38.8 | Consolidate dual patterns | MEDIUM | Medium (1-2d) | US-38.7 |
+| US-38.8 | Consolidate dual patterns | MEDIUM | Medium (1-2d) | ✅ Complete |
 | US-38.9 | Move services out of handlers | MEDIUM | Medium (1-2d) | US-38.2 |
 | US-38.10 | Add retry to PushCredentials | MEDIUM | Small (0.5d) | None |
 | US-38.11 | Fix K8s client wrapper | HIGH | Medium (1-2d) | None |

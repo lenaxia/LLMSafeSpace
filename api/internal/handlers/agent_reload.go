@@ -35,7 +35,7 @@ type QueueClearer interface {
 
 // BrokerPublisher is the minimal SSE broker interface needed by the reload handler.
 type BrokerPublisher interface {
-	Publish(workspaceID string, event apitypes.WorkspaceSSEEvent)
+	PublishToWorkspace(workspaceID string, event apitypes.WorkspaceSSEEvent)
 }
 
 // respondWithAPIError maps API errors to HTTP responses.
@@ -137,7 +137,7 @@ func clearQueueForWorkspace(ctx context.Context, workspaceID string, q QueueClea
 	}
 	if b != nil {
 		for _, msg := range msgs {
-			b.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
+			b.PublishToWorkspace(workspaceID, apitypes.WorkspaceSSEEvent{
 				Type:      "queue.update",
 				SessionID: msg.SessionID,
 				Data: queueUpdateData{

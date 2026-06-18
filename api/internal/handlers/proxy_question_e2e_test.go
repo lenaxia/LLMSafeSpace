@@ -98,7 +98,7 @@ func TestE2E_QuestionFlow_FullRoundTrip(t *testing.T) {
 
 	env := newTestEnvWithBackend(t, podBackend.Config.Handler.(http.HandlerFunc))
 	env.handler.dialect = &agentoc.Dialect{}
-	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
+	env.handler.userBroker = eventbroker.NewUserEventBroker()
 	env.wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).
 		Return(makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1"), nil).Maybe()
 	env.setupPasswordWithT(t, "ws-1", "test-pw")
@@ -115,7 +115,7 @@ func TestE2E_QuestionFlow_FullRoundTrip(t *testing.T) {
 
 	// Wait until the broker has an active subscriber (user SSE is wired).
 	require.Eventually(t, func() bool {
-		return env.handler.broker.SubscriberCount("ws-1") > 0
+		return env.handler.userBroker.WorkspaceSubscriberCount("ws-1") > 0
 	}, 2*time.Second, 5*time.Millisecond)
 	require.NotNil(t, status)
 
@@ -202,7 +202,7 @@ func TestE2E_QuestionFlow_RejectClearsQuestion(t *testing.T) {
 
 	env := newTestEnvWithBackend(t, podBackend.Config.Handler.(http.HandlerFunc))
 	env.handler.dialect = &agentoc.Dialect{}
-	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
+	env.handler.userBroker = eventbroker.NewUserEventBroker()
 	env.wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).
 		Return(makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1"), nil).Maybe()
 	env.setupPasswordWithT(t, "ws-1", "test-pw")
@@ -214,7 +214,7 @@ func TestE2E_QuestionFlow_RejectClearsQuestion(t *testing.T) {
 	defer body.Close()
 
 	require.Eventually(t, func() bool {
-		return env.handler.broker.SubscriberCount("ws-1") > 0
+		return env.handler.userBroker.WorkspaceSubscriberCount("ws-1") > 0
 	}, 2*time.Second, 5*time.Millisecond)
 
 	env.handler.onRawEvent("ws-1", "question.asked", makeEnvelope("question.asked", map[string]interface{}{
