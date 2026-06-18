@@ -63,6 +63,10 @@ func NewWorkspaceClient(pw PasswordResolver, ip PodIPResolver, logger *zap.Logge
 	}
 }
 
+// agentPort is the opencode HTTP port. Package-level so tests can
+// override it to point at a test server.
+var agentPort = agentd.AgentPort
+
 // resolve returns a low-level Client configured for the workspace's pod.
 func (w *WorkspaceClient) resolve(ctx context.Context, userID, workspaceID string) (*Client, error) {
 	podIP, err := w.podIPResolver.GetWorkspacePodIP(ctx, userID, workspaceID)
@@ -76,7 +80,7 @@ func (w *WorkspaceClient) resolve(ctx context.Context, userID, workspaceID strin
 	if err != nil {
 		return nil, fmt.Errorf("resolve password for workspace %s: %w", workspaceID, err)
 	}
-	baseURL := fmt.Sprintf("http://%s:%d", podIP, agentd.AgentPort)
+	baseURL := fmt.Sprintf("http://%s:%d", podIP, agentPort)
 	return NewClient(baseURL, password, w.logger), nil
 }
 

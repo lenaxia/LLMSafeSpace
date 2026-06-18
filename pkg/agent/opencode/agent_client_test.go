@@ -6,15 +6,15 @@ package opencode
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-
-	"github.com/lenaxia/llmsafespace/pkg/secrets"
 )
 
 // --- Client.ListModels / PatchConfig tests ---
@@ -78,7 +78,7 @@ func TestClient_PatchConfig_ServerError(t *testing.T) {
 	assert.Contains(t, err.Error(), "400")
 }
 
-// --- WorkspaceClient tests ---
+// --- WorkspaceClient resolve tests ---
 
 type mockPodIPResolver struct {
 	ip      string
@@ -92,22 +92,6 @@ func (m *mockPodIPResolver) GetWorkspacePodIP(_ context.Context, userID, workspa
 		}
 	}
 	return m.ip, nil
-}
-
-// testBackendWithPort creates a test HTTP server and a WorkspaceClient
-// whose resolve points at it. We can't easily mock the internal
-// http://podIP:4096 URL, so we test resolve + Client methods separately
-// and verify the full path via the Client tests above.
-func TestWorkspaceClient_Resolve_ProducesCorrectBaseURL(t *testing.T) {
-	wcl := NewWorkspaceClient(
-		func(_ context.Context, _ string) (string, error) { return "pw", nil },
-		&mockPodIPResolver{ip: "10.0.0.5"},
-		zap.NewNop(),
-	)
-	c, err := wcl.resolve(context.Background(), "user-1", "ws-1")
-	require.NoError(t, err)
-	assert.Contains(t, c.baseURL, "10.0.0.5")
-	assert.Equal(t, "pw", c.password)
 }
 
 func TestWorkspaceClient_Resolve_EmptyPodIP_ReturnsCleanError(t *testing.T) {
@@ -163,10 +147,43 @@ func TestWorkspaceClient_PassUserID_ToResolver(t *testing.T) {
 	assert.Equal(t, "user-99", capturedUserID, "userID must be passed through to PodIPResolver")
 }
 
+// --- WorkspaceClient end-to-end test ---
+
+// TestWorkspaceClient_ListModels_EndToEnd verifies the full delegation
+// path: WorkspaceClient.ListModels → resolve → Client.ListModels → HTTP.
+// Uses a real listener on a dynamic port to avoid hardcoding 4096.
+func TestWorkspaceClient_ListModels_EndToEnd(t *testing.T) {
+	var gotAuth bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, pass, ok := r.BasicAuth()
+		gotAuth = ok && user == "opencode" && pass == "e2e-pw"
+		assert.Equal(t, "/provider", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"connected":["anthropic"]}`))
+	}))
+	defer srv.Close()
+
+	// Extract the port from the test server URL so WorkspaceClient
+	// resolves to it.
+	_, portStr, _ := net.SplitHostPort(srv.Listener.Addr().String())
+	testPort, _ := strconv.Atoi(portStr)
+	origPort := agentPort
+	agentPort = testPort
+	defer func() { agentPort = origPort }()
+
+	wcl := NewWorkspaceClient(
+		func(_ context.Context, _ string) (string, error) { return "e2e-pw", nil },
+		&mockPodIPResolver{ip: "127.0.0.1"},
+		zap.NewNop(),
+	)
+
+	body, err := wcl.ListModels(context.Background(), "user-1", "ws-e2e")
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "anthropic")
+	assert.True(t, gotAuth, "end-to-end call must send Basic auth")
+}
+
 // Compile-time interface conformance.
 func TestWorkspaceClient_SatisfiesAgentClient(t *testing.T) {
 	var _ AgentClient = (*WorkspaceClient)(nil)
 }
-
-// Ensure secrets import is used.
-var _ = secrets.LLMProviderData{}
