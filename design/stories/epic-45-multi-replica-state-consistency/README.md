@@ -77,18 +77,21 @@ The `{workspace_id}` hash tag ensures all keys for a workspace land on the same 
 **Goal:** Define interface, refactor existing code to use it, no behavior change.
 
 **Acceptance:**
-- [ ] New package `api/internal/services/wsstate/`
-- [ ] Define `interfaces.WorkspaceStateStore` interface
-- [ ] In-memory implementation matches current `ProxyHandler` behavior exactly
-- [ ] All `ProxyHandler` map accesses go through interface
-- [ ] Existing tests pass without modification
-- [ ] New tests for the interface contract
+- [x] New package `api/internal/services/wsstate/`
+- [x] Define `wsstate.Store` interface *(deviation from original wording "`interfaces.WorkspaceStateStore`" — package-local interface is more idiomatic Go and the consumer is exclusively ProxyHandler. Deviation recorded 2026-06-17.)*
+- [x] In-memory implementation matches current `ProxyHandler` behavior exactly *(one near-miss: original `InvalidateAll` would have cleared `priorPhase`, breaking Active→Active reconcile. Caught by skeptical validator before PR; fixed.)*
+- [x] All `ProxyHandler` map accesses go through interface
+- [x] Existing tests pass *(deviation: 6 test files modified to migrate direct map pokes to typed `SetXxxForTest` helpers — the underlying private fields were removed, so the literal criterion "without modification" was impossible. The migrated tests assert the same semantics.)*
+- [x] New tests for the interface contract (`api/internal/services/wsstate/inmemory_test.go` — 35 tests covering active sessions, tombstones, password cache, config cache, prior phase, parent backfill, InvalidateAll, concurrency)
 
 **Files:**
 - New: `api/internal/services/wsstate/store.go`
 - New: `api/internal/services/wsstate/inmemory.go`
+- New: `api/internal/services/wsstate/inmemory_test.go`
 - Modified: `api/internal/handlers/proxy.go` (use interface)
 - Modified: `api/internal/handlers/proxy_connections.go` (delegate to interface)
+- Modified: `api/internal/handlers/proxy_handlers.go`, `proxy_permissions.go`, `proxy_events.go`, `proxy_session_index.go`
+- Modified: 6 test files (mechanical migration to test helpers)
 
 **Effort:** 2 days
 
@@ -98,23 +101,24 @@ The `{workspace_id}` hash tag ensures all keys for a workspace land on the same 
 **Goal:** Move busy session tracking to Valkey. Fixes today's stuck-session bug class.
 
 **Acceptance:**
-- [ ] Redis implementation of `WorkspaceStateStore.CheckAndAddActiveSession`
-- [ ] Uses Lua script for atomic check-and-add
-- [ ] Hash-tagged keys: `ws:{workspace_id}:active`
-- [ ] TTL = 30 minutes (auto-recovery for stuck entries)
-- [ ] TTL refreshed on every successful operation
-- [ ] Fail-open behavior on Redis errors (log + allow)
-- [ ] Prometheus metrics:
+- [x] Redis implementation of `WorkspaceStateStore.CheckAndAddActiveSession`
+- [x] Uses Lua script for atomic check-and-add (`checkAndAddScript`)
+- [x] Hash-tagged keys: `ws:{workspace_id}:active`
+- [x] TTL = 30 minutes (auto-recovery for stuck entries)
+- [x] TTL refreshed on every successful operation (both new-add and idempotent re-add)
+- [x] Fail-open behavior on Redis errors (log + allow)
+- [x] Prometheus metrics:
   - `ws_state_op_duration_seconds{op,result}` histogram
   - `ws_state_errors_total{op}` counter
-  - `ws_state_active_sessions{workspace_id}` gauge (sampled)
-- [ ] Unit tests for Lua script edge cases:
-  - Concurrent checkAndAdd (verify atomicity)
-  - TTL refresh on existing member
-  - Limit enforcement under contention
-  - Empty set scenarios
-- [ ] Integration test with real Valkey
-- [ ] Load test: 1000 concurrent ops, verify no double-counting
+  - `ws_state_active_sessions{workspace_id}` gauge (sampled on writes; cleaned up on workspace terminate via DeleteLabelValues)
+- [x] Unit tests for Lua script edge cases:
+  - Concurrent checkAndAdd (50 goroutines — `TestRedisStore_CheckAndAddActiveSession_Concurrent_AtLimitNoOversubscribe`)
+  - 1000-op load test (`TestRedisStore_LoadTest_1000ConcurrentOps_NoDoubleCounting`)
+  - TTL refresh on existing member (`TestRedisStore_CheckAndAddActiveSession_TTLRefreshedOnEveryOp`)
+  - Limit enforcement under contention (same tests)
+  - Empty set scenarios (`TestRedisStore_GetActiveSessions_EmptyWorkspace_ReturnsNil`, `TestRedisStore_RemoveActiveSession_LastRemoval_CleansWorkspaceEntry`)
+- [ ] Integration test with real Valkey *(DEFERRED — miniredis with real gopher-lua interpreter covers Lua atomicity; testcontainers-go dependency introduction is a separate, larger change. Tracked as follow-up.)*
+- [x] Load test: 1000 concurrent ops, verify no double-counting
 
 **Lua Script:**
 ```lua
@@ -147,7 +151,9 @@ return 1
 **Files:**
 - New: `api/internal/services/wsstate/redis.go`
 - New: `api/internal/services/wsstate/redis_test.go`
-- Modified: `api/internal/services/services.go` (wire up Redis impl)
+- Modified: `api/internal/handlers/proxy.go` (added `SetStateStore` setter with panic guard for after-Start use)
+- Modified: `api/internal/handlers/proxy_lifecycle.go` (sets `started=true` inside startOnce.Do)
+- Modified: `api/internal/app/app.go` (wire up Redis impl when cache service is available)
 
 **Effort:** 3 days
 

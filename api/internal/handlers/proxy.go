@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
+	"github.com/lenaxia/llmsafespace/api/internal/services/wsstate"
 	"github.com/lenaxia/llmsafespace/pkg/agent"
 	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
@@ -42,11 +44,6 @@ const (
 	phaseTerminated  = "Terminated"
 )
 
-type workspaceConfig struct {
-	maxActiveSessions      int
-	autoApprovePermissions bool
-}
-
 type ProxyHandler struct {
 	k8sClient         pkginterfaces.KubernetesClient
 	httpClient        *http.Client
@@ -55,18 +52,19 @@ type ProxyHandler struct {
 	dialect           agent.Dialect
 	agentStateChecker AgentStateChecker
 
-	pwCache   map[string]string
-	pwCacheMu sync.RWMutex
+	// stateStore holds the per-workspace state that was previously kept
+	// in process-local maps on ProxyHandler (activeSess, deletedSessions,
+	// pwCache, wsConfig, priorPhase, parentBackfilled). Externalizing it
+	// via an interface is the foundation for moving the state to a
+	// shared Redis backend in subsequent Epic 45 stories, which
+	// eliminates the multi-replica drift that caused the 2026-06-16
+	// stuck-session incident. The InMemoryStore used today preserves
+	// single-replica behavior exactly.
+	stateStore wsstate.Store
 
-	wsConfig   map[string]workspaceConfig
-	wsConfigMu sync.RWMutex
-
-	priorPhase   map[string]string
-	priorPhaseMu sync.Mutex
-
-	activeSess map[string]map[string]bool
-	activeMu   sync.RWMutex
-
+	// connCount is intentionally NOT in stateStore — it represents a
+	// per-replica resource (HTTP file descriptors, memory) that must
+	// remain local even after the Redis migration. See US-45 design.
 	connCount map[string]int
 	connMu    sync.RWMutex
 
@@ -77,16 +75,6 @@ type ProxyHandler struct {
 	broker          *eventbroker.WorkspaceEventBroker
 	userBroker      *eventbroker.UserEventBroker
 	sessionParents  *sessionParentCache
-
-	parentBackfilled   map[string]struct{}
-	parentBackfilledMu sync.Mutex
-
-	// deletedSessions tracks sessions that were explicitly deleted via the API.
-	// Late SSE events (session.updated, idle, step.ended) from opencode that
-	// arrive after deletion are suppressed to prevent re-inserting the session
-	// into session_index. Keyed by "workspaceID/sessionID".
-	deletedSessions   map[string]struct{}
-	deletedSessionsMu sync.RWMutex
 
 	meteringSvc interfaces.MeteringService
 
@@ -99,6 +87,10 @@ type ProxyHandler struct {
 
 	startOnce sync.Once
 	stopOnce  sync.Once
+	// started is set true inside startOnce.Do. Used by SetStateStore to
+	// panic if called after Start — request goroutines read stateStore
+	// without synchronization, so a late swap would race.
+	started bool
 }
 
 func NewProxyHandler(
@@ -127,19 +119,30 @@ func NewProxyHandler(
 		}
 	}
 	return &ProxyHandler{
-		k8sClient:        k8sClient,
-		httpClient:       httpClient,
-		logger:           logger,
-		namespace:        namespace,
-		dialect:          dialect,
-		pwCache:          make(map[string]string),
-		wsConfig:         make(map[string]workspaceConfig),
-		priorPhase:       make(map[string]string),
-		activeSess:       make(map[string]map[string]bool),
-		connCount:        make(map[string]int),
-		parentBackfilled: make(map[string]struct{}),
-		deletedSessions:  make(map[string]struct{}),
+		k8sClient:  k8sClient,
+		httpClient: httpClient,
+		logger:     logger,
+		namespace:  namespace,
+		dialect:    dialect,
+		stateStore: wsstate.NewInMemoryStore(),
+		connCount:  make(map[string]int),
 	}, nil
+}
+
+// SetStateStore overrides the per-workspace state store. By default the
+// ProxyHandler uses an InMemoryStore (single-replica); app.go swaps in a
+// RedisStore when a Redis/Valkey client is available so multi-replica
+// deployments share active-session state. Panics if called after Start()
+// — request goroutines read stateStore without synchronization, so a
+// late swap would race.
+func (h *ProxyHandler) SetStateStore(store wsstate.Store) {
+	if store == nil {
+		return
+	}
+	if h.started {
+		panic("SetStateStore called after Start — request goroutines may already be reading stateStore")
+	}
+	h.stateStore = store
 }
 
 func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWriteOp bool, sessionID string) {
@@ -428,9 +431,19 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 
 	flusher, canFlush := c.Writer.(http.Flusher)
 	buf := make([]byte, 32*1024)
+	// US-44.1: terminal event on agent death. Scope: SSE responses only
+	// (Content-Type: text/event-stream). On EOF after data on an SSE
+	// stream, the agent process disappeared (OOM/SIGTERM/crash); emit a
+	// terminal `agent_died` event so clients can surface it instead of
+	// seeing a silent close. Non-SSE responses legitimately EOF after
+	// data (normal HTTP), so the heuristic MUST be SSE-scoped or JSON
+	// parsers downstream would be corrupted.
+	isSSEStream := strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream")
+	var bytesReceived int64
 	for {
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
+			bytesReceived += int64(n)
 			_, _ = c.Writer.Write(buf[:n])
 			if canFlush {
 				flusher.Flush()
@@ -438,8 +451,21 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 		}
 		if readErr != nil {
 			if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
+				if isSSEStream && bytesReceived > 0 {
+					const agentDiedEvent = "event: error\ndata: {\"type\":\"agent_died\",\"reason\":\"unknown\"}\n\n"
+					_, _ = c.Writer.Write([]byte(agentDiedEvent))
+					if canFlush {
+						flusher.Flush()
+					}
+				}
 				break
 			}
+			// Epic 25 B2: non-EOF errors are network-level failures
+			// (TCP RST, timeout). Keep the existing wire format — it is
+			// intentionally distinct from agent_died so clients can
+			// distinguish "network problem" from "process gone". Both
+			// shapes are pinned by TestProxy_US44_1_ErrorShapesAreDocumented
+			// and TestProxy_B2_MidStreamReadError_WritesSSEErrorEvent.
 			const sseErrEvent = "event: error\ndata: {\"error\":\"upstream connection lost\"}\n\n"
 			_, _ = c.Writer.Write([]byte(sseErrEvent))
 			if canFlush {

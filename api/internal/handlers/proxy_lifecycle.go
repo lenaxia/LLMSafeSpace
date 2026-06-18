@@ -25,6 +25,7 @@ func (h *ProxyHandler) EnableSessionParentResolution() {
 func (h *ProxyHandler) Start() error {
 	var startErr error
 	h.startOnce.Do(func() {
+		h.started = true
 		h.broker = eventbroker.NewWorkspaceEventBroker()
 		h.userBroker = eventbroker.NewUserEventBroker()
 

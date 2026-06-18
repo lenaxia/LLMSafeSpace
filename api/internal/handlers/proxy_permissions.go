@@ -12,16 +12,14 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/lenaxia/llmsafespace/api/internal/services/wsstate"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
 func (h *ProxyHandler) shouldAutoApprovePermissions(workspaceID string) bool {
-	h.wsConfigMu.RLock()
-	if cfg, ok := h.wsConfig[workspaceID]; ok {
-		h.wsConfigMu.RUnlock()
-		return cfg.autoApprovePermissions
+	if cfg, ok := h.state().GetWorkspaceConfig(workspaceID); ok {
+		return cfg.AutoApprovePermissions
 	}
-	h.wsConfigMu.RUnlock()
 
 	v1Client, err := h.k8sClient.LlmsafespaceV1()
 	if err != nil {
@@ -32,12 +30,10 @@ func (h *ProxyHandler) shouldAutoApprovePermissions(workspaceID string) bool {
 		return false
 	}
 
-	h.wsConfigMu.Lock()
-	cfg := h.wsConfig[workspaceID]
-	cfg.autoApprovePermissions = workspace.Spec.AutoApprovePermissions
-	cfg.maxActiveSessions = int(workspace.Spec.MaxActiveSessions)
-	h.wsConfig[workspaceID] = cfg
-	h.wsConfigMu.Unlock()
+	h.state().SetWorkspaceConfig(workspaceID, wsstate.Config{
+		MaxActiveSessions:      int(workspace.Spec.MaxActiveSessions),
+		AutoApprovePermissions: workspace.Spec.AutoApprovePermissions,
+	})
 
 	return workspace.Spec.AutoApprovePermissions
 }

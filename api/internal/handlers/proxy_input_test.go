@@ -629,11 +629,10 @@ func TestEpic13_wsConfig_PopulatesMaxActiveSessions(t *testing.T) {
 	assert.False(t, result, "workspace CRD has AutoApprovePermissions=false")
 
 	// Verify wsConfig was populated with all fields from the CRD.
-	handler.wsConfigMu.RLock()
-	cfg := handler.wsConfig["ws-1"]
-	handler.wsConfigMu.RUnlock()
-	assert.Equal(t, 10, cfg.maxActiveSessions)
-	assert.False(t, cfg.autoApprovePermissions)
+	cfg, ok := handler.GetWorkspaceConfigForTest("ws-1")
+	require.True(t, ok, "wsConfig must be populated after shouldAutoApprovePermissions call")
+	assert.Equal(t, 10, cfg.MaxActiveSessions)
+	assert.False(t, cfg.AutoApprovePermissions)
 }
 
 func TestNormalizedEvents_E2E_QuestionResolved_ViaProcessEvent(t *testing.T) {

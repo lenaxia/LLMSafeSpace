@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
+	"github.com/lenaxia/llmsafespace/api/internal/services/wsstate"
 	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
 )
 
@@ -24,9 +25,7 @@ func TestOnSessionIdle_PublishesToUserBroker(t *testing.T) {
 	broker.RecordWorkspaceOwner("ws-1", "user-1")
 	handler.userBroker = broker
 
-	handler.activeMu.Lock()
-	handler.activeSess["ws-1"] = map[string]bool{"s1": true}
-	handler.activeMu.Unlock()
+	handler.SetActiveSessionsForTest("ws-1", []string{"s1"})
 
 	sub, err := broker.SubscribeUser("user-1")
 	require.NoError(t, err)
@@ -48,9 +47,7 @@ func TestOnSessionIdle_PublishesToUserBroker(t *testing.T) {
 func TestOnSessionActive_PublishesToUserBroker(t *testing.T) {
 	handler := newHandlerWithMockK8s(t)
 
-	handler.wsConfigMu.Lock()
-	handler.wsConfig["ws-1"] = workspaceConfig{maxActiveSessions: 5}
-	handler.wsConfigMu.Unlock()
+	handler.SetWorkspaceConfigForTest("ws-1", wsstate.Config{MaxActiveSessions: 5})
 
 	broker := eventbroker.NewUserEventBroker()
 	broker.RecordWorkspaceOwner("ws-1", "user-1")
@@ -79,9 +76,7 @@ func TestOnSessionIdle_SkipsUserBrokerWhenOwnerUnknown(t *testing.T) {
 	broker := eventbroker.NewUserEventBroker()
 	handler.userBroker = broker
 
-	handler.activeMu.Lock()
-	handler.activeSess["ws-unknown"] = map[string]bool{"s1": true}
-	handler.activeMu.Unlock()
+	handler.SetActiveSessionsForTest("ws-unknown", []string{"s1"})
 
 	sub, err := broker.SubscribeUser("user-1")
 	require.NoError(t, err)
@@ -99,9 +94,7 @@ func TestOnSessionIdle_SkipsUserBrokerWhenOwnerUnknown(t *testing.T) {
 func TestOnSessionIdle_NoPanicWhenUserBrokerNil(t *testing.T) {
 	handler := newHandlerWithMockK8s(t)
 
-	handler.activeMu.Lock()
-	handler.activeSess["ws-1"] = map[string]bool{"s1": true}
-	handler.activeMu.Unlock()
+	handler.SetActiveSessionsForTest("ws-1", []string{"s1"})
 
 	assert.NotPanics(t, func() {
 		handler.onSessionIdle("ws-1", "s1")
@@ -111,9 +104,7 @@ func TestOnSessionIdle_NoPanicWhenUserBrokerNil(t *testing.T) {
 func TestOnSessionActive_NoPanicWhenUserBrokerNil(t *testing.T) {
 	handler := newHandlerWithMockK8s(t)
 
-	handler.wsConfigMu.Lock()
-	handler.wsConfig["ws-1"] = workspaceConfig{maxActiveSessions: 5}
-	handler.wsConfigMu.Unlock()
+	handler.SetWorkspaceConfigForTest("ws-1", wsstate.Config{MaxActiveSessions: 5})
 
 	assert.NotPanics(t, func() {
 		handler.onSessionActive("ws-1", "s1")
