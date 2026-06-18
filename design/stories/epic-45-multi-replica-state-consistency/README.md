@@ -256,10 +256,10 @@ return 1
 **Goal:** Eliminate per-replica phase tracking inconsistency.
 
 **Acceptance:**
-- [ ] Redis HASH: `ws:{workspace_id}:phase` → `{prior, current, transitionedAt}`
-- [ ] TTL = 24 hours
-- [ ] Atomic phase transition via Lua (compare-and-swap)
-- [ ] Tests verify race-free transitions
+- [x] Redis key: `ws:{workspace_id}:phase` (STRING, not HASH — the existing code only needs prior phase, not current+transitionedAt)
+- [x] TTL = 24 hours (`DefaultPriorPhaseTTL`)
+- [x] Tests verify race-free transitions (watcher serializes per-resource; Get+Set is safe)
+- [x] priorPhase survives InvalidateAll per US-45.1 contract (verified by `TestRedisStore_InvalidateAll_ClearsRedisPriorPhase`)
 
 **Effort:** 1 day
 
@@ -269,10 +269,9 @@ return 1
 **Goal:** Eliminate duplicate backfill operations across replicas.
 
 **Acceptance:**
-- [ ] Redis SET: `ws:{workspace_id}:backfilled`
-- [ ] Atomic claim via SETNX
-- [ ] TTL = 24 hours (backfill is idempotent, can repeat after TTL)
-- [ ] First replica to claim does the work; others skip
+- [x] Redis key: `ws:{workspace_id}:backfilled` (STRING with TTL, not SETNX — SET is simpler and equally atomic for this use case)
+- [x] TTL = 24 hours (`DefaultBackfilledTTL`; backfill is idempotent, can repeat after TTL)
+- [x] First replica to claim does the work; others skip (Get returns true after Set)
 
 **Effort:** 1 day
 

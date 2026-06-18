@@ -47,6 +47,14 @@ const DefaultPasswordTTL = 1 * time.Hour
 // can change via CRD updates. 5 minutes matches the design spec.
 const DefaultConfigTTL = 5 * time.Minute
 
+// DefaultPriorPhaseTTL is the TTL for prior-phase tracking. 24 hours —
+// long enough to survive API replica restarts and watch reconnects.
+const DefaultPriorPhaseTTL = 24 * time.Hour
+
+// DefaultBackfilledTTL is the TTL for the parent-backfill marker. 24
+// hours — backfill is idempotent, so re-running after TTL expiry is safe.
+const DefaultBackfilledTTL = 24 * time.Hour
+
 // checkAndAddScript atomically checks the active-session set size and
 // adds the session ID if there's room. The atomicity is what makes this
 // safe across replicas: two concurrent calls cannot both observe
@@ -83,12 +91,12 @@ redis.call('EXPIRE', key, ttlSeconds)
 return 1
 `)
 
-// RedisStore is the multi-replica-safe implementation of Store. It
-// backs the active-session set, deleted-session tombstones, password
-// cache, and workspace-config cache with Redis; the remaining state
-// sections (priorPhase, parentBackfilled) continue to be served by the
-// embedded InMemoryStore; their migration to Redis is the subject of
-// US-45.7 and US-45.8.
+// RedisStore is the multi-replica-safe implementation of Store. All
+// six state sections (activeSess, deletedSessions, pwCache, wsConfig,
+// priorPhase, parentBackfilled) are backed by Redis. The embedded
+// InMemoryStore is retained for defense-in-depth (InvalidateAll clears
+// both sides) but will be removed in US-45.9 when all sections are
+// verified stable in production.
 //
 // Fail-open policy (per design): if Redis is unreachable,
 // CheckAndAddActiveSession returns true (allow the request) and records
@@ -117,6 +125,12 @@ type RedisStore struct {
 	// configTTL is the TTL for cached workspace config. Shorter than
 	// passwordTTL because config can change via CRD updates.
 	configTTL time.Duration
+
+	// priorPhaseTTL is the TTL for prior-phase tracking.
+	priorPhaseTTL time.Duration
+
+	// backfilledTTL is the TTL for the parent-backfill marker.
+	backfilledTTL time.Duration
 
 	// logger records fail-open events. Optional — if nil, errors are
 	// surfaced only via Prometheus metrics.
@@ -155,6 +169,8 @@ func NewRedisStoreWithLogger(client *redis.Client, activeSessTTL time.Duration, 
 		deletedTTL:          DefaultDeletedTTL,
 		passwordTTL:         DefaultPasswordTTL,
 		configTTL:           DefaultConfigTTL,
+		priorPhaseTTL:       DefaultPriorPhaseTTL,
+		backfilledTTL:       DefaultBackfilledTTL,
 		logger:              logger,
 		inMemory:            NewInMemoryStore(),
 		opDuration:          pkgOpDuration,
@@ -394,15 +410,20 @@ func (s *RedisStore) ClearActiveSessions(workspaceID string) {
 
 // --- InvalidateAll (overrides to clear both Redis and InMemory) ---
 
-// InvalidateAll clears both the Redis-backed state (active sessions,
-// deleted tombstones, password cache, config cache) and the
-// InMemoryStore-backed state (parent backfill). priorPhase is
-// intentionally preserved (per US-45.1 contract).
+// InvalidateAll clears all Redis-backed state (active sessions, deleted
+// tombstones, password cache, config cache, parent backfill) for the
+// workspace. priorPhase is INTENTIONALLY PRESERVED — onPhaseChange
+// relies on it to distinguish first-invocation from Active→Active
+// reconcile (per US-45.1 contract). Terminate/Terminating calls
+// DeletePriorPhase explicitly when the workspace is truly gone.
 func (s *RedisStore) InvalidateAll(workspaceID string) {
 	s.ClearActiveSessions(workspaceID)
 	s.ClearDeletedSessions(workspaceID)
 	s.InvalidatePassword(workspaceID)
 	s.InvalidateWorkspaceConfig(workspaceID)
+	s.DeleteParentBackfilled(workspaceID)
+	// InMemoryStore cleanup for defense-in-depth (no-ops for migrated
+	// sections but harmless).
 	s.inMemory.ClearActiveSessions(workspaceID)
 	s.inMemory.ClearDeletedSessions(workspaceID)
 	s.inMemory.InvalidatePassword(workspaceID)
@@ -669,32 +690,86 @@ func (s *RedisStore) InvalidateWorkspaceConfig(workspaceID string) {
 	s.observeOp(op, "ok", start)
 }
 
-// --- Prior phase tracking (delegated to InMemoryStore) ---
-// US-45.7 will move this to Redis.
+// --- Prior phase tracking (Redis-backed, US-45.7) ---
+
+func priorPhaseCacheKey(workspaceID string) string {
+	return fmt.Sprintf("ws:{%s}:phase", workspaceID)
+}
 
 func (s *RedisStore) GetPriorPhase(workspaceID string) (string, bool) {
-	return s.inMemory.GetPriorPhase(workspaceID)
+	const op = "get_prior_phase"
+	start := time.Now()
+	phase, err := s.client.Get(context.Background(), priorPhaseCacheKey(workspaceID)).Result()
+	if err != nil {
+		if err != redis.Nil {
+			s.recordError(op)
+			s.observeOp(op, "error", start)
+		}
+		return "", false
+	}
+	s.observeOp(op, "hit", start)
+	return phase, true
 }
 
 func (s *RedisStore) SetPriorPhase(workspaceID, phase string) {
-	s.inMemory.SetPriorPhase(workspaceID, phase)
+	const op = "set_prior_phase"
+	start := time.Now()
+	if err := s.client.Set(context.Background(), priorPhaseCacheKey(workspaceID), phase, s.priorPhaseTTL).Err(); err != nil {
+		s.recordError(op)
+		s.observeOp(op, "error", start)
+		return
+	}
+	s.observeOp(op, "ok", start)
 }
 
 func (s *RedisStore) DeletePriorPhase(workspaceID string) {
-	s.inMemory.DeletePriorPhase(workspaceID)
+	const op = "delete_prior_phase"
+	start := time.Now()
+	if err := s.client.Del(context.Background(), priorPhaseCacheKey(workspaceID)).Err(); err != nil && err != redis.Nil {
+		s.recordError(op)
+		s.observeOp(op, "error", start)
+		return
+	}
+	s.observeOp(op, "ok", start)
 }
 
-// --- Parent-backfill marker (delegated to InMemoryStore) ---
-// US-45.8 will move this to Redis.
+// --- Parent-backfill marker (Redis-backed, US-45.8) ---
+
+func backfilledCacheKey(workspaceID string) string {
+	return fmt.Sprintf("ws:{%s}:backfilled", workspaceID)
+}
 
 func (s *RedisStore) GetParentBackfilled(workspaceID string) bool {
-	return s.inMemory.GetParentBackfilled(workspaceID)
+	const op = "get_parent_backfilled"
+	start := time.Now()
+	n, err := s.client.Exists(context.Background(), backfilledCacheKey(workspaceID)).Result()
+	if err != nil {
+		s.recordError(op)
+		s.observeOp(op, "error", start)
+		return false
+	}
+	s.observeOp(op, "ok", start)
+	return n > 0
 }
 
 func (s *RedisStore) SetParentBackfilled(workspaceID string) {
-	s.inMemory.SetParentBackfilled(workspaceID)
+	const op = "set_parent_backfilled"
+	start := time.Now()
+	if err := s.client.Set(context.Background(), backfilledCacheKey(workspaceID), "1", s.backfilledTTL).Err(); err != nil {
+		s.recordError(op)
+		s.observeOp(op, "error", start)
+		return
+	}
+	s.observeOp(op, "ok", start)
 }
 
 func (s *RedisStore) DeleteParentBackfilled(workspaceID string) {
-	s.inMemory.DeleteParentBackfilled(workspaceID)
+	const op = "delete_parent_backfilled"
+	start := time.Now()
+	if err := s.client.Del(context.Background(), backfilledCacheKey(workspaceID)).Err(); err != nil && err != redis.Nil {
+		s.recordError(op)
+		s.observeOp(op, "error", start)
+		return
+	}
+	s.observeOp(op, "ok", start)
 }

@@ -110,11 +110,10 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		queueSvc := msgqueue.NewWithClient(cacheSvc.GetClient())
 		proxyHandler.SetMessageQueueService(queueSvc)
 
-		// US-45.2..US-45.6: swap the in-memory state store for a Redis-backed
-		// one so multi-replica deployments share active-session, deleted-
-		// session tombstone, password-cache, and workspace-config state.
-		// The RedisStore still serves priorPhase and parentBackfilled via an
-		// embedded InMemoryStore; each migrates to Redis in its own story.
+		// US-45.2..US-45.8: swap the in-memory state store for a Redis-backed
+		// one so multi-replica deployments share all per-workspace state
+		// (active sessions, deleted tombstones, password cache, workspace
+		// config, prior phase, parent backfill).
 		redisStateStore := wsstate.NewRedisStoreWithLogger(
 			cacheSvc.GetClient(),
 			wsstate.DefaultActiveSessTTL,
