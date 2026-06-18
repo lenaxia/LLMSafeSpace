@@ -231,7 +231,7 @@ func (s *PgSecretStore) CreateCredential(ctx context.Context, ownerType, ownerID
 // ordered by created_at ASC.
 func (s *PgSecretStore) ListCredentials(ctx context.Context, ownerType, ownerID string) ([]*CredentialRow, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, owner_id, name, provider, ciphertext, key_version, model_allowlist, model_context_limits, created_at, updated_at
+		SELECT id, owner_type, owner_id, name, provider, ciphertext, key_version, model_allowlist, model_context_limits, created_at, updated_at
 		FROM provider_credentials WHERE owner_type = $1 AND owner_id = $2
 		ORDER BY created_at ASC
 	`, ownerType, ownerID)
@@ -243,7 +243,7 @@ func (s *PgSecretStore) ListCredentials(ctx context.Context, ownerType, ownerID 
 	var out []*CredentialRow
 	for rows.Next() {
 		var r CredentialRow
-		if err := rows.Scan(&r.ID, &r.OwnerID, &r.Name, &r.Provider, &r.Ciphertext, &r.KeyVersion, &r.ModelAllowlist, &r.ModelContextLimits, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.OwnerType, &r.OwnerID, &r.Name, &r.Provider, &r.Ciphertext, &r.KeyVersion, &r.ModelAllowlist, &r.ModelContextLimits, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if r.ModelContextLimits == nil {
@@ -260,9 +260,9 @@ func (s *PgSecretStore) ListCredentials(ctx context.Context, ownerType, ownerID 
 func (s *PgSecretStore) GetCredential(ctx context.Context, ownerType, ownerID, credID string) (*CredentialRow, error) {
 	var r CredentialRow
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, owner_id, name, provider, ciphertext, key_version, model_allowlist, model_context_limits, created_at, updated_at
+		SELECT id, owner_type, owner_id, name, provider, ciphertext, key_version, model_allowlist, model_context_limits, created_at, updated_at
 		FROM provider_credentials WHERE id = $1 AND owner_type = $2 AND owner_id = $3
-	`, credID, ownerType, ownerID).Scan(&r.ID, &r.OwnerID, &r.Name, &r.Provider, &r.Ciphertext, &r.KeyVersion, &r.ModelAllowlist, &r.ModelContextLimits, &r.CreatedAt, &r.UpdatedAt)
+	`, credID, ownerType, ownerID).Scan(&r.ID, &r.OwnerType, &r.OwnerID, &r.Name, &r.Provider, &r.Ciphertext, &r.KeyVersion, &r.ModelAllowlist, &r.ModelContextLimits, &r.CreatedAt, &r.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
