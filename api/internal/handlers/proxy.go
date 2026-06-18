@@ -84,6 +84,10 @@ type ProxyHandler struct {
 
 	queueSvc interfaces.MessageQueueService
 
+	// requestBuffer parks POST /message requests during an opencode restart
+	// (connection-refused window) so users do not see 503s. See US-44.10.
+	requestBuffer *requestBuffer
+
 	startOnce sync.Once
 	stopOnce  sync.Once
 	// started is set true inside startOnce.Do. Used by SetStateStore to
@@ -118,13 +122,14 @@ func NewProxyHandler(
 		}
 	}
 	return &ProxyHandler{
-		k8sClient:  k8sClient,
-		httpClient: httpClient,
-		logger:     logger,
-		namespace:  namespace,
-		dialect:    dialect,
-		stateStore: wsstate.NewInMemoryStore(),
-		connCount:  make(map[string]int),
+		k8sClient:     k8sClient,
+		httpClient:    httpClient,
+		logger:        logger,
+		namespace:     namespace,
+		dialect:       dialect,
+		stateStore:    wsstate.NewInMemoryStore(),
+		connCount:     make(map[string]int),
+		requestBuffer: newRequestBuffer(defaultBufferMaxSize, defaultBufferTimeout, defaultBufferPollInterval, logger),
 	}, nil
 }
 
@@ -145,7 +150,7 @@ func (h *ProxyHandler) SetStateStore(store wsstate.Store) {
 }
 
 func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWriteOp bool, sessionID string) {
-	h.proxyToWorkspaceWithErrBody(c, targetPath, isWriteOp, sessionID, nil)
+	h.proxyToWorkspaceWithErrBody(c, targetPath, isWriteOp, sessionID, nil, false)
 }
 
 // proxyToWorkspaceWithErrBody behaves like proxyToWorkspace but optionally
@@ -155,12 +160,18 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 // bytes are written to the client. Used by SendMessage (US-27b.5) to inject
 // the agentNeedsRefresh / hint fields when the agent fails with staged
 // credentials pending. 2xx responses stream as before (no buffering).
+//
+// When bufferable is true and the forward fails with a connection error
+// (opencode restarting), the request is parked in the per-workspace request
+// buffer and retried until the upstream recovers or the buffer timeout elapses,
+// instead of returning 503 immediately. Only SendMessage sets bufferable.
 func (h *ProxyHandler) proxyToWorkspaceWithErrBody(
 	c *gin.Context,
 	targetPath string,
 	isWriteOp bool,
 	sessionID string,
 	onErrorBody func(statusCode int, body []byte) []byte,
+	bufferable bool,
 ) {
 	workspaceID := c.Param("id")
 	if workspaceID == "" {
@@ -220,7 +231,12 @@ func (h *ProxyHandler) proxyToWorkspaceWithErrBody(
 		})
 		return
 	}
-	defer h.releaseConnection(workspaceID)
+	slotReleased := false
+	defer func() {
+		if !slotReleased {
+			h.releaseConnection(workspaceID)
+		}
+	}()
 
 	if isWriteOp && sessionID != "" {
 		if !h.checkAndAddActiveSession(workspaceID, sessionID, maxSessions) {
@@ -285,6 +301,77 @@ func (h *ProxyHandler) proxyToWorkspaceWithErrBody(
 		if getErr == nil && freshWS.Status.PodIP != "" && freshWS.Status.PodIP != podIP && freshWS.Status.Phase == phaseActive {
 			h.logger.Info("Retrying proxy with fresh pod IP", "workspaceID", workspaceID, "oldIP", podIP, "newIP", freshWS.Status.PodIP)
 			proxyErr = h.doProxy(c, freshWS.Status.PodIP, targetPath, password, bodyBytes, onErrorBody)
+		}
+	}
+
+	if proxyErr != nil && isConnectionError(proxyErr) && !c.Writer.Written() && bufferable &&
+		h.requestBuffer != nil && h.requestBuffer.maxSize > 0 {
+		// podIP is stable for in-place opencode restarts (same pod, agentd
+		// SIGTERMs and restarts opencode in place); pod-recreating restarts
+		// (suspend/resume) go through the not-Active 503 path above, never the
+		// buffer. So re-forwarding the captured podIP is correct for the
+		// restart window this buffer exists to smooth over.
+		bufReq := &bufferedRequest{
+			forward: func() error {
+				if !h.acquireConnection(workspaceID) {
+					return errBufferRetryLater
+				}
+				defer h.releaseConnection(workspaceID)
+				err := h.doProxy(c, podIP, targetPath, password, bodyBytes, onErrorBody)
+				if err != nil && c.Writer.Written() {
+					return errBufferCommitted
+				}
+				return err
+			},
+			result:   make(chan error, 1),
+			deadline: time.Now().Add(h.requestBuffer.timeout),
+			cancelCh: make(chan struct{}),
+		}
+		if !h.requestBuffer.tryEnqueue(workspaceID, bufReq) {
+			metrics.RecordRequestBufferFull(workspaceID)
+			if isWriteOp && sessionID != "" {
+				h.removeActiveSession(workspaceID, sessionID)
+			}
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many requests during restart, please try again"})
+			return
+		}
+		// A parked request holds no upstream socket, so release the connection
+		// slot acquired on entry; forward re-acquires (briefly) per attempt.
+		// slotReleased=true neutralizes the top-level deferred release so
+		// connCount is decremented exactly once for this request.
+		h.releaseConnection(workspaceID)
+		slotReleased = true
+		startWait := time.Now()
+		// Always learn the drainer's terminal outcome: even if the client
+		// disconnects, block for the drainer's deliver so a success that
+		// raced with ctx.Done is not silently dropped (which would skip
+		// metering and wrongly remove the active session).
+		var ferr error
+		select {
+		case ferr = <-bufReq.result:
+		case <-c.Request.Context().Done():
+			close(bufReq.cancelCh)
+			ferr = <-bufReq.result
+		}
+		metrics.RecordRequestBufferWait(workspaceID, time.Since(startWait))
+		if ferr == nil {
+			proxyErr = nil
+		} else {
+			if errors.Is(ferr, errBufferTimeout) {
+				metrics.RecordRequestBufferTimeout(workspaceID)
+			}
+			if isWriteOp && sessionID != "" {
+				h.removeActiveSession(workspaceID, sessionID)
+			}
+			if !c.Writer.Written() && c.Request.Context().Err() == nil {
+				if errors.Is(ferr, errBufferTimeout) {
+					c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Workspace is restarting, please try again in a moment"})
+				} else {
+					c.Header("Retry-After", fmt.Sprintf("%d", retryAfterSec))
+					c.JSON(http.StatusServiceUnavailable, gin.H{"error": "workspace connection failed", "retryAfter": retryAfterSec})
+				}
+			}
+			return
 		}
 	}
 

@@ -97,6 +97,11 @@ type Config struct {
 		Strategy      string        `mapstructure:"strategy"`
 	} `mapstructure:"rateLimiting"`
 
+	Proxy struct {
+		RequestBufferSizePerWorkspace int `mapstructure:"requestBufferSizePerWorkspace"`
+		RequestBufferTimeoutSeconds   int `mapstructure:"requestBufferTimeoutSeconds"`
+	} `mapstructure:"proxy"`
+
 	// Billing holds Stripe configuration for org subscriptions (Epic 43).
 	// When SecretKey is empty, a NoopCheckoutProvider is used and the webhook
 	// endpoint rejects all deliveries — development/test mode.
@@ -241,6 +246,17 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("LLMSAFESPACE_RATELIMITING_BURSTSIZE"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			config.RateLimiting.BurstSize = n
+		}
+	}
+
+	if v := os.Getenv("LLMSAFESPACE_PROXY_REQUESTBUFFERSIZEPERWORKSPACE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			config.Proxy.RequestBufferSizePerWorkspace = n
+		}
+	}
+	if v := os.Getenv("LLMSAFESPACE_PROXY_REQUESTBUFFERTIMEOUTSECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			config.Proxy.RequestBufferTimeoutSeconds = n
 		}
 	}
 

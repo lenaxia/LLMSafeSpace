@@ -246,3 +246,35 @@ func TestConfig_RememberMeDuration_ZeroEnvIgnored(t *testing.T) {
 		t.Errorf("zero env value should be ignored (d > 0 guard); expected 720h from YAML, got %v", cfg.Auth.RememberMeDuration)
 	}
 }
+
+func TestConfig_ProxyRequestBuffer_EnvOverrides(t *testing.T) {
+	t.Setenv("LLMSAFESPACE_PROXY_REQUESTBUFFERSIZEPERWORKSPACE", "7")
+	t.Setenv("LLMSAFESPACE_PROXY_REQUESTBUFFERTIMEOUTSECONDS", "45")
+	path := writeMinimalConfig(t, "")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Proxy.RequestBufferSizePerWorkspace != 7 {
+		t.Errorf("expected RequestBufferSizePerWorkspace=7 from env, got %d", cfg.Proxy.RequestBufferSizePerWorkspace)
+	}
+	if cfg.Proxy.RequestBufferTimeoutSeconds != 45 {
+		t.Errorf("expected RequestBufferTimeoutSeconds=45 from env, got %d", cfg.Proxy.RequestBufferTimeoutSeconds)
+	}
+}
+
+func TestConfig_ProxyRequestBuffer_InvalidEnvIgnored(t *testing.T) {
+	t.Setenv("LLMSAFESPACE_PROXY_REQUESTBUFFERSIZEPERWORKSPACE", "not-a-number")
+	t.Setenv("LLMSAFESPACE_PROXY_REQUESTBUFFERTIMEOUTSECONDS", "-3")
+	path := writeMinimalConfig(t, "")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Proxy.RequestBufferSizePerWorkspace != 0 {
+		t.Errorf("invalid size env should be ignored; expected 0, got %d", cfg.Proxy.RequestBufferSizePerWorkspace)
+	}
+	if cfg.Proxy.RequestBufferTimeoutSeconds != 0 {
+		t.Errorf("non-positive timeout env should be ignored; expected 0, got %d", cfg.Proxy.RequestBufferTimeoutSeconds)
+	}
+}

@@ -6,6 +6,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespace/api/internal/services/activity"
@@ -93,6 +94,22 @@ func (h *ProxyHandler) SetAgentStateChecker(c AgentStateChecker) {
 
 func (h *ProxyHandler) SetVersionSyncCallback(cb workspace.VersionSyncCallback) {
 	h.versionSyncCb = cb
+}
+
+// SetRequestBufferConfig rebuilds the per-workspace request buffer with the
+// configured size and timeout. Must be called before Start: request goroutines
+// read h.requestBuffer without synchronization, so a late swap would race.
+// Values <=0 fall back to the enabled defaults (size 10, timeout 30s) so the
+// feature is on unless explicitly constructed disabled — the zero-value config
+// must not silently turn buffering off in production.
+func (h *ProxyHandler) SetRequestBufferConfig(maxSize int, timeout time.Duration) {
+	if h.started {
+		panic("SetRequestBufferConfig called after Start — request goroutines may already be reading requestBuffer")
+	}
+	if maxSize <= 0 {
+		maxSize = defaultBufferMaxSize
+	}
+	h.requestBuffer = newRequestBuffer(maxSize, timeout, defaultBufferPollInterval, h.logger)
 }
 
 func (h *ProxyHandler) SetMeteringService(svc interfaces.MeteringService) {
