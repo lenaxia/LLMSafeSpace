@@ -91,6 +91,8 @@ export interface InvitationDetail {
 export interface CreateOrgRequest {
   name: string;
   slug: string;
+  /** Owner's email; resolved to a user ID server-side (design 0031 D1). */
+  ownerEmail: string;
   planId?: OrgPlan;
 }
 

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { orgsApi, type OrgResponse } from "../../api/orgs";
+import { orgsApi, type OrgResponse, type OrgPlan } from "../../api/orgs";
 import { Button } from "../ui/Button";
 import { ApiClientError } from "../../api/client";
+import { useAuth } from "../../providers/AuthProvider";
 
 function slugify(name: string): string {
   return name
@@ -21,6 +22,8 @@ function CreateOrgForm({
 }) {
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
+  const [ownerEmail, setOwnerEmail] = useState("");
+  const [planId, setPlanId] = useState<OrgPlan>("enterprise");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -30,14 +33,27 @@ function CreateOrgForm({
       setError("Name is required");
       return;
     }
+    if (!ownerEmail.trim()) {
+      setError("Owner email is required");
+      return;
+    }
     setLoading(true);
     try {
       const finalSlug = slug.trim() || slugify(name);
-      await orgsApi.create({ name: name.trim(), slug: finalSlug });
+      await orgsApi.create({
+        name: name.trim(),
+        slug: finalSlug,
+        ownerEmail: ownerEmail.trim(),
+        planId,
+      });
       onCreated();
     } catch (e) {
       if (e instanceof ApiClientError && e.status === 409) {
         setError("An organisation with this slug already exists");
+      } else if (e instanceof ApiClientError && e.status === 404) {
+        setError("No user found with that owner email");
+      } else if (e instanceof ApiClientError && e.status === 403) {
+        setError("Only platform admins can create organisations");
       } else {
         setError(e instanceof Error ? e.message : "Failed to create organisation");
       }
@@ -51,6 +67,13 @@ function CreateOrgForm({
       <p className="text-sm font-medium">New Organisation</p>
       {error && <p className="text-xs text-red-500">{error}</p>}
       <div className="space-y-2">
+        <input
+          type="email"
+          value={ownerEmail}
+          onChange={(e) => setOwnerEmail(e.target.value)}
+          placeholder="Owner email (must be an existing user)"
+          className="h-8 w-full rounded border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+        />
         <input
           type="text"
           value={name}
@@ -70,6 +93,16 @@ function CreateOrgForm({
           placeholder="slug (auto-generated from name)"
           className="h-8 w-full rounded border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
         />
+        <select
+          value={planId}
+          onChange={(e) => setPlanId(e.target.value as OrgPlan)}
+          className="h-8 w-full rounded border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+        >
+          <option value="free">Free</option>
+          <option value="team">Team</option>
+          <option value="business">Business</option>
+          <option value="enterprise">Enterprise</option>
+        </select>
       </div>
       <div className="flex gap-2">
         <Button size="sm" disabled={loading} onClick={handleSubmit}>
@@ -144,6 +177,8 @@ export function OrgCard({
 }
 
 export function OrgSettingsTab() {
+  const { user } = useAuth();
+  const isPlatformAdmin = user?.role === "admin";
   const [orgs, setOrgs] = useState<OrgResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -172,14 +207,16 @@ export function OrgSettingsTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold">Organisations</h3>
-        <Button size="sm" onClick={() => setShowCreate(true)}>
-          New Organisation
-        </Button>
+        {isPlatformAdmin && (
+          <Button size="sm" onClick={() => setShowCreate(true)}>
+            New Organisation
+          </Button>
+        )}
       </div>
 
       {error && <p className="text-xs text-red-500">{error}</p>}
 
-      {showCreate && (
+      {isPlatformAdmin && showCreate && (
         <CreateOrgForm
           onCreated={() => {
             setShowCreate(false);
@@ -189,7 +226,7 @@ export function OrgSettingsTab() {
         />
       )}
 
-      {orgs.length === 0 && !showCreate ? (
+      {orgs.length === 0 && !(isPlatformAdmin && showCreate) ? (
         <p className="text-xs text-muted-foreground">
           You are not a member of any organisations.
         </p>

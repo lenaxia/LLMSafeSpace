@@ -34,8 +34,7 @@ type orgStore interface {
 	CountOrgAdmins(ctx context.Context, orgID string) (int, error)
 	UpdateOrgMemberRole(ctx context.Context, orgID, userID string, role types.OrgRole) error
 	ListOrgWorkspaces(ctx context.Context, orgID string, limit, offset int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error)
-	GetUserSalt(ctx context.Context, userID string) ([]byte, error)
-	CreateBillingAccount(ctx context.Context, ownerID, ownerType, provider, externalCustomerID string) (int64, error)
+	GetUserIDByEmail(ctx context.Context, email string) (string, error)
 	GetStripeCustomerID(ctx context.Context, orgID string) (string, error)
 	UpdateOrgStatus(ctx context.Context, orgID string, status *types.OrgStatus, subStatus *types.OrgSubscriptionStatus, planID *types.OrgPlan) error
 }
@@ -84,21 +83,44 @@ func (h *OrgsHandler) GetOrg(ctx context.Context, orgID string) (*types.Organiza
 
 // Create handles POST /api/v1/orgs.
 //
-// Self-service flow: the org is created with status='pending_activation' (the DB
-// default), a Stripe customer is created and linked via billing_accounts, and a
-// Checkout URL is returned. The Stripe webhook activates the org on payment.
-//
-// Platform-admin flow (users.role='admin'): the org is created and immediately
-// activated with plan='enterprise' — no Stripe checkout, manual billing.
+// Per design 0031 D1, org creation is platform-admin only. Non-admin callers
+// receive 403. A platform admin supplies the intended owner's email; the
+// backend resolves it to a user ID (single lookup, 404 when no such user) and
+// creates the org already active with the requested plan (default enterprise),
+// adding the resolved user as the org's first admin member. The caller admin is
+// recorded as CreatedBy; the owner is the email-resolved user. No Stripe
+// Checkout session is created at org-creation time — the self-service flow is
+// deferred to the future billing-portal epic.
 func (h *OrgsHandler) Create(c *gin.Context) {
+	callerID := h.authSvc.GetUserID(c)
+	if callerID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+	if !isPlatformAdmin(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "only platform admins can create organizations"})
+		return
+	}
+
 	var req types.CreateOrgRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
 	req.Slug = strings.ToLower(req.Slug)
+	ownerEmail := strings.ToLower(strings.TrimSpace(req.OwnerEmail))
 
 	ctx := c.Request.Context()
+
+	ownerID, err := h.orgStore.GetUserIDByEmail(ctx, ownerEmail)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve owner"})
+		return
+	}
+	if ownerID == "" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "owner not found"})
+		return
+	}
 
 	existing, err := h.orgStore.GetOrgBySlug(ctx, req.Slug)
 	if err != nil {
@@ -110,22 +132,14 @@ func (h *OrgsHandler) Create(c *gin.Context) {
 		return
 	}
 
-	userID := h.authSvc.GetUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
-		return
-	}
-
-	platformAdmin := isPlatformAdmin(c)
-
 	newOrg := &types.Organization{
 		ID:        uuid.New().String(),
 		Name:      req.Name,
 		Slug:      req.Slug,
-		CreatedBy: userID,
+		CreatedBy: callerID,
 	}
 
-	created, err := h.orgStore.CreateOrgWithAdmin(ctx, newOrg, userID)
+	created, err := h.orgStore.CreateOrgWithAdmin(ctx, newOrg, ownerID)
 	if err != nil {
 		if isDuplicateErr(err) {
 			c.JSON(http.StatusConflict, gin.H{"error": "slug already in use"})
@@ -135,58 +149,36 @@ func (h *OrgsHandler) Create(c *gin.Context) {
 		return
 	}
 
-	resp := types.CreateOrgResponse{
-		OrgResponse: types.OrgResponse{
-			Organization: *created,
-			UserRole:     types.OrgRoleAdmin,
-			MemberCount:  1,
-		},
+	plan := req.PlanID
+	if plan == "" {
+		plan = types.PlanEnterprise
 	}
-
-	if platformAdmin {
-		active := types.OrgStatusActive
-		ent := types.PlanEnterprise
-		sub := types.SubscriptionActive
-		if err := h.orgStore.UpdateOrgStatus(ctx, created.ID, &active, &sub, &ent); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to activate organization"})
-			return
-		}
-		created.Status = active
-		created.PlanID = ent
-		created.SubscriptionStatus = sub
-		resp.Organization = *created
-		c.JSON(http.StatusCreated, resp)
+	active := types.OrgStatusActive
+	sub := types.SubscriptionActive
+	if err := h.orgStore.UpdateOrgStatus(ctx, created.ID, &active, &sub, &plan); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to activate organization"})
 		return
 	}
+	created.Status = active
+	created.PlanID = plan
+	created.SubscriptionStatus = sub
 
-	checkoutURL := ""
-	if h.billing != nil {
-		checkoutURL, err = h.provisionStripe(ctx, created.ID, created.Name, req.PlanID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to provision billing"})
-			return
-		}
-		resp.CheckoutURL = checkoutURL
+	// UserRole reflects the calling user's membership context (types.go OrgResponse).
+	// The caller is the creator (CreatedBy). When the admin creates the org for a
+	// different owner, the caller is not a member — so the role is empty unless
+	// the admin is also the resolved owner.
+	userRole := types.OrgRole("")
+	if ownerID == callerID {
+		userRole = types.OrgRoleAdmin
 	}
 
-	c.JSON(http.StatusCreated, resp)
-}
-
-// provisionStripe creates the Stripe customer, persists the billing-account
-// link, and builds the Checkout URL for plan checkout. On failure the org
-// remains pending_activation and the cleanup cron will reap it.
-func (h *OrgsHandler) provisionStripe(ctx context.Context, orgID, orgName string, planID types.OrgPlan) (string, error) {
-	customerID, err := h.billing.CreateCustomer(ctx, "", orgName)
-	if err != nil {
-		return "", err
-	}
-	if _, err := h.orgStore.CreateBillingAccount(ctx, orgID, string(types.OwnerTypeOrg), "stripe", customerID); err != nil {
-		return "", err
-	}
-	if planID == "" {
-		planID = types.PlanTeam
-	}
-	return h.billing.CreateCheckoutSession(ctx, customerID, string(planID), h.successURL, h.cancelURL)
+	c.JSON(http.StatusCreated, types.CreateOrgResponse{
+		OrgResponse: types.OrgResponse{
+			Organization: *created,
+			UserRole:     userRole,
+			MemberCount:  1,
+		},
+	})
 }
 
 // List handles GET /api/v1/orgs.

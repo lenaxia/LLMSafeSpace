@@ -6,9 +6,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -83,115 +81,10 @@ func setupOrgTestRouterWithBilling(t *testing.T, store *mockOrgStore, billing Or
 	return router
 }
 
-func TestCreateOrg_RegularUser_PendingActivationWithCheckoutURL(t *testing.T) {
-	store := newMockOrgStore()
-	store.salts["admin-1"] = make([]byte, 32)
-	billing := &fakeOrgBilling{checkoutURL: "https://checkout.example.com/cs_1"}
-	router := setupOrgTestRouterWithBilling(t, store, billing, false)
-
-	w := doRequest(router, "POST", "/api/v1/orgs", `{"name":"Acme","slug":"ACME","planId":"team"}`)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var resp types.CreateOrgResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if resp.Status != types.OrgStatusPendingActivation {
-		t.Errorf("expected pending_activation, got %q", resp.Status)
-	}
-	if resp.CheckoutURL == "" {
-		t.Errorf("expected non-empty checkout URL for regular user")
-	}
-	if resp.CheckoutURL != "https://checkout.example.com/cs_1" {
-		t.Errorf("checkout URL: got %q", resp.CheckoutURL)
-	}
-	if billing.customerCalls != 1 {
-		t.Errorf("expected 1 CreateCustomer call, got %d", billing.customerCalls)
-	}
-	if billing.checkoutCalls != 1 {
-		t.Errorf("expected 1 CreateCheckoutSession call, got %d", billing.checkoutCalls)
-	}
-}
-
-func TestCreateOrg_SlugLowercasedAndStored(t *testing.T) {
-	store := newMockOrgStore()
-	store.salts["admin-1"] = make([]byte, 32)
-	billing := &fakeOrgBilling{}
-	router := setupOrgTestRouterWithBilling(t, store, billing, false)
-
-	w := doRequest(router, "POST", "/api/v1/orgs", `{"name":"Acme","slug":"AcMeCo"}`)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	store.mu.Lock()
-	var created *types.Organization
-	for _, o := range store.orgs {
-		created = o
-	}
-	store.mu.Unlock()
-	if created == nil {
-		t.Fatal("no org created")
-	}
-	if created.Slug != "acmeco" {
-		t.Errorf("slug should be lowercased: got %q", created.Slug)
-	}
-	if !strings.EqualFold(created.Slug, "acmeco") {
-		t.Errorf("slug mismatch")
-	}
-}
-
-func TestCreateOrg_PlatformAdmin_ActiveEnterprise(t *testing.T) {
-	store := newMockOrgStore()
-	store.salts["admin-1"] = make([]byte, 32)
-	billing := &fakeOrgBilling{}
-	router := setupOrgTestRouterWithBilling(t, store, billing, true)
-
-	w := doRequest(router, "POST", "/api/v1/orgs", `{"name":"Enterprise Co","slug":"entco"}`)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var resp types.CreateOrgResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if resp.Status != types.OrgStatusActive {
-		t.Errorf("platform admin org must be active, got %q", resp.Status)
-	}
-	if resp.PlanID != types.PlanEnterprise {
-		t.Errorf("platform admin org must be enterprise plan, got %q", resp.PlanID)
-	}
-	if resp.SubscriptionStatus != types.SubscriptionActive {
-		t.Errorf("expected subscription active, got %q", resp.SubscriptionStatus)
-	}
-	if resp.CheckoutURL != "" {
-		t.Errorf("platform admin org must NOT have a checkout URL, got %q", resp.CheckoutURL)
-	}
-	if billing.checkoutCalls != 0 {
-		t.Errorf("platform admin must not trigger Stripe checkout, got %d calls", billing.checkoutCalls)
-	}
-}
-
-func TestCreateOrg_NoBillingConfigured_StillCreatesPending(t *testing.T) {
-	store := newMockOrgStore()
-	store.salts["admin-1"] = make([]byte, 32)
-	router := setupOrgTestRouterWithBilling(t, store, nil, false)
-
-	w := doRequest(router, "POST", "/api/v1/orgs", `{"name":"Dev Org","slug":"devorg"}`)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("expected 201 in dev mode without billing, got %d: %s", w.Code, w.Body.String())
-	}
-	var resp types.CreateOrgResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if resp.Status != types.OrgStatusPendingActivation {
-		t.Errorf("expected pending_activation, got %q", resp.Status)
-	}
-	if resp.CheckoutURL != "" {
-		t.Errorf("no checkout URL without billing config, got %q", resp.CheckoutURL)
-	}
-}
+// The self-service org-creation flow was removed in design 0031 Story 2 (D1).
+// POST /api/v1/orgs is now platform-admin only; see orgs_admin_create_test.go
+// for the create-path coverage. The tests in this file cover the per-org
+// billing endpoints (Checkout/Portal) that remain for future use.
 
 func TestCheckout_RequiresPlanID(t *testing.T) {
 	store := newMockOrgStore()
@@ -235,27 +128,6 @@ func TestCheckout_NoCustomerLinked_Conflict(t *testing.T) {
 	w := doRequest(router, "POST", "/api/v1/orgs/org-1/billing/checkout", `{"planId":"team"}`)
 	if w.Code != http.StatusConflict {
 		t.Errorf("expected 409 for org without billing customer, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestCreateOrg_StripeCustomerCreationFails_LeavesPending(t *testing.T) {
-	store := newMockOrgStore()
-	store.salts["admin-1"] = make([]byte, 32)
-	billing := &fakeOrgBilling{customerErr: errors.New("stripe down")}
-	router := setupOrgTestRouterWithBilling(t, store, billing, false)
-
-	w := doRequest(router, "POST", "/api/v1/orgs", `{"name":"Acme","slug":"acme"}`)
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500 on customer creation failure, got %d: %s", w.Code, w.Body.String())
-	}
-	store.mu.Lock()
-	var created *types.Organization
-	for _, o := range store.orgs {
-		created = o
-	}
-	store.mu.Unlock()
-	if created != nil && created.Status != types.OrgStatusPendingActivation {
-		t.Errorf("org should remain pending_activation after provisioning failure, got %q", created.Status)
 	}
 }
 

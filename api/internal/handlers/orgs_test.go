@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
@@ -22,13 +21,15 @@ type mockOrgStore struct {
 	orgs                  map[string]*types.Organization
 	members               map[string][]*types.OrgMember
 	adminCounts           map[string]int
-	salts                 map[string][]byte
 	billingAccounts       map[string]string
 	listOrgsForUserResult []*types.OrgResponse
 	listOrgsForUserErr    error
 	createErr             error
 	slugExists            bool
 	orgHasWorkspaces      bool
+	usersByEmail          map[string]string
+	userByEmailErr        error
+	updateStatusErr       error
 }
 
 func newMockOrgStore() *mockOrgStore {
@@ -36,8 +37,8 @@ func newMockOrgStore() *mockOrgStore {
 		orgs:            make(map[string]*types.Organization),
 		members:         make(map[string][]*types.OrgMember),
 		adminCounts:     make(map[string]int),
-		salts:           make(map[string][]byte),
 		billingAccounts: make(map[string]string),
+		usersByEmail:    make(map[string]string),
 	}
 }
 
@@ -246,23 +247,11 @@ func (m *mockOrgStore) ListOrgWorkspaces(_ context.Context, _ string, _, _ int) 
 	return []*types.WorkspaceMetadata{}, &types.PaginationMetadata{Total: 0}, nil
 }
 
-func (m *mockOrgStore) GetUserSalt(_ context.Context, userID string) ([]byte, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if salt, ok := m.salts[userID]; ok {
-		return salt, nil
+func (m *mockOrgStore) GetUserIDByEmail(_ context.Context, email string) (string, error) {
+	if m.userByEmailErr != nil {
+		return "", m.userByEmailErr
 	}
-	return nil, secrets.ErrUserKeysMissing
-}
-
-func (m *mockOrgStore) CreateBillingAccount(_ context.Context, ownerID, _, _, externalCustomerID string) (int64, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.billingAccounts == nil {
-		m.billingAccounts = make(map[string]string)
-	}
-	m.billingAccounts[ownerID] = externalCustomerID
-	return int64(len(m.billingAccounts)), nil
+	return m.usersByEmail[email], nil
 }
 
 func (m *mockOrgStore) GetStripeCustomerID(_ context.Context, orgID string) (string, error) {
@@ -272,6 +261,9 @@ func (m *mockOrgStore) GetStripeCustomerID(_ context.Context, orgID string) (str
 }
 
 func (m *mockOrgStore) UpdateOrgStatus(_ context.Context, orgID string, status *types.OrgStatus, sub *types.OrgSubscriptionStatus, plan *types.OrgPlan) error {
+	if m.updateStatusErr != nil {
+		return m.updateStatusErr
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if org, ok := m.orgs[orgID]; ok {
@@ -333,36 +325,6 @@ func doRequest(router *gin.Engine, method, path string, body string) *httptest.R
 }
 
 // --- Tests ---
-
-func TestOrgsHandler_Create_SlugConflict(t *testing.T) {
-	store := newMockOrgStore()
-	store.slugExists = true
-	router, _ := setupOrgTestRouter(t, store)
-
-	w := doRequest(router, "POST", "/api/v1/orgs", `{"name":"Test","slug":"test"}`)
-	if w.Code != http.StatusConflict {
-		t.Errorf("expected 409, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestOrgsHandler_Create_Success(t *testing.T) {
-	store := newMockOrgStore()
-	store.salts["admin-1"] = make([]byte, 32)
-	router, _ := setupOrgTestRouter(t, store)
-
-	w := doRequest(router, "POST", "/api/v1/orgs", `{"name":"Test Org","slug":"testorg"}`)
-	if w.Code != http.StatusCreated {
-		t.Errorf("expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var resp types.OrgResponse
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp.Name != "Test Org" {
-		t.Errorf("name: got %q", resp.Name)
-	}
-	if resp.UserRole != types.OrgRoleAdmin {
-		t.Errorf("expected admin role, got %q", resp.UserRole)
-	}
-}
 
 func TestOrgsHandler_RemoveMember_LastAdmin(t *testing.T) {
 	store := newMockOrgStore()

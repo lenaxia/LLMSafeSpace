@@ -50,8 +50,10 @@ func isPlatformAdmin(c *gin.Context) bool {
 	return strings.EqualFold(role, "admin")
 }
 
-// resolveCustomerID returns the Stripe customer id linked to the org. For an org
-// created via the self-service flow the customer already exists; this is a read.
+// resolveCustomerID returns the Stripe customer id linked to the org, if any.
+// This is a read against billing_accounts; the org-creation flow no longer
+// creates a Stripe customer (self-service provisioning was removed in design
+// 0031 Story 2). Customers may still be linked via the future billing portal.
 func (h *OrgsHandler) resolveCustomerID(ctx context.Context, org *types.Organization) (string, error) {
 	return h.orgStore.GetStripeCustomerID(ctx, org.ID)
 }

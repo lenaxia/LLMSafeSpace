@@ -689,10 +689,15 @@ type OrgMember struct {
 
 // CreateOrgRequest is the request body for creating an organization. The slug is
 // lowercased by the service before insert and uniqueness check.
+//
+// Per design 0031 D1, org creation is platform-admin only. The admin supplies
+// the intended owner's email; the backend resolves it to a user ID. This is a
+// single lookup, not a search/list endpoint (account-enumeration prevention).
 type CreateOrgRequest struct {
-	Name   string  `json:"name"   binding:"required,min=2,max=100"`
-	Slug   string  `json:"slug"   binding:"required,min=2,max=50,alphanum"`
-	PlanID OrgPlan `json:"planId" binding:"omitempty"`
+	Name       string  `json:"name"       binding:"required,min=2,max=100"`
+	Slug       string  `json:"slug"       binding:"required,min=2,max=50,alphanum"`
+	OwnerEmail string  `json:"ownerEmail" binding:"required,email"`
+	PlanID     OrgPlan `json:"planId"     binding:"omitempty"`
 }
 
 // UpdateOrgRequest is the request body for updating an organization.
@@ -701,9 +706,9 @@ type UpdateOrgRequest struct {
 	Slug string `json:"slug" binding:"omitempty,min=2,max=50,alphanum"`
 }
 
-// CreateOrgResponse is returned by POST /api/v1/orgs. For self-service orgs the
-// checkout URL points at Stripe Checkout; for platform-admin created orgs it is
-// empty (status is already active, no payment required).
+// CreateOrgResponse is returned by POST /api/v1/orgs. Org creation is
+// platform-admin only (design 0031 D1); CheckoutURL is retained for the
+// future self-service billing portal but is always empty from the create path.
 type CreateOrgResponse struct {
 	OrgResponse
 	CheckoutURL string `json:"checkoutUrl,omitempty"`
