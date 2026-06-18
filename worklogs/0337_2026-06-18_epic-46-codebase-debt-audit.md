@@ -73,7 +73,7 @@ Verified scope overlap with existing epics before drafting to avoid duplication:
 | Epic 29 and Epic 38 are active (not abandoned) | Verified via `design/stories/README.md` status table — both listed as 🔶 Partial / Planning, not ⛔ Superseded or 🚫 Obsolete |
 | Story numbering convention is `US-NN.M` | Verified by listing existing story files in `design/stories/epic-38-architectural-remediation/` |
 | Design doc numbering is `NNNN_YYYY-MM-DD_description.md` | Verified by `ls design/` — pattern holds for all 36 docs |
-| Worklog numbering is `NNNN_YYYY-MM-DD_description.md` | Verified by `ls worklogs/` — pattern holds, next number is 0330 |
+| Worklog numbering is `NNNN_YYYY-MM-DD_description.md` | Verified by `ls worklogs/` — pattern holds; **initial assumption "next is 0330" was wrong** (origin/main had advanced to 0336 after clone); repolint caught the collision on PR CI; renumbered to 0337 |
 | Epic numbering allows gaps (no epic 19, 39) | Verified by `ls design/stories/ | grep epic` — gaps exist |
 | `golangci-lint` v2 baseline mechanism exists | Not validated — US-46.13 acceptance criteria includes "use v2 native baseline if available, otherwise line-number file" as a fallback |
 | The `GCPDriver` is truly unwired (no registration) | Not validated in this session — US-46.2 acceptance criteria includes a grep step to confirm before deletion |
@@ -131,4 +131,4 @@ Manual verification performed:
 | `design/stories/epic-46-codebase-debt-audit/US-46.13-add-funlen-gocyclo-lint-baseline.md` | Created |
 | `design/stories/epic-46-codebase-debt-audit/US-46.14-archive-v1-design-docs.md` | Created |
 | `design/stories/epic-46-codebase-debt-audit/US-46.15-fix-readme-llm-stale-references.md` | Created |
-| `worklogs/0330_2026-06-18_epic-46-codebase-debt-audit.md` | Created (this file) |
+| `worklogs/0337_2026-06-18_epic-46-codebase-debt-audit.md` | Created (this file) |

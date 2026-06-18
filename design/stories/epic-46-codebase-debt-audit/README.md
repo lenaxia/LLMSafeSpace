@@ -2,7 +2,7 @@
 
 **Status:** Proposed
 **Created:** 2026-06-18
-**Author:** Audit session (see worklog 0330)
+**Author:** Audit session (see worklog 0337)
 **Parent design doc:** [`design/0037_2026-06-18_epic-46-codebase-debt-audit.md`](../../0037_2026-06-18_epic-46-codebase-debt-audit.md)
 
 ---
@@ -50,7 +50,7 @@ ROI = (correctness + testability + maintainability impact) ÷ engineering days.
 ## Scope Boundaries
 
 ### Covered by this epic
-Findings from the production code audit (worklog 0330) that are **not already owned** by:
+Findings from the production code audit (worklog 0337) that are **not already owned** by:
 - **Epic 29** (Handler Decomposition) — owns SecretsHandler split, AgentClient extraction, constructor injection
 - **Epic 38** (Architectural Remediation) — owns ProxyHandler decomposition, the 9 confirmed dead code locations, dual-pattern consolidation, services-out-of-handlers, credential triplication
 
