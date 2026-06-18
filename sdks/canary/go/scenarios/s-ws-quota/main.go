@@ -15,8 +15,8 @@ import (
 	"strconv"
 	"time"
 
-	llm "github.com/lenaxia/llmsafespace/sdk/go"
-	canary "github.com/lenaxia/llmsafespace/sdks/canary/go"
+	llm "github.com/lenaxia/llmsafespaces/sdk/go"
+	canary "github.com/lenaxia/llmsafespaces/sdks/canary/go"
 )
 
 func Handler(w http.ResponseWriter, r *http.Request) {
@@ -41,7 +41,7 @@ func main() {
 }
 
 func runWSQuota(ctx context.Context, run *canary.Runner, cfg canary.Config) {
-	limitStr := os.Getenv("LLMSAFESPACE_MAX_WORKSPACES_PER_USER")
+	limitStr := os.Getenv("LLMSAFESPACES_MAX_WORKSPACES_PER_USER")
 	limit := 10
 	if limitStr != "" {
 		if v, err := strconv.Atoi(limitStr); err == nil {

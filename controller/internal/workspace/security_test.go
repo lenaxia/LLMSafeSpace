@@ -24,7 +24,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 func newWorkspaceForSecurity(t *testing.T) *v1.Workspace {
@@ -37,7 +37,7 @@ func newWorkspaceForSecurity(t *testing.T) *v1.Workspace {
 		Spec: v1.WorkspaceSpec{
 			// Use an explicit image reference so resolveRuntimeImage doesn't
 			// require a RuntimeEnvironment CRD in the fake client.
-			Runtime: "ghcr.io/lenaxia/llmsafespace/runtimes/base:test",
+			Runtime: "ghcr.io/lenaxia/llmsafespaces/runtimes/base:test",
 		},
 		Status: v1.WorkspaceStatus{
 			PVCName: "pvc-sec-regression",

@@ -40,9 +40,9 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/lenaxia/llmsafespace/pkg/agent/opencode"
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
-	"github.com/lenaxia/llmsafespace/pkg/agentd/secrets"
+	"github.com/lenaxia/llmsafespaces/pkg/agent/opencode"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd/secrets"
 )
 
 // reloadMu serializes concurrent calls to reloadSecretsHandler. Two
@@ -279,7 +279,7 @@ type materializeConfig struct {
 	// provider model lists between credential reloads. It must NOT be inside
 	// secretsBaseDir because reset() deletes that directory on every Materialize
 	// call, which would destroy the cache before it could be used.
-	// Default: $HOME/.local/state/llmsafespace (on the workspace PVC subPath:home,
+	// Default: $HOME/.local/state/llmsafespaces (on the workspace PVC subPath:home,
 	// outside SecretsBaseDir and SSHDir, never cleaned by reset()).
 	enricherCacheDir string
 }
@@ -296,18 +296,18 @@ func (c materializeConfig) toPaths() secrets.Paths {
 }
 
 // loadMaterializeConfig resolves filesystem paths. It honors the same
-// LLMSAFESPACE_* env-var overrides used by the test suite; in production
+// LLMSAFESPACES_* env-var overrides used by the test suite; in production
 // no overrides are set and defaults match the runtime pod layout.
 func loadMaterializeConfig() materializeConfig {
 	home := envOrDefault("HOME", "/home/sandbox")
 	return materializeConfig{
 		home:             home,
-		secretsBaseDir:   envOrDefault("LLMSAFESPACE_SECRETS_BASE_DIR", agentd.SecretsBasePath),
-		sshDir:           envOrDefault("LLMSAFESPACE_SSH_DIR", home+"/.ssh"),
-		agentConfigPath:  envOrDefault("LLMSAFESPACE_AGENT_CONFIG_PATH", agentd.AgentConfigPath),
-		secretsEnvPath:   envOrDefault("LLMSAFESPACE_SECRETS_ENV_PATH", agentd.SecretsEnvPath),
-		gitCredsPath:     envOrDefault("LLMSAFESPACE_GIT_CREDS_PATH", home+"/.git-credentials"),
-		enricherCacheDir: envOrDefault("LLMSAFESPACE_ENRICHER_CACHE_DIR", home+"/.local/state/llmsafespace"),
+		secretsBaseDir:   envOrDefault("LLMSAFESPACES_SECRETS_BASE_DIR", agentd.SecretsBasePath),
+		sshDir:           envOrDefault("LLMSAFESPACES_SSH_DIR", home+"/.ssh"),
+		agentConfigPath:  envOrDefault("LLMSAFESPACES_AGENT_CONFIG_PATH", agentd.AgentConfigPath),
+		secretsEnvPath:   envOrDefault("LLMSAFESPACES_SECRETS_ENV_PATH", agentd.SecretsEnvPath),
+		gitCredsPath:     envOrDefault("LLMSAFESPACES_GIT_CREDS_PATH", home+"/.git-credentials"),
+		enricherCacheDir: envOrDefault("LLMSAFESPACES_ENRICHER_CACHE_DIR", home+"/.local/state/llmsafespaces"),
 	}
 }
 

@@ -69,5 +69,5 @@ type CredentialStore interface {
 
 // AdminKeyDeriver derives a server-side encryption key for admin credentials.
 // The label parameter scopes the derived key (e.g. "provider-credentials").
-// Returns nil when LLMSAFESPACE_MASTER_SECRET is not set.
+// Returns nil when LLMSAFESPACES_MASTER_SECRET is not set.
 type AdminKeyDeriver func(label string) []byte

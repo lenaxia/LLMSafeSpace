@@ -105,8 +105,8 @@ rateLimiting:
 	}
 
 	// Test environment variable override
-	os.Setenv("LLMSAFESPACE_DATABASE_PASSWORD", "envpass")
-	defer os.Unsetenv("LLMSAFESPACE_DATABASE_PASSWORD")
+	os.Setenv("LLMSAFESPACES_DATABASE_PASSWORD", "envpass")
+	defer os.Unsetenv("LLMSAFESPACES_DATABASE_PASSWORD")
 
 	cfg, err = Load(tmpfile.Name())
 	if err != nil {
@@ -212,7 +212,7 @@ func TestConfig_CookieName_DefaultFromYAML(t *testing.T) {
 }
 
 func TestConfig_RememberMeDuration_EnvOverride(t *testing.T) {
-	t.Setenv("LLMSAFESPACE_AUTH_REMEMBEREDURATION", "168h")
+	t.Setenv("LLMSAFESPACES_AUTH_REMEMBEREDURATION", "168h")
 	path := writeMinimalConfig(t, "  rememberMeDuration: 720h\n")
 	cfg, err := Load(path)
 	if err != nil {
@@ -224,7 +224,7 @@ func TestConfig_RememberMeDuration_EnvOverride(t *testing.T) {
 }
 
 func TestConfig_RememberMeDuration_InvalidEnvIgnored(t *testing.T) {
-	t.Setenv("LLMSAFESPACE_AUTH_REMEMBEREDURATION", "not-a-duration")
+	t.Setenv("LLMSAFESPACES_AUTH_REMEMBEREDURATION", "not-a-duration")
 	path := writeMinimalConfig(t, "  rememberMeDuration: 720h\n")
 	cfg, err := Load(path)
 	if err != nil {
@@ -236,7 +236,7 @@ func TestConfig_RememberMeDuration_InvalidEnvIgnored(t *testing.T) {
 }
 
 func TestConfig_RememberMeDuration_ZeroEnvIgnored(t *testing.T) {
-	t.Setenv("LLMSAFESPACE_AUTH_REMEMBEREDURATION", "0")
+	t.Setenv("LLMSAFESPACES_AUTH_REMEMBEREDURATION", "0")
 	path := writeMinimalConfig(t, "  rememberMeDuration: 720h\n")
 	cfg, err := Load(path)
 	if err != nil {
@@ -248,8 +248,8 @@ func TestConfig_RememberMeDuration_ZeroEnvIgnored(t *testing.T) {
 }
 
 func TestConfig_ProxyRequestBuffer_EnvOverrides(t *testing.T) {
-	t.Setenv("LLMSAFESPACE_PROXY_REQUESTBUFFERSIZEPERWORKSPACE", "7")
-	t.Setenv("LLMSAFESPACE_PROXY_REQUESTBUFFERTIMEOUTSECONDS", "45")
+	t.Setenv("LLMSAFESPACES_PROXY_REQUESTBUFFERSIZEPERWORKSPACE", "7")
+	t.Setenv("LLMSAFESPACES_PROXY_REQUESTBUFFERTIMEOUTSECONDS", "45")
 	path := writeMinimalConfig(t, "")
 	cfg, err := Load(path)
 	if err != nil {
@@ -264,8 +264,8 @@ func TestConfig_ProxyRequestBuffer_EnvOverrides(t *testing.T) {
 }
 
 func TestConfig_ProxyRequestBuffer_InvalidEnvIgnored(t *testing.T) {
-	t.Setenv("LLMSAFESPACE_PROXY_REQUESTBUFFERSIZEPERWORKSPACE", "not-a-number")
-	t.Setenv("LLMSAFESPACE_PROXY_REQUESTBUFFERTIMEOUTSECONDS", "-3")
+	t.Setenv("LLMSAFESPACES_PROXY_REQUESTBUFFERSIZEPERWORKSPACE", "not-a-number")
+	t.Setenv("LLMSAFESPACES_PROXY_REQUESTBUFFERTIMEOUTSECONDS", "-3")
 	path := writeMinimalConfig(t, "")
 	cfg, err := Load(path)
 	if err != nil {

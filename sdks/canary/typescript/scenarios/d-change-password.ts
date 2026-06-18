@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // D-CHANGE-PASSWORD canary — TypeScript SDK
 
-import { LLMSafeSpace, AuthError } from '../../src/index.js';
+import { LLMSafeSpaces, AuthError } from '../../src/index.js';
 import { Runner, Config, configFromEnv, nodeFetch, rawDo } from '../canary.js';
 
 async function run(r: Runner, cfg: Config): Promise<void> {
-  const rotateEmail = process.env.LLMSAFESPACE_ROTATE_EMAIL || 'canary-rotate@llmsafespace.test';
-  const rotatePassword = process.env.LLMSAFESPACE_ROTATE_PASSWORD || 'canary-rotate-password!';
+  const rotateEmail = process.env.LLMSAFESPACES_ROTATE_EMAIL || 'canary-rotate@llmsafespaces.test';
+  const rotatePassword = process.env.LLMSAFESPACES_ROTATE_PASSWORD || 'canary-rotate-password!';
   const newPassword = 'canary-rotate-newpw!';
 
-  const c = new LLMSafeSpace({
+  const c = new LLMSafeSpaces({
     baseUrl: cfg.apiUrl,
     credentials: { email: rotateEmail, password: rotatePassword },
     timeout: 60000,
@@ -36,7 +36,7 @@ async function run(r: Runner, cfg: Config): Promise<void> {
     const [s2] = await rawDo('POST', `${cfg.apiUrl}/api/v1/auth/login`, '', loginBodyOld);
     r.assert(s2 === 401, 'login-old-password: 401', `got ${s2}`);
 
-    const c2 = new LLMSafeSpace({
+    const c2 = new LLMSafeSpaces({
       baseUrl: cfg.apiUrl,
       credentials: { email: rotateEmail, password: newPassword },
       timeout: 60000,
@@ -68,7 +68,7 @@ async function run(r: Runner, cfg: Config): Promise<void> {
 
   } finally {
     try {
-      const cCleanup = new LLMSafeSpace({
+      const cCleanup = new LLMSafeSpaces({
         baseUrl: cfg.apiUrl,
         credentials: { email: rotateEmail, password: rotatePassword },
         timeout: 30000,

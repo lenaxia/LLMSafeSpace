@@ -14,11 +14,11 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
-	"github.com/lenaxia/llmsafespace/api/internal/handlers"
-	apilogger "github.com/lenaxia/llmsafespace/api/internal/logger"
-	imocks "github.com/lenaxia/llmsafespace/api/internal/mocks"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	apierrors "github.com/lenaxia/llmsafespaces/api/internal/errors"
+	"github.com/lenaxia/llmsafespaces/api/internal/handlers"
+	apilogger "github.com/lenaxia/llmsafespaces/api/internal/logger"
+	imocks "github.com/lenaxia/llmsafespaces/api/internal/mocks"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 // newWorkspaceAccessRouter builds a router identical to newRouterFixture but

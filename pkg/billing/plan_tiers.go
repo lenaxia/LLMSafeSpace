@@ -3,7 +3,7 @@
 
 package billing
 
-import "github.com/lenaxia/llmsafespace/pkg/types"
+import "github.com/lenaxia/llmsafespaces/pkg/types"
 
 // PlanFeatures defines what a plan tier allows. Used for feature gating.
 type PlanFeatures struct {

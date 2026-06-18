@@ -22,12 +22,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 
-	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
-	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
-	"github.com/lenaxia/llmsafespace/api/internal/services/wsstate"
-	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
-	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/eventbroker"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/sse"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/wsstate"
+	apitypes "github.com/lenaxia/llmsafespaces/api/internal/types"
+	k8smocks "github.com/lenaxia/llmsafespaces/mocks/kubernetes"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 func newStreamEventsRouter(h *ProxyHandler) *gin.Engine {
@@ -100,9 +100,9 @@ func TestStreamEvents_WorkspaceNotFound(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	wsMock.On("Get", mock.Anything, "ws-missing", metav1.GetOptions{}).
@@ -163,9 +163,9 @@ func TestStreamEvents_EnsuresWatchingOnOpen(t *testing.T) {
 	httpClient := &http.Client{Transport: transport, Timeout: 5 * time.Second}
 
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()
@@ -304,9 +304,9 @@ func TestStreamEvents_TooManySubscribers_Returns429(t *testing.T) {
 
 func TestStreamEvents_OnPhaseChange_PublishesToBroker(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
@@ -345,9 +345,9 @@ func TestStreamEvents_OnPhaseChange_PublishesToBroker(t *testing.T) {
 
 func TestStreamEvents_OnSessionIdle_PublishesToBroker(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
@@ -375,9 +375,9 @@ func TestStreamEvents_OnSessionIdle_PublishesToBroker(t *testing.T) {
 
 func TestStreamEvents_OnRawEvent_PublishesOpenCodeEvent(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
@@ -407,9 +407,9 @@ func TestStreamEvents_OnRawEvent_PublishesOpenCodeEvent(t *testing.T) {
 
 func TestStreamEvents_OnRawEvent_PublishesAllEventTypes(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
@@ -446,9 +446,9 @@ func TestStreamEvents_OnRawEvent_PublishesAllEventTypes(t *testing.T) {
 
 func TestStreamEvents_OnRawEvent_NilBrokerDoesNotPanic(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
@@ -459,9 +459,9 @@ func TestStreamEvents_OnRawEvent_NilBrokerDoesNotPanic(t *testing.T) {
 
 func TestStreamEvents_OnRawEvent_UnparsableJSONData(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
@@ -487,9 +487,9 @@ func TestStreamEvents_OnRawEvent_UnparsableJSONData(t *testing.T) {
 
 func TestStreamEvents_OnRawEvent_PreservesNestedStructure(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
@@ -567,9 +567,9 @@ func TestStreamEvents_OpenCodeEventDeliveredToSSEClient(t *testing.T) {
 
 func TestStreamEvents_OnRawEvent_DifferentWorkspaceIsolation(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
@@ -603,9 +603,9 @@ func TestStreamEvents_OnRawEvent_DifferentWorkspaceIsolation(t *testing.T) {
 
 func TestStreamEvents_OnSessionActive_PublishesToBroker(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)

@@ -32,7 +32,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/lenaxia/llmsafespace/pkg/secrets"
+	"github.com/lenaxia/llmsafespaces/pkg/secrets"
 )
 
 // ProbeModelEntry is one model returned by the probe endpoint.

@@ -17,12 +17,12 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
-	"github.com/lenaxia/llmsafespace/api/internal/handlers"
-	apilogger "github.com/lenaxia/llmsafespace/api/internal/logger"
-	imocks "github.com/lenaxia/llmsafespace/api/internal/mocks"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	apierrors "github.com/lenaxia/llmsafespaces/api/internal/errors"
+	"github.com/lenaxia/llmsafespaces/api/internal/handlers"
+	apilogger "github.com/lenaxia/llmsafespaces/api/internal/logger"
+	imocks "github.com/lenaxia/llmsafespaces/api/internal/mocks"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -146,7 +146,7 @@ func newTerminalTestRouter(t *testing.T) (*gin.Engine, *terminalMockCache) {
 		},
 	}
 
-	terminalHandler := handlers.NewTerminalHandler(cache, wsGetter, "llmsafespace", log)
+	terminalHandler := handlers.NewTerminalHandler(cache, wsGetter, "llmsafespaces", log)
 
 	router := NewRouter(svc, log, nil, RouterConfig{
 		TerminalHandler: terminalHandler,

@@ -1,4 +1,4 @@
-"""Typed models for LLMSafeSpace API."""
+"""Typed models for LLMSafeSpaces API."""
 
 from __future__ import annotations
 

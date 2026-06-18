@@ -1,6 +1,6 @@
-# LLMSafeSpace API Middlewares
+# LLMSafeSpaces API Middlewares
 
-This document provides detailed technical specifications for all middleware components in the LLMSafeSpace API system. Middlewares are executed in the order they're added to the Gin engine.
+This document provides detailed technical specifications for all middleware components in the LLMSafeSpaces API system. Middlewares are executed in the order they're added to the Gin engine.
 
 ## Table of Contents
 

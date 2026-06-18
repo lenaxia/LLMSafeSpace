@@ -18,7 +18,7 @@ from canary import (
     wait_active,
     ensure_session_with_retry,
 )
-from llmsafespace import LLMSafeSpace
+from llmsafespaces import LLMSafeSpaces
 
 
 def run(run: Runner, cfg: Config) -> None:
@@ -35,11 +35,11 @@ def run(run: Runner, cfg: Config) -> None:
         run.ok("cred-model-flow: JWT not configured — agent tests will be skipped")
 
     if jwt_available:
-        c = LLMSafeSpace(
+        c = LLMSafeSpaces(
             cfg.api_url, email=cfg.email, password=cfg.password, timeout=120.0
         )
     else:
-        c = LLMSafeSpace(cfg.api_url, api_key=cfg.api_key, timeout=120.0)
+        c = LLMSafeSpaces(cfg.api_url, api_key=cfg.api_key, timeout=120.0)
     ws_id = None
     cred_id = None
 

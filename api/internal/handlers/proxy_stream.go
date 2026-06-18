@@ -13,8 +13,8 @@ import (
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
-	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/eventbroker"
+	apitypes "github.com/lenaxia/llmsafespaces/api/internal/types"
 )
 
 func (h *ProxyHandler) StreamEvents(c *gin.Context) {
@@ -24,9 +24,9 @@ func (h *ProxyHandler) StreamEvents(c *gin.Context) {
 		return
 	}
 
-	v1Client, err := h.k8sClient.LlmsafespaceV1()
+	v1Client, err := h.k8sClient.LlmsafespacesV1()
 	if err != nil {
-		h.logger.Error("Failed to get LLMSafespaceV1 client for SSE", err, "workspaceID", workspaceID)
+		h.logger.Error("Failed to get LLMSafespacesV1 client for SSE", err, "workspaceID", workspaceID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}

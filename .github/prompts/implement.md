@@ -1,4 +1,4 @@
-You are implementing a feature or user story for the LLMSafeSpace repository.
+You are implementing a feature or user story for the LLMSafeSpaces repository.
 
 Rules:
 1. Read README-LLM.md before making any changes — it contains hard rules for TDD, type safety, architecture, and adversarial self-review.

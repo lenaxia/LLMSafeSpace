@@ -4,10 +4,10 @@
 package kubernetes
 
 import (
-	"github.com/lenaxia/llmsafespace/api/internal/config"
-	"github.com/lenaxia/llmsafespace/pkg/interfaces"
-	k8s "github.com/lenaxia/llmsafespace/pkg/kubernetes"
-	"github.com/lenaxia/llmsafespace/pkg/logger"
+	"github.com/lenaxia/llmsafespaces/api/internal/config"
+	"github.com/lenaxia/llmsafespaces/pkg/interfaces"
+	k8s "github.com/lenaxia/llmsafespaces/pkg/kubernetes"
+	"github.com/lenaxia/llmsafespaces/pkg/logger"
 )
 
 // NewClient creates a new Kubernetes client from the API config

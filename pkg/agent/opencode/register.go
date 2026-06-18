@@ -3,7 +3,7 @@
 
 package opencode
 
-import "github.com/lenaxia/llmsafespace/pkg/agent"
+import "github.com/lenaxia/llmsafespaces/pkg/agent"
 
 func Register() {
 	agent.Register(agent.AgentTypeOpenCode, &OpenCodeAgent{})

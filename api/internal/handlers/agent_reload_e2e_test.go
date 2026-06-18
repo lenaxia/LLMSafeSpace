@@ -18,10 +18,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 
-	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
-	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
-	opencode "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	apierrors "github.com/lenaxia/llmsafespaces/api/internal/errors"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/sse"
+	opencode "github.com/lenaxia/llmsafespaces/pkg/agent/opencode"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 // --- E2E mocks that simulate the full workspace lifecycle ---

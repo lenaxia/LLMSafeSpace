@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lenaxia/llmsafespace/api/internal/middleware"
+	"github.com/lenaxia/llmsafespaces/api/internal/middleware"
 )
 
 type mockOrgMemberChecker struct {

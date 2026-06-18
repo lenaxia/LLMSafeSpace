@@ -20,7 +20,7 @@ from canary import (
     has_field,
     contains_leaked_internals,
 )
-from llmsafespace import LLMSafeSpace
+from llmsafespaces import LLMSafeSpaces
 
 
 def run(run: Runner, cfg: Config) -> None:
@@ -45,7 +45,7 @@ def run(run: Runner, cfg: Config) -> None:
     run.assert_(has_error_field(b3), "400-empty-register: error field")
 
     # P4: 400 PUT workspace missing name
-    c = LLMSafeSpace(cfg.api_url, api_key=cfg.api_key, timeout=15.0)
+    c = LLMSafeSpaces(cfg.api_url, api_key=cfg.api_key, timeout=15.0)
     ws_id = None
     try:
         ws = c.workspaces.create(

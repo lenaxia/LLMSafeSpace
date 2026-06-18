@@ -11,16 +11,16 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 from canary import Runner, Config, config_from_env, wait_active
-from llmsafespace import LLMSafeSpace
+from llmsafespaces import LLMSafeSpaces
 
 
 def run(r: Runner, cfg: Config) -> None:
-    limit = int(os.environ.get("LLMSAFESPACE_MAX_ACTIVE_WORKSPACES_PER_USER", "3"))
+    limit = int(os.environ.get("LLMSAFESPACES_MAX_ACTIVE_WORKSPACES_PER_USER", "3"))
     if limit <= 0:
         r.ok("activate-eviction: skipped (unlimited)")
         return
 
-    c = LLMSafeSpace(cfg.api_url, api_key=cfg.api_key, timeout=120.0)
+    c = LLMSafeSpaces(cfg.api_url, api_key=cfg.api_key, timeout=120.0)
     created: list[str] = []
     try:
         for i in range(limit):

@@ -14,11 +14,11 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/lenaxia/llmsafespace/api/internal/services/msgqueue"
-	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/msgqueue"
+	apitypes "github.com/lenaxia/llmsafespaces/api/internal/types"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
@@ -369,7 +369,7 @@ func (h *ProxyHandler) persistContextFromEvent(workspaceID, rawData string) {
 }
 
 func (h *ProxyHandler) getPodIPForSSE(workspaceID string) string {
-	v1Client, err := h.k8sClient.LlmsafespaceV1()
+	v1Client, err := h.k8sClient.LlmsafespacesV1()
 	if err != nil {
 		return ""
 	}

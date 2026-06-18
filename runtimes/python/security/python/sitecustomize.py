@@ -4,7 +4,7 @@ import importlib.util
 import os
 
 # Load restricted modules configuration
-with open('/etc/llmsafespace/python/restricted_modules.json', 'r') as f:
+with open('/etc/llmsafespaces/python/restricted_modules.json', 'r') as f:
     RESTRICTED_MODULES = json.load(f)
 
 class RestrictedImportFinder:

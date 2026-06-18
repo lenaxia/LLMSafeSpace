@@ -18,8 +18,8 @@ import (
 const (
 	dekSize  = 32
 	saltSize = 32
-	kekInfo  = "llmsafespace-kek"
-	recInfo  = "llmsafespace-recovery"
+	kekInfo  = "llmsafespaces-kek"
+	recInfo  = "llmsafespaces-recovery"
 
 	KDFVersionHKDF     = 0
 	KDFVersionArgon2id = 1

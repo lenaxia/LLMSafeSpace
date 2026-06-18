@@ -9,7 +9,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/lenaxia/llmsafespace/api/internal/services/wsstate"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/wsstate"
 )
 
 func (h *ProxyHandler) getPassword(ctx context.Context, workspaceID string) (string, error) {

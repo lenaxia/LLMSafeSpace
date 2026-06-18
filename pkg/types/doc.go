@@ -5,7 +5,7 @@
 // service to receive requests and return responses to clients.
 //
 // These types are intentionally NOT Kubernetes CRD types. CRD types live in
-// pkg/apis/llmsafespace/v1; this package converts to/from them at the
+// pkg/apis/llmsafespaces/v1; this package converts to/from them at the
 // service boundary. Types here use plain Go types (e.g. *time.Time, not
 // *metav1.Time) so the JSON contract returned to clients is free of
 // Kubernetes-isms (kind, apiVersion, metadata).

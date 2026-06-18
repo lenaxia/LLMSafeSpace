@@ -7,9 +7,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/lenaxia/llmsafespace/api/internal/services/database"
-	"github.com/lenaxia/llmsafespace/pkg/billing"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/database"
+	"github.com/lenaxia/llmsafespaces/pkg/billing"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 	stripe "github.com/stripe/stripe-go/v76"
 	"github.com/stripe/stripe-go/v76/checkout/session"
 )

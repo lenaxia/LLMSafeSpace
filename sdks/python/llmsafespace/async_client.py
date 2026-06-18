@@ -1,6 +1,6 @@
-"""Async LLMSafeSpace Python SDK client (US-14.4).
+"""Async LLMSafeSpaces Python SDK client (US-14.4).
 
-Mirrors the synchronous LLMSafeSpace client using httpx.AsyncClient so
+Mirrors the synchronous LLMSafeSpaces client using httpx.AsyncClient so
 async-native agent frameworks (FastAPI, LangChain async, asyncio pipelines)
 can call the API without blocking the event loop.
 """
@@ -14,7 +14,7 @@ import httpx
 from .errors import (
     AuthError,
     ConflictError,
-    LLMSafeSpaceError,
+    LLMSafeSpacesError,
     NotFoundError,
     RateLimitError,
     TimeoutError,
@@ -32,8 +32,8 @@ from .types import (
 )
 
 
-class AsyncLLMSafeSpace:
-    """Asynchronous client for the LLMSafeSpace API."""
+class AsyncLLMSafeSpaces:
+    """Asynchronous client for the LLMSafeSpaces API."""
 
     def __init__(
         self,
@@ -140,11 +140,11 @@ class AsyncLLMSafeSpace:
             case 429:
                 raise RateLimitError(msg)
             case _:
-                raise LLMSafeSpaceError(msg, resp.status_code)
+                raise LLMSafeSpacesError(msg, resp.status_code)
 
 
 class _AsyncWorkspacesAPI:
-    def __init__(self, client: AsyncLLMSafeSpace):
+    def __init__(self, client: AsyncLLMSafeSpaces):
         self._c = client
 
     async def list(self, limit: int = 20, offset: int = 0) -> WorkspaceListResult:
@@ -212,7 +212,7 @@ class _AsyncWorkspacesAPI:
 
 
 class _AsyncSessionsAPI:
-    def __init__(self, client: AsyncLLMSafeSpace):
+    def __init__(self, client: AsyncLLMSafeSpaces):
         self._c = client
 
     async def ensure(self, workspace_id: str) -> EnsureSessionResponse:
@@ -270,7 +270,7 @@ class _AsyncSessionsAPI:
 
 
 class _AsyncAuthAPI:
-    def __init__(self, client: AsyncLLMSafeSpace):
+    def __init__(self, client: AsyncLLMSafeSpaces):
         self._c = client
 
     async def me(self) -> dict[str, Any]:
@@ -288,7 +288,7 @@ class _AsyncAuthAPI:
 
 
 class _AsyncAccountAPI:
-    def __init__(self, client: AsyncLLMSafeSpace):
+    def __init__(self, client: AsyncLLMSafeSpaces):
         self._c = client
 
     async def rotate_key(self, password: str) -> dict[str, Any]:
@@ -310,7 +310,7 @@ class _AsyncAccountAPI:
 
 
 class _AsyncSecretsAPI:
-    def __init__(self, client: AsyncLLMSafeSpace):
+    def __init__(self, client: AsyncLLMSafeSpaces):
         self._c = client
 
     async def create(
@@ -358,7 +358,7 @@ class _AsyncSecretsAPI:
 
 
 class _AsyncTerminalAPI:
-    def __init__(self, client: AsyncLLMSafeSpace):
+    def __init__(self, client: AsyncLLMSafeSpaces):
         self._c = client
 
     async def get_ticket(self, workspace_id: str) -> TerminalTicket:

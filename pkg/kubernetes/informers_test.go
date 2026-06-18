@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/client-go/tools/cache"
 
-	kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
+	kmocks "github.com/lenaxia/llmsafespaces/mocks/kubernetes"
 )
 
 // countingInformer is a cache.SharedIndexInformer double whose only meaningful
@@ -76,7 +76,7 @@ func (c *countingInformer) GetIndexer() cache.Indexer        { panic("not used b
 // exactly once across two StartInformers calls — the direct, deterministic
 // measure of "one set of goroutines".
 func TestStartInformers_Idempotent(t *testing.T) {
-	client := kmocks.NewMockLLMSafespaceV1Interface()
+	client := kmocks.NewMockLLMSafespacesV1Interface()
 	f := NewInformerFactory(client, time.Minute, "default")
 
 	re := &countingInformer{}
@@ -108,7 +108,7 @@ func TestStartInformers_Idempotent(t *testing.T) {
 // TestStartInformers_OnlyOnce flag-independent sanity: a fresh factory is not
 // started before StartInformers is called.
 func TestStartInformers_NotStartedByDefault(t *testing.T) {
-	client := kmocks.NewMockLLMSafespaceV1Interface()
+	client := kmocks.NewMockLLMSafespacesV1Interface()
 	f := NewInformerFactory(client, time.Minute, "default")
 	assert.False(t, f.started, "new factory must not be started")
 }
@@ -118,7 +118,7 @@ func TestStartInformers_NotStartedByDefault(t *testing.T) {
 // caching contract that lets callers register handlers against a stable object
 // before StartInformers; a new instance per call would silently drop handlers.
 func TestInformerFactory_CachesInformerInstances(t *testing.T) {
-	client := kmocks.NewMockLLMSafespaceV1Interface()
+	client := kmocks.NewMockLLMSafespacesV1Interface()
 	f := NewInformerFactory(client, time.Minute, "default")
 
 	re1 := f.RuntimeEnvironmentInformer()

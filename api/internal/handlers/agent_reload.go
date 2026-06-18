@@ -17,14 +17,14 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
-	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
-	"github.com/lenaxia/llmsafespace/api/internal/services/msgqueue"
-	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
-	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
-	opencode "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
-	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	apierrors "github.com/lenaxia/llmsafespaces/api/internal/errors"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/msgqueue"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/sse"
+	apitypes "github.com/lenaxia/llmsafespaces/api/internal/types"
+	opencode "github.com/lenaxia/llmsafespaces/pkg/agent/opencode"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
+	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 // QueueClearer is the minimal queue interface needed by the reload handler.

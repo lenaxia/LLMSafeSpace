@@ -9,7 +9,7 @@
 #       • mainline collisions and post-rebase dups are AUTO-FIXED in
 #         this hook (run_repolint_gate) and in .githooks/post-rewrite;
 #         see pkg/repolint/sequence.go FixWorklogs.
-#   - drift between api/migrations/ and charts/llmsafespace/migrations/ (repolint)
+#   - drift between api/migrations/ and charts/llmsafespaces/migrations/ (repolint)
 #   - drift between Go CRD struct fields and chart CRD schema (repolint)
 #   - un-gofmt'd Go source                              (fmt-check)
 #   - missing/wrong Go imports (goimports)              (imports-check)

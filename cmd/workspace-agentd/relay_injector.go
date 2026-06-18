@@ -88,7 +88,7 @@ func getActiveRelayModels() []relayModel {
 }
 
 var relayInjectorOutcomes = promauto.NewCounterVec(prometheus.CounterOpts{
-	Name: "llmsafespace_relay_injector_total",
+	Name: "llmsafespaces_relay_injector_total",
 	Help: "Phase-2 relay injector outcomes per agentd pod boot.",
 }, []string{"outcome"})
 

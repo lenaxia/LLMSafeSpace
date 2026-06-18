@@ -1,4 +1,4 @@
-import { LLMSafeSpace, NotFoundError, AuthError } from '../src/index.js';
+import { LLMSafeSpaces, NotFoundError, AuthError } from '../src/index.js';
 import http from 'http';
 
 const API_URL = process.env.API_URL || 'http://localhost:18080';
@@ -37,7 +37,7 @@ function nodeFetch(input: string, init?: RequestInit): Promise<Response> {
   });
 }
 
-const client = new LLMSafeSpace({ baseUrl: API_URL, apiKey: API_KEY, timeout: 120_000, fetch: nodeFetch as any });
+const client = new LLMSafeSpaces({ baseUrl: API_URL, apiKey: API_KEY, timeout: 120_000, fetch: nodeFetch as any });
 
 let passed = 0;
 let failed = 0;
@@ -257,7 +257,7 @@ async function main() {
   }
 
   try {
-    const bad = new LLMSafeSpace({ baseUrl: API_URL, apiKey: 'lsp_invalid' });
+    const bad = new LLMSafeSpaces({ baseUrl: API_URL, apiKey: 'lsp_invalid' });
     await bad.auth.me();
     assert(false, 'invalid key should throw');
   } catch (e) {

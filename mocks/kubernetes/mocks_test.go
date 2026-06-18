@@ -15,16 +15,16 @@ import (
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 
-	kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
-	"github.com/lenaxia/llmsafespace/pkg/interfaces"
+	kmocks "github.com/lenaxia/llmsafespaces/mocks/kubernetes"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+	"github.com/lenaxia/llmsafespaces/pkg/interfaces"
 )
 
 // Compile-time interface checks — if any mock is missing a method the file
 // won't compile and CI catches it immediately without running a single test.
 var (
 	_ interfaces.KubernetesClient            = (*kmocks.MockKubernetesClient)(nil)
-	_ interfaces.LLMSafespaceV1Interface     = (*kmocks.MockLLMSafespaceV1Interface)(nil)
+	_ interfaces.LLMSafespacesV1Interface     = (*kmocks.MockLLMSafespacesV1Interface)(nil)
 	_ interfaces.RuntimeEnvironmentInterface = (*kmocks.MockRuntimeEnvironmentInterface)(nil)
 	_ watch.Interface                        = (*kmocks.MockWatch)(nil)
 )
@@ -75,20 +75,20 @@ func TestMockKubernetesClient_InformerFactory_Nil(t *testing.T) {
 	m.AssertExpectations(t)
 }
 
-func TestMockKubernetesClient_LlmsafespaceV1(t *testing.T) {
+func TestMockKubernetesClient_LlmsafespacesV1(t *testing.T) {
 	m := kmocks.NewMockKubernetesClient()
-	v1iface := kmocks.NewMockLLMSafespaceV1Interface()
-	m.On("LlmsafespaceV1").Return(v1iface, nil)
-	got, err := m.LlmsafespaceV1()
+	v1iface := kmocks.NewMockLLMSafespacesV1Interface()
+	m.On("LlmsafespacesV1").Return(v1iface, nil)
+	got, err := m.LlmsafespacesV1()
 	assert.NoError(t, err)
 	assert.Equal(t, v1iface, got)
 	m.AssertExpectations(t)
 }
 
-// ===== MockLLMSafespaceV1Interface =====
+// ===== MockLLMSafespacesV1Interface =====
 
-func TestMockLLMSafespaceV1_RuntimeEnvironments(t *testing.T) {
-	m := kmocks.NewMockLLMSafespaceV1Interface()
+func TestMockLLMSafespacesV1_RuntimeEnvironments(t *testing.T) {
+	m := kmocks.NewMockLLMSafespacesV1Interface()
 	rte := kmocks.NewMockRuntimeEnvironmentInterface()
 	m.On("RuntimeEnvironments").Return(rte)
 	assert.Equal(t, rte, m.RuntimeEnvironments())

@@ -1,4 +1,4 @@
-"""LLMSafeSpace Python SDK client."""
+"""LLMSafeSpaces Python SDK client."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import httpx
 from .errors import (
     AuthError,
     ConflictError,
-    LLMSafeSpaceError,
+    LLMSafeSpacesError,
     NotFoundError,
     RateLimitError,
     TimeoutError,
@@ -27,8 +27,8 @@ from .types import (
 )
 
 
-class LLMSafeSpace:
-    """Synchronous client for the LLMSafeSpace API."""
+class LLMSafeSpaces:
+    """Synchronous client for the LLMSafeSpaces API."""
 
     def __init__(
         self,
@@ -135,11 +135,11 @@ class LLMSafeSpace:
             case 429:
                 raise RateLimitError(msg)
             case _:
-                raise LLMSafeSpaceError(msg, resp.status_code)
+                raise LLMSafeSpacesError(msg, resp.status_code)
 
 
 class _WorkspacesAPI:
-    def __init__(self, client: LLMSafeSpace):
+    def __init__(self, client: LLMSafeSpaces):
         self._c = client
 
     def list(self, limit: int = 20, offset: int = 0) -> WorkspaceListResult:
@@ -207,7 +207,7 @@ class _WorkspacesAPI:
 
 
 class _SessionsAPI:
-    def __init__(self, client: LLMSafeSpace):
+    def __init__(self, client: LLMSafeSpaces):
         self._c = client
 
     def ensure(self, workspace_id: str) -> EnsureSessionResponse:
@@ -265,7 +265,7 @@ class _SessionsAPI:
 
 
 class _AuthAPI:
-    def __init__(self, client: LLMSafeSpace):
+    def __init__(self, client: LLMSafeSpaces):
         self._c = client
 
     def me(self) -> dict[str, Any]:
@@ -283,7 +283,7 @@ class _AuthAPI:
 
 
 class _AccountAPI:
-    def __init__(self, client: LLMSafeSpace):
+    def __init__(self, client: LLMSafeSpaces):
         self._c = client
 
     def rotate_key(self, password: str) -> dict[str, Any]:
@@ -305,7 +305,7 @@ class _AccountAPI:
 
 
 class _SecretsAPI:
-    def __init__(self, client: LLMSafeSpace):
+    def __init__(self, client: LLMSafeSpaces):
         self._c = client
 
     def create(
@@ -354,7 +354,7 @@ class _SecretsAPI:
 
 
 class _TerminalAPI:
-    def __init__(self, client: LLMSafeSpace):
+    def __init__(self, client: LLMSafeSpaces):
         self._c = client
 
     def get_ticket(self, workspace_id: str) -> TerminalTicket:

@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 func newWorkspaceForPodBuilder(t *testing.T) *v1.Workspace {
@@ -28,7 +28,7 @@ func newWorkspaceForPodBuilder(t *testing.T) *v1.Workspace {
 			Namespace: "default",
 		},
 		Spec: v1.WorkspaceSpec{
-			Runtime: "ghcr.io/lenaxia/llmsafespace/runtimes/base:test",
+			Runtime: "ghcr.io/lenaxia/llmsafespaces/runtimes/base:test",
 		},
 		Status: v1.WorkspaceStatus{
 			PVCName: "pvc-pod-builder-test",

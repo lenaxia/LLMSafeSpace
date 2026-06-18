@@ -1,0 +1,606 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "LLMSafeSpaces billing and cost attribution: inference spend, token economics, per-user/per-workspace usage, quota enforcement. Pipeline health is on the Operational dashboard.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": ["llmsafespaces"],
+      "targetBlank": true,
+      "title": "LLMSafeSpaces Dashboards",
+      "tooltip": "",
+      "type": "dashboards",
+      "url": ""
+    }
+  ],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "id": 1,
+      "panels": [],
+      "title": "Burn Rate (Fleet-wide Inference Spend)",
+      "type": "row",
+      "description": "How fast are we spending on inference? Total cost, cost by model, cost by tier. These panels answer: what is driving spend, and is the free tier costing more than expected?"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"fixedColor": "green", "mode": "fixed"},
+          "decimals": 2,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "red", "value": 500}
+            ]
+          },
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 1},
+      "id": 2,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "expr": "sum(increase(llmsafespaces_inference_cost_dollars_total{job=~\"$job\"}[$__range]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Total Inference Cost (period)",
+      "type": "stat",
+      "description": "Cumulative inference spend in USD over the dashboard time range. Zero for providers that do not report cost (self-hosted, relay models). Red threshold at $500/period — adjust to match your daily budget. If spend exceeds budget, check Cost Rate by Model to identify which model is driving it."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"fixedColor": "blue", "mode": "fixed"},
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 1},
+      "id": 3,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "expr": "sum(increase(llmsafespaces_inference_requests_total{job=~\"$job\"}[$__range]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Total Inference Requests (period)",
+      "type": "stat",
+      "description": "Number of inference calls that produced at least one output token in the selected period. Use with Total Cost to compute cost-per-request. A high request count with low cost indicates cheap models are being used; low requests with high cost indicates expensive models."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"fixedColor": "purple", "mode": "fixed"},
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "purple", "value": null}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 1},
+      "id": 4,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "expr": "sum(increase(llmsafespaces_inference_input_tokens_total{job=~\"$job\"}[$__range]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Total Input Tokens (period)",
+      "type": "stat",
+      "description": "Total prompt tokens sent to models. A high input-to-output ratio indicates long-context sessions (large codebases being re-submitted). This is the secondary cost driver for token-priced providers."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"fixedColor": "orange", "mode": "fixed"},
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "orange", "value": null}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 1},
+      "id": 5,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "expr": "sum(increase(llmsafespaces_inference_output_tokens_total{job=~\"$job\"}[$__range]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Total Output Tokens (period)",
+      "type": "stat",
+      "description": "Total tokens generated by models. This is the PRIMARY cost driver for token-priced providers. Compare with Input Tokens to understand the prompt-vs-generation economics."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 20, "gradientMode": "scheme",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "mappings": [],
+          "unit": "$/h"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+      "id": 6,
+      "options": {"legend": {"calcs": ["mean", "sum"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "expr": "sum(rate(llmsafespaces_inference_cost_dollars_total{job=~\"$job\"}[$__rate_interval])) by (model_id) * 3600",
+          "legendFormat": "{{model_id}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Cost Rate by Model ($/h)",
+      "type": "timeseries",
+      "description": "Inference spend rate in USD per hour for each model. A flat line = steady usage. A rising line = an active session consuming tokens. A single model dominating this chart is the primary cost lever — consider offering a cheaper alternative or adjusting free-tier model availability. Action: negotiate pricing with provider, limit expensive models to paid tiers."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 30, "gradientMode": "scheme",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "normal"},
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "mappings": [],
+          "unit": "$/h"
+        },
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "free"}, "properties": [{"id": "color", "value": {"fixedColor": "yellow", "mode": "fixed"}}]},
+          {"matcher": {"id": "byName", "options": "paid"}, "properties": [{"id": "color", "value": {"fixedColor": "green", "mode": "fixed"}}]}
+        ]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+      "id": 7,
+      "options": {"legend": {"calcs": ["mean", "sum"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "expr": "sum(rate(llmsafespaces_inference_cost_dollars_total{job=~\"$job\"}[$__rate_interval])) by (tier) * 3600",
+          "legendFormat": "{{tier}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Cost Rate by Tier — Free vs Paid ($/h, stacked)",
+      "type": "timeseries",
+      "description": "Inference spend split by credential tier. Free (yellow) = calls routed through opencode relay (platform bears the cost). Paid (green) = calls using user's own provider credentials (user bears the cost). If free-tier cost is growing, the platform is subsidizing inference for free users. Action: tighten free-tier model availability, enforce token quotas, or convert free users to paid."
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 14},
+      "id": 8,
+      "panels": [],
+      "title": "Per-User Attribution (from usage_events table)",
+      "type": "row",
+      "description": "Who is costing the most? Top consumers by tokens and compute time. These panels query the PostgreSQL usage_events table directly, enabling per-user attribution that Prometheus cardinality limits prevent. Requires the Postgres datasource to be configured in Grafana."
+    },
+    {
+      "datasource": {"type": "postgres", "uid": "${pg_datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 10000000}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 15},
+      "id": 9,
+      "options": {"displayMode": "lcd", "minVizHeight": 10, "minVizWidth": 0, "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": true}, "showUnfilled": true, "text": {}},
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "${pg_datasource}"},
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT owner_id AS metric, SUM(quantity) AS value FROM usage_events WHERE event_type = 'llm_tokens' AND owner_type = 'user' AND event_time BETWEEN $__timeFrom() AND $__timeTo() GROUP BY owner_id ORDER BY value DESC LIMIT 10",
+          "refId": "A"
+        }
+      ],
+      "title": "Top-10 Users by Token Consumption",
+      "type": "bargauge",
+      "description": "Top-10 users by total token consumption (input + output) in the selected period. Red threshold at 10M tokens. A single user dominating this chart is the primary cost driver. Action: enforce per-user token quota, upsell to paid tier, investigate for abuse (automated loops, token farming)."
+    },
+    {
+      "datasource": {"type": "postgres", "uid": "${pg_datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 100}]},
+          "unit": "h"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 15},
+      "id": 10,
+      "options": {"displayMode": "lcd", "minVizHeight": 10, "minVizWidth": 0, "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": true}, "showUnfilled": true, "text": {}},
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "${pg_datasource}"},
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT owner_id AS metric, SUM(quantity) / 3600.0 AS value FROM usage_events WHERE event_type = 'compute_seconds' AND owner_type = 'user' AND event_time BETWEEN $__timeFrom() AND $__timeTo() GROUP BY owner_id ORDER BY value DESC LIMIT 10",
+          "refId": "A"
+        }
+      ],
+      "title": "Top-10 Users by Compute Hours",
+      "type": "bargauge",
+      "description": "Top-10 users by active workspace compute hours in the selected period. Red threshold at 100h. Users with very high compute hours may be running workspaces idle (wasting PVC storage and node capacity). Action: enforce idle-eviction policy, implement compute-hour quotas, contact user about usage patterns."
+    },
+    {
+      "datasource": {"type": "postgres", "uid": "${pg_datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 500}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 23},
+      "id": 11,
+      "options": {"displayMode": "lcd", "minVizHeight": 10, "minVizWidth": 0, "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": true}, "showUnfilled": true, "text": {}},
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "${pg_datasource}"},
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT workspace_id AS metric, SUM(quantity) / 3600.0 AS value FROM usage_events WHERE event_type = 'compute_seconds' AND workspace_id IS NOT NULL AND event_time BETWEEN $__timeFrom() AND $__timeTo() GROUP BY workspace_id ORDER BY value DESC LIMIT 10",
+          "refId": "A"
+        }
+      ],
+      "title": "Top-10 Workspaces by Compute Hours",
+      "type": "bargauge",
+      "description": "Top-10 individual workspaces by compute hours. Red threshold at 500h. A single workspace with very high compute hours is a candidate for suspension if idle, or resource-limit adjustment if actively used. Action: check if workspace is actively used (session activity), suspend long-idle workspaces, adjust resource requests."
+    },
+    {
+      "datasource": {"type": "postgres", "uid": "${pg_datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "decimals": 1,
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 90}]},
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 23},
+      "id": 12,
+      "options": {"displayMode": "lcd", "minVizHeight": 10, "minVizWidth": 0, "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": true}, "showUnfilled": true, "text": {}},
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "${pg_datasource}"},
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT ul.owner_id || ' / ' || ul.event_type AS metric, COALESCE(SUM(ue.quantity), 0)::float / NULLIF(ul.max_quantity, 0) * 100 AS value FROM usage_limits ul LEFT JOIN usage_events ue ON ue.owner_id = ul.owner_id AND ue.owner_type = ul.owner_type AND ue.event_type = ul.event_type AND ue.period = CURRENT_DATE WHERE ul.period_type = 'daily' GROUP BY ul.owner_id, ul.event_type, ul.max_quantity HAVING COALESCE(SUM(ue.quantity), 0)::float / NULLIF(ul.max_quantity, 0) > 0 ORDER BY value DESC LIMIT 10",
+          "refId": "A"
+        }
+      ],
+      "title": "Top-10 Users by Daily Quota Utilization %",
+      "type": "bargauge",
+      "description": "Top-10 users approaching their daily quota limit for any event type. Red threshold at 90%: users above this will soon hit their quota and start receiving 429s. Action: proactively contact high-usage users for upsell, review if quota limits are appropriate for the usage pattern."
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 31},
+      "id": 13,
+      "panels": [],
+      "title": "Token Economics & Model Mix",
+      "type": "row",
+      "description": "Which models are being used and how efficiently? Token throughput, model selection patterns, and request distribution by provider. Use these to optimize model offerings and identify token inefficiency."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "mappings": [],
+          "unit": "tok/s"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32},
+      "id": 14,
+      "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(llmsafespaces_inference_input_tokens_total{job=~\"$job\"}[$__rate_interval])) by (model_id)", "legendFormat": "input {{model_id}}", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(rate(llmsafespaces_inference_output_tokens_total{job=~\"$job\"}[$__rate_interval])) by (model_id)", "legendFormat": "output {{model_id}}", "refId": "B"}
+      ],
+      "title": "Token Throughput by Model (input vs output)",
+      "type": "timeseries",
+      "description": "Token rate per model, split into input (prompt) and output (generation). Output rate is a direct proxy for generation speed. A spike in input with flat output indicates a large context being re-submitted (cache miss) — this wastes input tokens without producing output. Action: investigate cache configuration, consider prompt caching for repeated contexts."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "mappings": [],
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32},
+      "id": 15,
+      "options": {"legend": {"calcs": ["mean", "sum"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "expr": "sum(rate(llmsafespaces_inference_requests_total{job=~\"$job\"}[$__rate_interval])) by (model_id, provider_id)",
+          "legendFormat": "{{model_id}} ({{provider_id}})",
+          "refId": "A"
+        }
+      ],
+      "title": "Inference Request Rate by Model & Provider",
+      "type": "timeseries",
+      "description": "Requests per second grouped by model and provider. Use this to see which model/provider combination is most active. Spikes correlate with concurrent users actively inferencing. A sudden shift from one provider to another may indicate a credential issue or relay routing change."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "bars", "fillOpacity": 50, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "normal"},
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "mappings": [],
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 40},
+      "id": 16,
+      "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "expr": "sum(increase(llmsafespaces_model_selections_total{job=~\"$job\"}[$__rate_interval])) by (model_id, tier)",
+          "legendFormat": "{{model_id}} ({{tier}})",
+          "refId": "A"
+        }
+      ],
+      "title": "Model Selection Churn (user-initiated model changes)",
+      "type": "timeseries",
+      "description": "Count of explicit model change events (PUT /model calls that succeeded). Low volume is normal. A sudden spike may indicate users cycling through models due to quality issues or rate limits on their preferred model. Action: investigate if a specific model is degraded, check provider rate limits."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "mappings": [],
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 40},
+      "id": 17,
+      "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "${datasource}"}, "expr": "sum(increase(llmsafespaces_relay_injector_total{job=~\"$job\"}[$__rate_interval])) by (outcome)", "legendFormat": "{{outcome}}", "refId": "A"}
+      ],
+      "title": "Relay Injector Outcomes (free-tier routing)",
+      "type": "timeseries",
+      "description": "Outcome of relay config injection per workspace boot. success = relay configured (free-tier available). skipped_personal_key = user has own credentials. no_free_models = no relay-eligible models. config_write_failed / unhealthy_timeout = injection errors (free-tier broken for that workspace). Action: investigate error outcomes — affected users cannot use free-tier models."
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 48},
+      "id": 18,
+      "panels": [],
+      "title": "Quota Enforcement",
+      "type": "row",
+      "description": "Are usage limits being enforced? Quota exceeded events confirm the enforcement pipeline is working. Per-user quota utilization shows who is approaching their limits."
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"fixedColor": "orange", "mode": "fixed"},
+          "custom": {
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0,
+            "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "mappings": [],
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 49},
+      "id": 19,
+      "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "expr": "sum(increase(llmsafespaces_metering_quota_exceeded_total{job=~\"$job\"}[$__rate_interval])) by (event_type)",
+          "legendFormat": "{{event_type}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Quota Exceeded Events (429 responses)",
+      "type": "timeseries",
+      "description": "Rate of quota enforcement triggers. Each event = one request rejected with 429. event_type tells which resource limit was hit: llm_request, llm_tokens, compute_seconds, etc. This confirms the enforcement pipeline is working. A high rate for a specific event_type may indicate quotas are set too low for legitimate use. Action: review quota limits for affected event types, check if a specific user is repeatedly hitting limits."
+    },
+    {
+      "datasource": {"type": "postgres", "uid": "${pg_datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 49},
+      "id": 20,
+      "options": {"displayMode": "lcd", "minVizHeight": 10, "minVizWidth": 0, "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": true}, "showUnfilled": true, "text": {}},
+      "targets": [
+        {
+          "datasource": {"type": "postgres", "uid": "${pg_datasource}"},
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT owner_id AS metric, SUM(quantity) AS value FROM usage_events WHERE event_type = 'llm_request' AND owner_type = 'user' AND event_time BETWEEN $__timeFrom() AND $__timeTo() GROUP BY owner_id ORDER BY value DESC LIMIT 10",
+          "refId": "A"
+        }
+      ],
+      "title": "Top-10 Users by LLM Request Count",
+      "type": "bargauge",
+      "description": "Top-10 users by total LLM request count in the selected period. Users with disproportionately high request counts may be running automated loops or hitting rate limits. Combined with Token Consumption, this distinguishes heavy users (many small requests) from expensive users (few large-context requests). Action: enforce per-user request quotas, investigate automated usage patterns. NOTE: per-user quota-exceeded attribution requires recording a usage_event on 429 rejection (future code change); this panel uses llm_request events which are recorded today."
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["llmsafespaces", "billing"],
+  "templating": {
+    "list": [
+      {
+        "current": {"selected": true, "text": "Prometheus", "value": "default"},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Prometheus Datasource",
+        "multi": false,
+        "name": "datasource",
+        "options": [],
+        "query": "prometheus",
+        "queryValue": "",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "current": {"selected": true, "text": "LLMSafeSpaces Postgres", "value": "llmsafespaces-postgres"},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Postgres Datasource",
+        "multi": false,
+        "name": "pg_datasource",
+        "options": [],
+        "query": "postgres",
+        "queryValue": "",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "current": {"selected": true, "text": ["llmsafespaces-api"], "value": ["llmsafespaces-api"]},
+        "datasource": {"type": "prometheus", "uid": "${datasource}"},
+        "definition": "label_values(llmsafespaces_inference_requests_total, job)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "API Job",
+        "multi": true,
+        "name": "job",
+        "options": [],
+        "query": {"qryType": 1, "query": "label_values(llmsafespaces_inference_requests_total, job)", "refId": "VariableQuery"},
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {"from": "now-24h", "to": "now"},
+  "timepicker": {},
+  "timezone": "utc",
+  "title": "LLMSafeSpaces - Billing & Metering",
+  "uid": "llmsafespaces-billing",
+  "version": 2
+}

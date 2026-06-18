@@ -1,4 +1,4 @@
-# golangci-lint v2 configuration for LLMSafeSpace.
+# golangci-lint v2 configuration for LLMSafeSpaces.
 #
 # Ruleset rationale: catch the audit-cycle bugs that pre-merge automation
 # could have caught mechanically (see worklogs 0094, 0099) instead of
@@ -65,7 +65,7 @@ linters:
        # frontend/node_modules; this guards CI runs that npm install.
        - frontend/node_modules
        - sdks/typescript/node_modules
-       - sdks/vscode-llmsafespace/node_modules
+       - sdks/vscode-llmsafespaces/node_modules
        # The SDK canary suite (sdks/canary/go/) and MCP canary
        # (sdks/canary/mcp/) each have their own go.mod. golangci-lint
        # cannot typecheck sub-module packages from the repo root.

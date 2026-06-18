@@ -2,7 +2,7 @@
 # Build the relay-router binary.
 # Build context MUST be the repository root (single Go module at root).
 #
-#   docker build -f cmd/relay-router/Dockerfile -t llmsafespace/relay-router:dev .
+#   docker build -f cmd/relay-router/Dockerfile -t llmsafespaces/relay-router:dev .
 
 ARG TARGETARCH=amd64
 

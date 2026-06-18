@@ -6,7 +6,7 @@ package billing
 import (
 	"testing"
 
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 func TestGetPlanFeatures_Free(t *testing.T) {

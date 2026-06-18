@@ -5,7 +5,7 @@
 // The flagship end-to-end scenario:
 // add credential → bind → set model → call agent (no reload) →
 // call agent (new session / "reload") → cleanup.
-// Requires LLMSAFESPACE_LLM_API_KEY and LLMSAFESPACE_LLM_MODEL.
+// Requires LLMSAFESPACES_LLM_API_KEY and LLMSAFESPACES_LLM_MODEL.
 package main
 
 import (
@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	llm "github.com/lenaxia/llmsafespace/sdk/go"
-	canary "github.com/lenaxia/llmsafespace/sdks/canary/go"
+	llm "github.com/lenaxia/llmsafespaces/sdk/go"
+	canary "github.com/lenaxia/llmsafespaces/sdks/canary/go"
 )
 
 func Handler(w http.ResponseWriter, r *http.Request) {
@@ -55,7 +55,7 @@ func runCredModelFlow(ctx context.Context, run *canary.Runner, cfg canary.Config
 	// silently, and the credential never reaches the running agent.
 	//
 	// Therefore this scenario MUST use JWT login (email+password) not an API key.
-	// Without LLMSAFESPACE_EMAIL+PASSWORD, we skip the message tests and only
+	// Without LLMSAFESPACES_EMAIL+PASSWORD, we skip the message tests and only
 	// verify the API surface (bind, set model) works.
 	jwtAvailable := cfg.Email != "" && cfg.Password != ""
 	if !jwtAvailable {

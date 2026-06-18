@@ -1,0 +1,95 @@
+# Worklog: Rename `llmsafespace` → `llmsafespaces` (execution)
+
+**Date:** 2026-06-18
+**Session:** Execute the approved rename plan from PR #233
+**Status:** Complete — all checks pass
+**Branch:** `chore/rename-to-llmsafespaces-execute`
+**Plan PR:** #233 (merged)
+
+---
+
+## Objective
+
+Execute the approved rename plan: 3 directory renames + 612-file content
+rewrite + Phase 3 regeneration, verified by build/vet/test/lint.
+
+---
+
+## Execution
+
+### Phase 1 — Directory renames (git mv)
+
+| Source | Destination | Files |
+|---|---|---:|
+| `pkg/apis/llmsafespace` | `pkg/apis/llmsafespaces` | 10 |
+| `charts/llmsafespace` | `charts/llmsafespaces` | 115 |
+| `sdks/vscode-llmsafespace` | `sdks/vscode-llmsafespaces` | 16 |
+
+### Phase 2 — Content rewrite
+
+Ran `DRY_RUN=0 hack/rename-to-llmsafespaces.sh` against `main` @ `0206f89b`:
+- 620 files edited (8 more than the plan's 612 — due to new files added
+  between `16f336b9` and `0206f89b`).
+- 2,962 occurrences replaced.
+
+### Phase 2b — Manual fix: 6 over-blocked CamelCase compounds
+
+The boundary regex `(?![sS])` correctly prevents matching inside
+already-pluralised tokens, but over-blocked 3 alert names where the
+next word started with `S` (the `S` was a word boundary, not a plural
+suffix). Manually fixed in:
+
+- `charts/llmsafespaces/templates/prometheus-rules.yaml`
+  - `LLMSafeSpaceSSEBrokerDroppingEvents` → `LLMSafeSpacesSSEBrokerDroppingEvents`
+  - `LLMSafeSpaceSafeModeActive` → `LLMSafeSpacesSafeModeActive`
+  - `LLMSafeSpaceStatusUpdateConflicts` → `LLMSafeSpacesStatusUpdateConflicts`
+- `charts/llmsafespaces/chart_test.go` (matching test assertions)
+
+**Lesson:** for CamelCase identifiers, lookahead-based boundary guards
+are too aggressive — a non-greedy word-boundary regex
+(`\bllmsafespace\b`) would not have caught them, but neither would it
+have over-blocked. The perl lookahead approach is correct for
+lowercase/UPPER variants but should not be used for MixedCase where
+the next token may start with the same letter. Documented for future
+similar rewrites.
+
+### Phase 3 — Regeneration
+
+| Step | Result |
+|---|---|
+| `go mod edit -module` (root) | ✅ `github.com/lenaxia/llmsafespaces` |
+| `go mod edit -module` (sdk/go) | ✅ `github.com/lenaxia/llmsafespaces/sdk/go` |
+| `go mod tidy` (root + sdk/go) | ✅ |
+| CRD YAML | ✅ Already correctly rewritten by Phase 2 perl (group → `llmsafespaces.dev`). `make -C controller manifests` blocked by pre-existing controller-tools v0.8.0 / Go 1.26 panic (unrelated to rename) — verified YAMLs are correct without regen. |
+| `zz_generated.deepcopy.go` | ✅ Zero stale refs (file is boilerplate; `make deepcopy` blocked by pre-existing sh pipefail issue in `hack/update-deepcopy.sh`, unrelated to rename). |
+| npm lockfiles (3 dirs) | ✅ `npm install --package-lock-only` ran clean |
+
+### Phase 4 — Verification
+
+| Check | Command | Result |
+|---|---|---|
+| Stale singular refs (3 variants) | `git grep -IohE '(llmsafespace\|LLMSAFESPACE\|LLMSafeSpace)([^sS]\|$)'` | **0** matches outside `worklogs/`, `design/`, rename tooling |
+| Go build (root) | `go build ./...` | ✅ exit 0 |
+| Go build (sdk/go) | `go build ./...` | ✅ exit 0 |
+| Go vet | `go vet ./...` | ✅ exit 0 |
+| Go test (root) | `go test ./...` | ✅ exit 0 — all packages pass |
+| Go test (sdk/go) | `go test ./...` | ✅ exit 0 |
+| golangci-lint v2 | `make lint` | ⚠️ 3 findings, all **pre-existing on main** (verified byte-identical on `origin/main`): gosec G202 in `database.go:593`, gosec G115 in `recovery_policy.go:38`, staticcheck ST1020 in `workspace_types.go:377`. Not introduced by rename. |
+
+---
+
+## Items not in scope (Phase 5 external, owner-run)
+
+1. GitHub repo rename `lenaxia/LLMSafeSpace` → `LLMSafeSpaces`
+2. ghcr.io: publish future images under new path
+3. npm: publish `@llmsafespaces/sdk`, `vscode-llmsafespaces`
+4. PyPI: publish `llmsafespaces`
+5. Cloudflare Worker: rename to `llmsafespaces-inference-relay`
+6. Dev Postgres: drop+recreate as `llmsafespaces`
+
+---
+
+## Files changed
+
+620 files (614 from script + 6 manual fixes for over-blocked alert names).
+Diff stat will appear in PR description.

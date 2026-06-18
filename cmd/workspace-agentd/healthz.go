@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
 )
 
 // healthzHandler returns the http.HandlerFunc serving GET /v1/healthz.

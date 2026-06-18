@@ -153,7 +153,7 @@ describe("MessagePart", () => {
   });
 
   describe("codeBlockWordWrap setting", () => {
-    const STORAGE_KEY = "llmsafespace_user_settings";
+    const STORAGE_KEY = "llmsafespaces_user_settings";
     const codeMarkdown = "```js\nconst x = 1;\n```";
 
     it("does not apply word-wrap classes when setting is false", async () => {

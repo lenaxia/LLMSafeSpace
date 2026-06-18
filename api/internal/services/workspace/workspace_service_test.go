@@ -21,18 +21,18 @@ import (
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
-	imocks "github.com/lenaxia/llmsafespace/api/internal/mocks"
-	kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
-	lmocks "github.com/lenaxia/llmsafespace/mocks/logger"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	imocks "github.com/lenaxia/llmsafespaces/api/internal/mocks"
+	kmocks "github.com/lenaxia/llmsafespaces/mocks/kubernetes"
+	lmocks "github.com/lenaxia/llmsafespaces/mocks/logger"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 // fixture wires up all centralized mocks and a real Service under test.
 type fixture struct {
 	svc     *Service
 	k8s     *kmocks.MockKubernetesClient
-	v1iface *kmocks.MockLLMSafespaceV1Interface
+	v1iface *kmocks.MockLLMSafespacesV1Interface
 	ws      *kmocks.MockWorkspaceInterface
 	db      *imocks.MockDatabaseService
 	cache   *imocks.MockCacheService
@@ -52,7 +52,7 @@ func newFixture(t *testing.T) *fixture {
 	log.On("Sync").Return(nil).Maybe()
 
 	k8s := kmocks.NewMockKubernetesClient()
-	v1i := kmocks.NewMockLLMSafespaceV1Interface()
+	v1i := kmocks.NewMockLLMSafespacesV1Interface()
 	ws := kmocks.NewMockWorkspaceInterface()
 	db := &imocks.MockDatabaseService{}
 	cache := &imocks.MockCacheService{}
@@ -60,7 +60,7 @@ func newFixture(t *testing.T) *fixture {
 
 	met.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
 
-	k8s.On("LlmsafespaceV1").Return(v1i, nil)
+	k8s.On("LlmsafespacesV1").Return(v1i, nil)
 	v1i.On("Workspaces", "default").Return(ws)
 
 	svc, err := New(log, k8s, db, cache, met, &Config{Namespace: "default"})
@@ -72,7 +72,7 @@ func newFixture(t *testing.T) *fixture {
 
 func crdWorkspace(name, ns, userID, storageSize string) *v1.Workspace {
 	return &v1.Workspace{
-		TypeMeta:   metav1.TypeMeta{Kind: "Workspace", APIVersion: "llmsafespace.dev/v1"},
+		TypeMeta:   metav1.TypeMeta{Kind: "Workspace", APIVersion: "llmsafespaces.dev/v1"},
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec: v1.WorkspaceSpec{
 			Owner:   v1.WorkspaceOwner{UserID: userID},
@@ -378,9 +378,9 @@ func TestRefreshEphemeralSecrets_NonEmptyBindings_WritesManifest(t *testing.T) {
 	require.NoError(t, err, "workspace-secrets-<id> must exist after refresh")
 	assert.Equal(t, payload, got.Data["secrets.json"],
 		"secrets.json payload must round-trip exactly through the manifest write")
-	assert.Equal(t, "true", got.Labels["llmsafespace.dev/ephemeral"],
+	assert.Equal(t, "true", got.Labels["llmsafespaces.dev/ephemeral"],
 		"ephemeral marker label is required for cleanup logic in workspace deletion")
-	assert.Equal(t, "ws-1", got.Labels["llmsafespace.dev/workspace"])
+	assert.Equal(t, "ws-1", got.Labels["llmsafespaces.dev/workspace"])
 }
 
 func TestRefreshEphemeralSecrets_PrepareFails_SkipsWriteCleanly(t *testing.T) {
@@ -593,8 +593,8 @@ func TestSeedEphemeralSecrets_NonEmptyBindings_WritesManifest(t *testing.T) {
 	require.NoError(t, err, "workspace-secrets-<id> must exist after seedEphemeralSecrets")
 	assert.Equal(t, payload, got.Data["secrets.json"],
 		"secrets.json payload must round-trip exactly through the manifest write")
-	assert.Equal(t, "true", got.Labels["llmsafespace.dev/ephemeral"])
-	assert.Equal(t, "ws-1", got.Labels["llmsafespace.dev/workspace"])
+	assert.Equal(t, "true", got.Labels["llmsafespaces.dev/ephemeral"])
+	assert.Equal(t, "ws-1", got.Labels["llmsafespaces.dev/workspace"])
 	assert.Equal(t, 1, inj.calls)
 }
 
@@ -1389,19 +1389,19 @@ func TestAgentHealthFromConditions(t *testing.T) {
 	}
 }
 
-// ===== LlmsafespaceV1() error path in callers =====
+// ===== LlmsafespacesV1() error path in callers =====
 //
-// LlmsafespaceV1() on the k8s client can return an error (e.g. the typed REST
+// LlmsafespacesV1() on the k8s client can return an error (e.g. the typed REST
 // client failed to construct from the rest.Config — the exact bug fixed in
 // US-38.11). Every caller of workspaceCRDClient() must surface that as a clean
 // internal error and never panic. These tests pin that contract so a future
 // refactor that swallows the error (e.g. by ignoring it and dereferencing a nil
 // client) is caught.
 
-// newSvcWithLlmsafespaceV1Error builds a Service whose k8s client returns the
-// given error from LlmsafespaceV1() on every call. Used to exercise caller
+// newSvcWithLlmsafespacesV1Error builds a Service whose k8s client returns the
+// given error from LlmsafespacesV1() on every call. Used to exercise caller
 // error paths without the happy-path stubs wired up by newFixture.
-func newSvcWithLlmsafespaceV1Error(t *testing.T, v1Err error) (*Service, *kmocks.MockKubernetesClient) {
+func newSvcWithLlmsafespacesV1Error(t *testing.T, v1Err error) (*Service, *kmocks.MockKubernetesClient) {
 	t.Helper()
 
 	log := lmocks.NewMockLogger()
@@ -1414,8 +1414,8 @@ func newSvcWithLlmsafespaceV1Error(t *testing.T, v1Err error) (*Service, *kmocks
 
 	k8s := kmocks.NewMockKubernetesClient()
 	// Every call returns the error; the nil interface is intentional so the
-	// mock returns (nil, v1Err) — mirroring the real Client.LlmsafespaceV1().
-	k8s.On("LlmsafespaceV1").Return(nil, v1Err)
+	// mock returns (nil, v1Err) — mirroring the real Client.LlmsafespacesV1().
+	k8s.On("LlmsafespacesV1").Return(nil, v1Err)
 
 	met := &imocks.MockMetricsService{}
 	met.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
@@ -1425,24 +1425,24 @@ func newSvcWithLlmsafespaceV1Error(t *testing.T, v1Err error) (*Service, *kmocks
 	return svc, k8s
 }
 
-func TestCreateWorkspace_LlmsafespaceV1Error_ReturnsInternal(t *testing.T) {
-	svc, k8s := newSvcWithLlmsafespaceV1Error(t, errors.New("no kind Workspace registered"))
+func TestCreateWorkspace_LlmsafespacesV1Error_ReturnsInternal(t *testing.T) {
+	svc, k8s := newSvcWithLlmsafespacesV1Error(t, errors.New("no kind Workspace registered"))
 
 	req := types.CreateWorkspaceRequest{Name: "ws", StorageSize: "10Gi"}
 	_, err := svc.CreateWorkspace(context.Background(), "user1", req)
 
-	require.Error(t, err, "LlmsafespaceV1 failure must surface as an error, not a panic")
+	require.Error(t, err, "LlmsafespacesV1 failure must surface as an error, not a panic")
 	assert.Contains(t, err.Error(), "workspace_creation_failed",
 		"error must be wrapped with the workspace_creation_failed code")
-	assert.Contains(t, err.Error(), "LLMSafespaceV1",
-		"underlying LlmsafespaceV1 error must be preserved for diagnosis")
+	assert.Contains(t, err.Error(), "LLMSafespacesV1",
+		"underlying LlmsafespacesV1 error must be preserved for diagnosis")
 	// The workspace interface must never have been reached.
-	k8s.AssertNumberOfCalls(t, "LlmsafespaceV1", 1)
+	k8s.AssertNumberOfCalls(t, "LlmsafespacesV1", 1)
 }
 
-func TestGetWorkspaceStatus_LlmsafespaceV1Error_ReturnsInternal(t *testing.T) {
+func TestGetWorkspaceStatus_LlmsafespacesV1Error_ReturnsInternal(t *testing.T) {
 	// GetWorkspaceStatus verifies ownership (DB) first, then constructs the
-	// CRD client. An LlmsafespaceV1 error after a successful owner check must
+	// CRD client. An LlmsafespacesV1 error after a successful owner check must
 	// surface as workspace_get_failed rather than nil-deref the workspace client.
 	log := lmocks.NewMockLogger()
 	log.On("Info", mock.Anything, mock.Anything).Maybe()
@@ -1453,7 +1453,7 @@ func TestGetWorkspaceStatus_LlmsafespaceV1Error_ReturnsInternal(t *testing.T) {
 	log.On("Sync").Return(nil).Maybe()
 
 	k8s := kmocks.NewMockKubernetesClient()
-	k8s.On("LlmsafespaceV1").Return(nil, errors.New("rest client construction failed"))
+	k8s.On("LlmsafespacesV1").Return(nil, errors.New("rest client construction failed"))
 
 	db := &imocks.MockDatabaseService{}
 	db.On("GetWorkspace", mock.Anything, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
@@ -1466,12 +1466,12 @@ func TestGetWorkspaceStatus_LlmsafespaceV1Error_ReturnsInternal(t *testing.T) {
 
 	_, err = svc.GetWorkspaceStatus(context.Background(), "user1", "ws-1")
 
-	require.Error(t, err, "LlmsafespaceV1 failure must surface as an error, not a panic")
+	require.Error(t, err, "LlmsafespacesV1 failure must surface as an error, not a panic")
 	assert.Contains(t, err.Error(), "workspace_get_failed")
-	assert.Contains(t, err.Error(), "LLMSafespaceV1")
+	assert.Contains(t, err.Error(), "LLMSafespacesV1")
 }
 
-func TestDeleteWorkspace_LlmsafespaceV1Error_ReturnsInternal(t *testing.T) {
+func TestDeleteWorkspace_LlmsafespacesV1Error_ReturnsInternal(t *testing.T) {
 	log := lmocks.NewMockLogger()
 	log.On("Info", mock.Anything, mock.Anything).Maybe()
 	log.On("Debug", mock.Anything, mock.Anything).Maybe()
@@ -1481,7 +1481,7 @@ func TestDeleteWorkspace_LlmsafespaceV1Error_ReturnsInternal(t *testing.T) {
 	log.On("Sync").Return(nil).Maybe()
 
 	k8s := kmocks.NewMockKubernetesClient()
-	k8s.On("LlmsafespaceV1").Return(nil, errors.New("scheme missing"))
+	k8s.On("LlmsafespacesV1").Return(nil, errors.New("scheme missing"))
 
 	db := &imocks.MockDatabaseService{}
 	db.On("GetWorkspace", mock.Anything, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
@@ -1494,9 +1494,9 @@ func TestDeleteWorkspace_LlmsafespaceV1Error_ReturnsInternal(t *testing.T) {
 
 	err = svc.DeleteWorkspace(context.Background(), "user1", "ws-1")
 
-	require.Error(t, err, "LlmsafespaceV1 failure must surface as an error, not a panic")
+	require.Error(t, err, "LlmsafespacesV1 failure must surface as an error, not a panic")
 	assert.Contains(t, err.Error(), "workspace_deletion_failed")
-	assert.Contains(t, err.Error(), "LLMSafespaceV1")
+	assert.Contains(t, err.Error(), "LLMSafespacesV1")
 }
 
 // ===== EnsureWorkspaceConfig =====
@@ -1609,7 +1609,7 @@ func TestEnsureWorkspaceConfig_EmptyWorkspaceID(t *testing.T) {
 }
 
 // TestEnsureWorkspaceConfig_PreservesLabels verifies that when the secret is
-// created by EnsureWorkspaceConfig, the standard llmsafespace labels are set
+// created by EnsureWorkspaceConfig, the standard llmsafespaces labels are set
 // so the controller and operators can discover and manage the secret correctly.
 func TestEnsureWorkspaceConfig_PreservesLabels(t *testing.T) {
 	f := newFixtureWithFakeClientset(t)
@@ -1619,9 +1619,9 @@ func TestEnsureWorkspaceConfig_PreservesLabels(t *testing.T) {
 
 	secret, err := f.fakeCS.CoreV1().Secrets("default").Get(ctx, "workspace-secrets-ws-labels", metav1.GetOptions{})
 	require.NoError(t, err)
-	assert.Equal(t, "llmsafespace", secret.Labels["app"],
-		"created secret must carry app=llmsafespace label")
-	assert.Equal(t, "ws-labels", secret.Labels["llmsafespace.dev/workspace"],
+	assert.Equal(t, "llmsafespaces", secret.Labels["app"],
+		"created secret must carry app=llmsafespaces label")
+	assert.Equal(t, "ws-labels", secret.Labels["llmsafespaces.dev/workspace"],
 		"created secret must carry workspace ID label")
 }
 
@@ -1872,7 +1872,7 @@ func TestMergeSecretsByName_MalformedExisting_FallsBackToIncoming(t *testing.T) 
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "workspace-secrets-ws-corrupt",
 			Namespace: "default",
-			Labels:    map[string]string{"app": "llmsafespace"},
+			Labels:    map[string]string{"app": "llmsafespaces"},
 		},
 		Data: map[string][]byte{"secrets.json": corrupt},
 	}, metav1.CreateOptions{})

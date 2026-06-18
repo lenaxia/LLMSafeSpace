@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	httputil "github.com/lenaxia/llmsafespace/pkg/http"
-	"github.com/lenaxia/llmsafespace/pkg/interfaces"
-	"github.com/lenaxia/llmsafespace/pkg/utilities"
+	httputil "github.com/lenaxia/llmsafespaces/pkg/http"
+	"github.com/lenaxia/llmsafespaces/pkg/interfaces"
+	"github.com/lenaxia/llmsafespaces/pkg/utilities"
 )
 
 type LoggingConfig struct {

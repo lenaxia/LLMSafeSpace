@@ -22,7 +22,7 @@ import (
 //	empty ImageID          : ""                                      → fallback to spec
 func TestImageTagFromPod_ContainerStatuses_TagAndDigest(t *testing.T) {
 	// docker-style: tag + digest — should extract the tag
-	pod := podWithImageID("ghcr.io/lenaxia/llmsafespace/base:ts-1781332002@sha256:32320b07abcd")
+	pod := podWithImageID("ghcr.io/lenaxia/llmsafespaces/base:ts-1781332002@sha256:32320b07abcd")
 	got := imageTagFromPod(pod)
 	if got != "ts-1781332002" {
 		t.Errorf("tag+digest: want ts-1781332002, got %q", got)
@@ -32,8 +32,8 @@ func TestImageTagFromPod_ContainerStatuses_TagAndDigest(t *testing.T) {
 func TestImageTagFromPod_ContainerStatuses_DigestOnly_FallsBackToSpec(t *testing.T) {
 	// containerd-style: digest only, no tag — must fall back to spec image
 	pod := podWithImageIDAndSpecImage(
-		"ghcr.io/lenaxia/llmsafespace/base@sha256:32320b07abcd",
-		"ghcr.io/lenaxia/llmsafespace/base:ts-1781332002",
+		"ghcr.io/lenaxia/llmsafespaces/base@sha256:32320b07abcd",
+		"ghcr.io/lenaxia/llmsafespaces/base:ts-1781332002",
 	)
 	got := imageTagFromPod(pod)
 	if got != "ts-1781332002" {
@@ -43,7 +43,7 @@ func TestImageTagFromPod_ContainerStatuses_DigestOnly_FallsBackToSpec(t *testing
 
 func TestImageTagFromPod_ContainerStatuses_TagOnly(t *testing.T) {
 	// tag only in ImageID (local builds, some registries)
-	pod := podWithImageID("ghcr.io/lenaxia/llmsafespace/base:ts-1781332002")
+	pod := podWithImageID("ghcr.io/lenaxia/llmsafespaces/base:ts-1781332002")
 	got := imageTagFromPod(pod)
 	if got != "ts-1781332002" {
 		t.Errorf("tag-only ImageID: want ts-1781332002, got %q", got)
@@ -54,7 +54,7 @@ func TestImageTagFromPod_ContainerStatuses_EmptyImageID_FallsBackToSpec(t *testi
 	// ImageID empty (container not yet started) — must fall back to spec
 	pod := podWithImageIDAndSpecImage(
 		"",
-		"ghcr.io/lenaxia/llmsafespace/base:ts-1781332002",
+		"ghcr.io/lenaxia/llmsafespaces/base:ts-1781332002",
 	)
 	got := imageTagFromPod(pod)
 	if got != "ts-1781332002" {
@@ -66,7 +66,7 @@ func TestImageTagFromPod_ContainerStatuses_BareDigest_FallsBackToSpec(t *testing
 	// sha256-only ImageID with no registry prefix or tag
 	pod := podWithImageIDAndSpecImage(
 		"sha256:32320b07abcdef1234567890",
-		"ghcr.io/lenaxia/llmsafespace/base:ts-1781332002",
+		"ghcr.io/lenaxia/llmsafespaces/base:ts-1781332002",
 	)
 	got := imageTagFromPod(pod)
 	if got != "ts-1781332002" {
@@ -79,7 +79,7 @@ func TestImageTagFromPod_NoContainerStatuses_FallsBackToSpec(t *testing.T) {
 	pod := &corev1.Pod{
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
-				{Image: "ghcr.io/lenaxia/llmsafespace/base:ts-1781332002"},
+				{Image: "ghcr.io/lenaxia/llmsafespaces/base:ts-1781332002"},
 			},
 		},
 	}
@@ -108,16 +108,16 @@ func TestImageTagFromPod_SpecImageNoTag_ReturnsFullRef(t *testing.T) {
 	// Spec image has no tag (unusual but valid) — return the full image ref
 	pod := podWithImageIDAndSpecImage(
 		"",
-		"ghcr.io/lenaxia/llmsafespace/base",
+		"ghcr.io/lenaxia/llmsafespaces/base",
 	)
 	got := imageTagFromPod(pod)
-	if got != "ghcr.io/lenaxia/llmsafespace/base" {
+	if got != "ghcr.io/lenaxia/llmsafespaces/base" {
 		t.Errorf("spec no tag: want full ref, got %q", got)
 	}
 }
 
 func TestImageTagFromPod_SpecImageWithLatestTag(t *testing.T) {
-	pod := podWithImageIDAndSpecImage("", "ghcr.io/lenaxia/llmsafespace/base:latest")
+	pod := podWithImageIDAndSpecImage("", "ghcr.io/lenaxia/llmsafespaces/base:latest")
 	got := imageTagFromPod(pod)
 	if got != "latest" {
 		t.Errorf("latest tag: want latest, got %q", got)
@@ -126,7 +126,7 @@ func TestImageTagFromPod_SpecImageWithLatestTag(t *testing.T) {
 
 func TestImageTagFromPod_TagContainingHyphenAndNumbers(t *testing.T) {
 	// Real-world ts- tags with unix timestamps
-	pod := podWithImageID("ghcr.io/lenaxia/llmsafespace/base:ts-1781332002@sha256:aabbccdd")
+	pod := podWithImageID("ghcr.io/lenaxia/llmsafespaces/base:ts-1781332002@sha256:aabbccdd")
 	got := imageTagFromPod(pod)
 	if got != "ts-1781332002" {
 		t.Errorf("ts tag: want ts-1781332002, got %q", got)
@@ -135,7 +135,7 @@ func TestImageTagFromPod_TagContainingHyphenAndNumbers(t *testing.T) {
 
 func TestImageTagFromPod_SHATagInImageID(t *testing.T) {
 	// sha- prefixed commit tags
-	pod := podWithImageID("ghcr.io/lenaxia/llmsafespace/base:sha-bf61310@sha256:32320b07abcd")
+	pod := podWithImageID("ghcr.io/lenaxia/llmsafespaces/base:sha-bf61310@sha256:32320b07abcd")
 	got := imageTagFromPod(pod)
 	if got != "sha-bf61310" {
 		t.Errorf("sha tag: want sha-bf61310, got %q", got)
@@ -176,8 +176,8 @@ func TestImageTagFromPod_SpecImage_RegistryWithPort(t *testing.T) {
 func TestImageTagFromPod_NonSHA256Digest_FallsBackToSpec(t *testing.T) {
 	// Hypothetical non-sha256 digest — "@" stripping must handle any algorithm.
 	pod := podWithImageIDAndSpecImage(
-		"ghcr.io/lenaxia/llmsafespace/base@sha512:deadbeef",
-		"ghcr.io/lenaxia/llmsafespace/base:ts-1781332002",
+		"ghcr.io/lenaxia/llmsafespaces/base@sha512:deadbeef",
+		"ghcr.io/lenaxia/llmsafespaces/base:ts-1781332002",
 	)
 	got := imageTagFromPod(pod)
 	if got != "ts-1781332002" {
@@ -191,7 +191,7 @@ func podWithImageID(imageID string) *corev1.Pod {
 	return &corev1.Pod{
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
-				{Image: "ghcr.io/lenaxia/llmsafespace/base:spec-tag"},
+				{Image: "ghcr.io/lenaxia/llmsafespaces/base:spec-tag"},
 			},
 		},
 		Status: corev1.PodStatus{

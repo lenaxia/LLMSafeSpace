@@ -1,4 +1,4 @@
-# Trivy ignore file for LLMSafeSpace.
+# Trivy ignore file for LLMSafeSpaces.
 #
 # Format: each line is either:
 #   - a CVE ID (e.g. CVE-2024-1234)
@@ -14,7 +14,7 @@
 # Misconfigurations: development manifests in local/ and security audit
 # fixtures in design/stories/epic-17-security-review/phase-0*/ deliberately
 # ship with weak security context to exercise specific scenarios. Production
-# install path is the chart in charts/llmsafespace/ which is hardened.
+# install path is the chart in charts/llmsafespaces/ which is hardened.
 #
 # We do NOT use a global ignore; instead .trivyignore.yaml scopes by path.
 # Keep this file for global CVE accepts only.
@@ -27,7 +27,7 @@
 GHSA-gv7w-rqvm-qjhr exp:2026-09-13
 
 # CVE-2026-53571 — vite: server.fs.deny bypass on Windows alternate paths
-# Not exploitable: LLMSafeSpace runs on Linux (Debian-based containers) only.
+# Not exploitable: LLMSafeSpaces runs on Linux (Debian-based containers) only.
 # The vulnerability affects Windows-specific alternate data stream paths which
 # do not exist on Linux filesystems. Fix is available in vite 6.4.3/7.3.5/8.0.16;
 # upgrade tracked separately from this bug fix.

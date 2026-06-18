@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bootstrap a kind cluster with a fully-installed LLMSafeSpace control plane.
+# Bootstrap a kind cluster with a fully-installed LLMSafeSpaces control plane.
 #
 # Phases:
 #   1. Verify prerequisites (kind, kubectl, helm, docker)
@@ -7,14 +7,14 @@
 #   3. Build api, controller, runtime-base images and load into kind
 #   4. Install cert-manager and wait for it
 #   5. Install Postgres + Redis (local/postgres-redis.yaml) and wait
-#   6. helm install LLMSafeSpace and wait for rollout
+#   6. helm install LLMSafeSpaces and wait for rollout
 #   7. Print smoke-test commands
 #
 # Idempotent: re-running re-uses the existing cluster and images.
 # Use ./teardown.sh to remove everything.
 #
 # Environment overrides (sane defaults):
-#   CLUSTER_NAME      - kind cluster name (default: llmsafespace)
+#   CLUSTER_NAME      - kind cluster name (default: llmsafespaces)
 #   IMAGE_TAG         - tag used for built images (default: dev)
 #   OPENCODE_VERSION  - opencode version baked into runtime image (default: 1.2.27)
 #   GOPROXY           - Go proxy for module downloads in builds (default: $(go env GOPROXY))
@@ -43,16 +43,16 @@ die()  { printf '%s ✗%s %s\n' "${RED}${BOLD}" "${RESET}" "$*" >&2; exit 1; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-CLUSTER_NAME="${CLUSTER_NAME:-llmsafespace}"
+CLUSTER_NAME="${CLUSTER_NAME:-llmsafespaces}"
 IMAGE_TAG="${IMAGE_TAG:-dev}"
 OPENCODE_VERSION="${OPENCODE_VERSION:-1.2.27}"
 GOPROXY_BUILD="${GOPROXY:-$(go env GOPROXY 2>/dev/null || echo direct)}"
-NS="llmsafespace"
-RELEASE_NAME="llmsafespace"
+NS="llmsafespaces"
+RELEASE_NAME="llmsafespaces"
 
-API_IMAGE="llmsafespace/api:${IMAGE_TAG}"
-CONTROLLER_IMAGE="llmsafespace/controller:${IMAGE_TAG}"
-RUNTIME_IMAGE="llmsafespace/runtime-base:${IMAGE_TAG}"
+API_IMAGE="llmsafespaces/api:${IMAGE_TAG}"
+CONTROLLER_IMAGE="llmsafespaces/controller:${IMAGE_TAG}"
+RUNTIME_IMAGE="llmsafespaces/runtime-base:${IMAGE_TAG}"
 
 # -----------------------------------------------------------------------------
 # Phase 1: prerequisites
@@ -186,22 +186,22 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# Phase 6: helm install LLMSafeSpace
+# Phase 6: helm install LLMSafeSpaces
 # -----------------------------------------------------------------------------
-log "Phase 6/6 — helm install LLMSafeSpace"
+log "Phase 6/6 — helm install LLMSafeSpaces"
 helm --kube-context "kind-${CLUSTER_NAME}" upgrade --install "${RELEASE_NAME}" \
-    "${REPO_ROOT}/charts/llmsafespace" \
+    "${REPO_ROOT}/charts/llmsafespaces" \
     -n "${NS}" --create-namespace \
-    --set "api.image.repository=llmsafespace/api" \
+    --set "api.image.repository=llmsafespaces/api" \
     --set "api.image.tag=${IMAGE_TAG}" \
     --set "api.image.pullPolicy=IfNotPresent" \
-    --set "controller.image.repository=llmsafespace/controller" \
+    --set "controller.image.repository=llmsafespaces/controller" \
     --set "controller.image.tag=${IMAGE_TAG}" \
     --set "controller.image.pullPolicy=IfNotPresent" \
     --set "postgresql.host=postgres" \
     --set "postgresql.port=5432" \
-    --set "postgresql.user=llmsafespace" \
-    --set "postgresql.database=llmsafespace" \
+    --set "postgresql.user=llmsafespaces" \
+    --set "postgresql.database=llmsafespaces" \
     --set "redis.host=redis-master" \
     --set "redis.port=6379" \
     --set "externalSecret.create=true" \
@@ -211,13 +211,13 @@ helm --kube-context "kind-${CLUSTER_NAME}" upgrade --install "${RELEASE_NAME}" \
 
 log "  waiting for API rollout"
 kubectl --context "kind-${CLUSTER_NAME}" -n "${NS}" rollout status \
-    deployment/llmsafespace-api --timeout=180s
+    deployment/llmsafespaces-api --timeout=180s
 
 log "  waiting for controller rollout"
 kubectl --context "kind-${CLUSTER_NAME}" -n "${NS}" rollout status \
-    deployment/llmsafespace-controller --timeout=180s
+    deployment/llmsafespaces-controller --timeout=180s
 
-ok "LLMSafeSpace installed"
+ok "LLMSafeSpaces installed"
 
 # -----------------------------------------------------------------------------
 # Done — print next steps
@@ -235,7 +235,7 @@ ${BOLD}Next steps:${RESET}
   # Smoke-test the API (port-forward to a random local port to avoid
   # conflicts with anything on host port 8080):
   kubectl --context kind-${CLUSTER_NAME} -n ${NS} port-forward \\
-      svc/llmsafespace-api 18080:8080 &
+      svc/llmsafespaces-api 18080:8080 &
   curl http://localhost:18080/livez
   curl http://localhost:18080/readyz
 

@@ -31,9 +31,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
-	"github.com/lenaxia/llmsafespace/api/internal/services/msgqueue"
-	ssetracker "github.com/lenaxia/llmsafespace/api/internal/services/sse"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/eventbroker"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/msgqueue"
+	ssetracker "github.com/lenaxia/llmsafespaces/api/internal/services/sse"
 )
 
 // TestDrainMiss_SSEDownWhenSessionGoesIdle reproduces the core bug:

@@ -22,7 +22,7 @@ from canary import (
     ensure_session_with_retry,
     raw_do,
 )
-from llmsafespace import LLMSafeSpace, RateLimitError
+from llmsafespaces import LLMSafeSpaces, RateLimitError
 
 
 def run(r: Runner, cfg: Config) -> None:
@@ -30,7 +30,7 @@ def run(r: Runner, cfg: Config) -> None:
         r.ok("skipped: no LLM key")
         return
 
-    c = LLMSafeSpace(cfg.api_url, api_key=cfg.api_key, timeout=60.0)
+    c = LLMSafeSpaces(cfg.api_url, api_key=cfg.api_key, timeout=60.0)
     ws_id = None
     try:
         ok, ws = r.assert_no_error(

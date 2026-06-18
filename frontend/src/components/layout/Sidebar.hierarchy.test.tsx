@@ -10,7 +10,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Sidebar } from "./Sidebar";
 import { AuthProvider } from "../../providers/AuthProvider";
 
-const STORAGE_KEY = "llmsafespace_user_settings";
+const STORAGE_KEY = "llmsafespaces_user_settings";
 
 vi.mock("../../api/auth", () => ({
   authApi: {

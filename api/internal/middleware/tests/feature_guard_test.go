@@ -12,8 +12,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lenaxia/llmsafespace/api/internal/middleware"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/api/internal/middleware"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 type mockOrgPlanReader struct {

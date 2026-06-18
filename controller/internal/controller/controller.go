@@ -9,9 +9,9 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/lenaxia/llmsafespace/controller/internal/relay"
-	"github.com/lenaxia/llmsafespace/controller/internal/workspace"
-	"github.com/lenaxia/llmsafespace/pkg/agent/opencode"
+	"github.com/lenaxia/llmsafespaces/controller/internal/relay"
+	"github.com/lenaxia/llmsafespaces/controller/internal/workspace"
+	"github.com/lenaxia/llmsafespaces/pkg/agent/opencode"
 )
 
 func init() {

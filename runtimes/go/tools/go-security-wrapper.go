@@ -19,7 +19,7 @@ type RestrictedPackages struct {
 
 func main() {
 	// Load restricted packages configuration
-	configFile, err := os.Open("/etc/llmsafespace/go/restricted_packages.json")
+	configFile, err := os.Open("/etc/llmsafespaces/go/restricted_packages.json")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading restricted packages: %v\n", err)
 		os.Exit(1)
@@ -34,7 +34,7 @@ func main() {
 
 	// Check if a source file is provided
 	if len(os.Args) < 2 {
-		fmt.Println("LLMSafeSpace Go Environment")
+		fmt.Println("LLMSafeSpaces Go Environment")
 		fmt.Println("Usage: go-security-wrapper <source-file>")
 		os.Exit(0)
 	}
@@ -72,7 +72,7 @@ func main() {
 	}
 
 	// Compile and run the code
-	tempDir, err := os.MkdirTemp("", "llmsafespace-go-*")
+	tempDir, err := os.MkdirTemp("", "llmsafespaces-go-*")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating temp directory: %v\n", err)
 		os.Exit(1)

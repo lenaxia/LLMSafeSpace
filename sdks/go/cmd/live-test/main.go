@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	llm "github.com/lenaxia/llmsafespace/sdk/go"
+	llm "github.com/lenaxia/llmsafespaces/sdk/go"
 )
 
 var (

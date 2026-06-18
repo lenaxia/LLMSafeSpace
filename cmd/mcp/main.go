@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Michael Kao
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Command mcp runs the LLMSafeSpace MCP server.
+// Command mcp runs the LLMSafeSpaces MCP server.
 // It supports stdio transport (default) and SSE transport (--sse flag).
 package main
 
@@ -17,7 +17,7 @@ import (
 
 	mcpserver "github.com/mark3labs/mcp-go/server"
 
-	llmmcp "github.com/lenaxia/llmsafespace/pkg/mcp"
+	llmmcp "github.com/lenaxia/llmsafespaces/pkg/mcp"
 )
 
 func main() {
@@ -29,15 +29,15 @@ func main() {
 		timeout time.Duration
 	)
 
-	flag.StringVar(&baseURL, "base-url", envOr("LLMSAFESPACE_URL", "http://localhost:8080"), "LLMSafeSpace API base URL")
-	flag.StringVar(&apiKey, "api-key", os.Getenv("LLMSAFESPACE_API_KEY"), "API key for authentication")
+	flag.StringVar(&baseURL, "base-url", envOr("LLMSAFESPACES_URL", "http://localhost:8080"), "LLMSafeSpaces API base URL")
+	flag.StringVar(&apiKey, "api-key", os.Getenv("LLMSAFESPACES_API_KEY"), "API key for authentication")
 	flag.BoolVar(&sse, "sse", false, "Use SSE transport instead of stdio")
 	flag.StringVar(&addr, "addr", envOr("MCP_ADDR", ":3001"), "SSE listen address")
 	flag.DurationVar(&timeout, "timeout", 300*time.Second, "Default timeout for session_message")
 	flag.Parse()
 
 	if apiKey == "" {
-		fmt.Fprintf(os.Stderr, "WARNING: no API key configured (set LLMSAFESPACE_API_KEY or --api-key). All API calls will fail with 401.\n")
+		fmt.Fprintf(os.Stderr, "WARNING: no API key configured (set LLMSAFESPACES_API_KEY or --api-key). All API calls will fail with 401.\n")
 	}
 
 	client := &llmmcp.HTTPClient{

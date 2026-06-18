@@ -12,12 +12,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
-	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
-	"github.com/lenaxia/llmsafespace/pkg/settings"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
+	"github.com/lenaxia/llmsafespaces/pkg/settings"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 
-	lmocks "github.com/lenaxia/llmsafespace/mocks/logger"
+	lmocks "github.com/lenaxia/llmsafespaces/mocks/logger"
 )
 
 // inMemorySettingsStore implements settings.InstanceStore for testing.
@@ -59,12 +59,12 @@ func newDefaultsFixture(t *testing.T, settingsData map[string]any) *fixture {
 
 func TestCreateWorkspace_EmptyRuntime_UsesDefaultImage(t *testing.T) {
 	f := newDefaultsFixture(t, map[string]any{
-		"workspace.defaultImage": "ghcr.io/lenaxia/llmsafespace/base:v2",
+		"workspace.defaultImage": "ghcr.io/lenaxia/llmsafespaces/base:v2",
 	})
 	ctx := context.Background()
 
 	f.ws.On("Create", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
-		return ws.Spec.Runtime == "ghcr.io/lenaxia/llmsafespace/base:v2"
+		return ws.Spec.Runtime == "ghcr.io/lenaxia/llmsafespaces/base:v2"
 	})).Return(crdWorkspace("ws-1", "default", "user1", "1Gi"), nil)
 	f.db.On("CreateWorkspace", ctx, mock.Anything).Return(nil)
 
@@ -76,7 +76,7 @@ func TestCreateWorkspace_EmptyRuntime_UsesDefaultImage(t *testing.T) {
 
 func TestCreateWorkspace_ExplicitRuntime_NotOverridden(t *testing.T) {
 	f := newDefaultsFixture(t, map[string]any{
-		"workspace.defaultImage": "ghcr.io/lenaxia/llmsafespace/base:v2",
+		"workspace.defaultImage": "ghcr.io/lenaxia/llmsafespaces/base:v2",
 	})
 	ctx := context.Background()
 
@@ -487,7 +487,7 @@ func TestCreateWorkspace_DefaultMaxActiveSessions_Applied(t *testing.T) {
 	})
 
 	mockCRD := &v1.Workspace{}
-	f.k8s.On("LlmsafespaceV1").Return(f.v1iface, nil)
+	f.k8s.On("LlmsafespacesV1").Return(f.v1iface, nil)
 	f.v1iface.On("Workspaces", mock.Anything).Return(f.ws)
 	f.ws.On("Create", mock.Anything, mock.Anything).Return(mockCRD, nil)
 	f.db.On("CreateWorkspace", mock.Anything, mock.Anything).Return(nil)

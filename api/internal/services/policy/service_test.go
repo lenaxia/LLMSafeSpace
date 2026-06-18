@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 type fakePolicyStore struct {

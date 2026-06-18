@@ -1,4 +1,4 @@
-apiVersion: llmsafespace.dev/v1
+apiVersion: llmsafespaces.dev/v1
 kind: WarmPool
 metadata:
   name: test-python-pool

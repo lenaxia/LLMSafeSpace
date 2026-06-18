@@ -43,8 +43,8 @@ frontend/coverage
 # SDK build artifacts
 sdks/typescript/node_modules/
 sdks/typescript/dist/
-sdks/vscode-llmsafespace/node_modules/
-sdks/vscode-llmsafespace/dist/
+sdks/vscode-llmsafespaces/node_modules/
+sdks/vscode-llmsafespaces/dist/
 sdks/python/__pycache__/
 sdks/python/*.egg-info/
 sdks/go/live-test
@@ -71,6 +71,6 @@ sdks/canary/go/cmd/seed-accounts/seed-accounts
 mcp
 
 # Cluster-specific helm overrides (redis host, disabled components, etc.)
-# Create charts/llmsafespace/values.local.yaml to persist local deploy config.
-charts/llmsafespace/values.local.yaml
+# Create charts/llmsafespaces/values.local.yaml to persist local deploy config.
+charts/llmsafespaces/values.local.yaml
 node_modules/.vite/

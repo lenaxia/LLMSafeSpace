@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
-	"github.com/lenaxia/llmsafespace/pkg/interfaces"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+	"github.com/lenaxia/llmsafespaces/pkg/interfaces"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,7 +25,7 @@ import (
 // providers — matching the InferenceRelay CRD enum `aws;oci;gcp`.
 type RelayAdminHandler struct {
 	clientset       kubernetes.Interface
-	llmClient       interfaces.LLMSafespaceV1Interface
+	llmClient       interfaces.LLMSafespacesV1Interface
 	namespace       string
 	routerNamespace string
 	routerSvcURL    string
@@ -35,7 +35,7 @@ type RelayAdminHandler struct {
 // NewRelayAdminHandler creates a new relay admin handler.
 // namespace is the workspace namespace (for Secrets, CRDs).
 // routerNamespace is the namespace where the relay-router Deployment lives.
-func NewRelayAdminHandler(clientset kubernetes.Interface, llmClient interfaces.LLMSafespaceV1Interface, namespace, routerNamespace, routerSvcURL string) *RelayAdminHandler {
+func NewRelayAdminHandler(clientset kubernetes.Interface, llmClient interfaces.LLMSafespacesV1Interface, namespace, routerNamespace, routerSvcURL string) *RelayAdminHandler {
 	return &RelayAdminHandler{
 		clientset:       clientset,
 		llmClient:       llmClient,
@@ -67,7 +67,7 @@ type setupResponse struct {
 
 // GetSetup returns the prerequisite checklist state for the relay setup wizard.
 //
-// The checklist is network-stack agnostic: it verifies LLMSafeSpace-owned
+// The checklist is network-stack agnostic: it verifies LLMSafeSpaces-owned
 // prerequisites (relay-router Deployment, InferenceRelay CRD, provider
 // credentials) but does NOT probe the load-balancer implementation. The WireGuard
 // endpoint's reachability is an operator responsibility — supplied as
@@ -109,7 +109,7 @@ func (h *RelayAdminHandler) checkRouter(ctx context.Context, resp *setupResponse
 }
 
 func (h *RelayAdminHandler) checkCRD(ctx context.Context, resp *setupResponse) error {
-	resources, err := h.clientset.Discovery().ServerResourcesForGroupVersion("llmsafespace.dev/v1")
+	resources, err := h.clientset.Discovery().ServerResourcesForGroupVersion("llmsafespaces.dev/v1")
 	if err != nil {
 		if apierrors.IsNotFound(err) || strings.Contains(err.Error(), "empty response") {
 			return nil
@@ -494,7 +494,7 @@ func (h *RelayAdminHandler) Deploy(c *gin.Context) {
 
 	relay := &v1.InferenceRelay{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "llmsafespace.dev/v1",
+			APIVersion: "llmsafespaces.dev/v1",
 			Kind:       "InferenceRelay",
 		},
 		ObjectMeta: metav1.ObjectMeta{
@@ -553,7 +553,7 @@ func (h *RelayAdminHandler) Rotate(c *gin.Context) {
 		return
 	}
 
-	applyAnnotation(existing, "relay.llmsafespace.dev/rotate", relayID)
+	applyAnnotation(existing, "relay.llmsafespaces.dev/rotate", relayID)
 	_, err = h.llmClient.InferenceRelays().Update(ctx, existing)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to trigger rotation: " + err.Error()})
@@ -577,7 +577,7 @@ func (h *RelayAdminHandler) Pause(c *gin.Context) {
 		return
 	}
 
-	applyAnnotation(existing, "relay.llmsafespace.dev/paused", "true")
+	applyAnnotation(existing, "relay.llmsafespaces.dev/paused", "true")
 	_, err = h.llmClient.InferenceRelays().Update(ctx, existing)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to pause relay fleet: " + err.Error()})
@@ -602,7 +602,7 @@ func (h *RelayAdminHandler) Resume(c *gin.Context) {
 	}
 
 	if existing.Annotations != nil {
-		delete(existing.Annotations, "relay.llmsafespace.dev/paused")
+		delete(existing.Annotations, "relay.llmsafespaces.dev/paused")
 	}
 
 	_, err = h.llmClient.InferenceRelays().Update(ctx, existing)
@@ -759,22 +759,22 @@ func buildAlerts(healthy, total int) []alertInfo {
 	return []alertInfo{
 		{
 			Name:       "RelayFleetDegraded",
-			Expression: "llmsafespace_relay_healthy_replicas < 2",
+			Expression: "llmsafespaces_relay_healthy_replicas < 2",
 			Firing:     healthy < total,
 		},
 		{
 			Name:       "RelayFleetCritical",
-			Expression: "llmsafespace_relay_healthy_replicas == 0",
+			Expression: "llmsafespaces_relay_healthy_replicas == 0",
 			Firing:     healthy == 0 && total > 0,
 		},
 		{
 			Name:       "RelayProvisioningFailed",
-			Expression: "llmsafespace_relay_provisioning_failed == 1",
+			Expression: "llmsafespaces_relay_provisioning_failed == 1",
 			Firing:     false,
 		},
 		{
 			Name:       "Relay429RateHigh",
-			Expression: "llmsafespace_relay_429_rate > 0.3",
+			Expression: "llmsafespaces_relay_429_rate > 0.3",
 			Firing:     false,
 		},
 	}

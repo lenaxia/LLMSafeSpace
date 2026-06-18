@@ -1,6 +1,6 @@
-# LLMSafeSpace — LLM Implementation Guide
+# LLMSafeSpaces — LLM Implementation Guide
 
-> **Repository:** `github.com/lenaxia/llmsafespace`
+> **Repository:** `github.com/lenaxia/llmsafespaces`
 
 **Version:** 1.15
 **Last Updated:** 2026-06-18
@@ -28,7 +28,7 @@
 
 ## Project Overview
 
-**LLMSafeSpace** is a Kubernetes-first platform for running AI agents securely in isolated sandboxes. Every sandbox runs `opencode serve` as a persistent HTTP server with a PVC-backed persistent workspace. The API acts as a reverse proxy to the agent, supporting both interactive chat and programmatic (MCP/REST) access.
+**LLMSafeSpaces** is a Kubernetes-first platform for running AI agents securely in isolated sandboxes. Every sandbox runs `opencode serve` as a persistent HTTP server with a PVC-backed persistent workspace. The API acts as a reverse proxy to the agent, supporting both interactive chat and programmatic (MCP/REST) access.
 
 **Core principles:**
 
@@ -36,7 +36,7 @@
 - Every sandbox is workspace-backed — PVC-mounted persistent filesystem at `/workspace`
 - Workspaces can be suspended (pod deleted, PVC retained) and resumed (~3s)
 - Credentials stored exclusively in K8s Secrets — never in PostgreSQL, Redis, or logs
-- LLMSafeSpace is an MCP server — any MCP-compatible client can connect
+- LLMSafeSpaces is an MCP server — any MCP-compatible client can connect
 - Stateless API server — horizontally scalable, no sticky sessions required
 
 **Three deliverables:**
@@ -246,7 +246,7 @@ See also the [Adversarial Assessment](#adversarial-assessment) section in the PR
 ## Repository Structure
 
 ```
-llmsafespace/
+llmsafespaces/
 ├── cmd/           # Top-level binaries (api, mcp, redact, repolint, seal-key, workspace-agentd)
 ├── api/           # Go API service (Gin) + MCP server — reverse proxy, workspace/credential/secret management
 ├── controller/    # Kubernetes operator (controller-runtime) — Workspace reconciler, validating webhooks
@@ -266,7 +266,7 @@ llmsafespace/
 
 **Before editing:** Read each folder's `README.md` for rules and conventions. Folders missing a `README.md` should have one added.
 
-**CRD type ownership:** `pkg/apis/llmsafespace/v1/` holds authoritative kubebuilder-annotated CRD types (Workspace, RuntimeEnvironment). `pkg/types/` holds API transfer objects only (request/response DTOs) — not CRD schemas. These must not be merged.
+**CRD type ownership:** `pkg/apis/llmsafespaces/v1/` holds authoritative kubebuilder-annotated CRD types (Workspace, RuntimeEnvironment). `pkg/types/` holds API transfer objects only (request/response DTOs) — not CRD schemas. These must not be merged.
 
 ---
 
@@ -279,7 +279,7 @@ llmsafespace/
 │         │                                                                    │
 │         ▼                                                                    │
 │   ┌─────────────────────────────────────────────────────────────────────┐   │
-│   │  LLMSafeSpace API (stateless, horizontally scalable)               │   │
+│   │  LLMSafeSpaces API (stateless, horizontally scalable)               │   │
 │   │  ┌──────────┐  ┌──────────┐  ┌───────────┐  ┌──────────────────┐  │   │
 │   │  │ REST API │  │  SSE     │  │   Auth    │  │  Rate Limiting   │  │   │
 │   │  │ (Gin)    │  │ Stream   │  │ JWT+APIKey│  │  + Validation    │  │   │
@@ -331,7 +331,7 @@ llmsafespace/
 
 ### Custom Resource Definitions
 
-The controller manages 2 CRDs in the `llmsafespace.dev/v1` API group:
+The controller manages 2 CRDs in the `llmsafespaces.dev/v1` API group:
 
 | CRD | Kind | Scope | Short | Purpose |
 |-----|------|-------|-------|---------|
@@ -346,7 +346,7 @@ CRD types exist in two locations with strictly separate roles:
 
 | Location | Purpose |
 |----------|---------|
-| `pkg/apis/llmsafespace/v1/` | **Authoritative** — kubebuilder-annotated CRD types (Workspace, RuntimeEnvironment), used by both controller and API service |
+| `pkg/apis/llmsafespaces/v1/` | **Authoritative** — kubebuilder-annotated CRD types (Workspace, RuntimeEnvironment), used by both controller and API service |
 | `pkg/types/` | **API transfer objects only** — REST request/response shapes (`CreateWorkspaceRequest`, etc.). Not CRD schemas. |
 
 These are intentionally different types. The API types are transfer objects; the CRD types are Kubernetes schemas. They must not be merged.
@@ -1296,14 +1296,14 @@ go test ./...
 
 ### Code generation
 
-When modifying CRD types in `pkg/apis/llmsafespace/v1/*_types.go`, you must regenerate the DeepCopy implementations:
+When modifying CRD types in `pkg/apis/llmsafespaces/v1/*_types.go`, you must regenerate the DeepCopy implementations:
 
 ```bash
 # From project root
 make deepcopy
 
 # Verify and commit generated changes
-git add pkg/apis/llmsafespace/v1/zz_generated.deepcopy.go
+git add pkg/apis/llmsafespaces/v1/zz_generated.deepcopy.go
 git commit -m "Update generated DeepCopy code"
 ```
 
@@ -1388,31 +1388,31 @@ The API service is configured via `api/config/config.yaml` with environment vari
 
 | Section | Key | Default | Env Var | Description |
 |---------|-----|---------|---------|-------------|
-| `server` | `host` | `0.0.0.0` | `LLMSAFESPACE_SERVER_HOST` | Listen address |
-| `server` | `port` | `8080` | `LLMSAFESPACE_SERVER_PORT` | Listen port |
+| `server` | `host` | `0.0.0.0` | `LLMSAFESPACES_SERVER_HOST` | Listen address |
+| `server` | `port` | `8080` | `LLMSAFESPACES_SERVER_PORT` | Listen port |
 | `server` | `shutdownTimeout` | `30s` | — | Graceful shutdown timeout |
 | `kubernetes` | `inCluster` | `true` | — | Use in-cluster config |
-| `kubernetes` | `namespace` | `llmsafespace` | — | Default namespace |
+| `kubernetes` | `namespace` | `llmsafespaces` | — | Default namespace |
 | `database` | `host` | `postgres` | — | PostgreSQL host |
 | `database` | `port` | `5432` | — | PostgreSQL port |
-| `database` | `password` | (empty) | `LLMSAFESPACE_DATABASE_PASSWORD` | PostgreSQL password |
+| `database` | `password` | (empty) | `LLMSAFESPACES_DATABASE_PASSWORD` | PostgreSQL password |
 | `database` | `maxOpenConns` | `25` | — | Max open connections |
 | `redis` | `host` | `redis` | — | Redis host |
 | `redis` | `port` | `6379` | — | Redis port |
-| `redis` | `password` | (empty) | `LLMSAFESPACE_REDIS_PASSWORD` | Redis password |
+| `redis` | `password` | (empty) | `LLMSAFESPACES_REDIS_PASSWORD` | Redis password |
 | `redis` | `poolSize` | `20` | — | Connection pool size |
-| `auth` | `jwtSecret` | (empty) | `LLMSAFESPACE_AUTH_JWTSECRET` | JWT signing secret (required) |
+| `auth` | `jwtSecret` | (empty) | `LLMSAFESPACES_AUTH_JWTSECRET` | JWT signing secret (required) |
 | `auth` | `tokenDuration` | `24h` | — | Token expiry |
 | `auth` | `apiKeyPrefix` | `lsp_` | — | API key prefix |
-| `auth` | `lockoutEnabled` | `false` | `LLMSAFESPACE_AUTH_LOCKOUTENABLED` | Enable account lockout after failed logins |
-| `auth` | `lockoutAttempts` | `0` | `LLMSAFESPACE_AUTH_LOCKOUTATTEMPTS` | Failed attempts before lockout (e.g. `5`) |
-| `auth` | `lockoutDuration` | `0` | `LLMSAFESPACE_AUTH_LOCKOUTDURATION` | Lockout duration (e.g. `15m`) |
-| `security` | `allowedOrigins` | (empty) | `LLMSAFESPACE_SECURITY_ALLOWEDORIGINS` | Comma-separated CORS origins (e.g. `https://app.example.com,https://admin.example.com`) |
-| `security` | `allowCredentials` | `false` | `LLMSAFESPACE_SECURITY_ALLOWCREDENTIALS` | Allow credentials in CORS |
-| `rateLimiting` | `enabled` | `false` | `LLMSAFESPACE_RATELIMITING_ENABLED` | Enable rate limiting |
-| `rateLimiting` | `defaultLimit` | `100` | `LLMSAFESPACE_RATELIMITING_DEFAULTLIMIT` | Requests per window |
-| `rateLimiting` | `defaultWindow` | `1m` | `LLMSAFESPACE_RATELIMITING_DEFAULTWINDOW` | Window duration |
-| `rateLimiting` | `burstSize` | `20` | `LLMSAFESPACE_RATELIMITING_BURSTSIZE` | Burst allowance |
+| `auth` | `lockoutEnabled` | `false` | `LLMSAFESPACES_AUTH_LOCKOUTENABLED` | Enable account lockout after failed logins |
+| `auth` | `lockoutAttempts` | `0` | `LLMSAFESPACES_AUTH_LOCKOUTATTEMPTS` | Failed attempts before lockout (e.g. `5`) |
+| `auth` | `lockoutDuration` | `0` | `LLMSAFESPACES_AUTH_LOCKOUTDURATION` | Lockout duration (e.g. `15m`) |
+| `security` | `allowedOrigins` | (empty) | `LLMSAFESPACES_SECURITY_ALLOWEDORIGINS` | Comma-separated CORS origins (e.g. `https://app.example.com,https://admin.example.com`) |
+| `security` | `allowCredentials` | `false` | `LLMSAFESPACES_SECURITY_ALLOWCREDENTIALS` | Allow credentials in CORS |
+| `rateLimiting` | `enabled` | `false` | `LLMSAFESPACES_RATELIMITING_ENABLED` | Enable rate limiting |
+| `rateLimiting` | `defaultLimit` | `100` | `LLMSAFESPACES_RATELIMITING_DEFAULTLIMIT` | Requests per window |
+| `rateLimiting` | `defaultWindow` | `1m` | `LLMSAFESPACES_RATELIMITING_DEFAULTWINDOW` | Window duration |
+| `rateLimiting` | `burstSize` | `20` | `LLMSAFESPACES_RATELIMITING_BURSTSIZE` | Burst allowance |
 | `logging` | `level` | `info` | — | Log level |
 | `logging` | `encoding` | `json` | — | Log format (json/console) |
 

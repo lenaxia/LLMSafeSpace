@@ -13,7 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/client-go/kubernetes/scheme"
 
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 // TestNegotiatedSerializerDecodesWatchPayload reproduces the cluster-observed
@@ -26,12 +26,12 @@ import (
 // __internal version, so decoding fails with:
 //
 //	no kind "Workspace" is registered for the internal version of group
-//	"llmsafespace.dev" in scheme "pkg/runtime/scheme.go:100"
+//	"llmsafespaces.dev" in scheme "pkg/runtime/scheme.go:100"
 //
 // The fix: use WithoutConversion(), which is the canonical pattern for CRD
 // clients that don't define separate internal/external versions.
 func TestNegotiatedSerializerDecodesWatchPayload(t *testing.T) {
-	gv := schema.GroupVersion{Group: "llmsafespace.dev", Version: "v1"}
+	gv := schema.GroupVersion{Group: "llmsafespaces.dev", Version: "v1"}
 
 	// Build a CodecFactory the way our rest config does.
 	codecs := serializer.NewCodecFactory(scheme.Scheme)
@@ -40,7 +40,7 @@ func TestNegotiatedSerializerDecodesWatchPayload(t *testing.T) {
 	// JSON payload as it would arrive from the apiserver in a watch event:
 	// a Workspace object with TypeMeta filled in.
 	payload := []byte(`{
-		"apiVersion": "llmsafespace.dev/v1",
+		"apiVersion": "llmsafespaces.dev/v1",
 		"kind": "Workspace",
 		"metadata": {"name": "sb-1", "namespace": "default", "resourceVersion": "42"},
 		"spec": {"runtime": "base", "securityLevel": "standard", "timeout": 300},
@@ -74,10 +74,10 @@ func TestNegotiatedSerializerDecodesWatchPayload(t *testing.T) {
 // that converts to the internal hub version of the object's group. Our
 // types have no __internal version registered, so conversion fails with
 // "no kind ... is registered for the internal version of group
-// llmsafespace.dev". This is exactly the cluster-observed failure.
+// llmsafespaces.dev". This is exactly the cluster-observed failure.
 //
 // This test exists to lock in the rationale behind using WithoutConversion()
-// in newLLMSafespaceV1Client. If a future refactor removes WithoutConversion()
+// in newLLMSafespacesV1Client. If a future refactor removes WithoutConversion()
 // thinking it's unnecessary, this test will catch it.
 func TestNegotiatedSerializerWithConversionFailsForCRD(t *testing.T) {
 	codecs := serializer.NewCodecFactory(scheme.Scheme)
@@ -93,7 +93,7 @@ func TestNegotiatedSerializerWithConversionFailsForCRD(t *testing.T) {
 	decoder := withConv.DecoderToVersion(info.Serializer, nil)
 
 	payload := []byte(`{
-		"apiVersion": "llmsafespace.dev/v1",
+		"apiVersion": "llmsafespaces.dev/v1",
 		"kind": "Workspace",
 		"metadata": {"name": "sb-1"}
 	}`)
@@ -108,7 +108,7 @@ func TestNegotiatedSerializerWithConversionFailsForCRD(t *testing.T) {
 // client_crds.go. Without this registration, even WithoutConversion() codecs
 // can't recognize Workspace objects.
 func TestSchemeRegisteredWithGroup(t *testing.T) {
-	gvk := schema.GroupVersionKind{Group: "llmsafespace.dev", Version: "v1", Kind: "Workspace"}
+	gvk := schema.GroupVersionKind{Group: "llmsafespaces.dev", Version: "v1", Kind: "Workspace"}
 	obj, err := scheme.Scheme.New(gvk)
 	require.NoError(t, err, "scheme must recognize Workspace GVK after init()")
 	_, ok := obj.(*v1.Workspace)
@@ -116,7 +116,7 @@ func TestSchemeRegisteredWithGroup(t *testing.T) {
 
 	// metav1 types (Status, WatchEvent) must also be registered in our group
 	// for watch decoding.
-	statusGVK := schema.GroupVersionKind{Group: "llmsafespace.dev", Version: "v1", Kind: "Status"}
+	statusGVK := schema.GroupVersionKind{Group: "llmsafespaces.dev", Version: "v1", Kind: "Status"}
 	_, err = scheme.Scheme.New(statusGVK)
 	assert.NoError(t, err, "metav1.Status must be registered for our group (apiserver delivers errors as Status)")
 }

@@ -13,7 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -236,6 +236,6 @@ func tagFromSpecImage(image string) string {
 // --- Operations Metrics ---
 
 var workspacePhaseTransitions = promauto.NewCounterVec(prometheus.CounterOpts{
-	Name: "llmsafespace_workspace_phase_transitions_total",
+	Name: "llmsafespaces_workspace_phase_transitions_total",
 	Help: "Workspace phase transitions observed by the controller.",
 }, []string{"from_phase", "to_phase"})

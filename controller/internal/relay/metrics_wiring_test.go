@@ -10,7 +10,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
+	"github.com/lenaxia/llmsafespaces/controller/internal/metrics"
 )
 
 // ─── Helpers for isolated testing ───────────────────────────────────────────
@@ -131,12 +131,12 @@ func TestMetricsRegisteredInCollectors(t *testing.T) {
 	}
 
 	expectedMetrics := []string{
-		"llmsafespace_relay_healthy_replicas",
-		"llmsafespace_relay_provisioning_failed",
-		"llmsafespace_relay_draining",
-		"llmsafespace_relay_quota_exhausted",
-		"llmsafespace_relay_provision_duration_seconds",
-		"llmsafespace_relay_rotation_total",
+		"llmsafespaces_relay_healthy_replicas",
+		"llmsafespaces_relay_provisioning_failed",
+		"llmsafespaces_relay_draining",
+		"llmsafespaces_relay_quota_exhausted",
+		"llmsafespaces_relay_provision_duration_seconds",
+		"llmsafespaces_relay_rotation_total",
 	}
 
 	for _, name := range expectedMetrics {

@@ -16,7 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 // =============================================================================
@@ -76,7 +76,7 @@ func newWorkspaceUpdateRequest(t *testing.T, oldWs, newWs *v1.Workspace) admissi
 // runtime references resolved via RuntimeEnvironment CRDs by name).
 func minimalValidWorkspace() *v1.Workspace {
 	return &v1.Workspace{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "llmsafespace.dev/v1", Kind: "Workspace"},
+		TypeMeta:   metav1.TypeMeta{APIVersion: "llmsafespaces.dev/v1", Kind: "Workspace"},
 		ObjectMeta: metav1.ObjectMeta{Name: "ws-1", Namespace: "default"},
 		Spec: v1.WorkspaceSpec{
 			Owner:   v1.WorkspaceOwner{UserID: "u1"},
@@ -110,7 +110,7 @@ func TestG2Workspace_AllowsAllowlistedRegistry(t *testing.T) {
 		MaxStorageGi:           1024,
 	}
 	ws := minimalValidWorkspace()
-	ws.Spec.Runtime = "ghcr.io/lenaxia/llmsafespace/runtime-python:3.11"
+	ws.Spec.Runtime = "ghcr.io/lenaxia/llmsafespaces/runtime-python:3.11"
 	resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
 	assert.True(t, resp.Allowed, "allow-listed registry must pass: %v", resp.Result)
 }

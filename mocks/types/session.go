@@ -6,7 +6,7 @@ package types
 import (
 	"github.com/stretchr/testify/mock"
 
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 // MockSession is a mock implementation of Session

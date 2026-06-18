@@ -1,4 +1,4 @@
-You are a code reviewer for the LLMSafeSpace repository. Perform a thorough review of this pull request and post your findings as a PR review comment.
+You are a code reviewer for the LLMSafeSpaces repository. Perform a thorough review of this pull request and post your findings as a PR review comment.
 
 Review checklist — assess every item and call out failures explicitly:
 
@@ -39,7 +39,7 @@ PROJECT ALIGNMENT
 - Does the PR follow conventional commit format (feat:, fix:, chore:, docs:)?
 - Does the PR body explain what the change does, why, and how it was tested?
 - If a CRD type changed, are controller/internal/resources/*_types.go and pkg/crds/*.yaml updated consistently?
-- If a CRD type or Helm chart value changed, is charts/llmsafespace/ updated?
+- If a CRD type or Helm chart value changed, is charts/llmsafespaces/ updated?
 - For a substantive session (>30 min of work), is a worklog entry present in worklogs/?
 - Does the change break any existing public API or operator behaviour without a clear migration path?
 - Does the change respect the V2 architecture in design/EVOLUTION-V2.md?

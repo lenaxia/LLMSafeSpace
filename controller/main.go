@@ -23,10 +23,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	"github.com/lenaxia/llmsafespace/controller/internal/controller"
-	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
-	"github.com/lenaxia/llmsafespace/controller/internal/webhooks"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespaces/controller/internal/controller"
+	"github.com/lenaxia/llmsafespaces/controller/internal/metrics"
+	"github.com/lenaxia/llmsafespaces/controller/internal/webhooks"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 var (
@@ -91,17 +91,17 @@ func main() {
 		"URL of the in-cluster relay-router for /metrics scraping (Epic 42).")
 	var apiServiceURL string
 	flag.StringVar(&apiServiceURL, "api-service-url", "",
-		"Root URL of the in-cluster API service (e.g. http://llmsafespace-api.llmsafespace.svc:8080) "+
+		"Root URL of the in-cluster API service (e.g. http://llmsafespaces-api.llmsafespaces.svc:8080) "+
 			"used to poll org status for D20 org-level workspace suspension. "+
 			"Empty disables org-suspension (the controller never org-suspends).")
 	flag.Parse()
 
 	// US-43.19 / D20: the shared secret authenticating controller→API internal
 	// calls. Read from the same env var the API service uses
-	// (LLMSAFESPACE_INTERNAL_TOKEN) so a single mounted Secret configures both
+	// (LLMSAFESPACES_INTERNAL_TOKEN) so a single mounted Secret configures both
 	// sides. Empty means no X-Internal-Token header is sent (the endpoint is
 	// then reachable only when the API side also has the env unset).
-	apiInternalToken := os.Getenv("LLMSAFESPACE_INTERNAL_TOKEN")
+	apiInternalToken := os.Getenv("LLMSAFESPACES_INTERNAL_TOKEN")
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 	setupLog.Info("starting controller", "version", version, "commit", commitSHA, "built", buildTime)
@@ -122,7 +122,7 @@ func main() {
 		WebhookServer:          webhook.NewServer(webhook.Options{Port: 9443}),
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "llmsafespace-controller-leader-election",
+		LeaderElectionID:       "llmsafespaces-controller-leader-election",
 	}
 
 	// Restrict the cache (and thus the controllers) to a specific set of
@@ -156,7 +156,7 @@ func main() {
 	// the nil decoder.
 	webhookDecoder := admission.NewDecoder(mgr.GetScheme())
 
-	mgr.GetWebhookServer().Register("/validate-llmsafespace-dev-v1-runtimeenvironment", &webhook.Admission{
+	mgr.GetWebhookServer().Register("/validate-llmsafespaces-dev-v1-runtimeenvironment", &webhook.Admission{
 		Handler: &webhooks.RuntimeEnvironmentValidator{
 			Decoder:                webhookDecoder,
 			AllowedImageRegistries: splitNonEmpty(allowedImageRegistries, ","),
@@ -167,7 +167,7 @@ func main() {
 	// F1.2.2 (status forge), F1.2.9 (storage class allow-list), and RT-6.1
 	// (storage size upper bound). Configuration is operator-supplied via
 	// flags so the same chart works in every deployment topology.
-	mgr.GetWebhookServer().Register("/validate-llmsafespace-dev-v1-workspace", &webhook.Admission{
+	mgr.GetWebhookServer().Register("/validate-llmsafespaces-dev-v1-workspace", &webhook.Admission{
 		Handler: &webhooks.WorkspaceValidator{
 			Decoder:                  webhookDecoder,
 			AllowedImageRegistries:   splitNonEmpty(allowedImageRegistries, ","),
@@ -187,7 +187,7 @@ func main() {
 	// Set up InferenceRelay controller (feature-gated)
 	relayNamespace := os.Getenv("POD_NAMESPACE")
 	if relayNamespace == "" {
-		relayNamespace = "llmsafespace"
+		relayNamespace = "llmsafespaces"
 	}
 	if err := controller.SetupRelayController(mgr, relayNamespace, relayRouterURL, enableRelayController); err != nil {
 		setupLog.Error(err, "unable to set up InferenceRelay controller")

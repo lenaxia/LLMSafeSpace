@@ -117,7 +117,7 @@ The glm-5.1 halt (Path A variant with `reason=length` + silent empty follow-up) 
 
 ## Files Changed
 
-### LLMSafeSpace
+### LLMSafeSpaces
 - `cmd/workspace-agentd/main.go` — remove 128K×sessions fallback
 - `frontend/src/components/workspace/DiskUsageBar.tsx` — Unknown context tooltip
 - `frontend/src/components/chat/SessionRetryBanner.tsx` — new component

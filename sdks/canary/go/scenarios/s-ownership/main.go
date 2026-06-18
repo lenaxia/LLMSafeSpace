@@ -13,8 +13,8 @@ import (
 	"os"
 	"time"
 
-	llm "github.com/lenaxia/llmsafespace/sdk/go"
-	canary "github.com/lenaxia/llmsafespace/sdks/canary/go"
+	llm "github.com/lenaxia/llmsafespaces/sdk/go"
+	canary "github.com/lenaxia/llmsafespaces/sdks/canary/go"
 )
 
 func Handler(w http.ResponseWriter, r *http.Request) {
@@ -40,7 +40,7 @@ func main() {
 
 func runOwnership(ctx context.Context, run *canary.Runner, cfg canary.Config) {
 	if cfg.APIKeyUser2 == "" {
-		run.OK("ownership: skipped (LLMSAFESPACE_API_KEY_USER2 not set)")
+		run.OK("ownership: skipped (LLMSAFESPACES_API_KEY_USER2 not set)")
 		return
 	}
 

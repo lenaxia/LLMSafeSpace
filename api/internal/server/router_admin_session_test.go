@@ -13,12 +13,12 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/lenaxia/llmsafespace/api/internal/handlers"
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	apilogger "github.com/lenaxia/llmsafespace/api/internal/logger"
-	imocks "github.com/lenaxia/llmsafespace/api/internal/mocks"
-	kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
-	lmocks "github.com/lenaxia/llmsafespace/mocks/logger"
+	"github.com/lenaxia/llmsafespaces/api/internal/handlers"
+	"github.com/lenaxia/llmsafespaces/api/internal/interfaces"
+	apilogger "github.com/lenaxia/llmsafespaces/api/internal/logger"
+	imocks "github.com/lenaxia/llmsafespaces/api/internal/mocks"
+	kmocks "github.com/lenaxia/llmsafespaces/mocks/kubernetes"
+	lmocks "github.com/lenaxia/llmsafespaces/mocks/logger"
 )
 
 // adminSessionMockServices is a minimum-viable interfaces.Services that wires

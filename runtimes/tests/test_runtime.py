@@ -7,10 +7,10 @@ import requests
 from pathlib import Path
 
 # Test configuration
-TEST_IMAGE = "ghcr.io/lenaxia/llmsafespace/base:latest"
-TEST_PYTHON_IMAGE = "ghcr.io/lenaxia/llmsafespace/python:latest"
-TEST_NODEJS_IMAGE = "ghcr.io/lenaxia/llmsafespace/nodejs:latest"
-TEST_GO_IMAGE = "ghcr.io/lenaxia/llmsafespace/go:latest"
+TEST_IMAGE = "ghcr.io/lenaxia/llmsafespaces/base:latest"
+TEST_PYTHON_IMAGE = "ghcr.io/lenaxia/llmsafespaces/python:latest"
+TEST_NODEJS_IMAGE = "ghcr.io/lenaxia/llmsafespaces/nodejs:latest"
+TEST_GO_IMAGE = "ghcr.io/lenaxia/llmsafespaces/go:latest"
 
 @pytest.fixture
 def docker_client():
@@ -32,10 +32,10 @@ def test_base_image_security(docker_client):
 def test_base_image_tools(docker_client):
     """Test base image tools are present and working"""
     tools = [
-        "/opt/llmsafespace/bin/sandbox-monitor",
-        "/opt/llmsafespace/bin/execution-tracker",
-        "/opt/llmsafespace/bin/health-check",
-        "/opt/llmsafespace/bin/cleanup-pod"
+        "/opt/llmsafespaces/bin/sandbox-monitor",
+        "/opt/llmsafespaces/bin/execution-tracker",
+        "/opt/llmsafespaces/bin/health-check",
+        "/opt/llmsafespaces/bin/cleanup-pod"
     ]
     
     for tool in tools:
@@ -60,7 +60,7 @@ except AttributeError:
     
     result = docker_client.containers.run(
         TEST_PYTHON_IMAGE,
-        ["/opt/llmsafespace/bin/python-security-wrapper.py", "-c", code],
+        ["/opt/llmsafespaces/bin/python-security-wrapper.py", "-c", code],
         remove=True,
         detach=False
     )
@@ -80,7 +80,7 @@ try {
     
     result = docker_client.containers.run(
         TEST_NODEJS_IMAGE,
-        ["/opt/llmsafespace/bin/nodejs-security-wrapper.js", "-e", code],
+        ["/opt/llmsafespaces/bin/nodejs-security-wrapper.js", "-e", code],
         remove=True,
         detach=False
     )
@@ -131,7 +131,7 @@ func main() {
         container.put_archive("/workspace", tar_stream.read())
         
         # Run the security wrapper
-        result = container.exec_run("/opt/llmsafespace/bin/go-security-wrapper /workspace/test.go")
+        result = container.exec_run("/opt/llmsafespaces/bin/go-security-wrapper /workspace/test.go")
         
         assert b"PASS" in result.output
     finally:
@@ -246,12 +246,12 @@ def test_monitoring_tools(docker_client):
     # Start monitoring tools
     container = docker_client.containers.run(
         TEST_IMAGE,
-        ["/bin/bash", "-c", "mkdir -p /var/log/llmsafespace && chmod +x /opt/llmsafespace/bin/sandbox-monitor /opt/llmsafespace/bin/execution-tracker && /opt/llmsafespace/bin/sandbox-monitor & /opt/llmsafespace/bin/execution-tracker & sleep 5 && echo '{\"timestamp\":\"test\",\"level\":\"INFO\",\"message\":\"Test data\",\"data\":{\"command\":\"test\",\"resources\":{\"cpu\":0}}}' > /var/log/llmsafespace/execution.log && echo '{\"timestamp\":\"test\",\"cpu\":{\"usage_percent\":0}}' > /var/log/llmsafespace/sandbox-monitor.log && sleep 30"],
+        ["/bin/bash", "-c", "mkdir -p /var/log/llmsafespaces && chmod +x /opt/llmsafespaces/bin/sandbox-monitor /opt/llmsafespaces/bin/execution-tracker && /opt/llmsafespaces/bin/sandbox-monitor & /opt/llmsafespaces/bin/execution-tracker & sleep 5 && echo '{\"timestamp\":\"test\",\"level\":\"INFO\",\"message\":\"Test data\",\"data\":{\"command\":\"test\",\"resources\":{\"cpu\":0}}}' > /var/log/llmsafespaces/execution.log && echo '{\"timestamp\":\"test\",\"cpu\":{\"usage_percent\":0}}' > /var/log/llmsafespaces/sandbox-monitor.log && sleep 30"],
         remove=True,
         detach=True,
         volumes={
             log_dir: {
-                "bind": "/var/log/llmsafespace",
+                "bind": "/var/log/llmsafespaces",
                 "mode": "rw"
             }
         }
@@ -261,11 +261,11 @@ def test_monitoring_tools(docker_client):
     
     try:
         # Check sandbox-monitor output
-        logs = container.exec_run("cat /var/log/llmsafespace/sandbox-monitor.log")
+        logs = container.exec_run("cat /var/log/llmsafespaces/sandbox-monitor.log")
         assert b"cpu" in logs.output.lower() or b"memory" in logs.output.lower(), "Missing monitoring data"
         
         # Check execution-tracker output
-        logs = container.exec_run("cat /var/log/llmsafespace/execution.log")
+        logs = container.exec_run("cat /var/log/llmsafespaces/execution.log")
         assert b"command" in logs.output.lower() or b"resources" in logs.output.lower(), "Missing execution data"
     finally:
         container.stop()
@@ -300,7 +300,7 @@ def test_warm_pool_integration(docker_client):
         time.sleep(2)
         
         # Run cleanup
-        result = container.exec_run("/opt/llmsafespace/bin/cleanup-pod")
+        result = container.exec_run("/opt/llmsafespaces/bin/cleanup-pod")
         assert result.exit_code == 0 or result.exit_code == 143, f"Cleanup failed: {result.output}"
         
         # Verify cleanup

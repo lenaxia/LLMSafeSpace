@@ -1,4 +1,4 @@
-package com.llmsafespace.sdk;
+package com.llmsafespaces.sdk;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
@@ -13,9 +13,9 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 
 /**
- * LLMSafeSpace API client for Java 17+.
+ * LLMSafeSpaces API client for Java 17+.
  */
-public class LLMSafeSpaceClient {
+public class LLMSafeSpacesClient {
     private final String baseUrl;
     private final String apiKey;
     private final HttpClient httpClient;
@@ -25,7 +25,7 @@ public class LLMSafeSpaceClient {
     /** Regex pattern for valid secret names. Keep in sync with pkg/validation/name.go. */
     public static final String SECRET_NAME_PATTERN = "^[a-z0-9._-]+$";
 
-    private LLMSafeSpaceClient(Builder builder) {
+    private LLMSafeSpacesClient(Builder builder) {
         this.baseUrl = builder.baseUrl.replaceAll("/$", "");
         this.apiKey = builder.apiKey;
         this.timeout = builder.timeout;
@@ -38,23 +38,23 @@ public class LLMSafeSpaceClient {
         return new Builder(baseUrl);
     }
 
-    public <T> T get(String path, Class<T> type) throws LLMSafeSpaceException {
+    public <T> T get(String path, Class<T> type) throws LLMSafeSpacesException {
         return request("GET", path, null, type);
     }
 
-    public <T> T post(String path, Object body, Class<T> type) throws LLMSafeSpaceException {
+    public <T> T post(String path, Object body, Class<T> type) throws LLMSafeSpacesException {
         return request("POST", path, body, type);
     }
 
-    public void post(String path, Object body) throws LLMSafeSpaceException {
+    public void post(String path, Object body) throws LLMSafeSpacesException {
         request("POST", path, body, null);
     }
 
-    public void delete(String path) throws LLMSafeSpaceException {
+    public void delete(String path) throws LLMSafeSpacesException {
         request("DELETE", path, null, null);
     }
 
-    private <T> T request(String method, String path, Object body, Class<T> responseType) throws LLMSafeSpaceException {
+    private <T> T request(String method, String path, Object body, Class<T> responseType) throws LLMSafeSpacesException {
         String url = baseUrl + "/api/v1" + path;
         HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
                 .uri(URI.create(url))
@@ -80,7 +80,7 @@ public class LLMSafeSpaceClient {
                     JsonObject err = gson.fromJson(resp.body(), JsonObject.class);
                     if (err.has("error")) msg = err.get("error").getAsString();
                 } catch (Exception ignored) {}
-                throw new LLMSafeSpaceException(msg, resp.statusCode());
+                throw new LLMSafeSpacesException(msg, resp.statusCode());
             }
 
             if (responseType == null || resp.statusCode() == 204 || resp.statusCode() == 202) {
@@ -89,7 +89,7 @@ public class LLMSafeSpaceClient {
 
             return gson.fromJson(resp.body(), responseType);
         } catch (IOException | InterruptedException e) {
-            throw new LLMSafeSpaceException("Request failed: " + e.getMessage(), 0);
+            throw new LLMSafeSpacesException("Request failed: " + e.getMessage(), 0);
         }
     }
 
@@ -126,8 +126,8 @@ public class LLMSafeSpaceClient {
             return this;
         }
 
-        public LLMSafeSpaceClient build() {
-            return new LLMSafeSpaceClient(this);
+        public LLMSafeSpacesClient build() {
+            return new LLMSafeSpacesClient(this);
         }
     }
 }

@@ -1,0 +1,20 @@
+{{- if .Values.migrations.enabled }}
+# Bundle every .sql file under charts/llmsafespaces/migrations/ into a ConfigMap
+# consumed by the migrate Job. The canonical migration source is api/migrations/;
+# the chart copy is kept in sync by `make chart-sync-migrations` (enforced by
+# repolint in pre-commit and CI).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "llmsafespaces.fullname" . }}-migrations
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmsafespaces.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+{{ (.Files.Glob "migrations/*.sql").AsConfig | indent 2 }}
+{{- end }}

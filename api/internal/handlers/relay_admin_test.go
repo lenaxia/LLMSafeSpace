@@ -12,8 +12,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	k8smocks "github.com/lenaxia/llmsafespaces/mocks/kubernetes"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -27,13 +27,13 @@ import (
 
 // ─── Test helpers ───────────────────────────────────────────────────────────
 
-const testNamespace = "llmsafespace"
+const testNamespace = "llmsafespaces"
 
 func setupRelayRouter(t *testing.T, clientset *fake.Clientset) (*gin.Engine, *RelayAdminHandler, *k8smocks.MockInferenceRelayInterface) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	relayMock := k8smocks.NewMockInferenceRelayInterface()
 	llmMock.On("InferenceRelays").Return(relayMock).Maybe()
 	relayMock.On("List", mock.Anything, mock.Anything).Return(&v1.InferenceRelayList{}, nil).Maybe()
@@ -63,7 +63,7 @@ func setupRelayRouter(t *testing.T, clientset *fake.Clientset) (*gin.Engine, *Re
 
 func makeRelayCR(name string, instances []v1.RelayInstanceStatus, healthy int) *v1.InferenceRelay {
 	return &v1.InferenceRelay{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "llmsafespace.dev/v1", Kind: "InferenceRelay"},
+		TypeMeta:   metav1.TypeMeta{APIVersion: "llmsafespaces.dev/v1", Kind: "InferenceRelay"},
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: v1.InferenceRelaySpec{
 			UpstreamURL: "https://opencode.ai/zen/v1",
@@ -82,7 +82,7 @@ func makeRelayCR(name string, instances []v1.RelayInstanceStatus, healthy int) *
 
 func makeRelayCRWithConditions(name string, conditions []metav1.Condition) *v1.InferenceRelay {
 	return &v1.InferenceRelay{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "llmsafespace.dev/v1", Kind: "InferenceRelay"},
+		TypeMeta:   metav1.TypeMeta{APIVersion: "llmsafespaces.dev/v1", Kind: "InferenceRelay"},
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Status: v1.InferenceRelayStatus{
 			Conditions: conditions,
@@ -122,7 +122,7 @@ func (e simpleError) Error() string { return e.msg }
 func testError(msg string) error { return simpleError{msg: msg} }
 
 func notFoundError() error {
-	return apierrors.NewNotFound(schema.GroupResource{Group: "llmsafespace.dev", Resource: "inferencerelays"}, "relay-fleet")
+	return apierrors.NewNotFound(schema.GroupResource{Group: "llmsafespaces.dev", Resource: "inferencerelays"}, "relay-fleet")
 }
 
 // ─── US-43.2: GetSetup tests ────────────────────────────────────────────────
@@ -193,7 +193,7 @@ func TestRelaySetup_RouterNamespaceQueriesCorrectNS(t *testing.T) {
 	clientset := fake.NewSimpleClientset(&appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "relay-router", Namespace: "router-ns"},
 	})
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	relayMock := k8smocks.NewMockInferenceRelayInterface()
 	llmMock.On("InferenceRelays").Return(relayMock).Maybe()
 	relayMock.On("List", mock.Anything, mock.Anything).Return(&v1.InferenceRelayList{}, nil).Maybe()
@@ -221,7 +221,7 @@ func TestRelaySetup_RouterNamespaceIgnoresWorkspaceNS(t *testing.T) {
 	clientset := fake.NewSimpleClientset(&appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "relay-router", Namespace: "ws-ns"},
 	})
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	relayMock := k8smocks.NewMockInferenceRelayInterface()
 	llmMock.On("InferenceRelays").Return(relayMock).Maybe()
 	relayMock.On("List", mock.Anything, mock.Anything).Return(&v1.InferenceRelayList{}, nil).Maybe()
@@ -661,7 +661,7 @@ func TestRelayPause_NotFound_404(t *testing.T) {
 func TestRelayResume_Success(t *testing.T) {
 	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
 	existing := makeRelayCR("relay-fleet", nil, 1)
-	existing.Annotations = map[string]string{"relay.llmsafespace.dev/paused": "true"}
+	existing.Annotations = map[string]string{"relay.llmsafespaces.dev/paused": "true"}
 	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(existing, nil).Maybe()
 	relayMock.On("Update", mock.Anything, mock.Anything).Return(existing, nil).Maybe()
 
@@ -840,7 +840,7 @@ func TestRelayStatus_ScrapesRouterMetrics(t *testing.T) {
 	defer metricsServer.Close()
 
 	clientset := fake.NewSimpleClientset()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	relayMock := k8smocks.NewMockInferenceRelayInterface()
 	llmMock.On("InferenceRelays").Return(relayMock).Maybe()
 	relayMock.On("List", mock.Anything, mock.Anything).Return(
@@ -868,7 +868,7 @@ func TestRelayStatus_ScrapesRouterMetrics(t *testing.T) {
 
 func TestRelayStatus_RouterUnreachable_GracefulDegrade(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	relayMock := k8smocks.NewMockInferenceRelayInterface()
 	llmMock.On("InferenceRelays").Return(relayMock).Maybe()
 	relayMock.On("List", mock.Anything, mock.Anything).Return(
@@ -898,7 +898,7 @@ func TestRelayAdmin_E2E_FullLifecycle(t *testing.T) {
 	clientset := fake.NewSimpleClientset()
 
 	gin.SetMode(gin.TestMode)
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	relayMock := k8smocks.NewMockInferenceRelayInterface()
 	llmMock.On("InferenceRelays").Return(relayMock).Maybe()
 

@@ -55,10 +55,10 @@ jobs:
     #    must be defined"
     #
     # Fix options (tracked in issue #24):
-    #   A) Add LLMSAFESPACE_KUBERNETES_INCLUSTER=false + a minimal
+    #   A) Add LLMSAFESPACES_KUBERNETES_INCLUSTER=false + a minimal
     #      kubeconfig (pointing at a kind/k3s cluster or a fake API
     #      server) to ci-compose.yaml so the client can initialise.
-    #   B) Add a LLMSAFESPACE_KUBERNETES_DISABLED env var that makes
+    #   B) Add a LLMSAFESPACES_KUBERNETES_DISABLED env var that makes
     #      app.New() skip k8s client creation entirely and return stub
     #      implementations — safe for auth/session/credential flows
     #      that don't touch workspaces.

@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "llmsafespaces.fullname" . }}-api-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmsafespaces.api.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    server:
+      host: {{ .Values.api.config.server.host | quote }}
+      port: {{ .Values.api.config.server.port }}
+      shutdownTimeout: {{ .Values.api.config.server.shutdownTimeout }}
+    kubernetes:
+      configPath: {{ .Values.api.config.kubernetes.configPath | quote }}
+      inCluster: {{ .Values.api.config.kubernetes.inCluster }}
+      namespace: {{ include "llmsafespaces.workspaceNamespace" . | quote }}
+      leaderElection:
+        enabled: {{ .Values.api.config.kubernetes.leaderElection.enabled }}
+        leaseDuration: {{ .Values.api.config.kubernetes.leaderElection.leaseDuration }}
+        renewDeadline: {{ .Values.api.config.kubernetes.leaderElection.renewDeadline }}
+        retryPeriod: {{ .Values.api.config.kubernetes.leaderElection.retryPeriod }}
+    database:
+      host: {{ .Values.postgresql.host | quote }}
+      port: {{ .Values.postgresql.port }}
+      user: {{ .Values.postgresql.user | quote }}
+      database: {{ .Values.postgresql.database | quote }}
+      sslMode: {{ .Values.postgresql.sslMode | quote }}
+      maxOpenConns: {{ .Values.postgresql.maxOpenConns }}
+      maxIdleConns: {{ .Values.postgresql.maxIdleConns }}
+      connMaxLifetime: {{ .Values.postgresql.connMaxLifetime }}
+    redis:
+      host: {{ .Values.redis.host | quote }}
+      port: {{ .Values.redis.port }}
+      db: {{ .Values.redis.db }}
+      poolSize: {{ .Values.redis.poolSize }}
+    auth:
+      tokenDuration: {{ .Values.api.config.auth.tokenDuration }}
+      apiKeyPrefix: {{ .Values.api.config.auth.apiKeyPrefix | quote }}
+    logging:
+      level: {{ .Values.api.config.logging.level | quote }}
+      development: {{ .Values.api.config.logging.development }}
+      encoding: {{ .Values.api.config.logging.encoding | quote }}
+    rateLimiting:
+      enabled: {{ .Values.api.config.rateLimiting.enabled }}
+      limits:
+        {{- range $name, $limit := .Values.api.config.rateLimiting.limits }}
+        {{ $name }}:
+          requests: {{ $limit.requests }}
+          window: {{ $limit.window }}
+        {{- end }}
+    security:
+      allowedOrigins:
+        {{- range .Values.api.config.security.allowedOrigins }}
+        - {{ . | quote }}
+        {{- end }}
+      allowCredentials: {{ .Values.api.config.security.allowCredentials }}

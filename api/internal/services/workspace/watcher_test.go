@@ -16,9 +16,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 
-	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
-	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/eventbroker"
+	k8smocks "github.com/lenaxia/llmsafespaces/mocks/kubernetes"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 const (
@@ -28,9 +28,9 @@ const (
 
 func setupWatcherMocks(t *testing.T) (*k8smocks.MockKubernetesClient, *k8smocks.MockWorkspaceInterface, *watch.FakeWatcher) {
 	k8s := k8smocks.NewMockKubernetesClient()
-	llm := k8smocks.NewMockLLMSafespaceV1Interface()
+	llm := k8smocks.NewMockLLMSafespacesV1Interface()
 	ws := k8smocks.NewMockWorkspaceInterface()
-	k8s.On("LlmsafespaceV1").Return(llm, nil)
+	k8s.On("LlmsafespacesV1").Return(llm, nil)
 	llm.On("Workspaces", "default").Return(ws)
 	fakeWatch := watch.NewFake()
 	ws.On("List", mock.Anything, mock.Anything).Return(&v1.WorkspaceList{}, nil).Maybe()
@@ -85,9 +85,9 @@ func TestWorkspaceWatcher_PhaseChangeCallback(t *testing.T) {
 
 func TestWorkspaceWatcher_SeedResourceVersion_PopulatesKnownPhases(t *testing.T) {
 	k8s := k8smocks.NewMockKubernetesClient()
-	llm := k8smocks.NewMockLLMSafespaceV1Interface()
+	llm := k8smocks.NewMockLLMSafespacesV1Interface()
 	ws := k8smocks.NewMockWorkspaceInterface()
-	k8s.On("LlmsafespaceV1").Return(llm, nil)
+	k8s.On("LlmsafespacesV1").Return(llm, nil)
 	llm.On("Workspaces", "default").Return(ws)
 
 	ws.On("List", mock.Anything, mock.Anything).Return(&v1.WorkspaceList{
@@ -280,9 +280,9 @@ func TestWorkspaceWatcher_HandleEvent_SamePhase_NoMetric(t *testing.T) {
 // watcher.Start() is async) and the SSE tracker never connects to already-Active workspaces.
 func TestWorkspaceWatcher_SeedResourceVersion_CallsOnPhaseChangeForActiveWorkspaces(t *testing.T) {
 	k8s := k8smocks.NewMockKubernetesClient()
-	llm := k8smocks.NewMockLLMSafespaceV1Interface()
+	llm := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsi := k8smocks.NewMockWorkspaceInterface()
-	k8s.On("LlmsafespaceV1").Return(llm, nil)
+	k8s.On("LlmsafespacesV1").Return(llm, nil)
 	llm.On("Workspaces", "default").Return(wsi)
 
 	wsi.On("List", mock.Anything, mock.Anything).Return(&v1.WorkspaceList{
@@ -323,9 +323,9 @@ func TestWorkspaceWatcher_SeedResourceVersion_CallsOnPhaseChangeForActiveWorkspa
 // workspaces discovered during seeding do not trigger onPhaseChange.
 func TestWorkspaceWatcher_SeedResourceVersion_NonActiveNoCallback(t *testing.T) {
 	k8s := k8smocks.NewMockKubernetesClient()
-	llm := k8smocks.NewMockLLMSafespaceV1Interface()
+	llm := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsi := k8smocks.NewMockWorkspaceInterface()
-	k8s.On("LlmsafespaceV1").Return(llm, nil)
+	k8s.On("LlmsafespacesV1").Return(llm, nil)
 	llm.On("Workspaces", "default").Return(wsi)
 
 	wsi.On("List", mock.Anything, mock.Anything).Return(&v1.WorkspaceList{
@@ -351,7 +351,7 @@ func gatherPhaseTransitionCount(t *testing.T, from, to string) float64 {
 	mfs, err := prometheus.DefaultGatherer.Gather()
 	require.NoError(t, err)
 	for _, mf := range mfs {
-		if mf.GetName() != "llmsafespace_workspace_phase_transitions_total" {
+		if mf.GetName() != "llmsafespaces_workspace_phase_transitions_total" {
 			continue
 		}
 		for _, m := range mf.GetMetric() {

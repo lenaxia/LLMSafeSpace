@@ -1,4 +1,4 @@
-module github.com/lenaxia/llmsafespace/sdks/validate
+module github.com/lenaxia/llmsafespaces/sdks/validate
 
 go 1.23
 

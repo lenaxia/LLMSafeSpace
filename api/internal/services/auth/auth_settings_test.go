@@ -13,13 +13,13 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/lenaxia/llmsafespace/api/internal/config"
-	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	mocks "github.com/lenaxia/llmsafespace/api/internal/mocks"
-	lmocks "github.com/lenaxia/llmsafespace/mocks/logger"
-	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
-	"github.com/lenaxia/llmsafespace/pkg/settings"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/api/internal/config"
+	"github.com/lenaxia/llmsafespaces/api/internal/logger"
+	mocks "github.com/lenaxia/llmsafespaces/api/internal/mocks"
+	lmocks "github.com/lenaxia/llmsafespaces/mocks/logger"
+	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
+	"github.com/lenaxia/llmsafespaces/pkg/settings"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 type stubStore struct {

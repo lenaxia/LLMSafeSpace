@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
 )
 
 // SeedStore is the database interface needed by the seed job.

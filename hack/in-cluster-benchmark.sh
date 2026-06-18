@@ -11,7 +11,7 @@ MODE="${1:-both}"
 ITERATIONS="${2:-3}"
 # RESUME_WS_ID: prefer env var (RESUME_WS_ID=xxx sh bench.sh), then $3 positional arg
 RESUME_WS_ID="${RESUME_WS_ID:-${3:-}}"
-API="http://llmsafespace-api:8080"
+API="http://llmsafespaces-api:8080"
 NS="default"
 HDR="X-Forwarded-Proto: https"
 APIKEY="${BENCH_APIKEY:-}"
@@ -55,7 +55,7 @@ wait_phase() {
 # ---- get pod name for workspace ----
 pod_name() {
   kubectl -n "$NS" get pods \
-    -l "llmsafespace.dev/workspace=$1" \
+    -l "llmsafespaces.dev/workspace=$1" \
     --no-headers -o custom-columns=":metadata.name" 2>/dev/null | head -1
 }
 
@@ -69,7 +69,7 @@ wait_new_pod_running() {
     # List pods with name, creationTimestamp, phase on one line each
     local line pod_name pod_ts pod_phase
     kubectl -n "$NS" get pods \
-      -l "llmsafespace.dev/workspace=$ws_id" \
+      -l "llmsafespaces.dev/workspace=$ws_id" \
       -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.creationTimestamp} {.status.phase}{"\n"}{end}' \
       2>/dev/null | \
     while IFS= read -r line; do
@@ -86,7 +86,7 @@ wait_new_pod_running() {
     done | head -1 | grep -q . && {
       # Found a running new pod — re-fetch the name and return
       kubectl -n "$NS" get pods \
-        -l "llmsafespace.dev/workspace=$ws_id" \
+        -l "llmsafespaces.dev/workspace=$ws_id" \
         -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.creationTimestamp} {.status.phase}{"\n"}{end}' \
         2>/dev/null | awk -v t0="$t0_iso" '
           $2 >= t0 && $3 == "Running" {print $1; exit}
@@ -252,7 +252,7 @@ run_resume() {
     while [ $(ts_ms) -lt $pod_gone_deadline ]; do
       local existing_pod
       existing_pod=$(kubectl -n "$NS" get pods \
-        -l "llmsafespace.dev/workspace=$ws_id" \
+        -l "llmsafespaces.dev/workspace=$ws_id" \
         --no-headers -o custom-columns=":metadata.name" 2>/dev/null | head -1)
       [ -z "$existing_pod" ] && break
       sleep 1
@@ -285,7 +285,7 @@ run_resume() {
     while [ $(ts_ms) -lt $deadline2 ]; do
       local candidate
       candidate=$(kubectl -n "$NS" get pods \
-        -l "llmsafespace.dev/workspace=$ws_id" \
+        -l "llmsafespaces.dev/workspace=$ws_id" \
         -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.creationTimestamp} {.status.phase}{"\n"}{end}' \
         2>/dev/null | awk -v t0="$t0_iso" '$2 >= t0 && $3 == "Running" {print $1; exit}')
       if [ -n "$candidate" ]; then
@@ -427,7 +427,7 @@ run_create() {
     while [ $(ts_ms) -lt $deadline2 ]; do
       local candidate
       candidate=$(kubectl -n "$NS" get pods \
-        -l "llmsafespace.dev/workspace=$ws_id" \
+        -l "llmsafespaces.dev/workspace=$ws_id" \
         -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.creationTimestamp} {.status.phase}{"\n"}{end}' \
         2>/dev/null | awk -v t0="$t0_iso" '$2 >= t0 && $3 == "Running" {print $1; exit}')
       if [ -n "$candidate" ]; then

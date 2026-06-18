@@ -34,7 +34,7 @@ write_files:
   - path: /etc/systemd/system/relay-proxy.service
     content: |
       [Unit]
-      Description=LLMSafeSpace Relay Proxy
+      Description=LLMSafeSpaces Relay Proxy
       After=network-online.target wg-quick@wg0.service
       Wants=network-online.target
       

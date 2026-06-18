@@ -11,8 +11,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/lenaxia/llmsafespace/api/internal/services/sso"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/sso"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 // ssoStore is the org-data subset used by the SSO CRUD + discovery endpoints.

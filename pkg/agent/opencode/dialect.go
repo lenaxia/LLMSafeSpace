@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/lenaxia/llmsafespace/pkg/agent"
+	"github.com/lenaxia/llmsafespaces/pkg/agent"
 )
 
 // Dialect implements agent.Dialect for the opencode agent runtime.

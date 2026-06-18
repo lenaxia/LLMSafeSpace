@@ -41,8 +41,8 @@ type account struct {
 }
 
 var canaryAccounts = []account{
-	{"canary1", "canary1@llmsafespace.test", "canary-password-1-abc123!"},
-	{"canary2", "canary2@llmsafespace.test", "canary-password-2-xyz456!"},
+	{"canary1", "canary1@llmsafespaces.test", "canary-password-1-abc123!"},
+	{"canary2", "canary2@llmsafespaces.test", "canary-password-2-xyz456!"},
 }
 
 func main() {

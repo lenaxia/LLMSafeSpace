@@ -3,7 +3,7 @@
 
 // Canary scenario: D-SESSION-SUBTASK
 // Tests subagent parentId backfill.
-// Requires LLMSAFESPACE_LLM_API_KEY.
+// Requires LLMSAFESPACES_LLM_API_KEY.
 // Skips gracefully if the model does not use the task tool.
 package main
 
@@ -15,8 +15,8 @@ import (
 	"os"
 	"time"
 
-	llm "github.com/lenaxia/llmsafespace/sdk/go"
-	canary "github.com/lenaxia/llmsafespace/sdks/canary/go"
+	llm "github.com/lenaxia/llmsafespaces/sdk/go"
+	canary "github.com/lenaxia/llmsafespaces/sdks/canary/go"
 )
 
 func Handler(w http.ResponseWriter, r *http.Request) {

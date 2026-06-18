@@ -63,29 +63,29 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_USER: llmsafespace
+          POSTGRES_USER: llmsafespaces
           POSTGRES_PASSWORD: migration-test
-          POSTGRES_DB: llmsafespace
+          POSTGRES_DB: llmsafespaces
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U llmsafespace"
+          --health-cmd "pg_isready -U llmsafespaces"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
 
     env:
       PGHOST: localhost
-      PGUSER: llmsafespace
+      PGUSER: llmsafespaces
       PGPASSWORD: migration-test
-      PGDATABASE: llmsafespace
+      PGDATABASE: llmsafespaces
 
     steps:
       - uses: actions/checkout@v6
       - name: Wait for Postgres
         run: |
           for i in {1..20}; do
-            pg_isready -h localhost -U llmsafespace && break
+            pg_isready -h localhost -U llmsafespaces && break
             sleep 1
           done
       - name: Round-trip
@@ -98,29 +98,29 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_USER: llmsafespace
+          POSTGRES_USER: llmsafespaces
           POSTGRES_PASSWORD: migration-test
-          POSTGRES_DB: llmsafespace
+          POSTGRES_DB: llmsafespaces
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U llmsafespace"
+          --health-cmd "pg_isready -U llmsafespaces"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
 
     env:
       PGHOST: localhost
-      PGUSER: llmsafespace
+      PGUSER: llmsafespaces
       PGPASSWORD: migration-test
-      PGDATABASE: llmsafespace
+      PGDATABASE: llmsafespaces
 
     steps:
       - uses: actions/checkout@v6
       - name: Wait for Postgres
         run: |
           for i in {1..20}; do
-            pg_isready -h localhost -U llmsafespace && break
+            pg_isready -h localhost -U llmsafespaces && break
             sleep 1
           done
       - name: Idempotency
@@ -133,29 +133,29 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_USER: llmsafespace
+          POSTGRES_USER: llmsafespaces
           POSTGRES_PASSWORD: migration-test
-          POSTGRES_DB: llmsafespace
+          POSTGRES_DB: llmsafespaces
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U llmsafespace"
+          --health-cmd "pg_isready -U llmsafespaces"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
 
     env:
       PGHOST: localhost
-      PGUSER: llmsafespace
+      PGUSER: llmsafespaces
       PGPASSWORD: migration-test
-      PGDATABASE: llmsafespace
+      PGDATABASE: llmsafespaces
 
     steps:
       - uses: actions/checkout@v6
       - name: Wait for Postgres
         run: |
           for i in {1..20}; do
-            pg_isready -h localhost -U llmsafespace && break
+            pg_isready -h localhost -U llmsafespaces && break
             sleep 1
           done
 
@@ -180,29 +180,29 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_USER: llmsafespace
+          POSTGRES_USER: llmsafespaces
           POSTGRES_PASSWORD: migration-test
-          POSTGRES_DB: llmsafespace
+          POSTGRES_DB: llmsafespaces
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U llmsafespace"
+          --health-cmd "pg_isready -U llmsafespaces"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
 
     env:
       PGHOST: localhost
-      PGUSER: llmsafespace
+      PGUSER: llmsafespaces
       PGPASSWORD: migration-test
-      PGDATABASE: llmsafespace
+      PGDATABASE: llmsafespaces
 
     steps:
       - uses: actions/checkout@v6
       - name: Wait for Postgres
         run: |
           for i in {1..20}; do
-            pg_isready -h localhost -U llmsafespace && break
+            pg_isready -h localhost -U llmsafespaces && break
             sleep 1
           done
 

@@ -9,7 +9,7 @@
 
 ## Summary
 
-Implemented credential health monitoring and agent runtime abstraction for LLMSafeSpace. The system now detects invalid/missing credentials and unhealthy agent processes before they cause silent failures, with self-healing capabilities.
+Implemented credential health monitoring and agent runtime abstraction for LLMSafeSpaces. The system now detects invalid/missing credentials and unhealthy agent processes before they cause silent failures, with self-healing capabilities.
 
 **Stories completed:** 10 of 11 (US-8.9 SSE deferred)  
 **Commits:** 3 (e2a0da6, 33862fa, 375e4b7)  
@@ -86,7 +86,7 @@ Added CRD condition types and reason constants:
 - Reasons: `CredentialsValid`, `CredentialSecretNotFound`, `CredentialEmpty`, `CredentialInvalid`, `CredentialCheckError`
 - `checkCredentialState()` method validates via AgentRuntime on every active reconcile
 
-**Files:** `pkg/apis/llmsafespace/v1/workspace_types.go`, `controller/internal/workspace/controller.go`
+**Files:** `pkg/apis/llmsafespaces/v1/workspace_types.go`, `controller/internal/workspace/controller.go`
 
 ### US-8.6: Agent Health Check in Controller
 
@@ -115,7 +115,7 @@ Extended `WorkspaceStatusResult` with `CredentialStateResult` and `AgentHealthRe
 
 ### US-8.10: Self-Healing Suspend on Credential Loss
 
-When annotation `llmsafespace.dev/suspend-on-cred-loss=true` is set and `CredentialsAvailable=False`, controller transitions workspace to Suspending phase.
+When annotation `llmsafespaces.dev/suspend-on-cred-loss=true` is set and `CredentialsAvailable=False`, controller transitions workspace to Suspending phase.
 
 **Files:** `controller/internal/workspace/controller.go`  
 **Tests:** 3 new (suspend on loss, no suspend without annotation, no suspend when valid)
@@ -201,7 +201,7 @@ $ npx vitest run (frontend)
 - `controller/internal/workspace/stale_pvc_test.go` — enhanced tests with PVC recreation verification
 - `controller/internal/common/utils.go` — crypto/rand password generation
 - `controller/internal/controller/controller.go` — opencode.Register() call
-- `pkg/apis/llmsafespace/v1/workspace_types.go` — new conditions, status fields, reason constants
+- `pkg/apis/llmsafespaces/v1/workspace_types.go` — new conditions, status fields, reason constants
 - `pkg/types/types.go` — CredentialStateResult, AgentHealthResult
 - `api/internal/services/workspace/workspace_service.go` — validation, health parsing
 - `api/internal/services/workspace/workspace_service_test.go` — new tests

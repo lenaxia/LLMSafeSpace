@@ -5,7 +5,7 @@ GOCLEAN=$(GOCMD) clean
 GOTEST=$(GOCMD) test
 GOGET=$(GOCMD) get
 GOMOD=$(GOCMD) mod
-BINARY_NAME=llmsafespace
+BINARY_NAME=llmsafespaces
 BINARY_UNIX=$(BINARY_NAME)_unix
 
 # Build targets
@@ -105,9 +105,9 @@ docker-run:
 # Helm chart targets
 # ---------------------------------------------------------------------------
 HELM=helm
-CHART_DIR=charts/llmsafespace
-RELEASE_NAME?=llmsafespace
-RELEASE_NS?=llmsafespace
+CHART_DIR=charts/llmsafespaces
+RELEASE_NAME?=llmsafespaces
+RELEASE_NS?=llmsafespaces
 
 helm-lint:
 	$(HELM) lint $(CHART_DIR)
@@ -147,7 +147,7 @@ helm-render:
 # Run by CI in both the `test` and `test-full` jobs (helm installed there).
 # Also run by `make check` so local contributors catch regressions before push.
 helm-chart-test:
-	$(GOTEST) ./charts/llmsafespace/...
+	$(GOTEST) ./charts/llmsafespaces/...
 
 # helm-deploy: upgrade the release on the live cluster. Enforces:
 #   1. Local branch is synced with origin/main (prevents deploying stale
@@ -163,7 +163,7 @@ helm-chart-test:
 #   make helm-deploy RELEASE_NS=default IMAGE_TAG=sha-abc1234 # override
 #   make helm-deploy HELM_FLAGS="--set frontend.enabled=true"  # extra flags
 #
-# Local overrides (gitignored): create charts/llmsafespace/values.local.yaml
+# Local overrides (gitignored): create charts/llmsafespaces/values.local.yaml
 # to persist cluster-specific values (e.g. redis.host, mcp.enabled=false).
 # The file is automatically included on every helm-deploy when present.
 IMAGE_TAG?=
@@ -212,7 +212,7 @@ openapi-validate:
 #   - duplicate database migration version numbers (silent skip on cluster)
 #   - non-sequential migration version numbers (gap = deleted migration)
 #   - duplicate worklog numbers (history confusion)
-#   - drift between api/migrations/ and charts/llmsafespace/migrations/
+#   - drift between api/migrations/ and charts/llmsafespaces/migrations/
 #   - drift between Go CRD struct fields and chart CRD openAPIV3Schema
 #     (apiserver silently drops unknown fields; see worklog 0118-0119)
 # See pkg/repolint/sequence_test.go and pkg/repolint/crd_drift_test.go for
@@ -229,7 +229,7 @@ repolint: repolint-build
 repolint-build:
 	$(GOBUILD) -o bin/repolint ./cmd/repolint
 
-# chart-sync-migrations: copy api/migrations/*.sql into charts/llmsafespace/migrations/.
+# chart-sync-migrations: copy api/migrations/*.sql into charts/llmsafespaces/migrations/.
 # Run this every time you add a migration so the Helm-bundled copy stays in
 # sync with the canonical one. The pre-commit hook will fail if you forget.
 chart-sync-migrations:
@@ -283,7 +283,7 @@ check: fmt-check imports-check vet lint helm-render helm-chart-test repolint
 #   - gofmt           (alignment, indentation)
 #   - goimports       (import grouping / unused imports)
 #   - misspell        (US-locale spelling: "behaviour" → "behavior", etc)
-#   - chart drift     (api/migrations/ ↔ charts/llmsafespace/migrations/)
+#   - chart drift     (api/migrations/ ↔ charts/llmsafespaces/migrations/)
 #   - staticcheck S1016 (struct → struct conversion idiom)
 #
 # Does NOT auto-fix:
@@ -316,7 +316,7 @@ pre-commit-fix:
 	if [ -n "$$staged" ]; then \
 		echo "$$staged" | xargs -r git add; \
 	fi; \
-	git add charts/llmsafespace/migrations/ 2>/dev/null || true; \
+	git add charts/llmsafespaces/migrations/ 2>/dev/null || true; \
 	git add worklogs/ 2>/dev/null || true; \
 	echo ""; \
 	echo "Auto-fixes applied and re-staged. Re-run 'git commit' to retry."
@@ -385,7 +385,7 @@ trivy-fs:
 	trivy fs --severity HIGH,CRITICAL --exit-code 1 \
 		--skip-dirs frontend/node_modules \
 		--skip-dirs sdks/typescript/node_modules \
-		--skip-dirs sdks/vscode-llmsafespace/node_modules \
+		--skip-dirs sdks/vscode-llmsafespaces/node_modules \
 		--ignorefile .trivyignore \
 		.
 
@@ -396,7 +396,7 @@ trivy-config:
 	trivy config --severity HIGH,CRITICAL --exit-code 1 \
 		--skip-dirs frontend/node_modules \
 		--skip-dirs sdks/typescript/node_modules \
-		--skip-dirs sdks/vscode-llmsafespace/node_modules \
+		--skip-dirs sdks/vscode-llmsafespaces/node_modules \
 		--skip-dirs design/stories/epic-17-security-review \
 		--skip-dirs local \
 		--ignorefile .trivyignore \
@@ -418,9 +418,9 @@ security-scan: gitleaks govulncheck trivy-fs trivy-config
 #
 # Setup:
 #   docker run -d --rm --name pg-test -p 5432:5432 \
-#     -e POSTGRES_USER=llmsafespace -e POSTGRES_PASSWORD=test \
-#     -e POSTGRES_DB=llmsafespace postgres:16
-#   export PGHOST=localhost PGUSER=llmsafespace PGPASSWORD=test PGDATABASE=llmsafespace
+#     -e POSTGRES_USER=llmsafespaces -e POSTGRES_PASSWORD=test \
+#     -e POSTGRES_DB=llmsafespaces postgres:16
+#   export PGHOST=localhost PGUSER=llmsafespaces PGPASSWORD=test PGDATABASE=llmsafespaces
 #   make migration-safety
 #
 # All three sub-targets re-create the schema from scratch in a single

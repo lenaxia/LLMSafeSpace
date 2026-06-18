@@ -18,10 +18,10 @@ import (
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/lenaxia/llmsafespace/api/internal/services/msgqueue"
-	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/msgqueue"
+	apitypes "github.com/lenaxia/llmsafespaces/api/internal/types"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 func (h *ProxyHandler) CreateSession(c *gin.Context) {
@@ -280,9 +280,9 @@ func (h *ProxyHandler) isSessionDeleted(workspaceID, sessionID string) bool {
 }
 
 func (h *ProxyHandler) GetWorkspaceCRD(workspaceID string) (*v1.Workspace, error) {
-	v1Client, err := h.k8sClient.LlmsafespaceV1()
+	v1Client, err := h.k8sClient.LlmsafespacesV1()
 	if err != nil {
-		return nil, fmt.Errorf("initialize LLMSafespaceV1 client: %w", err)
+		return nil, fmt.Errorf("initialize LLMSafespacesV1 client: %w", err)
 	}
 	return v1Client.Workspaces(h.namespace).Get(context.Background(), workspaceID, metav1.GetOptions{})
 }
@@ -297,9 +297,9 @@ func (h *ProxyHandler) RenameSessionInAgent(ctx context.Context, workspaceID, se
 		return fmt.Errorf("invalid sessionId: %w", err)
 	}
 
-	v1Client, err := h.k8sClient.LlmsafespaceV1()
+	v1Client, err := h.k8sClient.LlmsafespacesV1()
 	if err != nil {
-		return fmt.Errorf("initialize LLMSafespaceV1 client: %w", err)
+		return fmt.Errorf("initialize LLMSafespacesV1 client: %w", err)
 	}
 	ws, err := v1Client.Workspaces(h.namespace).Get(ctx, workspaceID, metav1.GetOptions{})
 	if err != nil {
@@ -365,7 +365,7 @@ func validateSessionID(s string) error {
 // getPodIPAndPassword returns the pod IP and opencode password for the given
 // workspace. It is a convenience helper shared by several background goroutines.
 func (h *ProxyHandler) getPodIPAndPassword(ctx context.Context, workspaceID string) (podIP, password string, err error) {
-	v1Client, err := h.k8sClient.LlmsafespaceV1()
+	v1Client, err := h.k8sClient.LlmsafespacesV1()
 	if err != nil {
 		return "", "", fmt.Errorf("getting v1 client: %w", err)
 	}

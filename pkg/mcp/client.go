@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Michael Kao
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Package mcp implements the LLMSafeSpace MCP server.
+// Package mcp implements the LLMSafeSpaces MCP server.
 package mcp
 
 import (
@@ -45,7 +45,7 @@ func validateID(id, fieldName string) error {
 	return nil
 }
 
-// APIClient defines the interface for calling the LLMSafeSpace REST API.
+// APIClient defines the interface for calling the LLMSafeSpaces REST API.
 // All operations are workspace-centric — the sandbox layer is internal.
 type APIClient interface {
 	CreateWorkspace(ctx context.Context, req CreateWorkspaceReq) (*WorkspaceResp, error)
@@ -156,7 +156,7 @@ type createSecretRequest struct {
 	Metadata map[string]string `json:"metadata"`
 }
 
-// HTTPClient implements APIClient using HTTP calls to the LLMSafeSpace API.
+// HTTPClient implements APIClient using HTTP calls to the LLMSafeSpaces API.
 // It resolves workspace → sandbox internally for session/message operations.
 type HTTPClient struct {
 	BaseURL    string

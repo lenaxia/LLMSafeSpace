@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
-	opencode "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/sse"
+	opencode "github.com/lenaxia/llmsafespaces/pkg/agent/opencode"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

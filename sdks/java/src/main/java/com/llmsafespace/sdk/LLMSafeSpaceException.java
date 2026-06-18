@@ -1,12 +1,12 @@
-package com.llmsafespace.sdk;
+package com.llmsafespaces.sdk;
 
 /**
- * Exception thrown by LLMSafeSpace API operations.
+ * Exception thrown by LLMSafeSpaces API operations.
  */
-public class LLMSafeSpaceException extends Exception {
+public class LLMSafeSpacesException extends Exception {
     private final int status;
 
-    public LLMSafeSpaceException(String message, int status) {
+    public LLMSafeSpacesException(String message, int status) {
         super(message);
         this.status = status;
     }

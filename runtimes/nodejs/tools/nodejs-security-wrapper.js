@@ -7,7 +7,7 @@ const Module = require('module');
 
 // Load restricted modules configuration
 const RESTRICTED_MODULES = JSON.parse(
-  fs.readFileSync('/etc/llmsafespace/nodejs/restricted_modules.json', 'utf8')
+  fs.readFileSync('/etc/llmsafespaces/nodejs/restricted_modules.json', 'utf8')
 );
 
 // Original require function
@@ -102,7 +102,7 @@ if (process.argv.length > 2) {
   // Interactive mode (REPL)
   const repl = require('repl');
   repl.start({
-    prompt: 'LLMSafeSpace Node.js > ',
+    prompt: 'LLMSafeSpaces Node.js > ',
     useGlobal: true
   });
 }

@@ -23,7 +23,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
 )
 
 var (
@@ -944,7 +944,7 @@ func main() {
 			RelayURL:         relayURL,
 			OpenCodeBaseURL:  getAgentAddr(),
 			OpenCodePassword: password,
-			AgentConfigPath:  envOrDefault("LLMSAFESPACE_AGENT_CONFIG_PATH", agentd.AgentConfigPath),
+			AgentConfigPath:  envOrDefault("LLMSAFESPACES_AGENT_CONFIG_PATH", agentd.AgentConfigPath),
 			AuthJSONPath:     authJSONPath,
 			HealthCheck:      func() bool { snap := healthCache.Snapshot(); return snap.Initialized && snap.Healthy },
 			KillOpenCode:     func() { proc.restart() },

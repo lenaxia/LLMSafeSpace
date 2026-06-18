@@ -49,7 +49,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 // dnsResolutionTimeout caps each LookupHost call so a slow / dead DNS
@@ -279,7 +279,7 @@ func (r *WorkspaceReconciler) buildWorkspaceEgressNetworkPolicy(
 			Labels: map[string]string{
 				LabelWorkspace:                 ws.Name,
 				"app.kubernetes.io/component":  "workspace-network-policy",
-				"app.kubernetes.io/managed-by": "llmsafespace-controller",
+				"app.kubernetes.io/managed-by": "llmsafespaces-controller",
 			},
 		},
 		Spec: networkingv1.NetworkPolicySpec{

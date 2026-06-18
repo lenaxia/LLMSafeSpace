@@ -13,7 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 // fakeInternalOrgStatusStore is a minimal GetOrg-only store for the internal
@@ -31,7 +31,7 @@ func setupInternalStatusRouter(t *testing.T, store *fakeInternalOrgStatusStore, 
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	if setToken {
-		t.Setenv("LLMSAFESPACE_INTERNAL_TOKEN", "sekret")
+		t.Setenv("LLMSAFESPACES_INTERNAL_TOKEN", "sekret")
 	}
 	h := NewInternalOrgStatusHandler(store)
 	r := gin.New()
@@ -123,11 +123,11 @@ func TestInternalOrgStatus_TokenRequiredWhenSet(t *testing.T) {
 }
 
 // TestInternalOrgStatus_TokenUnsetAllowsAccess verifies that when
-// LLMSAFESPACE_INTERNAL_TOKEN is unset, the endpoint is reachable without a
+// LLMSAFESPACES_INTERNAL_TOKEN is unset, the endpoint is reachable without a
 // header — the cluster NetworkPolicy is the primary boundary, matching the
 // /metrics opt-in pattern.
 func TestInternalOrgStatus_TokenUnsetAllowsAccess(t *testing.T) {
-	os.Unsetenv("LLMSAFESPACE_INTERNAL_TOKEN")
+	os.Unsetenv("LLMSAFESPACES_INTERNAL_TOKEN")
 	store := &fakeInternalOrgStatusStore{org: &types.Organization{ID: "o1", Status: types.OrgStatusActive}}
 	r, _ := setupInternalStatusRouter(t, store, false)
 

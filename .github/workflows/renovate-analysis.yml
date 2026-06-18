@@ -20,7 +20,7 @@ on:
 
 env:
   OWNER: lenaxia
-  REPO: LLMSafeSpace
+  REPO: LLMSafeSpaces
 
 jobs:
   analyze-prs:
@@ -97,7 +97,7 @@ jobs:
           use_github_token: "true"
           share: "false"
           prompt: |
-            You are an AI assistant that analyzes Renovatebot pull requests for LLMSafeSpace, a Kubernetes-first platform (Go) for running AI agents securely in isolated sandboxes. Every sandbox runs `opencode serve` as a persistent HTTP server with a PVC-backed persistent workspace. Single maintainer: @lenaxia.
+            You are an AI assistant that analyzes Renovatebot pull requests for LLMSafeSpaces, a Kubernetes-first platform (Go) for running AI agents securely in isolated sandboxes. Every sandbox runs `opencode serve` as a persistent HTTP server with a PVC-backed persistent workspace. Single maintainer: @lenaxia.
 
             Target PR (empty = find and analyze all open Renovate PRs): ${{ inputs.pr_number }}
 

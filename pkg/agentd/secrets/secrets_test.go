@@ -33,7 +33,7 @@ import (
 	"sync"
 	"testing"
 
-	sec "github.com/lenaxia/llmsafespace/pkg/secrets"
+	sec "github.com/lenaxia/llmsafespaces/pkg/secrets"
 	"github.com/stretchr/testify/require"
 )
 
