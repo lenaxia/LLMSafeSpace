@@ -77,8 +77,18 @@ Builds on PR #201 (Story 2, admin-only org creation).
 | F3 | Should the migration drop the redundant `idx_org_memberships_user`? | **No — decided to keep it.** Dropping requires a `DROP INDEX` that could fail on partial deploys. The redundancy is harmless (PostgreSQL will use the unique index for `user_id` lookups). Idempotency > minimalism here. |
 | F4 | Pre-existing 0318 worklog collision on main (`admin-only-org-creation` + `us-45.2-redis-activesess` both numbered 0318) | **Pre-existing main issue, flagged.** Not introduced by this PR. My worklog is 0319 (next free). The collision should be resolved by renaming one of the two on main, but that touches already-merged history — out of scope for Story 3. |
 
-### Phase 3
-F1 is a documented accepted edge case (no corruption, rare, design's fix is the pre-check). F2–F4 are false alarms / pre-existing. **Zero actionable findings remaining.**
+### Automated reviewer round 1 (REQUEST CHANGES — one item) — addressed
+The reviewer found a **real regression (C1)**: the new unique index on `org_memberships(user_id)` affects **all three** application-layer INSERT paths into `org_memberships`, but I only patched two (`AcceptInvitationTx`, `AddOrgMember`). The third — `CreateOrgWithAdmin` via `OrgsHandler.Create` — would hit the unique index when a platform admin creates an org for an owner already in another org. The 23505 error bubbles up through `isDuplicateErr` → the handler returns a **misleading** `"slug already in use"` (the actual cause is "owner already in another org").
+
+**Fixed:** added the same `GetUserOrgID(ownerID)` pre-check to `OrgsHandler.Create` (after resolving the owner email, before the slug check). Returns a clear **409** `"owner is already a member of another organization"`. Regression test: `TestCreateOrg_Admin_OwnerAlreadyInAnotherOrg_Conflict`.
+
+| Insert path | Pre-check added? |
+|---|---|
+| `AcceptInvitationTx` (`pg_org_store.go:910`) | ✅ `invitations.go` Accept |
+| `AddOrgMember` (`pg_org_store.go:271`) | ✅ `orgs.go` AddMember |
+| `CreateOrgWithAdmin` (`pg_org_store.go:122`) | ✅ `orgs.go` Create (reviewer r1 fix) |
+
+All three `org_memberships` INSERT paths now have a cross-org pre-check returning a clear 409.
 
 ---
 

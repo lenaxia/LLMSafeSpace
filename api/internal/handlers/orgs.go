@@ -123,6 +123,20 @@ func (h *OrgsHandler) Create(c *gin.Context) {
 		return
 	}
 
+	// Single-org enforcement (D8): if the resolved owner is already in another
+	// org, CreateOrgWithAdmin's membership insert would hit the unique index on
+	// org_memberships(user_id) and bubble up as a 23505 that isDuplicateErr
+	// would misclassify as "slug already in use". Pre-check for a clear 409.
+	existingOrgID, err := h.orgStore.GetUserOrgID(ctx, ownerID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check owner org membership"})
+		return
+	}
+	if existingOrgID != "" {
+		c.JSON(http.StatusConflict, gin.H{"error": "owner is already a member of another organization"})
+		return
+	}
+
 	existing, err := h.orgStore.GetOrgBySlug(ctx, req.Slug)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check slug uniqueness"})
