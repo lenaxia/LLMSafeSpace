@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useOutletContext } from "react-router-dom";
 import { PortalLayout, type NavItem } from "./PortalLayout";
 
 const NAV_ITEMS: NavItem[] = [
@@ -87,5 +87,28 @@ describe("PortalLayout", () => {
     const { container } = renderPortal();
     const root = container.firstElementChild;
     expect(root).toHaveClass("h-screen");
+  });
+
+  it("propagates the context prop to child routes via useOutletContext", () => {
+    const ctx = { org: { id: "org-1" }, isAdmin: true };
+
+    function ContextReader() {
+      const c = useOutletContext<typeof ctx>();
+      return <span data-testid="ctx">{JSON.stringify(c)}</span>;
+    }
+
+    render(
+      <MemoryRouter initialEntries={["/portal/overview"]}>
+        <Routes>
+          <Route path="/portal" element={<PortalLayout title="T" backLink="/chat" navItems={[]} context={ctx} />}>
+            <Route path="overview" element={<ContextReader />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const ctxEl = screen.getByTestId("ctx");
+    expect(ctxEl.textContent).toContain("org-1");
+    expect(ctxEl.textContent).toContain('"isAdmin":true');
   });
 });
