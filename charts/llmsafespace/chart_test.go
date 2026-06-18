@@ -1455,6 +1455,87 @@ func TestF133_ControllerSecretsAreNamespaceScoped(t *testing.T) {
 }
 
 // =============================================================================
+// InferenceRelay — API ClusterRole for cluster-scoped CRD
+// =============================================================================
+
+// TestRelay_APIInferenceRelayClusterRole_DisabledByDefault asserts that
+// NEITHER the API ClusterRole nor its ClusterRoleBinding for inferencerelays
+// renders when the relay subsystem is disabled (the chart default). Guards
+// against accidental removal of the {{- if }} gate on either document.
+func TestRelay_APIInferenceRelayClusterRole_DisabledByDefault(t *testing.T) {
+	docs := helmTemplate(t, "")
+	for _, d := range docs {
+		k, _ := d["kind"].(string)
+		if k != "ClusterRole" && k != "ClusterRoleBinding" {
+			continue
+		}
+		require.NotContains(t, metaName(d), "api-inferencerelay",
+			"API InferenceRelay %s must NOT render when controller.inferenceRelay.enabled is false (default)", k)
+	}
+}
+
+// TestRelay_APIInferenceRelayClusterRole_RendersWhenEnabled asserts the
+// API ClusterRole + ClusterRoleBinding for inferencerelays render with a
+// least-privilege grant when the relay subsystem is enabled, and that the
+// binding is correctly wired (roleRef → the ClusterRole, subject → the API
+// ServiceAccount in the release namespace). The InferenceRelay CRD is
+// cluster-scoped, so a namespace Role is insufficient.
+func TestRelay_APIInferenceRelayClusterRole_RendersWhenEnabled(t *testing.T) {
+	docs := helmTemplate(t, "controller:\n  inferenceRelay:\n    enabled: true\n")
+
+	leastPrivilege := []string{"get", "list", "create", "update"}
+
+	var roleName, bindingRoleRef string
+	var sawRole, sawBinding bool
+	for _, d := range docs {
+		k, _ := d["kind"].(string)
+		name := metaName(d)
+		if !strings.Contains(name, "api-inferencerelay") {
+			continue
+		}
+		switch k {
+		case "ClusterRole":
+			sawRole = true
+			roleName = name
+			rv := resourceVerbs(d)
+			verbs := rv["llmsafespace.dev/inferencerelays"]
+			require.NotEmpty(t, verbs,
+				"ClusterRole %q must grant access to inferencerelays", name)
+			require.ElementsMatch(t, leastPrivilege, verbs,
+				"API inferencerelays grant must be exactly [get,list,create,update] (least-privilege)")
+			require.NotContains(t, rv, "llmsafespace.dev/inferencerelays/status",
+				"API must NOT receive /status subresource access")
+			require.NotContains(t, rv, "llmsafespace.dev/inferencerelays/finalizers",
+				"API must NOT receive /finalizers subresource access")
+		case "ClusterRoleBinding":
+			sawBinding = true
+			roleRef, _ := d["roleRef"].(map[string]any)
+			require.Equal(t, "ClusterRole", roleRef["kind"],
+				"ClusterRoleBinding %q roleRef.kind must be ClusterRole", name)
+			roleRefName, _ := roleRef["name"].(string)
+			require.NotEmpty(t, roleRefName,
+				"ClusterRoleBinding %q must reference a ClusterRole by name", name)
+			bindingRoleRef = roleRefName
+			subjects, _ := d["subjects"].([]any)
+			require.Len(t, subjects, 1,
+				"ClusterRoleBinding %q must bind exactly one subject (the API ServiceAccount)", name)
+			subj, _ := subjects[0].(map[string]any)
+			require.Equal(t, "ServiceAccount", subj["kind"],
+				"ClusterRoleBinding %q subject must be a ServiceAccount", name)
+			subjNS, _ := subj["namespace"].(string)
+			require.Equal(t, "test-ns", subjNS,
+				"ClusterRoleBinding %q subject must be in the release namespace", name)
+		}
+	}
+	require.True(t, sawRole,
+		"ClusterRole for API inferencerelays must render when controller.inferenceRelay.enabled=true")
+	require.True(t, sawBinding,
+		"ClusterRoleBinding for API inferencerelays must render when controller.inferenceRelay.enabled=true")
+	require.Equal(t, roleName, bindingRoleRef,
+		"ClusterRoleBinding.roleRef.name must point at the rendered API inferencerelay ClusterRole")
+}
+
+// =============================================================================
 // Monitoring — Grafana dashboards, PrometheusRule, ServiceMonitor
 // =============================================================================
 
