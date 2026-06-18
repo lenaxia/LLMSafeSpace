@@ -80,52 +80,87 @@ func TestClient_PatchConfig_ServerError(t *testing.T) {
 
 // --- WorkspaceClient tests ---
 
-type mockPodIPResolver struct{ ip string }
+type mockPodIPResolver struct {
+	ip      string
+	errFunc func(userID, workspaceID string) error
+}
 
-func (m *mockPodIPResolver) GetWorkspacePodIP(_ context.Context, _, _ string) (string, error) {
+func (m *mockPodIPResolver) GetWorkspacePodIP(_ context.Context, userID, workspaceID string) (string, error) {
+	if m.errFunc != nil {
+		if err := m.errFunc(userID, workspaceID); err != nil {
+			return "", err
+		}
+	}
 	return m.ip, nil
 }
 
-func TestWorkspaceClient_ListModels_ResolvesWorkspace(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _, _ = r.BasicAuth()
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"connected":[]}`))
-	}))
-	defer srv.Close()
-
-	// WorkspaceClient constructs the baseURL from podIP + AgentPort.
-	// For testing, we point at the test server by overriding the port
-	// resolution via a test-specific constructor.
-	wcl := &WorkspaceClient{
-		passwordResolver: func(_ context.Context, _ string) (string, error) { return "pw", nil },
-		podIPResolver:    &mockPodIPResolver{ip: "127.0.0.1"},
-		httpClient:       &http.Client{Timeout: 5e9},
-		logger:           zap.NewNop(),
-	}
-	// Monkey-patch the resolve to point at our test server by using the
-	// full Client directly via a wrapper. In production, resolve constructs
-	// http://<podIP>:4096.
-	_ = wcl // compile check
-
-	// Direct test of the interface method via a test server listening on
-	// the real AgentPort is environment-dependent. Instead, verify the
-	// resolve logic produces the correct baseURL shape.
-	c, err := wcl.resolve(context.Background(), "ws-1")
+// testBackendWithPort creates a test HTTP server and a WorkspaceClient
+// whose resolve points at it. We can't easily mock the internal
+// http://podIP:4096 URL, so we test resolve + Client methods separately
+// and verify the full path via the Client tests above.
+func TestWorkspaceClient_Resolve_ProducesCorrectBaseURL(t *testing.T) {
+	wcl := NewWorkspaceClient(
+		func(_ context.Context, _ string) (string, error) { return "pw", nil },
+		&mockPodIPResolver{ip: "10.0.0.5"},
+		zap.NewNop(),
+	)
+	c, err := wcl.resolve(context.Background(), "user-1", "ws-1")
 	require.NoError(t, err)
-	assert.Contains(t, c.baseURL, "127.0.0.1")
+	assert.Contains(t, c.baseURL, "10.0.0.5")
 	assert.Equal(t, "pw", c.password)
 }
 
-func TestWorkspaceClient_Resolve_NoPodIP_ReturnsError(t *testing.T) {
-	wcl := &WorkspaceClient{
-		passwordResolver: func(_ context.Context, _ string) (string, error) { return "pw", nil },
-		podIPResolver:    &mockPodIPResolver{ip: ""},
-		httpClient:       &http.Client{Timeout: 5e9},
-		logger:           zap.NewNop(),
-	}
-	_, err := wcl.resolve(context.Background(), "ws-missing")
+func TestWorkspaceClient_Resolve_EmptyPodIP_ReturnsCleanError(t *testing.T) {
+	wcl := NewWorkspaceClient(
+		func(_ context.Context, _ string) (string, error) { return "pw", nil },
+		&mockPodIPResolver{ip: ""},
+		zap.NewNop(),
+	)
+	_, err := wcl.resolve(context.Background(), "user-1", "ws-missing")
 	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no running pod")
+	assert.NotContains(t, err.Error(), "%!w", "error must not contain fmt verb artifacts")
+}
+
+func TestWorkspaceClient_Resolve_PodIPErr_ReturnsWrappedError(t *testing.T) {
+	wcl := NewWorkspaceClient(
+		func(_ context.Context, _ string) (string, error) { return "pw", nil },
+		&mockPodIPResolver{ip: "", errFunc: func(_, _ string) error {
+			return context.DeadlineExceeded
+		}},
+		zap.NewNop(),
+	)
+	_, err := wcl.resolve(context.Background(), "user-1", "ws-slow")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "resolve pod IP")
+}
+
+func TestWorkspaceClient_Resolve_PasswordErr_ReturnsWrappedError(t *testing.T) {
+	wcl := NewWorkspaceClient(
+		func(_ context.Context, _ string) (string, error) { return "", context.Canceled },
+		&mockPodIPResolver{ip: "10.0.0.1"},
+		zap.NewNop(),
+	)
+	_, err := wcl.resolve(context.Background(), "user-1", "ws-1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "resolve password")
+}
+
+func TestWorkspaceClient_PassUserID_ToResolver(t *testing.T) {
+	var capturedUserID string
+	wcl := NewWorkspaceClient(
+		func(_ context.Context, _ string) (string, error) { return "pw", nil },
+		&mockPodIPResolver{
+			ip: "10.0.0.1",
+			errFunc: func(userID, _ string) error {
+				capturedUserID = userID
+				return nil
+			},
+		},
+		zap.NewNop(),
+	)
+	_, _ = wcl.resolve(context.Background(), "user-99", "ws-1")
+	assert.Equal(t, "user-99", capturedUserID, "userID must be passed through to PodIPResolver")
 }
 
 // Compile-time interface conformance.

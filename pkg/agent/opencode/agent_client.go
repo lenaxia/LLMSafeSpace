@@ -6,8 +6,6 @@ package opencode
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"time"
 
 	"go.uber.org/zap"
 
@@ -31,14 +29,14 @@ type PodIPResolver interface {
 // concerns. The interface is caller-shaped — consumers ask for what
 // they need, not for a raw HTTP client.
 //
-// The interface is satisfied by WorkspaceClient, which wraps the
-// low-level Client with workspace→pod resolution.
+// userID is required for workspace ownership verification (the PodIPResolver
+// enforces that the caller owns the workspace before returning the IP).
 type AgentClient interface {
-	ListModels(ctx context.Context, workspaceID string) ([]byte, error)
-	PatchConfig(ctx context.Context, workspaceID string, config map[string]any) error
-	DisposeInstance(ctx context.Context, workspaceID string) error
-	GetSessionStatuses(ctx context.Context, workspaceID string) (map[string]string, error)
-	StageCredentials(ctx context.Context, workspaceID string, providers []secrets.LLMProviderData) error
+	ListModels(ctx context.Context, userID, workspaceID string) ([]byte, error)
+	PatchConfig(ctx context.Context, userID, workspaceID string, config map[string]any) error
+	DisposeInstance(ctx context.Context, userID, workspaceID string) error
+	GetSessionStatuses(ctx context.Context, userID, workspaceID string) (map[string]string, error)
+	StageCredentials(ctx context.Context, userID, workspaceID string, providers []secrets.LLMProviderData) error
 }
 
 // WorkspaceClient implements AgentClient by resolving each call to a
@@ -49,7 +47,6 @@ type AgentClient interface {
 type WorkspaceClient struct {
 	passwordResolver PasswordResolver
 	podIPResolver    PodIPResolver
-	httpClient       *http.Client
 	logger           *zap.Logger
 }
 
@@ -62,21 +59,18 @@ func NewWorkspaceClient(pw PasswordResolver, ip PodIPResolver, logger *zap.Logge
 	return &WorkspaceClient{
 		passwordResolver: pw,
 		podIPResolver:    ip,
-		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
-		},
-		logger: logger,
+		logger:           logger,
 	}
 }
 
 // resolve returns a low-level Client configured for the workspace's pod.
-// podIP is resolved first; password is resolved on demand by the Client.
-func (w *WorkspaceClient) resolve(ctx context.Context, workspaceID string) (*Client, error) {
-	// PodIPResolver requires a userID in some implementations; pass empty
-	// for workspace-scoped resolvers that don't need it.
-	podIP, err := w.podIPResolver.GetWorkspacePodIP(ctx, "", workspaceID)
-	if err != nil || podIP == "" {
+func (w *WorkspaceClient) resolve(ctx context.Context, userID, workspaceID string) (*Client, error) {
+	podIP, err := w.podIPResolver.GetWorkspacePodIP(ctx, userID, workspaceID)
+	if err != nil {
 		return nil, fmt.Errorf("resolve pod IP for workspace %s: %w", workspaceID, err)
+	}
+	if podIP == "" {
+		return nil, fmt.Errorf("no running pod for workspace %s", workspaceID)
 	}
 	password, err := w.passwordResolver(ctx, workspaceID)
 	if err != nil {
@@ -86,40 +80,40 @@ func (w *WorkspaceClient) resolve(ctx context.Context, workspaceID string) (*Cli
 	return NewClient(baseURL, password, w.logger), nil
 }
 
-func (w *WorkspaceClient) ListModels(ctx context.Context, workspaceID string) ([]byte, error) {
-	c, err := w.resolve(ctx, workspaceID)
+func (w *WorkspaceClient) ListModels(ctx context.Context, userID, workspaceID string) ([]byte, error) {
+	c, err := w.resolve(ctx, userID, workspaceID)
 	if err != nil {
 		return nil, err
 	}
 	return c.ListModels(ctx)
 }
 
-func (w *WorkspaceClient) PatchConfig(ctx context.Context, workspaceID string, config map[string]any) error {
-	c, err := w.resolve(ctx, workspaceID)
+func (w *WorkspaceClient) PatchConfig(ctx context.Context, userID, workspaceID string, config map[string]any) error {
+	c, err := w.resolve(ctx, userID, workspaceID)
 	if err != nil {
 		return err
 	}
 	return c.PatchConfig(ctx, config)
 }
 
-func (w *WorkspaceClient) DisposeInstance(ctx context.Context, workspaceID string) error {
-	c, err := w.resolve(ctx, workspaceID)
+func (w *WorkspaceClient) DisposeInstance(ctx context.Context, userID, workspaceID string) error {
+	c, err := w.resolve(ctx, userID, workspaceID)
 	if err != nil {
 		return err
 	}
 	return c.DisposeInstance(ctx)
 }
 
-func (w *WorkspaceClient) GetSessionStatuses(ctx context.Context, workspaceID string) (map[string]string, error) {
-	c, err := w.resolve(ctx, workspaceID)
+func (w *WorkspaceClient) GetSessionStatuses(ctx context.Context, userID, workspaceID string) (map[string]string, error) {
+	c, err := w.resolve(ctx, userID, workspaceID)
 	if err != nil {
 		return nil, err
 	}
 	return c.GetSessionStatuses(ctx)
 }
 
-func (w *WorkspaceClient) StageCredentials(ctx context.Context, workspaceID string, providers []secrets.LLMProviderData) error {
-	c, err := w.resolve(ctx, workspaceID)
+func (w *WorkspaceClient) StageCredentials(ctx context.Context, userID, workspaceID string, providers []secrets.LLMProviderData) error {
+	c, err := w.resolve(ctx, userID, workspaceID)
 	if err != nil {
 		return err
 	}
