@@ -76,6 +76,8 @@ Organized by epic, following the V2 design roadmap (design/EVOLUTION-V2.md v2.4)
 |------|------|------------|
 | 32 | VPN Sidecars (WireGuard, Tailscale, ZeroTier), VPC Connectivity, & AWS IAM (IRSA + Pod Identity) — admin-gated per-workspace network attachment | Epics 6, 9, 24 |
 | 31 | **Shared Workspace Per User (User Drive)** — per-user PVC/S3 drive mounted at `/shared` in every workspace, 5 GB default quota, resize for billing upgrades, frontend capacity bar in status area | Epics 6, 9, 24 |
+| 46 | **Codebase Debt Audit (backend)** — split god files, type the untyped, propagate context, single-writer agent-config.json, define Service interfaces, lint baselines | Epics 29, 38 |
+| 47 | **Frontend Architecture Consolidation** — dead-code sweep, fix silent failures (autoSuspend UI), account-level autoSuspend, busy-indicator unification, TanStack Query migration, provider UX fold | None |
 
 ## V2.1 (Deferred)
 
