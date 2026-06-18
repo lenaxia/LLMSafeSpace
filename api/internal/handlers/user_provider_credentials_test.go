@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/stretchr/testify/assert"
@@ -77,7 +78,7 @@ func (f *fakeUserCredStore) UpdateCredential(_ context.Context, ownerType, owner
 func (f *fakeUserCredStore) DeleteCredential(_ context.Context, ownerType, ownerID, id string) error {
 	c, ok := f.creds[id]
 	if !ok || c.OwnerType != ownerType || c.OwnerID != ownerID {
-		return nil
+		return pgx.ErrNoRows
 	}
 	delete(f.creds, id)
 	return nil

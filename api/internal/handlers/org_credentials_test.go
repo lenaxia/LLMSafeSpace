@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -110,6 +111,9 @@ func (f *fakeOrgCredStore) UpdateCredential(_ context.Context, _, _, credID stri
 }
 
 func (f *fakeOrgCredStore) DeleteCredential(_ context.Context, _, _, credID string) error {
+	if _, ok := f.creds[credID]; !ok {
+		return pgx.ErrNoRows
+	}
 	delete(f.creds, credID)
 	return nil
 }
