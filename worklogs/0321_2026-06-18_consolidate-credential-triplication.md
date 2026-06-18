@@ -67,7 +67,7 @@ The provider credential system had three independent handler files, three store 
 | A2 | Org responses use `orgId` JSON key (spec's `ownerId` would break tests) | Verified: `TestOrgCredentials_List_CamelCaseAndBaseURL` asserts `orgId`. Kept `orgId`. |
 | A3 | `secrets.CredentialStore` (injection) is a different concern from the CRUD interface | Verified: referenced only via type assertion in `injection.go` + async-audit wrapper; never imported by handlers. Named the new CRUD interface in the handlers package to avoid collision. |
 | A4 | `api/credentials.ts` already has unrelated `CredentialSet` types | Verified: created `providerCredentialTypes.ts` instead. |
-| A5 | Org Update COALESCE-with-nil semantics must be preserved | Verified: `TestOrgCredentials_Update_NameOnly_NoReEncrypt` passes — unified `UpdateCredential` uses COALESCE so nil = "don't change". |
+| A5 | Org Update COALESCE-with-nil semantics must be preserved | Verified: `TestOrgCredentials_Update_NameOnly_PreservesLimits` (seeds non-empty limits, asserts preservation on name-only update) + integration test `TestPgCredentialStore_UpdateCredential_NilPreservesLimits` (SQL-layer COALESCE verification). |
 | A6 | Org Create relied on `RETURNING id`; unified Create generates UUID in Go | Verified: behavior-neutral since DB `DEFAULT gen_random_uuid()` is only a fallback; `TestOrgCredentials_Create_*` pass. |
 | A7 | Admin Update allows provider change; org does not | Verified: stayed per-handler (admin update request has `Provider *string`, org does not). `TestAdminProviderCredentials_Update_*` pass. |
 | A8 | Controller package is unaffected by these changes | Verified: `grep` for all changed types in `controller/` and `cmd/` returns zero hits. |

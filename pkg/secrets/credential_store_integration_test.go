@@ -9,6 +9,7 @@ package secrets
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func cleanupProviderCredentials(t *testing.T, store *PgSecretStore, ownerType, ownerID string) {
@@ -348,5 +349,65 @@ func TestPgCredentialStore_GetWorkspaceCredentials_PriorityOrder(t *testing.T) {
 	}
 	if bindings[1].WithinPriority != 10 {
 		t.Errorf("second binding within_priority = %d, want 10", bindings[1].WithinPriority)
+	}
+}
+
+// TestPgCredentialStore_UpdateCredential_NilPreservesLimits verifies that
+// UpdateCredential's COALESCE semantics preserve model_context_limits and
+// model_allowlist when the update row passes nil for those fields. This is the
+// org handler's partial-update contract: nil = "don't change", empty = "clear".
+// Regression test for the critical nil→{} normalization bug.
+func TestPgCredentialStore_UpdateCredential_NilPreservesLimits(t *testing.T) {
+	pool := getTestPool(t)
+	defer pool.Close()
+	store := NewPgSecretStore(pool)
+	ctx := context.Background()
+
+	defer cleanupProviderCredentials(t, store, "org", "org-test-update-nil")
+
+	// Create a credential with non-empty limits and allowlist.
+	now := time.Now()
+	row := &CredentialRow{
+		ID:                 "cred-nil-test",
+		Name:               "original",
+		Provider:           "test-provider-nil",
+		Ciphertext:         []byte("encrypted"),
+		KeyVersion:         1,
+		ModelAllowlist:     []string{"glm-5.1", "gpt-4o"},
+		ModelContextLimits: map[string]int{"glm-5.1": 200000, "gpt-4o": 128000},
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+	if err := store.CreateCredential(ctx, "org", "org-test-update-nil", row); err != nil {
+		t.Fatalf("CreateCredential: %v", err)
+	}
+
+	// Update with nil limits/allowlist — must NOT overwrite existing values.
+	upd := &CredentialRow{
+		ID:                 "cred-nil-test",
+		Name:               "renamed",
+		Provider:           "test-provider-nil",
+		Ciphertext:         []byte("encrypted"),
+		KeyVersion:         1,
+		ModelAllowlist:     nil, // nil = don't change
+		ModelContextLimits: nil, // nil = don't change
+	}
+	if err := store.UpdateCredential(ctx, "org", "org-test-update-nil", "cred-nil-test", upd); err != nil {
+		t.Fatalf("UpdateCredential: %v", err)
+	}
+
+	// Read back and verify limits/allowlist are preserved.
+	got, err := store.GetCredential(ctx, "org", "org-test-update-nil", "cred-nil-test")
+	if err != nil {
+		t.Fatalf("GetCredential: %v", err)
+	}
+	if got.Name != "renamed" {
+		t.Errorf("Name = %q, want %q", got.Name, "renamed")
+	}
+	if len(got.ModelAllowlist) != 2 || got.ModelAllowlist[0] != "glm-5.1" {
+		t.Errorf("ModelAllowlist = %v, want [glm-5.1, gpt-4o] (nil must preserve)", got.ModelAllowlist)
+	}
+	if got.ModelContextLimits["glm-5.1"] != 200000 || got.ModelContextLimits["gpt-4o"] != 128000 {
+		t.Errorf("ModelContextLimits = %v, want {glm-5.1:200000, gpt-4o:128000} (nil must preserve)", got.ModelContextLimits)
 	}
 }
