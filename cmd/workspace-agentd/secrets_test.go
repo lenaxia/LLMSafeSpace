@@ -249,7 +249,7 @@ func TestReloadSecretsHandler_HappyPath(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
-	reloadSecretsHandler(cfg, nil, "")(rec, req)
+	reloadSecretsHandler(cfg, nil, "", nil)(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	var resp struct {
@@ -270,7 +270,7 @@ func TestReloadSecretsHandler_BadJSON(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader("not json"))
 	rec := httptest.NewRecorder()
 
-	reloadSecretsHandler(cfg, nil, "")(rec, req)
+	reloadSecretsHandler(cfg, nil, "", nil)(rec, req)
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
@@ -280,7 +280,7 @@ func TestReloadSecretsHandler_WrongMethod(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/reload-secrets", nil)
 	rec := httptest.NewRecorder()
 
-	reloadSecretsHandler(cfg, nil, "")(rec, req)
+	reloadSecretsHandler(cfg, nil, "", nil)(rec, req)
 	require.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 }
 
@@ -423,7 +423,7 @@ func TestReloadSecretsHandler_LLMProvider_CallsOpenCodeClient(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
-	reloadSecretsHandler(cfg, nil, "")(rec, req)
+	reloadSecretsHandler(cfg, nil, "", nil)(rec, req)
 
 	// Handler should succeed (materializer and flush work in-process)
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -461,7 +461,7 @@ func TestReloadSecretsHandler_LLMProvider_FlushFailure_Returns500(t *testing.T) 
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
-	reloadSecretsHandler(cfg, nil, "")(rec, req)
+	reloadSecretsHandler(cfg, nil, "", nil)(rec, req)
 
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
 	var resp map[string]string
@@ -495,7 +495,7 @@ func TestReloadSecretsHandler_MixedBatch_LLMAndEnv(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
-	reloadSecretsHandler(cfg, nil, "")(rec, req)
+	reloadSecretsHandler(cfg, nil, "", nil)(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
 
@@ -538,7 +538,7 @@ func TestReloadSecretsHandler_EnvOnly_NoConfigReload(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	// proc=nil means restart won't actually fire, but we can check the response
-	reloadSecretsHandler(cfg, nil, "")(rec, req)
+	reloadSecretsHandler(cfg, nil, "", nil)(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	var resp struct {
@@ -584,7 +584,7 @@ func TestReloadSecretsHandler_RemergesRelayAfterFlush(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
-	reloadSecretsHandler(cfg, nil, "")(rec, req)
+	reloadSecretsHandler(cfg, nil, "", nil)(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	// agent-config.json must contain both the credential provider (thekao)
@@ -637,7 +637,7 @@ func TestReloadSecretsHandler_SkipsRelayMergeWhenModelsNil(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
-	reloadSecretsHandler(cfg, nil, "")(rec, req)
+	reloadSecretsHandler(cfg, nil, "", nil)(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	cfgData, err := os.ReadFile(agentCfg)
@@ -714,7 +714,7 @@ func TestReloadSecretsHandler_RelayRemergeError_StillReturns200(t *testing.T) {
 	//   1. The code path using Warn (not Error + return) at secrets.go:302-303
 	//   2. The integration of the re-merge inside the existing 200-path
 	// This test validates FlushProviders failure → 500 (separate from re-merge).
-	reloadSecretsHandler(cfg, nil, "")(rec, req)
+	reloadSecretsHandler(cfg, nil, "", nil)(rec, req)
 	// FlushProviders to unwritable dir → 500
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
 
@@ -724,7 +724,7 @@ func TestReloadSecretsHandler_RelayRemergeError_StillReturns200(t *testing.T) {
 	cfg2.agentConfigPath = agentCfg
 	req2 := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec2 := httptest.NewRecorder()
-	reloadSecretsHandler(cfg2, nil, "")(rec2, req2)
+	reloadSecretsHandler(cfg2, nil, "", nil)(rec2, req2)
 	require.Equal(t, http.StatusOK, rec2.Code,
 		"handler must return 200 even when re-merge path hits non-fatal warn")
 }
@@ -884,7 +884,7 @@ func TestReloadSecretsHandler_ConcurrentCalls_NoRace(t *testing.T) {
 		enricherCacheDir: filepath.Join(dir, "cache"),
 	}
 
-	handler := reloadSecretsHandler(cfg, nil, "")
+	handler := reloadSecretsHandler(cfg, nil, "", nil)
 	body := `[{"type":"env-secret","name":"FOO","metadata":{"var_name":"FOO"},"plaintext":"bar"}]`
 
 	var wg sync.WaitGroup

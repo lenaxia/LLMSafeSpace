@@ -259,6 +259,44 @@ func (t *sessionStatusTracker) get(sessionID string) string {
 	return "idle"
 }
 
+// hasAnyBusy returns true if any tracked session is currently "busy".
+// Used by the session-aware restart mechanism (US-44.2) to decide
+// whether to defer an opencode restart until sessions are idle.
+func (t *sessionStatusTracker) hasAnyBusy() bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	for _, s := range t.statuses {
+		if s == "busy" {
+			return true
+		}
+	}
+	return false
+}
+
+// listBusy returns the IDs of all sessions currently marked "busy".
+// Used for logging which sessions are blocking a deferred restart.
+func (t *sessionStatusTracker) listBusy() []string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	var busy []string
+	for id, s := range t.statuses {
+		if s == "busy" {
+			busy = append(busy, id)
+		}
+	}
+	return busy
+}
+
+// hasAnyData returns true if the tracker has tracked at least one
+// session. Used by the session-aware restart logic to detect the
+// SSE-disconnect case: an empty tracker means no session.status events
+// have been received, so we cannot safely defer a restart.
+func (t *sessionStatusTracker) hasAnyData() bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return len(t.statuses) > 0
+}
+
 // prune removes entries for sessions that no longer exist.
 func (t *sessionStatusTracker) prune(activeIDs []string) {
 	active := make(map[string]struct{}, len(activeIDs))
@@ -925,7 +963,7 @@ func main() {
 	adminMux.Handle("/metrics", promhttp.Handler())
 
 	// User endpoints — user port.
-	userMux.HandleFunc("/v1/reload-secrets", reloadSecretsHandler(loadMaterializeConfig(), proc, password))
+	userMux.HandleFunc("/v1/reload-secrets", reloadSecretsHandler(loadMaterializeConfig(), proc, password, sseTracker))
 	userMux.HandleFunc("/v1/agent/reload", agentReloadHandler(password, log))
 
 	// Start admin server (health probes) on dedicated port.

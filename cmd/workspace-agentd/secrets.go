@@ -55,6 +55,77 @@ import (
 // the lock to avoid holding it during the ~5s SIGTERM window.
 var reloadMu sync.Mutex
 
+// restartableProcess is the subset of *managedProcess needed by the
+// session-aware restart logic. Extracting it as an interface lets tests
+// pass a mock without constructing a real managedProcess supervisor.
+type restartableProcess interface {
+	restart()
+}
+
+// restartIdleCheckInterval is how often the deferred-restart goroutine
+// polls the sessionStatusTracker for busy→idle transitions. 5s per
+// the US-44.2 design.
+const restartIdleCheckInterval = 5 * time.Second
+
+// makeSessionAwareRestartDecision decides whether to restart opencode
+// now or defer until all sessions are idle. Returns true if the restart
+// was initiated (immediately or via deferred goroutine that has since
+// fired), false if the restart was deferred to a background goroutine.
+//
+// If tracker is nil or has no data (SSE disconnected), treats as "all
+// idle" and restarts immediately — without session state, deferring
+// would block forever. A log warning is emitted in this case.
+//
+// If proc is nil, returns true without doing anything (test/no-op path).
+//
+// Per US-44.2 design: NO forced timeout. The restart is deferred
+// indefinitely until sessions are idle OR the user triggers a manual
+// restart via POST /agent/reload?drain=false.
+func makeSessionAwareRestartDecision(proc restartableProcess, tracker *sessionStatusTracker, pollInterval time.Duration) bool {
+	if proc == nil {
+		return true
+	}
+
+	// SSE-disconnect fallback: nil tracker or empty statuses map means
+	// we have no session state to check. Restart immediately rather than
+	// block forever.
+	if tracker == nil || !tracker.hasAnyData() {
+		if tracker == nil {
+			log.Warn("session-aware restart: tracker is nil, restarting immediately")
+		} else {
+			log.Warn("session-aware restart: tracker has no session data (SSE disconnected?), restarting immediately")
+		}
+		proc.restart()
+		return true
+	}
+
+	if !tracker.hasAnyBusy() {
+		proc.restart()
+		return true
+	}
+
+	// Sessions are busy — defer the restart.
+	busySessions := tracker.listBusy()
+	log.Info("session-aware restart: deferring restart, sessions are busy",
+		zap.Strings("busySessions", busySessions))
+
+	go func() {
+		ticker := time.NewTicker(pollInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			if !tracker.hasAnyBusy() {
+				log.Info("session-aware restart: all sessions now idle, applying deferred restart")
+				proc.restart()
+				return
+			}
+			log.Debug("session-aware restart: still waiting for sessions to idle",
+				zap.Strings("busySessions", tracker.listBusy()))
+		}
+	}()
+
+	return false
+}
+
 // materializeConfig is the resolved set of filesystem paths used by the
 // materialize subcommand and the reload handler. It maps 1:1 onto
 // secrets.Paths but lives here so the binary can override defaults via
@@ -304,7 +375,7 @@ func resolveModelWithProvider(cfg map[string]json.RawMessage, flatModelID string
 // stub the URL to a server that does not enforce auth. An empty
 // password produces 401 against real opencode and was the proximate
 // cause of Bug 1 (worklog 0125).
-func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess, opencodePassword string) http.HandlerFunc {
+func reloadSecretsHandler(cfg materializeConfig, proc restartableProcess, opencodePassword string, tracker *sessionStatusTracker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method != http.MethodPost {
@@ -410,13 +481,11 @@ func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess, opencodeP
 			}
 		}
 
-		// Restart for env-secret changes (agent reads env at boot only).
+		// Restart for env-secret/api-key changes (agent reads env at boot only).
+		// US-44.2: session-aware restart — defer until all sessions idle.
 		restarted := false
 		if proc != nil && shouldRestart(batch) {
-			log.Info("env secrets changed, restarting opencode")
-			//nolint:contextcheck // restart() spawns its own health-check goroutine with a fresh context
-			proc.restart()
-			restarted = true
+			restarted = makeSessionAwareRestartDecision(proc, tracker, restartIdleCheckInterval)
 		}
 
 		status := http.StatusOK
@@ -436,7 +505,7 @@ func reloadSecretsHandler(cfg materializeConfig, proc *managedProcess, opencodeP
 
 func shouldRestart(batch []secrets.Secret) bool {
 	for _, s := range batch {
-		if s.Type == "env-secret" {
+		if s.Type == "env-secret" || s.Type == "api-key" {
 			return true
 		}
 	}
