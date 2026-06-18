@@ -374,12 +374,10 @@ type WorkspaceList struct {
 	Items           []Workspace `json:"items"`
 }
 
-// --- LastActivityAt annotation helpers (US-23.3) ---
-//
 // GetLastActivityAt reads the last-activity timestamp from the
 // metadata annotation (authoritative) with a fallback to the
 // deprecated Status.LastActivityAt field for workspaces created
-// before the migration.
+// before the migration (US-23.3).
 func GetLastActivityAt(ws *Workspace) *metav1.Time {
 	if ws.Annotations != nil {
 		if v, ok := ws.Annotations[AnnotationLastActivityAt]; ok && v != "" {
