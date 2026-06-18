@@ -120,6 +120,8 @@ func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Works
 			ws.Status.PodIP = ""
 			ws.Status.Endpoint = ""
 			ws.Status.RestartCount++
+			ws.Status.ControllerRestartCount++
+			metrics.WorkspaceControllerRestartsTotal.Inc()
 			ws.Status.ConsecutiveHealthFailures = 0
 		}
 		return
@@ -149,6 +151,8 @@ func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Works
 			ws.Status.PodIP = ""
 			ws.Status.Endpoint = ""
 			ws.Status.RestartCount++
+			ws.Status.ControllerRestartCount++
+			metrics.WorkspaceControllerRestartsTotal.Inc()
 			ws.Status.ConsecutiveHealthFailures = 0
 		}
 		return
