@@ -165,19 +165,18 @@ return 1
 **Goal:** Move session tombstones to Valkey to prevent late-event resurrection across replicas.
 
 **Acceptance:**
-- [ ] Redis implementation of `MarkDeleted` and `IsDeleted`
-- [ ] Per-key TTL = 30 minutes
-- [ ] Hash-tagged: `ws:{workspace_id}:deleted:{session_id}`
-- [ ] Fail-closed behavior on Redis errors (treat as deleted to prevent resurrection)
+- [x] Redis implementation of `MarkDeleted` and `IsDeleted`
+- [x] Per-key TTL = 30 minutes (`DefaultDeletedTTL`)
+- [x] Hash-tagged: `ws:{workspace_id}:deleted:{session_id}`
+- [x] Fail-closed behavior on Redis errors (treat as deleted to prevent resurrection)
   - Rationale: If we can't verify, assume deleted; user can recreate session
   - Different from activeSess (fail-open) because data integrity > availability here
-- [ ] Remove in-memory `deletedSessions` map and threshold-based eviction
-- [ ] Tests cover error paths and TTL behavior
+- [x] Remove in-memory `deletedSessions` map from production path (RedisStore now overrides all 3 methods; InMemoryStore retains its impl for standalone/test use)
+- [x] Tests cover error paths and TTL behavior (12 tests in `redis_deleted_test.go`)
 
 **Files:**
-- Modified: `api/internal/services/wsstate/redis.go`
-- Modified: `api/internal/handlers/proxy_handlers.go` (remove map ops)
-- Modified: `api/internal/handlers/proxy.go` (remove map field)
+- Modified: `api/internal/services/wsstate/redis.go` (override 3 methods + InvalidateAll update)
+- New: `api/internal/services/wsstate/redis_deleted_test.go` (12 tests)
 
 **Effort:** 1 day
 
