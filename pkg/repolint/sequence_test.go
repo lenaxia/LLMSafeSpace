@@ -96,6 +96,154 @@ func TestSequenceCheck_GapInSequence(t *testing.T) {
 	}
 }
 
+func TestSequenceCheck_AllowGaps_GapStillReportedButOKTrue(t *testing.T) {
+	// Worklog-style scenario: contiguous numbers required by some
+	// callers, but for append-only docs we want gaps to be warnings,
+	// not failures. Verify OK() is true while MissingVersions is
+	// still populated and HasWarnings() reports the gap.
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0001_2026-06-18_alpha.md"), "")
+	// Gap at 2.
+	mustWrite(t, filepath.Join(dir, "0003_2026-06-18_charlie.md"), "")
+
+	rep, err := SequenceCheck(SequenceConfig{
+		Dir:       dir,
+		Pattern:   WorklogPattern,
+		AllowGaps: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !rep.OK() {
+		t.Fatalf("expected OK with AllowGaps=true; got: %s", rep.String())
+	}
+	if !rep.HasWarnings() {
+		t.Fatalf("expected HasWarnings=true with gap, got false")
+	}
+	if len(rep.MissingVersions) != 1 || rep.MissingVersions[0] != 2 {
+		t.Fatalf("expected MissingVersions=[2], got %v", rep.MissingVersions)
+	}
+	if !rep.GapsAllowed {
+		t.Fatalf("expected GapsAllowed=true on report")
+	}
+}
+
+func TestSequenceCheck_AllowGaps_DuplicatesStillFail(t *testing.T) {
+	// Even with AllowGaps=true, duplicate version numbers must still
+	// fail OK(). The whole point of the check is referential
+	// uniqueness; relaxing gaps doesn't relax that.
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0001_2026-06-18_alpha.md"), "")
+	mustWrite(t, filepath.Join(dir, "0001_2026-06-18_bravo.md"), "")
+
+	rep, err := SequenceCheck(SequenceConfig{
+		Dir:       dir,
+		Pattern:   WorklogPattern,
+		AllowGaps: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rep.OK() {
+		t.Fatalf("expected NOT OK on duplicate even with AllowGaps; got: %s", rep.String())
+	}
+	if len(rep.Duplicates) != 1 {
+		t.Fatalf("expected 1 duplicate, got %d", len(rep.Duplicates))
+	}
+}
+
+func TestSequenceCheck_AllowGapsFalse_DefaultBehaviorPreserved(t *testing.T) {
+	// Migrations and any caller that doesn't pass AllowGaps must
+	// still fail on gaps — this is load-bearing for migration
+	// safety. Explicit regression guard against accidentally
+	// flipping the default.
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "000001_a.up.sql"), "")
+	mustWrite(t, filepath.Join(dir, "000001_a.down.sql"), "")
+	mustWrite(t, filepath.Join(dir, "000003_c.up.sql"), "")
+	mustWrite(t, filepath.Join(dir, "000003_c.down.sql"), "")
+
+	rep, err := SequenceCheck(SequenceConfig{
+		Dir:           dir,
+		Pattern:       MigrationPattern,
+		RequirePaired: true,
+		// AllowGaps NOT set → defaults to false.
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rep.OK() {
+		t.Fatalf("expected NOT OK; AllowGaps default must be false. got: %s", rep.String())
+	}
+	if rep.HasWarnings() {
+		t.Fatalf("HasWarnings() must be false when GapsAllowed is false")
+	}
+}
+
+func TestSequenceCheck_AllowGaps_NoGaps_HasWarningsFalse(t *testing.T) {
+	// Happy path: AllowGaps=true AND contiguous sequence. HasWarnings
+	// must be false. Catches the bug class where someone simplifies
+	// HasWarnings() to "return r.GapsAllowed" without the
+	// len(MissingVersions)>0 clause.
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0001_2026-06-18_alpha.md"), "")
+	mustWrite(t, filepath.Join(dir, "0002_2026-06-18_bravo.md"), "")
+	mustWrite(t, filepath.Join(dir, "0003_2026-06-18_charlie.md"), "")
+
+	rep, err := SequenceCheck(SequenceConfig{
+		Dir:       dir,
+		Pattern:   WorklogPattern,
+		AllowGaps: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !rep.OK() {
+		t.Fatalf("expected OK with no gaps; got: %s", rep.String())
+	}
+	if rep.HasWarnings() {
+		t.Fatalf("expected HasWarnings()=false with no gaps; got true")
+	}
+	if !rep.GapsAllowed {
+		t.Fatalf("expected GapsAllowed=true on report")
+	}
+}
+
+func TestSequenceCheck_AllowGaps_GrandfatherBelowExcludesOldGaps(t *testing.T) {
+	// Production config: cmd/repolint/main.go runWorklogs sets BOTH
+	// AllowGaps=true AND GrandfatherBelow=97. Verify gaps strictly
+	// below the threshold are excluded; gaps at or above the
+	// threshold ARE reported.
+	dir := t.TempDir()
+	// Below grandfather threshold: 90 and 92 with a gap at 91 (and at 1..89,
+	// 93..96 which are all before the threshold and thus excluded).
+	mustWrite(t, filepath.Join(dir, "0090_2026-06-18_old-a.md"), "")
+	mustWrite(t, filepath.Join(dir, "0092_2026-06-18_old-b.md"), "")
+	// Above threshold: 97, 98 contiguous, then a real gap at 99.
+	mustWrite(t, filepath.Join(dir, "0097_2026-06-18_new-a.md"), "")
+	mustWrite(t, filepath.Join(dir, "0098_2026-06-18_new-b.md"), "")
+	mustWrite(t, filepath.Join(dir, "0100_2026-06-18_new-c.md"), "")
+
+	rep, err := SequenceCheck(SequenceConfig{
+		Dir:              dir,
+		Pattern:          WorklogPattern,
+		AllowGaps:        true,
+		GrandfatherBelow: 97,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !rep.OK() {
+		t.Fatalf("expected OK (gaps allowed); got: %s", rep.String())
+	}
+	if !rep.HasWarnings() {
+		t.Fatalf("expected HasWarnings()=true (gap at 99)")
+	}
+	if len(rep.MissingVersions) != 1 || rep.MissingVersions[0] != 99 {
+		t.Fatalf("expected MissingVersions=[99] (91 is grandfathered); got %v", rep.MissingVersions)
+	}
+}
+
 func TestSequenceCheck_MissingDownPair(t *testing.T) {
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "000001_a.up.sql"), "")
@@ -379,7 +527,7 @@ func TestLive_Migrations_NoCollisionsOrGaps(t *testing.T) {
 	}
 }
 
-func TestLive_Worklogs_NoCollisionsOrGaps(t *testing.T) {
+func TestLive_Worklogs_NoDuplicates(t *testing.T) {
 	root := repoRoot(t)
 	rep, err := SequenceCheck(SequenceConfig{
 		Dir:           filepath.Join(root, "worklogs"),
@@ -390,14 +538,21 @@ func TestLive_Worklogs_NoCollisionsOrGaps(t *testing.T) {
 		// before this lint existed. Renumbering them would require
 		// updating ~26 cross-references and is too risky relative to
 		// benefit. Cut the line at 0097 (worklog 0097 is where this
-		// lint was introduced) and require strict sequencing forward.
+		// lint was introduced).
 		GrandfatherBelow: 97,
+		// Mirror cmd/repolint/main.go runWorklogs: gaps are warnings,
+		// not failures. Concurrent merges + auto-rename hooks
+		// produce gaps the autofix bot cannot heal without breaking
+		// MainlineCheck. Uniqueness is what's load-bearing here;
+		// duplicates still fail OK() regardless of AllowGaps. See
+		// worklog 0357 for the rationale.
+		AllowGaps: true,
 	})
 	if err != nil {
 		t.Fatalf("scanning worklogs: %v", err)
 	}
 	if !rep.OK() {
-		t.Fatalf("worklogs/ has issues at >= 0097:\n%s", rep.String())
+		t.Fatalf("worklogs/ has duplicate version(s) at >= 0097:\n%s", rep.String())
 	}
 }
 

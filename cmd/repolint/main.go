@@ -38,7 +38,7 @@ const (
 
 	// worklogGrandfatherBelow is the cutoff before which historical
 	// duplicates and gaps are tolerated. See pkg/repolint/sequence_test.go
-	// (TestLive_Worklogs_NoCollisionsOrGaps) for the rationale.
+	// (TestLive_Worklogs_NoDuplicates) for the rationale.
 	worklogGrandfatherBelow = 97
 )
 
@@ -164,15 +164,29 @@ func runWorklogs(root string) int {
 		Pattern:          repolint.WorklogPattern,
 		RequirePaired:    false,
 		GrandfatherBelow: worklogGrandfatherBelow,
+		// Worklogs are append-only documentation. Concurrent merges
+		// + auto-rename collisions can leave gaps the autofix bot
+		// cannot heal without breaking MainlineCheck (a worklog
+		// already on origin/main must not be renumbered locally).
+		// Treat gaps as warnings to avoid main going red on a
+		// healable failure mode. Uniqueness and the mainline
+		// collision check still hard-fail. Migrations remain strict
+		// (runMigrations does NOT pass AllowGaps) — an out-of-order
+		// migration breaks schema rebuild.
+		AllowGaps: true,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL  worklogs sequence: %v\n", err)
 		return 1
 	}
 	if !rep.OK() {
-		fmt.Fprintf(os.Stderr, "FAIL  worklogs sequence in %s (entries >= %04d must be unique and contiguous):\n%s\n",
+		fmt.Fprintf(os.Stderr, "FAIL  worklogs sequence in %s (entries >= %04d must be unique):\n%s\n",
 			dir, worklogGrandfatherBelow, rep.String())
 		return 1
+	}
+	if rep.HasWarnings() {
+		fmt.Printf("WARN  worklogs sequence has gaps at %v (max %04d) — accepted\n",
+			rep.MissingVersions, rep.MaxVersion)
 	}
 	fmt.Printf("ok    worklogs sequence (%d worklogs, max %04d, grandfathered <%04d)\n",
 		len(rep.SeenVersions), rep.MaxVersion, worklogGrandfatherBelow)
