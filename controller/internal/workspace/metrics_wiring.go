@@ -148,10 +148,9 @@ func recordStatusUpdateConflictInto(ctr *prometheus.CounterVec, site string) {
 // Non-conflict errors (Forbidden, NotFound, internal) are silently ignored —
 // the metric is exclusively about optimistic-lock conflicts.
 //
-// This is the helper used inline at the 18 r.Status().Update() call sites
-// that have not been migrated to the updateStatusWithRetry helper (which is
-// gated on US-23.3 per design). The 3 LastActivityAt writers also use this
-// helper for the same metric coverage.
+// This is the helper used inline at the 21 r.Status().Update() call sites.
+// The LastActivityAt annotation migration (US-23.3) moved activity writes
+// out of Status, so the controller no longer writes LastActivityAt.
 func recordStatusUpdateConflictOnErrorInto(ctr *prometheus.CounterVec, site string, err error) {
 	if ctr == nil || err == nil {
 		return
