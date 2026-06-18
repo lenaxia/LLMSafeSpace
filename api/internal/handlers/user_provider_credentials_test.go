@@ -806,3 +806,23 @@ func TestUserProviderCredentials_ProbeModels_WithBaseURL_Success(t *testing.T) {
 	assert.Equal(t, 200000, byID["glm-5.1"].ContextLimit, "saved context limit must be populated")
 	assert.Equal(t, 0, byID["glm-5.2"].ContextLimit, "unsaved model has no context limit")
 }
+
+// TestUserProviderCredentials_Delete_NotFound_Returns204 verifies that deleting
+// a non-existent credential returns 204 (idempotent), not 500. Regression test
+// for C3: the unified DeleteCredential returns pgx.ErrNoRows on 0 rows; the
+// user delete handler must treat this as success to preserve the old behavior.
+func TestUserProviderCredentials_Delete_NotFound_Returns204(t *testing.T) {
+	store := newFakeUserCredStore()
+	// Seed nothing — the credential doesn't exist.
+	h := &UserProviderCredentialsHandler{
+		store:    store,
+		bindings: store,
+	}
+	router := setupUserCredRouter(h)
+
+	req, _ := http.NewRequest("DELETE", "/api/v1/provider-credentials/does-not-exist", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNoContent, w.Code, "deleting a missing credential must be idempotent (204)")
+}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 )
 
@@ -239,7 +240,14 @@ func (h *UserProviderCredentialsHandler) Delete(c *gin.Context) {
 		boundWSIDs = nil // non-fatal; worst case pods keep old key until next restart
 	}
 
+	// The unified DeleteCredential returns pgx.ErrNoRows when no row was affected.
+	// User delete was historically idempotent (204 even if already gone); preserve
+	// that by treating "not found" as success.
 	if err := h.store.DeleteCredential(c.Request.Context(), "user", userID, credID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.Status(http.StatusNoContent)
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete credential"})
 		return
 	}

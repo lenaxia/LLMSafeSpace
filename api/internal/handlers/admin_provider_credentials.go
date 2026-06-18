@@ -73,13 +73,17 @@ type updateAdminCredentialRequest struct {
 func buildCredentialResponse(row *secrets.CredentialRow, key []byte) CredentialResponse {
 	resp := CredentialResponse{
 		ID:                 row.ID,
-		OrgID:              row.OwnerID,
 		Name:               row.Name,
 		Provider:           row.Provider,
 		ModelAllowlist:     row.ModelAllowlist,
 		ModelContextLimits: row.ModelContextLimits,
 		CreatedAt:          row.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:          row.UpdatedAt.Format(time.RFC3339),
+	}
+	// OrgID is populated only for org-scoped credentials; admin/user credentials
+	// omit it (OwnerID is "_platform" or a user id — not meaningful to clients).
+	if row.OwnerType == "org" {
+		resp.OrgID = row.OwnerID
 	}
 	if resp.ModelAllowlist == nil {
 		resp.ModelAllowlist = []string{}

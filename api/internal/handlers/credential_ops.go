@@ -28,18 +28,14 @@ func (e *probeError) Error() string { return fmt.Sprintf("probe: %s (%d)", e.msg
 
 // getCredentialForProbe fetches a credential row, resolves the encryption key,
 // decrypts the ciphertext, and returns the plaintext (LLMProviderData JSON)
-// plus the row's saved model context limits for model probing. It writes an
-// HTTP-appropriate response to c and returns a non-nil probeError when the row
-// is not found, the key is unavailable, or decryption fails — in which case the
-// caller must return immediately.
+// plus the row's saved model context limits for model probing. It returns a
+// non-nil probeError when the row is not found, the key is unavailable, or
+// decryption fails — the caller writes the HTTP response from the error.
 //
 // The returned plaintext must be zeroed by the caller once no longer needed
 // (probeCredentialModels copies out what it needs but does not zero).
 func getCredentialForProbe(
 	ctx context.Context,
-	c interface {
-		JSON(code int, obj interface{})
-	},
 	store CredentialStore,
 	ownerType, ownerID, credID string,
 	resolveKey credentialKeyResolver,

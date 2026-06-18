@@ -580,3 +580,38 @@ func TestAdminProviderCredentials_ProbeModels_WithBaseURL_Success(t *testing.T) 
 	assert.Equal(t, 1000000, byID["glm-5.2"].ContextLimit)
 	assert.Equal(t, 0, byID["classifier"].ContextLimit, "classifier has no saved limit")
 }
+
+// TestAdminProviderCredentials_Response_NoOrgID verifies that admin credential
+// responses do NOT include the orgId field (regression test for C1: the unified
+// buildCredentialResponse leaked orgId:"_platform" into admin responses).
+func TestAdminProviderCredentials_Response_NoOrgID(t *testing.T) {
+	store := newFakeAdminCredStore()
+	kek := make([]byte, 32)
+	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
+	router := setupAdminCredRouter(h)
+
+	// Create a credential.
+	createBody := `{"name":"test","provider":"openai","apiKey":"sk-test"}`
+	req, _ := http.NewRequest("POST", "/api/v1/admin/provider-credentials", bytes.NewBufferString(createBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	// Assert the raw JSON does NOT contain "orgId".
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
+	_, hasOrgID := raw["orgId"]
+	assert.False(t, hasOrgID, "admin response must not include orgId")
+
+	// Also check List (which uses buildCredentialResponse).
+	req2, _ := http.NewRequest("GET", "/api/v1/admin/provider-credentials", nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req2)
+	require.Equal(t, http.StatusOK, w2.Code)
+	var listRaw []map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &listRaw))
+	require.NotEmpty(t, listRaw)
+	_, hasOrgIDList := listRaw[0]["orgId"]
+	assert.False(t, hasOrgIDList, "admin List response must not include orgId")
+}

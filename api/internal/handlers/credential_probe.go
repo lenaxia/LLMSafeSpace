@@ -163,8 +163,9 @@ func isPrivateIP(ip net.IP) bool {
 	return false
 }
 
-// plaintext bytes), calls GET {baseURL}/v1/models with the stored API key,
-// merges saved context limits, and returns the probe response.
+// probeCredentialModels takes the decrypted LLMProviderData, calls GET
+// {baseURL}/v1/models with the stored API key, merges saved context limits,
+// and returns the probe response.
 //
 // plaintext must be the decrypted JSON-encoded LLMProviderData.
 // savedLimits is the ModelContextLimits map from the credential row.
@@ -248,7 +249,7 @@ func (h *AdminProviderCredentialsHandler) ProbeModels(c *gin.Context) {
 		}
 		return nil, "master secret not configured", http.StatusServiceUnavailable
 	}
-	plaintext, limits, perr := getCredentialForProbe(c.Request.Context(), c, h.store, "admin", "_platform", id, resolveKey)
+	plaintext, limits, perr := getCredentialForProbe(c.Request.Context(), h.store, "admin", "_platform", id, resolveKey)
 	if perr != nil {
 		c.JSON(perr.status, gin.H{"error": perr.msg})
 		return
@@ -273,7 +274,7 @@ func (h *UserProviderCredentialsHandler) ProbeModels(c *gin.Context) {
 		}
 		return dek, "", 0
 	}
-	plaintext, limits, perr := getCredentialForProbe(c.Request.Context(), c, h.store, "user", userID, c.Param("id"), resolveKey)
+	plaintext, limits, perr := getCredentialForProbe(c.Request.Context(), h.store, "user", userID, c.Param("id"), resolveKey)
 	if perr != nil {
 		c.JSON(perr.status, gin.H{"error": perr.msg})
 		return

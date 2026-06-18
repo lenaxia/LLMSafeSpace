@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
@@ -888,4 +889,65 @@ func TestOrgCredentials_List_PartialDecryptFailure_NonFatal(t *testing.T) {
 	assert.Equal(t, "https://good.example.com/v1", byID["cred-good"].BaseURL, "good credential must have baseURL")
 	assert.Equal(t, "", byID["cred-corrupt"].BaseURL, "corrupt credential must omit baseURL but still appear")
 	assert.Equal(t, "corrupt", byID["cred-corrupt"].Name, "corrupt credential metadata must still be returned")
+}
+
+// TestOrgCredentials_List_OrderIsNewestFirst verifies that List returns
+// credentials in DESCENDING created_at order (newest first). Regression test
+// for C2: the unified ListCredentials returns ASC, which flipped the org list
+// from newest-first to oldest-first.
+func TestOrgCredentials_List_OrderIsNewestFirst(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+
+	// Seed two creds with distinct timestamps.
+	base := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	for i, tc := range []struct {
+		id    string
+		hours int
+	}{
+		{"cred-old", 0},
+		{"cred-new", 1},
+	} {
+		ts := base.Add(time.Duration(tc.hours) * time.Hour)
+		store.creds[tc.id] = &secrets.CredentialRow{
+			ID:        tc.id,
+			OwnerType: "org",
+			OwnerID:   "org-1",
+			Name:      tc.id,
+			Provider:  "openai",
+			CreatedAt: ts,
+			UpdatedAt: ts,
+		}
+		_ = i
+	}
+
+	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	req, _ := http.NewRequest("GET", "/api/v1/orgs/org-1/credentials", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp []CredentialResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp, 2)
+	assert.Equal(t, "cred-new", resp[0].ID, "newest credential must be first (DESC order)")
+	assert.Equal(t, "cred-old", resp[1].ID, "oldest credential must be last")
+}
+
+// TestOrgCredentials_Delete_NotFound_Returns204 verifies that deleting a
+// non-existent credential returns 204 (idempotent), not 500. Regression test
+// for C3: the unified DeleteCredential returns pgx.ErrNoRows on 0 rows.
+func TestOrgCredentials_Delete_NotFound_Returns204(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	req, _ := http.NewRequest("DELETE", "/api/v1/orgs/org-1/credentials/does-not-exist", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNoContent, w.Code, "deleting a missing credential must be idempotent (204)")
 }

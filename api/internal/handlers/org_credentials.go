@@ -8,11 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-
+	"github.com/jackc/pgx/v5"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 )
 
@@ -150,6 +151,11 @@ func (h *OrgCredentialsHandler) List(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list credentials"})
 		return
 	}
+	// The unified ListCredentials returns ASC (matching admin/user). The org
+	// credential list was historically DESC (newest first); preserve that order.
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].CreatedAt.After(rows[j].CreatedAt)
+	})
 	kek := h.orgKEK()
 	resp := make([]CredentialResponse, 0, len(rows))
 	for _, row := range rows {
@@ -269,7 +275,14 @@ func (h *OrgCredentialsHandler) Update(c *gin.Context) {
 func (h *OrgCredentialsHandler) Delete(c *gin.Context) {
 	orgID := c.Param("id")
 	credID := c.Param("credID")
+	// The unified DeleteCredential returns pgx.ErrNoRows when no row was affected.
+	// Org delete was historically idempotent (204 even if already gone); preserve
+	// that by treating "not found" as success.
 	if err := h.credStore.DeleteCredential(c.Request.Context(), "org", orgID, credID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.Status(http.StatusNoContent)
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete credential"})
 		return
 	}
@@ -291,7 +304,7 @@ func (h *OrgCredentialsHandler) ProbeModels(c *gin.Context) {
 		}
 		return nil, "server key not configured", http.StatusServiceUnavailable
 	}
-	plaintext, limits, perr := getCredentialForProbe(ctx, c, h.credStore, "org", orgID, credID, resolveKey)
+	plaintext, limits, perr := getCredentialForProbe(ctx, h.credStore, "org", orgID, credID, resolveKey)
 	if perr != nil {
 		c.JSON(perr.status, gin.H{"error": perr.msg})
 		return
