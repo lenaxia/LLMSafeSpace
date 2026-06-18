@@ -28,6 +28,17 @@ func newTestGaugeVec(name string, labels []string) *prometheus.GaugeVec {
 	return prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: name}, labels)
 }
 
+func newTestGauge(name string) prometheus.Gauge {
+	return prometheus.NewGauge(prometheus.GaugeOpts{Name: name})
+}
+
+func gaugeValue(t *testing.T, g prometheus.Gauge) float64 {
+	t.Helper()
+	m := &dto.Metric{}
+	require.NoError(t, g.(prometheus.Metric).Write(m))
+	return m.GetGauge().GetValue()
+}
+
 func newTestHistogramVec(name string, labels []string) *prometheus.HistogramVec {
 	return prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{Name: name, Buckets: []float64{1, 5, 10, 60}},
@@ -96,8 +107,10 @@ func TestWorkspacesDeletedIncremented(t *testing.T) {
 func TestRecordRecoveryMetrics_IncrementsAttempts(t *testing.T) {
 	attempts := newTestCounterVec("test_rec_attempts_a", []string{"failure_class"})
 	backoffHist := newTestHistogramVec("test_rec_backoff_a", []string{"failure_class"})
-	safeModeGauge := newTestGaugeVec("test_safe_mode_a", []string{"workspace_id"})
+	safeModeGauge := newTestGauge("test_safe_mode_a")
+	safeModeEntries := newTestCounterVec("test_safe_mode_entries_a", []string{"trigger"})
 	failedCtr := newTestCounterVec("test_ws_failed_a", []string{"reason"})
+	inRecovery := newTestGauge("test_in_recovery_a")
 
 	ws := &v1.Workspace{}
 	ws.UID = "ws-uid-a"
@@ -107,16 +120,19 @@ func TestRecordRecoveryMetrics_IncrementsAttempts(t *testing.T) {
 	ws.Status.NextRetryAt = nil
 	ws.Status.LastFailureAt = &now
 
-	recordRecoveryMetricsInto(ws, FailureClassProcess, attempts, backoffHist, safeModeGauge, failedCtr)
+	recordRecoveryMetricsInto(ws, FailureClassProcess, false, false, attempts, backoffHist, safeModeGauge, safeModeEntries, failedCtr, inRecovery)
 
 	assert.Equal(t, float64(1), counterValue(t, attempts, string(FailureClassProcess)))
+	assert.Equal(t, float64(1), gaugeValue(t, inRecovery), "in-recovery gauge must increment on first entry")
 }
 
 func TestRecordRecoveryMetrics_RecordsBackoff(t *testing.T) {
 	attempts := newTestCounterVec("test_rec_attempts_b", []string{"failure_class"})
 	backoffHist := newTestHistogramVec("test_rec_backoff_b", []string{"failure_class"})
-	safeModeGauge := newTestGaugeVec("test_safe_mode_b", []string{"workspace_id"})
+	safeModeGauge := newTestGauge("test_safe_mode_b")
+	safeModeEntries := newTestCounterVec("test_safe_mode_entries_b", []string{"trigger"})
 	failedCtr := newTestCounterVec("test_ws_failed_b", []string{"reason"})
+	inRecovery := newTestGauge("test_in_recovery_b")
 
 	ws := &v1.Workspace{}
 	ws.UID = "ws-uid-b"
@@ -125,48 +141,73 @@ func TestRecordRecoveryMetrics_RecordsBackoff(t *testing.T) {
 	next := metav1.NewTime(time.Now().Add(10 * time.Second))
 	ws.Status.NextRetryAt = &next
 
-	recordRecoveryMetricsInto(ws, FailureClassInfrastructure, attempts, backoffHist, safeModeGauge, failedCtr)
+	recordRecoveryMetricsInto(ws, FailureClassInfrastructure, false, false, attempts, backoffHist, safeModeGauge, safeModeEntries, failedCtr, inRecovery)
 
 	assert.Equal(t, uint64(1), histCount(t, backoffHist, string(FailureClassInfrastructure)))
 }
 
-func TestRecordRecoveryMetrics_SafeMode_SetsGauge(t *testing.T) {
+func TestRecordRecoveryMetrics_SafeModeTransition_SetsGauge(t *testing.T) {
 	attempts := newTestCounterVec("test_rec_attempts_c", []string{"failure_class"})
 	backoffHist := newTestHistogramVec("test_rec_backoff_c", []string{"failure_class"})
-	safeModeGauge := newTestGaugeVec("test_safe_mode_c", []string{"workspace_id"})
+	safeModeGauge := newTestGauge("test_safe_mode_c")
+	safeModeEntries := newTestCounterVec("test_safe_mode_entries_c", []string{"trigger"})
 	failedCtr := newTestCounterVec("test_ws_failed_c", []string{"reason"})
+	inRecovery := newTestGauge("test_in_recovery_c")
 
 	ws := &v1.Workspace{}
 	ws.UID = "ws-uid-c"
 	ws.Status.ConsecutiveFailures = 6
 	ws.Status.SafeMode = true
 
-	recordRecoveryMetricsInto(ws, FailureClassProcess, attempts, backoffHist, safeModeGauge, failedCtr)
+	// wasInSafeMode=false → transition fires gauge + entries.
+	recordRecoveryMetricsInto(ws, FailureClassProcess, false, false, attempts, backoffHist, safeModeGauge, safeModeEntries, failedCtr, inRecovery)
 
-	assert.Equal(t, float64(1), gaugeVecValue(t, safeModeGauge, "ws-uid-c"))
+	assert.Equal(t, float64(1), gaugeValue(t, safeModeGauge))
+	assert.Equal(t, float64(1), counterValue(t, safeModeEntries, string(FailureClassProcess)))
 	assert.Equal(t, float64(1), counterValue(t, failedCtr, string(FailureClassProcess)))
 }
 
 func TestRecordRecoveryMetrics_NoSafeMode_GaugeZero(t *testing.T) {
 	attempts := newTestCounterVec("test_rec_attempts_d", []string{"failure_class"})
 	backoffHist := newTestHistogramVec("test_rec_backoff_d", []string{"failure_class"})
-	safeModeGauge := newTestGaugeVec("test_safe_mode_d", []string{"workspace_id"})
+	safeModeGauge := newTestGauge("test_safe_mode_d")
+	safeModeEntries := newTestCounterVec("test_safe_mode_entries_d", []string{"trigger"})
 	failedCtr := newTestCounterVec("test_ws_failed_d", []string{"reason"})
+	inRecovery := newTestGauge("test_in_recovery_d")
 
 	ws := &v1.Workspace{}
 	ws.UID = "ws-uid-d"
 	ws.Status.ConsecutiveFailures = 1
 	ws.Status.SafeMode = false
 
-	safeModeGauge.WithLabelValues("ws-uid-d").Set(1)
+	recordRecoveryMetricsInto(ws, FailureClassProcess, false, false, attempts, backoffHist, safeModeGauge, safeModeEntries, failedCtr, inRecovery)
 
-	recordRecoveryMetricsInto(ws, FailureClassProcess, attempts, backoffHist, safeModeGauge, failedCtr)
+	assert.Equal(t, float64(0), gaugeValue(t, safeModeGauge))
+	assert.Equal(t, float64(0), counterValue(t, safeModeEntries, string(FailureClassProcess)))
+}
 
-	m := &dto.Metric{}
-	err := safeModeGauge.WithLabelValues("ws-uid-d").Write(m)
-	if err == nil {
-		assert.Equal(t, float64(0), m.GetGauge().GetValue())
-	}
+// TestRecordRecoveryMetrics_RepeatedFailure_NoDoubleInc verifies the
+// gauge Inc is guarded by the wasInRecovery flag — a workspace that
+// enters recovery a second time must NOT Inc the gauge again.
+func TestRecordRecoveryMetrics_RepeatedFailure_NoDoubleInc(t *testing.T) {
+	attempts := newTestCounterVec("test_rec_attempts_e", []string{"failure_class"})
+	backoffHist := newTestHistogramVec("test_rec_backoff_e", []string{"failure_class"})
+	safeModeGauge := newTestGauge("test_safe_mode_e")
+	safeModeEntries := newTestCounterVec("test_safe_mode_entries_e", []string{"trigger"})
+	failedCtr := newTestCounterVec("test_ws_failed_e", []string{"reason"})
+	inRecovery := newTestGauge("test_in_recovery_e")
+	inRecovery.Inc() // simulate prior entry
+
+	ws := &v1.Workspace{}
+	ws.UID = "ws-uid-e"
+	ws.Status.ConsecutiveFailures = 2 // was 1, now 2 — already in recovery
+	ws.Status.SafeMode = false
+
+	// wasInRecovery=true → must NOT Inc the gauge again.
+	recordRecoveryMetricsInto(ws, FailureClassProcess, true, false, attempts, backoffHist, safeModeGauge, safeModeEntries, failedCtr, inRecovery)
+
+	assert.Equal(t, float64(1), gaugeValue(t, inRecovery), "gauge must stay at 1 — no double Inc on repeated failure")
+	assert.Equal(t, float64(1), counterValue(t, attempts, string(FailureClassProcess)), "counter must increment once for this call")
 }
 
 // ---- WorkspaceActiveSeconds ----

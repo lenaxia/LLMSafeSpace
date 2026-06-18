@@ -51,12 +51,23 @@ func incrementWorkspacesDeleted(ws *v1.Workspace) {
 func recordRecoveryMetricsInto(
 	ws *v1.Workspace,
 	class FailureClass,
+	wasInRecovery bool,
+	wasInSafeMode bool,
 	attempts *prometheus.CounterVec,
 	backoffHist *prometheus.HistogramVec,
-	safeModeGauge *prometheus.GaugeVec,
+	safeModeGauge prometheus.Gauge,
+	safeModeEntries *prometheus.CounterVec,
 	failedCtr *prometheus.CounterVec,
+	inRecoveryGauge prometheus.Gauge,
 ) {
 	attempts.WithLabelValues(string(class)).Inc()
+
+	// Only Inc the gauge on the first entry into recovery for this episode.
+	// A workspace that fails N times only Dec's once on recovery success,
+	// so N Inc's would drift the gauge by N-1.
+	if !wasInRecovery {
+		inRecoveryGauge.Inc()
+	}
 
 	if ws.Status.NextRetryAt != nil {
 		backoff := time.Until(ws.Status.NextRetryAt.Time)
@@ -66,23 +77,23 @@ func recordRecoveryMetricsInto(
 		backoffHist.WithLabelValues(string(class)).Observe(backoff.Seconds())
 	}
 
-	workspaceID := string(ws.UID)
-	if ws.Status.SafeMode {
-		safeModeGauge.WithLabelValues(workspaceID).Set(1)
+	// Only Inc safe-mode gauge + entries on the false→true transition.
+	if ws.Status.SafeMode && !wasInSafeMode {
+		safeModeGauge.Inc()
+		safeModeEntries.WithLabelValues(string(class)).Inc()
 		failedCtr.WithLabelValues(string(class)).Inc()
-	} else {
-		safeModeGauge.DeleteLabelValues(workspaceID)
 	}
 }
 
-// recordRecoveryMetrics records into package-level metrics.
-func recordRecoveryMetrics(ws *v1.Workspace, class FailureClass) {
+func recordRecoveryMetrics(ws *v1.Workspace, class FailureClass, wasInRecovery, wasInSafeMode bool) {
 	recordRecoveryMetricsInto(
-		ws, class,
+		ws, class, wasInRecovery, wasInSafeMode,
 		metrics.WorkspaceRecoveryAttemptsTotal,
 		metrics.WorkspaceRecoveryBackoffDurationSeconds,
 		metrics.WorkspaceSafeModeActive,
+		metrics.WorkspaceSafeModeEntriesTotal,
 		metrics.WorkspacesFailedTotal,
+		metrics.WorkspacesInRecovery,
 	)
 }
 
