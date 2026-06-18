@@ -77,9 +77,6 @@ var (
 	// These DO count against the circuit breaker.
 	ErrConfig = errors.New("provider configuration error")
 
-	// ErrNotImplemented indicates the driver does not support this provider yet.
-	ErrNotImplemented = errors.New("provider driver not implemented")
-
 	// ErrTimeout indicates the provisioning operation timed out.
 	ErrTimeout = errors.New("provisioning timed out")
 )

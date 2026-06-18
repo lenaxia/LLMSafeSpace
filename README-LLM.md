@@ -2,7 +2,7 @@
 
 > **Repository:** `github.com/lenaxia/llmsafespace`
 
-**Version:** 1.14
+**Version:** 1.15
 **Last Updated:** 2026-06-18
 **Project Status:** Active Development
 
@@ -49,13 +49,13 @@
 
 - [`design/0021_2026-05-21_evolution-v2.md`](design/0021_2026-05-21_evolution-v2.md) — V2 architecture (v2.4). Supersedes all V1 design docs for the areas it covers.
 
-**V1 design docs (reference only — superseded by evolution-v2.md where they conflict):**
+**V1 design docs (reference only — superseded by evolution-v2.md where they conflict; archived under `design/archive/v1/`):**
 
-- `design/0001_2025-03-05_architecture.md` — System overview, deployment topology, security model
-- `design/0003_2025-03-05_controller.md` — Controller specification (V1 CRDs, reconciliation loops)
-- `design/0005_2025-03-05_security.md` — Defense-in-depth security model
-- `design/0007_2025-03-05_network.md` — Network policy design and egress filtering
-- `design/0006_2025-03-05_runtimeenv.md` — Runtime environments
+- `design/archive/v1/0001_2025-03-05_architecture.md` — System overview, deployment topology, security model
+- `design/archive/v1/0003_2025-03-05_controller.md` — Controller specification (V1 CRDs, reconciliation loops)
+- `design/archive/v1/0005_2025-03-05_security.md` — Defense-in-depth security model
+- `design/archive/v1/0020_2025-03-05_network.md` — Network policy design and egress filtering
+- `design/archive/v1/0007_2025-03-05_runtimeenv.md` — Runtime environments
 
 ---
 
@@ -180,10 +180,10 @@ Key documents by area:
 | **V2 Architecture** | `design/0021_2026-05-21_evolution-v2.md` (authoritative) |
 | V2 Implementation stories | `design/stories/` |
 | Security model | `design/0027_2026-05-24_security-policy-v21.md`, `design/0021 §9` |
-| System overview (V1) | `design/0001_2025-03-05_architecture.md` |
-| Controller + CRDs (V1) | `design/0003_2025-03-05_controller.md` |
-| Runtime environments (V1) | `design/0006_2025-03-05_runtimeenv.md` |
-| Network policies (V1) | `design/0007_2025-03-05_network.md` |
+| System overview (V1) | `design/archive/v1/0001_2025-03-05_architecture.md` |
+| Controller + CRDs (V1) | `design/archive/v1/0003_2025-03-05_controller.md` |
+| Runtime environments (V1) | `design/archive/v1/0007_2025-03-05_runtimeenv.md` |
+| Network policies (V1) | `design/archive/v1/0020_2025-03-05_network.md` |
 
 ### 9. Communication Tone
 
@@ -1422,6 +1422,7 @@ The API service is configured via `api/config/config.yaml` with environment vari
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.15 | 2026-06-18 | US-46.14/US-46.15: archived V1 design docs (`0001`–`0020`) to `design/archive/v1/`; repointed all V1 references in README-LLM.md to the archive path; fixed stale filenames (network doc was listed as `0007` but is `0020`; runtimeenv doc was listed as `0006` but is `0007`) |
 | 1.14 | 2026-06-18 | Reclassified annotateModels remap guard from "dead code (tech debt to remove)" to "intentional defense-in-depth" — aligns the doc with the code author's documented reasoning at `models.go:450-456` and the hardening history from worklogs 0178/0189 (see worklog 0341) |
 | 1.13 | 2026-06-12 | Removed redundant Bug Status, Confirmed Bugs, Implementation Status, Branch Management sections; simplified repo structure, worklog template, multi-agent workflow, PR adversarial assessment; folded scoring bullets into tables; compressed relay write sequences and version history; removed backwards compat; updated annotateModels remap note |
 | 1.12 | 2026-06-11 | Fixed repo structure, CRD count, architecture diagram, API reference, tech stack, SSE paths, route docs |

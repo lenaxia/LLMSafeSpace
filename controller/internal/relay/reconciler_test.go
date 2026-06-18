@@ -114,7 +114,6 @@ func newTestReconciler(t *testing.T, objs ...runtime.Object) (*InferenceRelayRec
 		Drivers: map[string]ProviderDriver{
 			"aws": &AWSDriver{},
 			"oci": &stubDriver{},
-			"gcp": &GCPDriver{},
 		},
 	}
 	return r, builder
@@ -238,6 +237,45 @@ func TestReconcileFleet_ConfigError_MarksFailed(t *testing.T) {
 	assert.Equal(t, string(v1.RelayStateProvisioningFailed), updated.Status.Instances[0].State)
 	assert.Contains(t, updated.Status.Instances[0].LastProvisionError, "provider configuration error")
 	assert.Equal(t, 1, updated.Status.Instances[0].ProvisioningAttempts)
+}
+
+// TestReconcileFleet_UnknownProvider_FailsFastWithConfigError locks in the
+// contract relied on by US-46.2 (removal of the GCP stub driver): a provider
+// listed in spec that has no registered driver must fail fast as a
+// configuration error (ProvisioningFailed with a clear message), not silently
+// requeue forever.
+func TestReconcileFleet_UnknownProvider_FailsFastWithConfigError(t *testing.T) {
+	relay := makeRelayCR()
+	relay.Spec.Providers = []v1.RelayProviderSpec{
+		{Provider: "gcp", Region: "us-west1", CredentialsRef: corev1.LocalObjectReference{Name: "gcp-credentials"}},
+	}
+	common.AddFinalizer(relay, InferenceRelayFinalizer)
+
+	scheme := testScheme(t)
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithRuntimeObjects(relay).
+		WithStatusSubresource(&v1.InferenceRelay{}).
+		Build()
+
+	r := &InferenceRelayReconciler{
+		Client:    fakeClient,
+		Scheme:    scheme,
+		Namespace: "test-ns",
+		Drivers:   map[string]ProviderDriver{"aws": &AWSDriver{}, "oci": &stubDriver{}},
+	}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "relay-fleet"},
+	})
+	require.NoError(t, err)
+
+	updated := &v1.InferenceRelay{}
+	_ = r.Get(context.Background(), types.NamespacedName{Name: "relay-fleet"}, updated)
+	require.NotEmpty(t, updated.Status.Instances)
+	assert.Equal(t, string(v1.RelayStateProvisioningFailed), updated.Status.Instances[0].State,
+		"provider with no driver must be marked ProvisioningFailed")
+	assert.Contains(t, updated.Status.Instances[0].LastProvisionError, "no driver for provider gcp")
 }
 
 func TestReconcileFleet_CapacityError_DoesNotMarkFailed(t *testing.T) {

@@ -176,7 +176,11 @@ jobs:
               -covermode=atomic \
               -coverpkg=./... \
               ./... 2>/dev/null) || true
-          base_total=$(go tool cover -func=/tmp/base-tree/coverage-base.out | awk '/^total:/ {print $3}' | tr -d '%')
+          # Run cover -func INSIDE the worktree because the base coverage
+          # profile references source files that may have been deleted in
+          # this PR (go tool cover needs the source to resolve function
+          # boundaries). Running from HEAD would fail on any file deletion.
+          base_total=$(cd /tmp/base-tree && go tool cover -func=coverage-base.out | awk '/^total:/ {print $3}' | tr -d '%')
           new_total=$(go tool cover -func=coverage.out | awk '/^total:/ {print $3}' | tr -d '%')
           delta=$(awk -v b="$base_total" -v n="$new_total" 'BEGIN { printf "%.2f", n - b }')
           echo "base=${base_total}%  new=${new_total}%  delta=${delta}%"

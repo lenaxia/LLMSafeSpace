@@ -51,12 +51,10 @@ func SetupRelayController(mgr ctrl.Manager, namespace, routerURL string, enableR
 		Drivers: map[string]relay.ProviderDriver{
 			"aws": relay.NewAWSDriver(mgr.GetClient(), namespace, "aws-relay-irwa"),
 			"oci": relay.NewOCIDriver(mgr.GetClient(), namespace, "oci-credentials"),
-			"gcp": &relay.GCPDriver{},
 		},
 		ExpectedCredentialSecrets: map[string]string{
 			"aws": "aws-relay-irwa",
 			"oci": "oci-credentials",
-			"gcp": "gcp-credentials",
 		},
 	}
 

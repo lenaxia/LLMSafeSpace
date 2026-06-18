@@ -1,4 +1,11 @@
-# Epic 43: Relay Admin UX
+# Epic 48: Relay Admin UX
+
+> **Renumbered** from `epic-43` (US-46.1, 2026-06-18): the `epic-43` slot collided
+> with `epic-43-organization-management`. This directory moved to `epic-48` (the
+> next free slot after `epic-47-frontend-architecture-consolidation`) to give
+> every epic a unique number. Internal story IDs remain `US-43.x` (historical
+> labels referenced by append-only worklogs); the directory number is the
+> canonical handle going forward.
 
 **Status:** Implemented
 **Created:** 2026-06-14
