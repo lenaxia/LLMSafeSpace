@@ -85,6 +85,13 @@ const stabilityResetWindow = 2 * time.Minute
 func (r *WorkspaceReconciler) enterRecovery(ctx context.Context, ws *v1.Workspace, class FailureClass) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
+	// Capture transition state before incrementing. Gauges must only Inc
+	// on the not-in-recovery → in-recovery transition, not on every
+	// enterRecovery call (a workspace can fail N times before recovering,
+	// but only Dec's once on success — so N Inc's would drift by N-1).
+	wasInRecovery := ws.Status.ConsecutiveFailures > 0
+	wasInSafeMode := ws.Status.SafeMode
+
 	ws.Status.ConsecutiveFailures++
 	ws.Status.LastFailureClass = string(class)
 	now := metav1.Now()
@@ -119,8 +126,6 @@ func (r *WorkspaceReconciler) enterRecovery(ctx context.Context, ws *v1.Workspac
 		recordStatusUpdateConflictOnError("enterRecovery", err)
 		return result, err
 	}
-	// Record metrics after successful status persist so transient update
-	// failures don't increment counters without a durable state change.
-	recordRecoveryMetrics(ws, class)
+	recordRecoveryMetrics(ws, class, wasInRecovery, wasInSafeMode)
 	return result, nil
 }
