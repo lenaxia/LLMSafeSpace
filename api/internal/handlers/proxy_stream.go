@@ -48,15 +48,19 @@ func (h *ProxyHandler) StreamEvents(c *gin.Context) {
 		return
 	}
 
+	sub, subErr := h.userBroker.SubscribeWorkspace(workspaceID)
+	if subErr != nil {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many SSE connections for this workspace"})
+		return
+	}
+	defer h.userBroker.UnsubscribeWorkspace(workspaceID, sub)
+
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 	c.Writer.WriteHeader(http.StatusOK)
 	flusher.Flush()
-
-	sub, _ := h.userBroker.SubscribeWorkspace(workspaceID)
-	defer h.userBroker.UnsubscribeWorkspace(workspaceID, sub)
 
 	if h.sseTracker != nil {
 		h.sseTracker.EnsureWatching(workspaceID)

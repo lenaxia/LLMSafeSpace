@@ -275,6 +275,33 @@ func TestStreamEvents_ClientDisconnectUnsubscribes(t *testing.T) {
 	}, time.Second, 5*time.Millisecond, "broker should unsubscribe disconnected client")
 }
 
+// TestStreamEvents_TooManySubscribers_Returns429 verifies that when a workspace
+// reaches its subscriber limit, the next SSE request gets 429 instead of a
+// nil-pointer panic (regression test for US-38.8 broker consolidation).
+func TestStreamEvents_TooManySubscribers_Returns429(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	env := newTestEnv(t)
+	broker := eventbroker.NewUserEventBroker()
+	env.handler.userBroker = broker
+	env.wsMock.On("Get", mock.Anything, "ws-limit", metav1.GetOptions{}).
+		Return(makeWorkspaceCRDWithStatus("ws-limit", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-limit"), nil).Maybe()
+
+	// Exhaust the subscriber limit.
+	for i := 0; i < eventbroker.MaxSubscribersPerUser; i++ {
+		sub, err := broker.SubscribeWorkspace("ws-limit")
+		require.NoError(t, err, "subscription %d should succeed", i)
+		defer broker.UnsubscribeWorkspace("ws-limit", sub)
+	}
+
+	// Next request should get 429, not panic.
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/workspaces/ws-limit/events", nil)
+	newStreamEventsRouter(env.handler).ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusTooManyRequests, w.Code)
+}
+
 func TestStreamEvents_OnPhaseChange_PublishesToBroker(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
@@ -284,9 +311,6 @@ func TestStreamEvents_OnPhaseChange_PublishesToBroker(t *testing.T) {
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
-
-	broker := eventbroker.NewUserEventBroker()
-	handler.userBroker = broker
 
 	userBroker := eventbroker.NewUserEventBroker()
 	handler.userBroker = userBroker
