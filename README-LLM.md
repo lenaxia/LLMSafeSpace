@@ -520,7 +520,7 @@ The remap guard `relayGloballyEnabled && relayInjected && avail == ModelFreeTier
 
 The guard protects against a failure mode we have already lived through: if an opencode version ever keeps the built-in `opencode` provider in `connected[]` despite `disabled_providers`, this code correctly remaps free-tier models to `opencode-relay` rather than silently routing users to a disabled provider. `disabled_providers` is an upstream mechanism we do not control; single mechanisms fail, which is why the guard layers on top of it.
 
-History supports keeping it: the guard was specifically *narrowed* (not added) in worklog 0178 to fix a real `ProviderModelNotFoundError` bug, and the comment block was re-reasoned in worklog 0189 after a follow-up audit. The ~20 LoC cost (4-line conditional + 2 tests + 14-line comment at `models.go:450-456`) is justified by the silent-failure mode it prevents. See worklog 0341 for the full rationale.
+History supports keeping it: the guard was specifically *narrowed* (not added) in worklog 0178 to fix a real `ProviderModelNotFoundError` bug, and the comment block was re-reasoned in worklog 0189 after a follow-up audit. The ~20 LoC cost (4-line conditional + 2 tests + the comment block at `models.go:439-453`) is justified by the silent-failure mode it prevents. See worklog 0341 for the full rationale.
 
 ---
 
