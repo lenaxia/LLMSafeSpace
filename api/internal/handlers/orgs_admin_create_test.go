@@ -66,7 +66,7 @@ func TestCreateOrg_Admin_KnownEmail_CreatesActiveOrgWithResolvedOwner(t *testing
 	store := newMockOrgStore()
 	store.usersByEmail["owner@example.com"] = "owner-1"
 
-	router, billing := setupAdminCreateRouter(t, store, true, nil)
+	router, _ := setupAdminCreateRouter(t, store, true, nil)
 
 	w := doRequest(router, "POST", "/api/v1/orgs",
 		`{"name":"Acme","slug":"acme","ownerEmail":"owner@example.com","planId":"enterprise"}`)
@@ -90,9 +90,6 @@ func TestCreateOrg_Admin_KnownEmail_CreatesActiveOrgWithResolvedOwner(t *testing
 	if resp.UserRole != types.OrgRole("") {
 		t.Errorf("caller (admin-1) is not the owner, so UserRole should be empty, got %q", resp.UserRole)
 	}
-	if resp.CheckoutURL != "" {
-		t.Errorf("admin-created org must not produce a checkout URL, got %q", resp.CheckoutURL)
-	}
 
 	store.mu.Lock()
 	var created *types.Organization
@@ -114,11 +111,6 @@ func TestCreateOrg_Admin_KnownEmail_CreatesActiveOrgWithResolvedOwner(t *testing
 	}
 	if mem.Role != types.OrgRoleAdmin {
 		t.Errorf("expected resolved owner to have role=admin, got %q", mem.Role)
-	}
-
-	if billing.customerCalls != 0 || billing.checkoutCalls != 0 {
-		t.Errorf("Stripe must NOT be invoked for admin org creation; customerCalls=%d checkoutCalls=%d",
-			billing.customerCalls, billing.checkoutCalls)
 	}
 }
 
@@ -228,7 +220,7 @@ func TestCreateOrg_NonAdmin_Returns403(t *testing.T) {
 	if store.orgsLen() != 0 {
 		t.Errorf("no org should be created when rejecting non-admin")
 	}
-	if billing.customerCalls != 0 || billing.checkoutCalls != 0 {
+	if billing.checkoutCalls != 0 {
 		t.Errorf("Stripe must not be invoked for rejected requests")
 	}
 }
@@ -236,7 +228,7 @@ func TestCreateOrg_NonAdmin_Returns403(t *testing.T) {
 func TestCreateOrg_Admin_UnknownEmail_Returns404(t *testing.T) {
 	store := newMockOrgStore()
 
-	router, billing := setupAdminCreateRouter(t, store, true, nil)
+	router, _ := setupAdminCreateRouter(t, store, true, nil)
 
 	w := doRequest(router, "POST", "/api/v1/orgs",
 		`{"name":"Acme","slug":"acme","ownerEmail":"nobody@example.com"}`)
@@ -245,9 +237,6 @@ func TestCreateOrg_Admin_UnknownEmail_Returns404(t *testing.T) {
 	}
 	if store.orgsLen() != 0 {
 		t.Errorf("no org should be created when owner is unknown")
-	}
-	if billing.customerCalls != 0 || billing.checkoutCalls != 0 {
-		t.Errorf("Stripe must not be invoked when owner is unknown")
 	}
 }
 

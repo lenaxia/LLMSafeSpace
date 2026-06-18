@@ -22,7 +22,6 @@ type mockOrgStore struct {
 	mu                    sync.Mutex
 	orgs                  map[string]*types.Organization
 	members               map[string][]*types.OrgMember
-	adminCounts           map[string]int
 	billingAccounts       map[string]string
 	listOrgsForUserResult []*types.OrgResponse
 	listOrgsForUserErr    error
@@ -39,7 +38,6 @@ func newMockOrgStore() *mockOrgStore {
 	return &mockOrgStore{
 		orgs:            make(map[string]*types.Organization),
 		members:         make(map[string][]*types.OrgMember),
-		adminCounts:     make(map[string]int),
 		billingAccounts: make(map[string]string),
 		usersByEmail:    make(map[string]string),
 		userOrgID:       make(map[string]string),
@@ -217,18 +215,6 @@ func (m *mockOrgStore) DemoteOrgAdminIfNotLast(_ context.Context, orgID, targetU
 		}
 	}
 	return true, nil
-}
-
-func (m *mockOrgStore) CountOrgAdmins(_ context.Context, orgID string) (int, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	count := 0
-	for _, mem := range m.members[orgID] {
-		if mem.Role == types.OrgRoleAdmin {
-			count++
-		}
-	}
-	return count, nil
 }
 
 func (m *mockOrgStore) UpdateOrgMemberRole(_ context.Context, orgID, userID string, role types.OrgRole) error {
