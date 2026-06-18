@@ -15,7 +15,14 @@ vi.mock("../../api/auth", () => ({
   },
 }));
 
+vi.mock("../../api/orgs", () => ({
+  orgsApi: {
+    list: vi.fn().mockResolvedValue([]),
+  },
+}));
+
 vi.mock("../../api/workspaces", () => ({
+
   workspacesApi: {
     list: vi.fn(),
     create: vi.fn().mockResolvedValue({ id: "ws-new", name: "new-ws" }),

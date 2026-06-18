@@ -18,13 +18,14 @@ function renderZone(orgName = "Acme Corp") {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
+  const result = render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
         <DangerZone orgId="org-1" orgName={orgName} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...result, queryClient };
 }
 
 describe("DangerZone", () => {
@@ -57,15 +58,17 @@ describe("DangerZone", () => {
     expect(screen.getByRole("button", { name: /delete organisation/i })).toBeDisabled();
   });
 
-  it("calls orgsApi.delete on confirm", async () => {
+  it("calls orgsApi.delete on confirm and invalidates org query", async () => {
     const user = userEvent.setup();
     vi.mocked(orgsApi.delete).mockResolvedValue(undefined);
-    renderZone("Acme");
+    const { queryClient } = renderZone("Acme");
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
     await user.type(screen.getByPlaceholderText("Acme"), "Acme");
     await user.click(screen.getByRole("button", { name: /delete organisation/i }));
     await waitFor(() => {
       expect(orgsApi.delete).toHaveBeenCalledWith("org-1");
     });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["user-orgs"] });
   });
 
   it("shows an error message on delete failure", async () => {
