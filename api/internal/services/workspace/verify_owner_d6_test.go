@@ -15,13 +15,18 @@ import (
 
 // stubOrgChecker is a minimal OrgMembershipChecker for D6 access tests.
 type stubOrgChecker struct {
-	members map[string]bool
-	admins  map[string]bool
-	err     error
+	members   map[string]bool
+	admins    map[string]bool
+	userOrgID map[string]string
+	err       error
 }
 
 func newStubOrgChecker() *stubOrgChecker {
-	return &stubOrgChecker{members: map[string]bool{}, admins: map[string]bool{}}
+	return &stubOrgChecker{
+		members:   map[string]bool{},
+		admins:    map[string]bool{},
+		userOrgID: map[string]string{},
+	}
 }
 
 func (s *stubOrgChecker) IsOrgMember(_ context.Context, orgID, userID string) (bool, error) {
@@ -36,6 +41,13 @@ func (s *stubOrgChecker) IsOrgAdmin(_ context.Context, orgID, userID string) (bo
 		return false, s.err
 	}
 	return s.admins[orgID+":"+userID], nil
+}
+
+func (s *stubOrgChecker) GetUserOrgID(_ context.Context, userID string) (string, error) {
+	if s.err != nil {
+		return "", s.err
+	}
+	return s.userOrgID[userID], nil
 }
 
 // TestVerifyOwner_D6_NonAdminMemberDenied verifies the D6 breaking change: a

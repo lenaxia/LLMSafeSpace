@@ -45,13 +45,21 @@ type invitationStore interface {
 	GetUserOrgID(ctx context.Context, userID string) (string, error)
 }
 
+// orgCredentialBinder binds org credentials to org workspaces. Used after
+// invitation acceptance (F7) to seed org credentials into newly-migrated
+// workspaces. Optional — nil in dev mode (no secret store wired).
+type orgCredentialBinder interface {
+	BindAllOrgCredentialsToOrgWorkspaces(ctx context.Context, orgID string) error
+}
+
 // InvitationsHandler handles org invitation CRUD and the accept/decline flows.
 type InvitationsHandler struct {
-	store   invitationStore
-	email   email.EmailProvider
-	authSvc orgAuthService
-	baseURL string
-	logger  invitationLogger
+	store          invitationStore
+	email          email.EmailProvider
+	authSvc        orgAuthService
+	baseURL        string
+	logger         invitationLogger
+	credentialBind orgCredentialBinder
 }
 
 type invitationLogger interface {
@@ -63,6 +71,12 @@ type invitationLogger interface {
 // Create/Resend succeed but no email is sent (dev mode). logger may be nil.
 func NewInvitationsHandler(store invitationStore, mailer email.EmailProvider, authSvc orgAuthService, baseURL string, logger invitationLogger) *InvitationsHandler {
 	return &InvitationsHandler{store: store, email: mailer, authSvc: authSvc, baseURL: baseURL, logger: logger}
+}
+
+// SetCredentialBinder wires the org credential binder used after invitation
+// acceptance (F7). Optional — nil means no credential seeding on join.
+func (h *InvitationsHandler) SetCredentialBinder(b orgCredentialBinder) {
+	h.credentialBind = b
 }
 
 // Create handles POST /api/v1/orgs/:id/invitations.
@@ -301,6 +315,17 @@ func (h *InvitationsHandler) Accept(c *gin.Context) {
 	if member == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "invitation not found"})
 		return
+	}
+
+	// F7: bind all org credentials to the newly-attributed workspaces. The
+	// workspace migration happened inside AcceptInvitationTx (D4); this step
+	// seeds the org's shared credentials into those workspaces immediately.
+	// Best-effort: log on error but do not fail the accept — the credentials
+	// will bind on the next credential reload anyway.
+	if h.credentialBind != nil {
+		if err := h.credentialBind.BindAllOrgCredentialsToOrgWorkspaces(ctx, inv.OrgID); err != nil && h.logger != nil {
+			h.logger.Error("failed to bind org credentials after invitation accept", err, "orgID", inv.OrgID, "userID", userID)
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"membership": member})

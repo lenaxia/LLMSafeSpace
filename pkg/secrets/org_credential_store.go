@@ -36,6 +36,27 @@ func (s *PgSecretStore) BindCredentialToAllOrgWorkspaces(ctx context.Context, cr
 	return nil
 }
 
+// BindAllOrgCredentialsToOrgWorkspaces binds every org credential to every
+// non-deleted org workspace. Used after invitation acceptance (F7) to ensure
+// newly-migrated workspaces receive the org's shared credentials immediately.
+// Existing bindings are skipped (ON CONFLICT DO NOTHING). Best-effort: callers
+// should log errors but not fail the user-facing operation.
+func (s *PgSecretStore) BindAllOrgCredentialsToOrgWorkspaces(ctx context.Context, orgID string) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO workspace_credential_bindings (credential_id, workspace_id, source_type, within_priority)
+		SELECT pc.id, w.id, 'auto', 5
+		FROM provider_credentials pc
+		CROSS JOIN workspaces w
+		WHERE pc.owner_type = 'org' AND pc.owner_id = $1
+		  AND w.org_id = $1 AND w.deleted_at IS NULL
+		ON CONFLICT (credential_id, workspace_id) DO NOTHING
+	`, orgID)
+	if err != nil {
+		return fmt.Errorf("bind all org credentials to org workspaces: %w", err)
+	}
+	return nil
+}
+
 func (s *PgSecretStore) CreateOrgAutoApply(ctx context.Context, credentialID, orgID string, withinPriority int) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO credential_auto_apply (credential_id, target_type, target_id, within_priority, created_at)
