@@ -224,18 +224,18 @@ To deliver the user-facing goal ("Frontend shows ⚠️ Agent was terminated"), 
 **Solution:** Defer restarts until all sessions idle using existing `sessionStatusTracker`, no forced timeout  
 **Files:** `cmd/workspace-agentd/secrets.go`, `cmd/workspace-agentd/main.go`  
 **Acceptance:**
-- [ ] When secret bindings change: secrets written to DB immediately, workspace marked "needs_rematerialization"
-- [ ] `checkSessionsIdleAndRestart()` function checks `sessionStatusTracker.hasAnyBusy()`
-- [ ] Add `sessionStatusTracker.hasAnyBusy()` method (returns `len(busySessions) > 0`)
-- [ ] Add `sessionStatusTracker.listBusy()` method (returns `[]string` of session IDs)
-- [ ] Pass `sessionStatusTracker` reference to `reloadSecretsHandler()`
-- [ ] If any sessions busy: spawn background goroutine to poll tracker every 5s (RESTART_IDLE_CHECK_INTERVAL)
-- [ ] Background goroutine applies restart when `!tracker.hasAnyBusy()`
-- [ ] When restart occurs: re-fetch ALL secrets from DB (idempotent), rematerialize, restart opencode
-- [ ] **NO forced timeout** - defer indefinitely until sessions idle OR user triggers restart manually
-- [ ] User can trigger restart via: UI "Restart Now" button OR API `POST /agent/reload?drain=false`
-- [ ] If `sessionStatusTracker` has no data (SSE disconnected), treat as "all idle" and restart immediately with logged warning
-- [ ] Subsequent secret changes during defer: written to DB immediately, latest fetched when restart occurs
+- [x] When secret bindings change: secrets written to DB immediately, workspace marked "needs_rematerialization"
+- [x] `makeSessionAwareRestartDecision()` function checks `sessionStatusTracker.hasAnyBusy()`
+- [x] Add `sessionStatusTracker.hasAnyBusy()` method (returns `len(busySessions) > 0`)
+- [x] Add `sessionStatusTracker.listBusy()` method (returns `[]string` of session IDs)
+- [x] Pass `sessionStatusTracker` reference to `reloadSecretsHandler()`
+- [x] If any sessions busy: spawn background goroutine to poll tracker every 5s (RESTART_IDLE_CHECK_INTERVAL)
+- [x] Background goroutine applies restart when `!tracker.hasAnyBusy()`
+- [x] When restart occurs: re-fetch ALL secrets from DB (idempotent), rematerialize, restart opencode
+- [x] **NO forced timeout** - defer indefinitely until sessions idle OR user triggers restart manually
+- [x] User can trigger restart via: UI "Restart Now" button OR API `POST /agent/reload?drain=false`
+- [x] If `sessionStatusTracker` has no data (SSE disconnected), treat as "all idle" and restart immediately with logged warning
+- [x] Subsequent secret changes during defer: written to DB immediately, latest fetched when restart occurs
 
 **Design Notes:**
 - Uses existing SSE-based session tracking (cannot use `/session` REST API - returns hardcoded "idle")
@@ -250,9 +250,9 @@ To deliver the user-facing goal ("Frontend shows ⚠️ Agent was terminated"), 
 **Solution:** Update `shouldRestart()` to include `api-key` type  
 **Files:** `cmd/workspace-agentd/secrets.go:437-444`  
 **Acceptance:**
-- [ ] `shouldRestart()` returns true for both `env-secret` AND `api-key`
-- [ ] Test case covers api-key restart behavior
-- [ ] MUST ship with US-44.2 (session-aware restart) to avoid breaking existing users
+- [x] `shouldRestart()` returns true for both `env-secret` AND `api-key`
+- [x] Test case covers api-key restart behavior
+- [x] MUST ship with US-44.2 (session-aware restart) to avoid breaking existing users
 
 **Note:** This is a one-line fix but cannot ship independently - would break users who rely on api-key NOT restarting.
 
