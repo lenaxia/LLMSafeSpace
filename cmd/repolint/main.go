@@ -38,7 +38,7 @@ const (
 
 	// worklogGrandfatherBelow is the cutoff before which historical
 	// duplicates and gaps are tolerated. See pkg/repolint/sequence_test.go
-	// (TestLive_Worklogs_NoCollisionsOrGaps) for the rationale.
+	// (TestLive_Worklogs_NoDuplicates) for the rationale.
 	worklogGrandfatherBelow = 97
 )
 
