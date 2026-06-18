@@ -10,6 +10,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func cleanupProviderCredentials(t *testing.T, store *PgSecretStore, ownerType, ownerID string) {
@@ -366,9 +368,10 @@ func TestPgCredentialStore_UpdateCredential_NilPreservesLimits(t *testing.T) {
 	defer cleanupProviderCredentials(t, store, "org", "org-test-update-nil")
 
 	// Create a credential with non-empty limits and allowlist.
+	credID := uuid.New().String()
 	now := time.Now()
 	row := &CredentialRow{
-		ID:                 "cred-nil-test",
+		ID:                 credID,
 		Name:               "original",
 		Provider:           "test-provider-nil",
 		Ciphertext:         []byte("encrypted"),
@@ -384,7 +387,7 @@ func TestPgCredentialStore_UpdateCredential_NilPreservesLimits(t *testing.T) {
 
 	// Update with nil limits/allowlist — must NOT overwrite existing values.
 	upd := &CredentialRow{
-		ID:                 "cred-nil-test",
+		ID:                 credID,
 		Name:               "renamed",
 		Provider:           "test-provider-nil",
 		Ciphertext:         []byte("encrypted"),
@@ -392,12 +395,12 @@ func TestPgCredentialStore_UpdateCredential_NilPreservesLimits(t *testing.T) {
 		ModelAllowlist:     nil, // nil = don't change
 		ModelContextLimits: nil, // nil = don't change
 	}
-	if err := store.UpdateCredential(ctx, "org", "org-test-update-nil", "cred-nil-test", upd); err != nil {
+	if err := store.UpdateCredential(ctx, "org", "org-test-update-nil", credID, upd); err != nil {
 		t.Fatalf("UpdateCredential: %v", err)
 	}
 
 	// Read back and verify limits/allowlist are preserved.
-	got, err := store.GetCredential(ctx, "org", "org-test-update-nil", "cred-nil-test")
+	got, err := store.GetCredential(ctx, "org", "org-test-update-nil", credID)
 	if err != nil {
 		t.Fatalf("GetCredential: %v", err)
 	}
