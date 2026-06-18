@@ -83,4 +83,4 @@ None — design + documentation session.
 - `design/stories/epic-47-frontend-architecture-consolidation/US-47.11-route-code-splitting.md` (created)
 - `design/stories/epic-47-frontend-architecture-consolidation/US-47.12-fold-secrets-llm-provider-into-provider-keys.md` (created)
 - `design/stories/README.md` (updated — added Epic 46 + 47 to registry)
-- `worklogs/0338_2026-06-18_epic-47-frontend-consolidation.md` (this worklog)
+- `worklogs/0339_2026-06-18_epic-47-frontend-consolidation.md` (this worklog)
