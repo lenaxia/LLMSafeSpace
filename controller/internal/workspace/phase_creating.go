@@ -141,7 +141,7 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 		metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Inc()
 		metrics.WorkspacesCreatedTotal.WithLabelValues(runtime, secLevel).Inc()
 		// If the workspace had prior failures, this Creating→Active transition is a recovery success.
-		if workspace.Status.ConsecutiveFailures > 0 || workspace.Status.LastFailureAt != nil {
+		if workspace.Status.ConsecutiveFailures > 0 {
 			metrics.WorkspaceRecoverySuccessTotal.WithLabelValues(workspace.Status.LastFailureClass).Inc()
 			metrics.WorkspacesInRecovery.Dec()
 			// US-24.11: observe recovery duration (enterRecovery → Active).
