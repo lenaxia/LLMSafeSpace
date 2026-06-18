@@ -827,6 +827,11 @@ func main() {
 		client:   &http.Client{Timeout: 5 * time.Second},
 	}
 
+	// US-44.7: surface the reason for the previous opencode restart
+	// (if any) and consume the one-shot marker before starting the
+	// supervisor. No-op when no marker is present (clean boot).
+	logRestartReason(RestartReasonMarkerPath, log.Core())
+
 	var proc *managedProcess
 	if supervise {
 		proc = &managedProcess{
@@ -1284,8 +1289,13 @@ func (p *managedProcess) supervise() {
 		// Crash path: classify exit, handle OOM, record metric, log, backoff, loop.
 		exitKind := classifyExit(waitErr)
 		if isOOMExit(exitKind) {
-			handleOOMExit(workspaceIDFromEnv(), OOMMarkerPath)
+			handleOOMExit(workspaceIDFromEnv(), OOMMarkerPath, RestartReasonMarkerPath)
 		} else {
+			if err := writeRestartReasonMarker(RestartReasonMarkerPath, "crash", nil); err != nil {
+				log.Error("failed to write restart-reason marker", zap.Error(err))
+			} else {
+				logRestartReasonAtWrite("crash", nil, log.Core())
+			}
 			pkgOpsMetrics.RecordRestart(workspaceIDFromEnv(), "crash")
 		}
 		log.Warn("opencode exited unexpectedly",

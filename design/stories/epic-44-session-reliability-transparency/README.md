@@ -318,14 +318,15 @@ To deliver the user-facing goal ("Frontend shows ⚠️ Agent was terminated"), 
 #### US-44.7: Restart Reason Logging
 **Problem:** No record of WHY opencode restarted  
 **Solution:** agentd writes restart reason to marker file, then logs the reason itself when reading the marker on next start (opencode is not modifiable; the reason is observable via agentd logs and the marker file's persistence on the PVC)  
-**Files:** `cmd/workspace-agentd/process.go`, `cmd/workspace-agentd/main.go`  
+**Files:** `cmd/workspace-agentd/restart_reason.go`, `cmd/workspace-agentd/main.go`, `cmd/workspace-agentd/secrets.go`, `cmd/workspace-agentd/oom_detection.go`  
 *(opencode is third-party and cannot be modified — all reason recording is in agentd)*  
 **Acceptance:**
-- [ ] agentd writes `/home/workspace/.opencode-restart-reason` before restart
-- [ ] Format: `{"reason": "env_secrets_changed", "timestamp": "2026-06-16T16:04:14Z", "secretNames": ["GH_TOKEN"]}`
-- [ ] opencode reads on startup and logs to console
-- [ ] Reasons: `env_secrets_changed`, `api_key_changed`, `crash`, `oom`, `user_requested`
-- [ ] API includes restart events in workspace event stream (optional)
+- [x] agentd writes `/workspace/.opencode-restart-reason` before restart *(path corrected from `/home/workspace/` which does not exist; the PVC-backed mount is `/workspace` — validated against the sibling OOM marker at `/workspace/.opencode-oom-marker`)*
+- [x] Format: `{"reason": "env_secrets_changed", "timestamp": "2026-06-16T16:04:14Z", "secretNames": ["GH_TOKEN"]}`
+- [x] agentd reads on startup and logs to console *(opencode cannot read it; agentd does — the reason is logged both at WRITE time, for real-time visibility during in-pod supervisor respawns, and at the next pod BOOT, as a one-shot secondary surface with fresh-vs-stale attribution)*
+- [x] Reasons: `env_secrets_changed`, `api_key_changed`, `crash`, `oom` — fully implemented
+- [ ] `user_requested` — **DEFERRED**: no trigger exists today. `/v1/agent/reload` only disposes the opencode instance in-process; it does not restart the OS process. The API server consumes the `drain` query parameter itself (via `WaitUntilIdle`) and forwards a parameter-less request to agentd, so there is no agentd-visible signal to record. Creating the trigger requires extending the API server ↔ agentd protocol, which is a separate concern.
+- [ ] API includes restart events in workspace event stream (optional — skipped; marker file + agentd log is the core deliverable)
 
 ---
 
