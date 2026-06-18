@@ -115,3 +115,43 @@ func TestPgOrgStore_GetUserOrgID_DBError(t *testing.T) {
 	assert.Equal(t, "", orgID)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// TestAcceptInvitationTx_MigratesPersonalWorkspaces verifies D4: the accept
+// transaction includes an UPDATE that migrates the user's personal workspaces
+// to the org. Uses sqlmock to assert the UPDATE statement is executed inside
+// the transaction.
+func TestAcceptInvitationTx_MigratesPersonalWorkspaces(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	store := NewPgOrgStore(db)
+
+	mock.ExpectBegin()
+	// SELECT invitation FOR UPDATE — returns the org_id.
+	mock.ExpectQuery(`SELECT org_id, accepted_at, declined_at`).
+		WithArgs("inv-1").
+		WillReturnRows(sqlmock.NewRows([]string{"org_id", "accepted_at", "declined_at"}).
+			AddRow("org-1", nil, nil))
+	// INSERT membership
+	mock.ExpectExec(`INSERT INTO org_memberships`).
+		WithArgs("org-1", "user-1", "member").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	// UPDATE workspaces — the migration (D4). Assert the statement exists.
+	mock.ExpectExec(`UPDATE workspaces SET org_id`).
+		WithArgs("user-1", "org-1").
+		WillReturnResult(sqlmock.NewResult(0, 3)) // 3 personal workspaces migrated
+	// UPDATE invitation accepted
+	mock.ExpectExec(`UPDATE org_invitations SET accepted_at`).
+		WithArgs("inv-1", "user-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	member, alreadyTaken, err := store.AcceptInvitationTx(context.Background(), "inv-1", "user-1", "member")
+	require.NoError(t, err)
+	assert.False(t, alreadyTaken)
+	require.NotNil(t, member)
+	assert.Equal(t, "org-1", member.OrgID)
+	assert.Equal(t, "user-1", member.UserID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
