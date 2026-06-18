@@ -559,11 +559,10 @@ webhooks:
   # G4 (F1.2.3) — Spec.Resources caps. The CRD pattern lets through
   # values like "999999999m" CPU; without these caps the workspace pod
   # is admitted but stays Pending forever, wasting tenant quota and
-  # confusing operators. Defaults: 16 cores, 64 GiB memory, 100 GiB
-  # ephemeral. Set 0 to disable each cap individually.
+  # confusing operators. Defaults: 16 cores, 64 GiB memory.
+  # Set 0 to disable each cap individually.
   maxWorkspaceCPUMillicores: 16000
   maxWorkspaceMemoryMi: 65536
-  maxWorkspaceEphemeralStorageGi: 100
 
 
 

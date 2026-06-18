@@ -233,26 +233,28 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 // Behavior:
 //   - If spec.resources is nil, fall back to a sane default (matches
 //     the kubebuilder defaults documented on `WorkspaceSpec`):
-//     500m CPU, 512Mi memory, 1Gi ephemeral-storage. This guarantees
-//     every workspace carries at least basic limits even when the
-//     operator submits a minimal YAML.
-//   - Limits and Requests are set to the SAME value (1:1 mapping)
-//     because the workspace is a single-tenant interactive
-//     environment; QoS=Guaranteed simplifies eviction reasoning.
+//     500m CPU, 512Mi memory. This guarantees every workspace carries
+//     at least basic limits even when the operator submits a minimal
+//     YAML.
+//   - ephemeral-storage is intentionally NOT set on the pod. The
+//     workspace's writable surfaces (PVC subPaths for /workspace,
+//     /home, /tmp; Memory-backed emptyDir for /sandbox-cfg) do not
+//     count toward node ephemeral storage. The only consumer is
+//     kubelet's container log files, which kubelet already rotates
+//     (~50 MiB per pod). A per-pod ephemeral limit added no
+//     protection beyond what kubelet's own log rotation provides.
 //   - Quantity parsing failures fall back to the default rather than
 //     panicking. The CRD pattern + (future) webhook caps protect
 //     against bad input; if both are bypassed (e.g. CRD validation
 //     disabled cluster-wide), we degrade gracefully.
 func resourceRequirementsFor(workspace *v1.Workspace) corev1.ResourceRequirements {
 	const (
-		defaultCPU       = "500m"
-		defaultMemory    = "512Mi"
-		defaultEphemeral = "1Gi"
-		burstFactor      = 4
+		defaultCPU    = "500m"
+		defaultMemory = "512Mi"
+		burstFactor   = 4
 	)
 	cpu := defaultCPU
 	memory := defaultMemory
-	ephemeral := defaultEphemeral
 	cpuLimit := ""
 	memoryLimit := ""
 	if r := workspace.Spec.Resources; r != nil {
@@ -261,9 +263,6 @@ func resourceRequirementsFor(workspace *v1.Workspace) corev1.ResourceRequirement
 		}
 		if r.Memory != "" {
 			memory = r.Memory
-		}
-		if r.EphemeralStorage != "" {
-			ephemeral = r.EphemeralStorage
 		}
 		cpuLimit = r.CPULimit
 		memoryLimit = r.MemoryLimit
@@ -277,7 +276,6 @@ func resourceRequirementsFor(workspace *v1.Workspace) corev1.ResourceRequirement
 
 	cpuReq := parseOrDefault(cpu, defaultCPU)
 	memReq := parseOrDefault(memory, defaultMemory)
-	ephReq := parseOrDefault(ephemeral, defaultEphemeral)
 
 	// CPU limit: explicit > 4× request
 	var cpuLim resource.Quantity
@@ -305,14 +303,12 @@ func resourceRequirementsFor(workspace *v1.Workspace) corev1.ResourceRequirement
 
 	return corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{
-			corev1.ResourceCPU:              cpuReq,
-			corev1.ResourceMemory:           memReq,
-			corev1.ResourceEphemeralStorage: ephReq,
+			corev1.ResourceCPU:    cpuReq,
+			corev1.ResourceMemory: memReq,
 		},
 		Limits: corev1.ResourceList{
-			corev1.ResourceCPU:              cpuLim,
-			corev1.ResourceMemory:           memLim,
-			corev1.ResourceEphemeralStorage: ephReq, // ephemeral: limit = request (no burst)
+			corev1.ResourceCPU:    cpuLim,
+			corev1.ResourceMemory: memLim,
 		},
 	}
 }

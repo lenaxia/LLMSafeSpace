@@ -56,8 +56,8 @@ import (
 //     always passes — that means "use cluster default").
 //   - MaxStorageGi: maximum requested workspace storage in GiB. Any
 //     storage size above this is rejected. Set 0 to disable.
-//   - MaxCPUMillicores / MaxMemoryMi / MaxEphemeralStorageGi: maximum
-//     spec.resources.{cpu,memory,ephemeralStorage} accepted at
+//   - MaxCPUMillicores / MaxMemoryMi: maximum
+//     spec.resources.{cpu,memory} accepted at
 //     admission. Closes F1.2.3 secondary surface (a user can declare
 //     999999999m CPU; the CRD pattern allows it; the pod stays Pending
 //     forever, wasting tenant quota — DoS at the API/etcd layer).
@@ -69,7 +69,6 @@ type WorkspaceValidator struct {
 	MaxStorageGi             int64
 	MaxCPUMillicores         int64
 	MaxMemoryMi              int64
-	MaxEphemeralStorageGi    int64
 }
 
 // runtimeRefIsImage reports whether the runtime string looks like an
@@ -168,14 +167,6 @@ func parseMemoryMi(s string) (int64, error) {
 		return n * 1024, nil
 	}
 	return -1, fmt.Errorf("memory %q has unrecognized suffix", s)
-}
-
-// parseStorageGi converts a storage string (Mi/Gi) to integer GiB.
-// Used for spec.resources.ephemeralStorage; reuses the same suffix
-// grammar as storageSizeGi but kept as a separate function to express
-// intent.
-func parseStorageGi(s string) (int64, error) {
-	return storageSizeGi(s)
 }
 
 // storageSizeGi parses the spec.storage.size string and returns the
@@ -437,7 +428,7 @@ func (v *WorkspaceValidator) Handle(ctx context.Context, req admission.Request) 
 			ws.Spec.Storage.Size, gi, v.MaxStorageGi))
 	}
 
-	// 4a. F1.2.3 — Spec.Resources.{cpu,memory,ephemeralStorage} caps.
+	// 4a. F1.2.3 — Spec.Resources.{cpu,memory} caps.
 	//     The CRD's pattern validation lets through values like
 	//     "999999999m" CPU; admission can pin CPU+memory but pods
 	//     stay Pending forever, wasting tenant quota and confusing
@@ -466,18 +457,6 @@ func (v *WorkspaceValidator) Handle(ctx context.Context, req admission.Request) 
 				return admission.Denied(fmt.Sprintf(
 					"spec.resources.memory %q (%d Mi) exceeds the maximum %d Mi",
 					r.Memory, mi, v.MaxMemoryMi))
-			}
-		}
-		if v.MaxEphemeralStorageGi > 0 && r.EphemeralStorage != "" {
-			gi, err := parseStorageGi(r.EphemeralStorage)
-			if err != nil {
-				return admission.Denied(fmt.Sprintf(
-					"spec.resources.ephemeralStorage %q: %s", r.EphemeralStorage, err.Error()))
-			}
-			if gi > v.MaxEphemeralStorageGi {
-				return admission.Denied(fmt.Sprintf(
-					"spec.resources.ephemeralStorage %q (%d Gi) exceeds the maximum %d Gi",
-					r.EphemeralStorage, gi, v.MaxEphemeralStorageGi))
 			}
 		}
 		// 4b. Limit field caps (US-24.3): MaxCPUMillicores/MaxMemoryMi apply to limit fields.

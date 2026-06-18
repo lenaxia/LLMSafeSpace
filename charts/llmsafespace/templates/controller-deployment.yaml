@@ -70,9 +70,6 @@ spec:
             {{- if hasKey .Values.webhooks "maxWorkspaceMemoryMi" }}
             - --max-workspace-memory-mi={{ .Values.webhooks.maxWorkspaceMemoryMi }}
             {{- end }}
-            {{- if hasKey .Values.webhooks "maxWorkspaceEphemeralStorageGi" }}
-            - --max-workspace-ephemeral-storage-gi={{ .Values.webhooks.maxWorkspaceEphemeralStorageGi }}
-            {{- end }}
             {{- with .Values.inferenceRelayURL }}
             - --inference-relay-url={{ . }}
             {{- end }}

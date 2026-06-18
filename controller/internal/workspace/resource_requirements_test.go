@@ -22,13 +22,20 @@ func TestResourceRequirements_BurstableDefaults(t *testing.T) {
 
 	assertQuantityEqual(t, "500m", rr.Requests[corev1.ResourceCPU])
 	assertQuantityEqual(t, "512Mi", rr.Requests[corev1.ResourceMemory])
-	assertQuantityEqual(t, "1Gi", rr.Requests[corev1.ResourceEphemeralStorage])
 
 	// Limits should be 4× requests for CPU and memory
 	assertQuantityEqual(t, "2000m", rr.Limits[corev1.ResourceCPU])
 	assertQuantityEqual(t, "2Gi", rr.Limits[corev1.ResourceMemory])
-	// Ephemeral storage: limit = request (no burst)
-	assertQuantityEqual(t, "1Gi", rr.Limits[corev1.ResourceEphemeralStorage])
+
+	// Ephemeral storage is intentionally NOT set on the pod — see
+	// resourceRequirementsFor docstring. Assert it stays absent so the
+	// pod inherits node defaults / kubelet eviction behavior.
+	if _, ok := rr.Requests[corev1.ResourceEphemeralStorage]; ok {
+		t.Error("ephemeral-storage must not be present in Requests")
+	}
+	if _, ok := rr.Limits[corev1.ResourceEphemeralStorage]; ok {
+		t.Error("ephemeral-storage must not be present in Limits")
+	}
 }
 
 func TestResourceRequirements_CustomRequestEmptyLimit(t *testing.T) {
@@ -84,21 +91,6 @@ func TestResourceRequirements_LimitEqualsRequest_Allowed(t *testing.T) {
 	// Guaranteed QoS: limit = request
 	assertQuantityEqual(t, "500m", rr.Limits[corev1.ResourceCPU])
 	assertQuantityEqual(t, "512Mi", rr.Limits[corev1.ResourceMemory])
-}
-
-func TestResourceRequirements_EphemeralUnchanged(t *testing.T) {
-	ws := &v1.Workspace{
-		Spec: v1.WorkspaceSpec{
-			Resources: &v1.ResourceRequirements{
-				EphemeralStorage: "5Gi",
-			},
-		},
-	}
-	rr := resourceRequirementsFor(ws)
-
-	// Ephemeral: request = limit always (no burst)
-	assertQuantityEqual(t, "5Gi", rr.Requests[corev1.ResourceEphemeralStorage])
-	assertQuantityEqual(t, "5Gi", rr.Limits[corev1.ResourceEphemeralStorage])
 }
 
 func TestResourceRequirements_EmptyRequestCustomLimit(t *testing.T) {

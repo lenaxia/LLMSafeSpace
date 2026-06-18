@@ -128,9 +128,6 @@ spec:
                     memory:
                       type: string
                       default: "512Mi"
-                    ephemeralStorage:
-                      type: string
-                      default: "1Gi"
                     cpuPinning:
                       type: boolean
                       default: false

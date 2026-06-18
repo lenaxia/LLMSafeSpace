@@ -45,9 +45,8 @@ func TestWorkspaceSpec_PodLifecycleFields(t *testing.T) {
 		Timeout:           3600,
 		RestartGeneration: 2,
 		Resources: &ResourceRequirements{
-			CPU:              "1000m",
-			Memory:           "1Gi",
-			EphemeralStorage: "2Gi",
+			CPU:    "1000m",
+			Memory: "1Gi",
 		},
 		PodSecurityContext: &PodSecurityContext{
 			RunAsUser:      1001,
