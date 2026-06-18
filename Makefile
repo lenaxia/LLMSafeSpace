@@ -17,7 +17,7 @@ BINARY_UNIX=$(BINARY_NAME)_unix
         relay-bin \
         check tools-install \
         gitleaks govulncheck trivy-fs trivy-config security-scan \
-        migration-roundtrip migration-fk-cascade migration-idempotent migration-data-cleanup migration-safety \
+        migration-roundtrip migration-fk-cascade migration-idempotent migration-data-cleanup migration-safety migration-safety-docker \
         test-full cover-floor mutation
 
 all: test build
@@ -450,6 +450,21 @@ migration-data-cleanup:
 migration-safety: migration-roundtrip migration-idempotent migration-fk-cascade migration-data-cleanup
 	@echo ""
 	@echo "All migration safety checks passed."
+
+# migration-safety-docker: run the full migration-safety suite against a
+# throwaway postgres:16 container that this target starts and tears down.
+# No PG* env vars or manual database setup required — only a working Docker
+# daemon. Mirrors .github/workflows/migration-safety.yml exactly (all four
+# checks), so what runs in CI runs identically here.
+#
+# Used by .githooks/pre-commit (only when .sql files are staged AND docker
+# is available) to give local feedback before push. Skips cleanly when
+# docker is absent, so it never blocks a commit on a docker-less machine.
+#
+# Override the image with LSS_PGIMAGE (defaults to postgres:16). Skip the
+# pre-commit invocation with LSS_SKIP_MIGRATION_GATE=1.
+migration-safety-docker:
+	bash hack/migration-safety-docker.sh
 
 # ---------------------------------------------------------------------------
 # Test rigor (Epic 19, PR D)
