@@ -19,8 +19,8 @@ After the user's pushback ("really? you didn't find any other weird quirks?"), I
 
 - `WorkspaceSettingsDrawer.tsx:31-32, 111-130` collects `autoSuspend` (Toggle) and `idleMinutes` (NumberInput, 5–10080) from the user, with a warning banner ("Disabling auto-suspend will keep this workspace running indefinitely, consuming compute minutes and potentially causing unexpected costs") at `:119`.
 - On Save, the drawer calls `onSave({ autoSuspendEnabled, autoSuspendIdleMinutes })` (`WorkspaceSettingsDrawer.tsx:54-57`).
-- The caller wires it to **nothing**: `Sidebar.tsx:412` — `onSave={async () => {}}`. The settings object is received and dropped on the floor.
-- The backend feature is **real and enforced**: `pkg/crds/workspace_crd.yaml:78` defines `spec.autoSuspend`; `api/internal/services/workspace/workspace_service.go:850-862` populates it from the **global** instance settings (`workspace.autoSuspend.enabled`, `workspace.autoSuspend.idleTimeoutMinutes` in `pkg/settings/schema.go:66-67`); the controller honours it.
+- The caller wires it to **nothing**: `Sidebar.tsx:421` — `onSave={async () => {}}`. The settings object is received and dropped on the floor.
+- The backend feature is **real and enforced**: `pkg/crds/workspace_crd.yaml:78` defines `spec.autoSuspend`; `api/internal/services/workspace/workspace_service.go:867-877` populates it from the **global** instance settings (`workspace.autoSuspend.enabled`, `workspace.autoSuspend.idleTimeoutMinutes` in `pkg/settings/schema.go:66-67`); the controller honours it.
 
 So: the user sees a per-workspace Auto-Suspend toggle, can flip it, gets a confirmation Save, and the workspace behaves per the *global* default regardless. There is **no per-workspace autoSuspend API path** in the backend at all (grep finds the CRD field but no PATCH/PUT handler that accepts it from the frontend).
 
@@ -201,5 +201,5 @@ The absence of these common smell-signals is itself worth noting: the code is *t
 - `frontend/src/components/ui/index.ts`
 - `frontend/src/components/org-admin/OrgWorkspacesTab.tsx` (sample of hand-rolled pattern)
 - `frontend/src/hooks/useSessionTitle.ts:39`
-- `api/internal/services/workspace/workspace_service.go:850-862` (backend autoSuspend)
+- `api/internal/services/workspace/workspace_service.go:867-877` (backend autoSuspend)
 - `pkg/crds/workspace_crd.yaml:78`, `pkg/settings/schema.go:66-67`

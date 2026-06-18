@@ -21,7 +21,7 @@ There is no component literally called "bouncing dot" or "blue circle". Mapping 
 | User's name | Actual component | File | Glyph | Colour |
 |---|---|---|---|---|
 | "bouncing dot" | `StreamingIndicator` | `frontend/src/components/chat/StreamingIndicator.tsx:1` | 3 dots, `animate-bounce`, staggered 0/150/300 ms | `bg-muted-foreground` (NOT blue) |
-| "blue circle" | inline `Loader2` (lucide icon, `animate-spin`) in the Sidebar | `frontend/src/components/layout/Sidebar.tsx:363` and `:773` | spinning circle | `text-blue-500` |
+| "blue circle" | inline `Loader2` (lucide icon, `animate-spin`) in the Sidebar | `frontend/src/components/layout/Sidebar.tsx:371` and `:792` | spinning circle | `text-blue-500` |
 
 The "blue circle" is a `lucide-react` `Loader2` icon rendered inline with an ad-hoc `text-blue-500` class — it is **not** the shared `Spinner` component (`components/ui/Spinner.tsx`), which uses `text-muted-foreground`.
 
@@ -50,7 +50,7 @@ There are **two independent derivations** of the same `session.status` event, fe
   1. **SSE** `session.status === "busy"|"idle"` (`SessionActivityProvider.tsx:181-249`) — sole authority once seen.
   2. **REST seed** from the `["sessions", wsId]` React Query cache: a session with `status === "active"` is treated as busy (`SessionActivityProvider.tsx:78`). Seeded once per workspace, guarded by `seededRef` so later REST refetches cannot clobber SSE-tracked state (`SessionActivityProvider.tsx:35`, `:64-94`).
 - Reset on user-stream reconnect: `busySessions` cleared, `seededRef` cleared (`SessionActivityProvider.tsx:167-171`).
-- Consumed by: `useIsSessionBusy`, `useWorkspaceBusyCount` (`SessionActivityProvider.tsx:281`, `:291`, `:407`). Rendered as the blue spinner at `Sidebar.tsx:773` (per session) and `Sidebar.tsx:363` (collapsed workspace busy-count).
+- Consumed by: `useIsSessionBusy`, `useWorkspaceBusyCount` (`SessionActivityProvider.tsx:281`, `:291`, `:407`). Rendered as the blue spinner at `Sidebar.tsx:792` (per session) and `Sidebar.tsx:371` (collapsed workspace busy-count).
 
 ### 3.2 Chat bouncing dots — `ChatPage` + `useChatStream`
 
@@ -117,9 +117,9 @@ But `Loader2` from `lucide-react` is used **directly** in 7 places with ad-hoc s
 |---|---|---|
 | `Sidebar.tsx:161` | `h-4 w-4 animate-spin` (inherited colour) | C (create-workspace mutation) |
 | `Sidebar.tsx:358` | `h-3 w-3 animate-spin text-muted-foreground` | C (workspace activating) |
-| `Sidebar.tsx:363` | `h-3 w-3 animate-spin text-blue-500` | **A** (busy session count) |
+| `Sidebar.tsx:371` | `h-3 w-3 animate-spin text-blue-500` | **A** (busy session count) |
 | `Sidebar.tsx:384` | `h-3 w-3 animate-spin` (inherited) | C (creating session) |
-| `Sidebar.tsx:773` | `h-3.5 w-3.5 animate-spin text-blue-500` | **A** (session busy) |
+| `Sidebar.tsx:792` | `h-3.5 w-3.5 animate-spin text-blue-500` | **A** (session busy) |
 | `chat/MessageList.tsx:127` | `h-4 w-4 animate-spin text-muted-foreground` | C (loading older messages) |
 | `chat/SessionRetryBanner.tsx:46` | `RefreshCw ... animate-spin` (2 s duration) | A-adjacent (retry in progress) |
 
@@ -190,7 +190,7 @@ const isSessionBusy = useIsSessionBusy(sessionId ?? "");
 // streaming = localStreaming || isSessionBusy
 ```
 
-The bouncing dots (`ChatView.tsx:70`) and the sidebar blue circle (`Sidebar.tsx:773`) would then read the **same** `busySessions` map → same mechanism, by construction.
+The bouncing dots (`ChatView.tsx:70`) and the sidebar blue circle (`Sidebar.tsx:792`) would then read the **same** `busySessions` map → same mechanism, by construction.
 
 **Right level of abstraction:** this is the canonical single-source-of-truth pattern. `SessionActivityProvider` already aggregates REST seed + SSE for **all** sessions and already handles the REST-vs-SSE race (`seededRef`) that `ChatPage` reimplements (`sseHasDrivenBusy`). Consolidating removes code rather than adding abstraction.
 
@@ -276,7 +276,7 @@ Each is independently mergeable. None depends on the others being merged first (
 | A2 | Both streams carry `session.status` events for the current session. | **Validated** | `SessionActivityProvider.tsx:181`; `ChatPage.tsx:549` |
 | A3 | `serverBusy` and `busySessions` reduce the same underlying event for the current session. | **Validated** | §3.2 vs §3.3 |
 | A4 | `SessionItem`/`SessionList`/`workspace/WorkspaceSessionList` are unused in production. | **Validated** | grep returns no production importer of `workspace/WorkspaceSessionList`; the other two are imported only by that file + tests |
-| A5 | `api/events.ts` (`createEventStream`) is unused in production. | **Validated** | only importer is `api/events.test.ts` |
+| A5 | `api/events.ts` (`createEventStream`) is unused in production. | **Validated** | only importers are `api/events.test.ts` and `useChatStream.test.ts:13` (both test files); no production importer |
 | A6 | `localStreaming` is distinct from server busy and must remain. | **Validated** | `useChatStream.ts:46` (set on send, before any SSE) |
 | A7 | The blue spinner's `text-blue-500` colour is an intentional design choice. | **NOT validated** | no comment, no design-doc spec for the *colour* (design doc §9.5 line 696 says "blue" for the session dot, but the spinner colour is not separately specified). Flagged for user confirmation in P2. |
 | A8 | Mounting into a busy session via the provider's REST seed works equivalently to ChatPage's status-poll seed. | **NOT validated** | different endpoints/timing (see P1 gate 1). Must be verified before P1. |
