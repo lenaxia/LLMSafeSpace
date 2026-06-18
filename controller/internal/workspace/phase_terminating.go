@@ -72,7 +72,9 @@ func (r *WorkspaceReconciler) handleTerminating(ctx context.Context, workspace *
 		metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Dec()
 	}
 
-	metrics.WorkspaceSafeModeActive.DeleteLabelValues(string(workspace.UID))
+	if workspace.Status.SafeMode {
+		metrics.WorkspaceSafeModeActive.Dec()
+	}
 
 	common.RemoveFinalizer(workspace, WorkspaceFinalizer)
 	return ctrl.Result{}, r.Update(ctx, workspace)

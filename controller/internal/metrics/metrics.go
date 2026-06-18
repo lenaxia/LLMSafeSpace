@@ -45,9 +45,30 @@ var (
 	WorkspaceConsecutiveFailuresMax = prometheus.NewGauge(
 		prometheus.GaugeOpts{Name: "llmsafespace_workspace_consecutive_failures_max", Help: "Highest ConsecutiveFailures across any active workspace"},
 	)
-	WorkspaceSafeModeActive = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{Name: "llmsafespace_workspace_safe_mode_active", Help: "Workspaces currently in SafeMode"},
-		[]string{"workspace_id"},
+	WorkspaceSafeModeActive = prometheus.NewGauge(
+		prometheus.GaugeOpts{Name: "llmsafespace_workspace_safe_mode_active", Help: "Count of workspaces currently in SafeMode (aggregate, no per-workspace label per F18)"},
+	)
+	WorkspaceSafeModeEntriesTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Name: "llmsafespace_workspace_safe_mode_entries_total", Help: "Total entries into SafeMode, labeled by trigger"},
+		[]string{"trigger"},
+	)
+	WorkspaceSafeModeExitsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Name: "llmsafespace_workspace_safe_mode_exits_total", Help: "Total exits from SafeMode, labeled by method"},
+		[]string{"method"},
+	)
+	WorkspaceControllerRestartsTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{Name: "llmsafespace_workspace_controller_restarts_total", Help: "Pod restarts initiated by the controller's health-check loop (distinct from user-initiated RestartGeneration bumps)"},
+	)
+	WorkspacesInRecovery = prometheus.NewGauge(
+		prometheus.GaugeOpts{Name: "llmsafespace_workspaces_in_recovery", Help: "Workspaces currently in recovery backoff (ConsecutiveFailures > 0 and not Active)"},
+	)
+	WorkspaceRecoveryDurationSeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "llmsafespace_workspace_recovery_duration_seconds",
+			Help:    "Wall-clock time from recovery entry (enterRecovery) to successful return to Active",
+			Buckets: []float64{5, 15, 30, 60, 120, 300, 600, 1800, 3600},
+		},
+		[]string{"failure_class"},
 	)
 	WorkspaceStatusUpdateConflictsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -170,7 +191,10 @@ func AllCollectors() []prometheus.Collector {
 		WorkspacesCreatedTotal, WorkspacesDeletedTotal, WorkspacesRunning, WorkspacesFailedTotal,
 		WorkspaceRecoveryAttemptsTotal, WorkspaceRecoverySuccessTotal,
 		WorkspaceRecoveryBackoffDurationSeconds, WorkspaceConsecutiveFailuresMax,
-		WorkspaceSafeModeActive, WorkspaceStatusUpdateConflictsTotal,
+		WorkspaceSafeModeActive, WorkspaceSafeModeEntriesTotal, WorkspaceSafeModeExitsTotal,
+		WorkspaceControllerRestartsTotal, WorkspacesInRecovery,
+		WorkspaceRecoveryDurationSeconds,
+		WorkspaceStatusUpdateConflictsTotal,
 		WorkspaceCreateDurationSeconds, WorkspaceResumeDurationSeconds,
 		WorkspaceInitContainerDurationSeconds,
 		ReconciliationDurationSeconds, ReconciliationErrorsTotal,

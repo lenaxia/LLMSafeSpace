@@ -35,6 +35,10 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 	if workspace.Spec.RestartGeneration > workspace.Status.ObservedRestartGeneration {
 		logger.Info("RestartGeneration bumped in Creating phase; clearing recovery state",
 			"gen", workspace.Spec.RestartGeneration)
+		if workspace.Status.SafeMode {
+			metrics.WorkspaceSafeModeActive.Dec()
+			metrics.WorkspaceSafeModeExitsTotal.WithLabelValues("restart_generation").Inc()
+		}
 		workspace.Status.ConsecutiveFailures = 0
 		workspace.Status.NextRetryAt = nil
 		workspace.Status.LastFailureClass = ""
@@ -137,8 +141,16 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 		metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Inc()
 		metrics.WorkspacesCreatedTotal.WithLabelValues(runtime, secLevel).Inc()
 		// If the workspace had prior failures, this Creating→Active transition is a recovery success.
-		if workspace.Status.ConsecutiveFailures > 0 {
+		if workspace.Status.ConsecutiveFailures > 0 || workspace.Status.LastFailureAt != nil {
 			metrics.WorkspaceRecoverySuccessTotal.WithLabelValues(workspace.Status.LastFailureClass).Inc()
+			metrics.WorkspacesInRecovery.Dec()
+			// US-24.11: observe recovery duration (enterRecovery → Active).
+			if workspace.Status.LastFailureAt != nil {
+				recoveryDuration := time.Since(workspace.Status.LastFailureAt.Time)
+				metrics.WorkspaceRecoveryDurationSeconds.WithLabelValues(workspace.Status.LastFailureClass).Observe(recoveryDuration.Seconds())
+			}
+			// US-24.7: clear controller restart count on successful recovery.
+			workspace.Status.ControllerRestartCount = 0
 		}
 		workspace.Status.Phase = v1.WorkspacePhaseActive
 		workspace.Status.PodName = existingPod.Name

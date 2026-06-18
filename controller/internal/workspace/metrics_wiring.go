@@ -53,10 +53,13 @@ func recordRecoveryMetricsInto(
 	class FailureClass,
 	attempts *prometheus.CounterVec,
 	backoffHist *prometheus.HistogramVec,
-	safeModeGauge *prometheus.GaugeVec,
+	safeModeGauge prometheus.Gauge,
+	safeModeEntries *prometheus.CounterVec,
 	failedCtr *prometheus.CounterVec,
+	inRecoveryGauge prometheus.Gauge,
 ) {
 	attempts.WithLabelValues(string(class)).Inc()
+	inRecoveryGauge.Inc()
 
 	if ws.Status.NextRetryAt != nil {
 		backoff := time.Until(ws.Status.NextRetryAt.Time)
@@ -66,12 +69,10 @@ func recordRecoveryMetricsInto(
 		backoffHist.WithLabelValues(string(class)).Observe(backoff.Seconds())
 	}
 
-	workspaceID := string(ws.UID)
 	if ws.Status.SafeMode {
-		safeModeGauge.WithLabelValues(workspaceID).Set(1)
+		safeModeGauge.Inc()
+		safeModeEntries.WithLabelValues(string(class)).Inc()
 		failedCtr.WithLabelValues(string(class)).Inc()
-	} else {
-		safeModeGauge.DeleteLabelValues(workspaceID)
 	}
 }
 
@@ -82,7 +83,9 @@ func recordRecoveryMetrics(ws *v1.Workspace, class FailureClass) {
 		metrics.WorkspaceRecoveryAttemptsTotal,
 		metrics.WorkspaceRecoveryBackoffDurationSeconds,
 		metrics.WorkspaceSafeModeActive,
+		metrics.WorkspaceSafeModeEntriesTotal,
 		metrics.WorkspacesFailedTotal,
+		metrics.WorkspacesInRecovery,
 	)
 }
 

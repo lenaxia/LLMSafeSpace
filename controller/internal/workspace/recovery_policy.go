@@ -76,6 +76,7 @@ func maybeResetConsecutiveFailures(ws *v1.Workspace) {
 		ws.Status.LastFailureAt = nil
 		ws.Status.NextRetryAt = nil
 		ws.Status.LastStableAt = nil
+		ws.Status.ControllerRestartCount = 0
 	}
 }
 

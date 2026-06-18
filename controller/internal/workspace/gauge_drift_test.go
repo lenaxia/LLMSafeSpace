@@ -40,6 +40,15 @@ func readGaugeVecValue(t *testing.T, gv *prometheus.GaugeVec, lv ...string) floa
 	return m.GetGauge().GetValue()
 }
 
+func readPlainGaugeValue(t *testing.T, g prometheus.Gauge) float64 {
+	t.Helper()
+	m := &dto.Metric{}
+	if err := g.(prometheus.Metric).Write(m); err != nil {
+		return 0
+	}
+	return m.GetGauge().GetValue()
+}
+
 func gaugeDelta(t *testing.T, runtime, secLevel string, fn func()) float64 {
 	t.Helper()
 	before := readGaugeVecValue(t, ctrMetrics.WorkspacesRunning, runtime, secLevel)
@@ -283,17 +292,17 @@ func TestGaugeDrift_Failed_SelfHealToActive_Increments(t *testing.T) {
 	assert.Equal(t, 1.0, delta, "WorkspacesRunning must increment by 1 when Failed self-heals to Active")
 }
 
-func TestSafeModeActive_IsGaugeVec(t *testing.T) {
-	ctrMetrics.WorkspaceSafeModeActive.WithLabelValues("ws-vec-1").Set(1)
-	ctrMetrics.WorkspaceSafeModeActive.WithLabelValues("ws-vec-2").Set(1)
+func TestSafeModeActive_IsAggregateGauge(t *testing.T) {
+	// US-24.11: WorkspaceSafeModeActive is a plain Gauge (no workspace_id label)
+	// per F18 cardinality finding. Two Inc calls → value 2.
+	ctrMetrics.WorkspaceSafeModeActive.Set(0)
+	ctrMetrics.WorkspaceSafeModeActive.Inc()
+	ctrMetrics.WorkspaceSafeModeActive.Inc()
 
-	v1 := readGaugeVecValue(t, ctrMetrics.WorkspaceSafeModeActive, "ws-vec-1")
-	v2 := readGaugeVecValue(t, ctrMetrics.WorkspaceSafeModeActive, "ws-vec-2")
-	assert.Equal(t, 1.0, v1, "per-workspace safe mode gauge must track independently")
-	assert.Equal(t, 1.0, v2, "per-workspace safe mode gauge must track independently")
+	v := readPlainGaugeValue(t, ctrMetrics.WorkspaceSafeModeActive)
+	assert.Equal(t, 2.0, v, "aggregate safe mode gauge must count total entries")
 
-	ctrMetrics.WorkspaceSafeModeActive.DeleteLabelValues("ws-vec-1")
-	ctrMetrics.WorkspaceSafeModeActive.DeleteLabelValues("ws-vec-2")
+	ctrMetrics.WorkspaceSafeModeActive.Set(0) // cleanup
 }
 
 func TestCreatingActiveCycle_MultiReconcile_NoGaugeDrift(t *testing.T) {
