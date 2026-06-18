@@ -1,0 +1,112 @@
+==================================================================
+ llmsafespace → llmsafespaces rename
+ mode: DRY-RUN (no edits)
+ root: /workspace/llmsafespace
+==================================================================
+
+### Phase 1: directory renames (git mv)
+
+  [DRY] git mv 'pkg/apis/llmsafespace' 'pkg/apis/llmsafespaces'   (10 tracked files)
+  [DRY] git mv 'charts/llmsafespace' 'charts/llmsafespaces'   (115 tracked files)
+  [DRY] git mv 'sdks/vscode-llmsafespace' 'sdks/vscode-llmsafespaces'   (16 tracked files)
+
+### Phase 2: content rewrites
+
+Patterns (case-sensitive):
+   'llmsafespace' → 'llmsafespaces'
+   'LLMSAFESPACE' → 'LLMSAFESPACES'
+   'LLMSafeSpace' → 'LLMSafeSpaces'
+
+Excluded paths: worklogs/, design/, .git/, bin/, node_modules/
+Excluded files: go.sum, package-lock.json, workspace-agentd, redact, tools
+
+Files needing edits: 612
+Total line-level matches across all files: 2791
+
+Top 30 files by match count:
+-----------------------------------------------
+  HITS  FILE
+ -----  ----------------------------------------
+    65  charts/llmsafespace/templates/prometheus-rules.yaml
+    60  sdks/vscode-llmsafespace/package.json
+    57  .github/workflows/ci.yml
+    50  charts/llmsafespace/templates/rbac.yaml
+    49  api/internal/app/app_master_key_test.go
+    44  charts/llmsafespace/dashboards/operational.json
+    43  api/internal/config/config.go
+    42  local/test.sh
+    38  sdks/canary/TESTPLAN.md
+    33  controller/internal/metrics/metrics.go
+    30  charts/llmsafespace/templates/_helpers.tpl
+    30  api/internal/app/app.go
+    29  charts/llmsafespace/chart_test.go
+    28  charts/llmsafespace/README.md
+    26  api/internal/services/metrics/metrics.go
+    26  README-LLM.md
+    24  .github/workflows/migration-safety.yml
+    23  charts/llmsafespace/values.yaml
+    23  charts/llmsafespace/dashboards/billing.json
+    22  sdks/canary/fission/canary-functions.yaml
+    21  .github/workflows/e2e-nightly.yml
+    20  local/bootstrap.sh
+    20  charts/llmsafespace/templates/api-deployment.yaml
+    20  api/internal/services/workspace/workspace_service.go
+    19  sdks/python/tests/test_async_client.py
+    17  sdks/vscode-llmsafespace/src/services/api.ts
+    17  charts/llmsafespace/templates/NOTES.txt
+    16  runtimes/tests/test_runtime.py
+    16  pkg/repolint/crd_drift.go
+    16  local/postgres-redis.yaml
+
+Per-pattern match counts (entire non-excluded tree):
+   llmsafespace     1950 matches (excluded 2247 in worklogs/+design/)
+   LLMSAFESPACE      350 matches (excluded 186 in worklogs/+design/)
+   LLMSafeSpace      498 matches (excluded 352 in worklogs/+design/)
+
+### Phase 3: stray files whose NAME contains 'llmsafespace'
+            (not under one of the 3 renamed dirs — review individually)
+
+  (none)
+
+### Phase 4: regeneration commands to run after edits
+            (run these manually; they regenerate derived artifacts)
+
+   go mod edit -module github.com/lenaxia/llmsafespaces
+   (cd sdks/go && go mod edit -module github.com/lenaxia/llmsafespaces/sdk/go)
+   go mod tidy
+   (cd sdks/go && go mod tidy)
+   make manifests          # regenerate CRD YAML + zz_generated.deepcopy.go
+   make mocks              # regenerate mocks (if a make target exists)
+   make test lint          # verify
+
+### Phase 5: external manual steps
+
+   1. GitHub: Settings → Repository → Rename
+        lenaxia/LLMSafeSpace → lenaxia/LLMSafeSpaces
+      (GitHub auto-redirects old URL; existing clones keep working.)
+
+   2. Container registry (ghcr.io): future pushes use new repo path.
+      Old image tags (ghcr.io/lenaxia/llmsafespace/*) become orphans.
+
+   3. npm: publish @llmsafespaces/sdk and vscode-llmsafespaces
+      when cutting next release. Old packages can be deprecated.
+
+   4. PyPI: publish llmsafespaces (sdks/python/pyproject.toml)
+      when cutting next release. Old 'llmsafespace' can be yanked.
+
+   5. Cloudflare Worker: rename 'llmsafespace-inference-relay' to
+      'llmsafespaces-inference-relay' in wrangler.toml + redeploy.
+
+   6. Local Postgres (dev cluster): drop+recreate DB/role as
+      'llmsafespaces' (or update values.yaml + local/bootstrap.sh).
+
+==================================================================
+ Summary
+==================================================================
+  Dirs to rename        : 3
+  Files to edit         : 612
+  Total line matches    : 2791
+  Stray-named files     : 0 (manual review)
+
+  Re-run with DRY_RUN=0 to execute.
+==================================================================
