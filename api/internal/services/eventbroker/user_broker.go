@@ -109,6 +109,13 @@ func (b *UserEventBroker) UnsubscribeWorkspace(workspaceID string, s *Subscriber
 	}
 }
 
+func (b *UserEventBroker) WorkspaceSubscriberCount(workspaceID string) int {
+	sh := b.wsShard(workspaceID)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	return len(sh.wsSubs[workspaceID])
+}
+
 func (b *UserEventBroker) PublishToUser(userID string, evt apitypes.WorkspaceSSEEvent) {
 	sh := b.userShard(userID)
 	sh.mu.Lock()

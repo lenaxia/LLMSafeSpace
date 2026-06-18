@@ -113,7 +113,7 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 func (h *ProxyHandler) onSessionIdle(workspaceID, sessionID string) {
 	h.removeActiveSession(workspaceID, sessionID)
 
-	if h.broker != nil {
+	if h.userBroker != nil {
 		h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
 			Type:      "session.status",
 			SessionID: sessionID,
@@ -152,7 +152,7 @@ func (h *ProxyHandler) onSessionActive(workspaceID, sessionID string) {
 	}
 	h.checkAndAddActiveSession(workspaceID, sessionID, maxSessions)
 
-	if h.broker != nil {
+	if h.userBroker != nil {
 		h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
 			Type:      "session.status",
 			SessionID: sessionID,
@@ -173,7 +173,7 @@ func (h *ProxyHandler) onSessionActive(workspaceID, sessionID string) {
 }
 
 func (h *ProxyHandler) onRawEvent(workspaceID, eventType, rawData string) {
-	if h.broker != nil {
+	if h.userBroker != nil {
 		var parsed interface{}
 		_ = json.Unmarshal([]byte(rawData), &parsed)
 		h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
@@ -197,7 +197,7 @@ func (h *ProxyHandler) onRawEvent(workspaceID, eventType, rawData string) {
 }
 
 func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData string) {
-	if h.broker == nil {
+	if h.userBroker == nil {
 		return
 	}
 	var envelope struct {
@@ -356,7 +356,7 @@ func (h *ProxyHandler) getPodIPForSSE(workspaceID string) string {
 // before clearing the queue so that connected UIs can remove pending pills.
 // Errors are logged and silently swallowed — the clear proceeds regardless.
 func (h *ProxyHandler) publishDismissedForWorkspace(ctx context.Context, workspaceID string) {
-	if h.queueSvc == nil || h.broker == nil {
+	if h.queueSvc == nil || h.userBroker == nil {
 		return
 	}
 	msgs, err := h.queueSvc.PeekAllWorkspace(ctx, workspaceID)
@@ -365,7 +365,7 @@ func (h *ProxyHandler) publishDismissedForWorkspace(ctx context.Context, workspa
 		return
 	}
 	for _, msg := range msgs {
-		h.broker.Publish(workspaceID, apitypes.WorkspaceSSEEvent{
+		h.userBroker.PublishToWorkspace(workspaceID, apitypes.WorkspaceSSEEvent{
 			Type:      "queue.update",
 			SessionID: msg.SessionID,
 			Data: queueUpdateData{
@@ -473,7 +473,7 @@ func (h *ProxyHandler) sendQueuedToOpencode(ctx context.Context, workspaceID, se
 }
 
 func (h *ProxyHandler) publishQueueEvent(workspaceID, sessionID, event, messageID, errMsg string) {
-	if h.broker == nil {
+	if h.userBroker == nil {
 		return
 	}
 	data := queueUpdateData{
@@ -555,7 +555,7 @@ func (h *ProxyHandler) reconcileSessionState(workspaceID, podIP, password string
 			// Publish session.status=idle so connected clients update their UI.
 			// Without this, browsers showing the session keep their busy
 			// indicator until the next page reload.
-			if h.broker != nil {
+			if h.userBroker != nil {
 				h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
 					Type:      "session.status",
 					SessionID: sess.ID,

@@ -15,79 +15,57 @@ import (
 	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
 )
 
-// TestPublishWorkspaceEvent_BridgePropagatesToBothBrokers proves the S28.5
-// strangler-pattern migration: publishWorkspaceEvent fans out to BOTH the
-// legacy WorkspaceEventBroker and the new UserEventBroker so subscribers on
-// either path receive the event. This makes userBroker.SubscribeWorkspace
-// non-dead code (it was previously unreferenced in production per worklog 170
-// item S28.5).
-func TestPublishWorkspaceEvent_BridgePropagatesToBothBrokers(t *testing.T) {
+// TestPublishWorkspaceEvent_DeliversToAllWorkspaceSubscribers verifies that
+// publishWorkspaceEvent delivers to every subscriber on the same workspace.
+func TestPublishWorkspaceEvent_DeliversToAllWorkspaceSubscribers(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
 	handler.userBroker = eventbroker.NewUserEventBroker()
 
-	legacySub := handler.broker.Subscribe("ws-bridge")
-	defer handler.broker.Unsubscribe("ws-bridge", legacySub)
+	sub1, err := handler.userBroker.SubscribeWorkspace("ws-bridge")
+	require.NoError(t, err)
+	defer handler.userBroker.UnsubscribeWorkspace("ws-bridge", sub1)
 
-	userSub, subErr := handler.userBroker.SubscribeWorkspace("ws-bridge")
-	require.NoError(t, subErr)
-	defer handler.userBroker.UnsubscribeWorkspace("ws-bridge", userSub)
+	sub2, err := handler.userBroker.SubscribeWorkspace("ws-bridge")
+	require.NoError(t, err)
+	defer handler.userBroker.UnsubscribeWorkspace("ws-bridge", sub2)
 
 	evt := apitypes.WorkspaceSSEEvent{Type: "workspace.phase", WorkspaceID: "ws-bridge", Phase: "Active"}
 	handler.publishWorkspaceEvent("ws-bridge", evt)
 
-	select {
-	case got := <-legacySub.Ch:
-		assert.Equal(t, "workspace.phase", got.Type)
-	case <-time.After(time.Second):
-		t.Fatal("legacy broker subscriber did not receive the bridged event")
-	}
-
-	select {
-	case got := <-userSub.Ch:
-		assert.Equal(t, "workspace.phase", got.Type)
-		assert.Equal(t, "Active", got.Phase)
-	case <-time.After(time.Second):
-		t.Fatal("userBroker.SubscribeWorkspace subscriber did not receive the bridged event (S28.5 dead-code regression)")
+	for i, sub := range []*eventbroker.Subscriber{sub1, sub2} {
+		select {
+		case got := <-sub.Ch:
+			assert.Equal(t, "workspace.phase", got.Type, "subscriber %d", i)
+			assert.Equal(t, "Active", got.Phase, "subscriber %d", i)
+		case <-time.After(time.Second):
+			t.Fatalf("subscriber %d did not receive the event", i)
+		}
 	}
 }
 
-// TestPublishWorkspaceEvent_NilUserBrokerDoesNotPanic proves the bridge is
-// safe in tests / older deployments that only wire the legacy broker.
+// TestPublishWorkspaceEvent_NilUserBrokerDoesNotPanic verifies nil-safety.
 func TestPublishWorkspaceEvent_NilUserBrokerDoesNotPanic(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
 	handler.userBroker = nil
-
-	sub := handler.broker.Subscribe("ws-x")
-	defer handler.broker.Unsubscribe("ws-x", sub)
 
 	assert.NotPanics(t, func() {
 		handler.publishWorkspaceEvent("ws-x", apitypes.WorkspaceSSEEvent{Type: "test"})
 	})
-
-	select {
-	case <-sub.Ch:
-	case <-time.After(time.Second):
-		t.Fatal("legacy subscriber must still receive event when userBroker is nil")
-	}
 }
 
-// TestPublishWorkspaceEvent_NilLegacyBrokerDoesNotPanic proves the bridge is
-// safe for forward-compatibility: once the legacy broker is removed entirely,
-// callers continue to work via the userBroker path alone.
-func TestPublishWorkspaceEvent_NilLegacyBrokerDoesNotPanic(t *testing.T) {
+// TestPublishWorkspaceEvent_UserBrokerReceivesEvent verifies publishWorkspaceEvent
+// delivers events via userBroker.SubscribeWorkspace.
+func TestPublishWorkspaceEvent_UserBrokerReceivesEvent(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 
-	handler.broker = nil
 	handler.userBroker = eventbroker.NewUserEventBroker()
 
 	sub, subErr := handler.userBroker.SubscribeWorkspace("ws-y")
@@ -101,6 +79,6 @@ func TestPublishWorkspaceEvent_NilLegacyBrokerDoesNotPanic(t *testing.T) {
 	select {
 	case <-sub.Ch:
 	case <-time.After(time.Second):
-		t.Fatal("userBroker subscriber must receive event when legacy broker is nil")
+		t.Fatal("userBroker subscriber must receive event")
 	}
 }

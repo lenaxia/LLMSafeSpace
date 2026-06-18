@@ -237,11 +237,11 @@ func makeEnvelope(eventType string, props map[string]interface{}) string {
 
 func TestNormalizedEvents_QuestionAsked(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
+	handler.userBroker = eventbroker.NewUserEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
-	sub := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", sub)
+	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeEnvelope("question.asked", map[string]interface{}{
 		"id":        "que_abc",
@@ -270,11 +270,11 @@ func TestNormalizedEvents_QuestionAsked(t *testing.T) {
 
 func TestNormalizedEvents_QuestionResolved(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
+	handler.userBroker = eventbroker.NewUserEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
-	sub := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", sub)
+	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeEnvelope("question.replied", map[string]interface{}{
 		"id":        "que_abc",
@@ -295,11 +295,11 @@ func TestNormalizedEvents_QuestionResolved(t *testing.T) {
 
 func TestNormalizedEvents_QuestionRejected(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
+	handler.userBroker = eventbroker.NewUserEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
-	sub := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", sub)
+	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeEnvelope("question.rejected", map[string]interface{}{
 		"id":        "que_abc",
@@ -325,11 +325,11 @@ func TestNormalizedEvents_PermissionAsked(t *testing.T) {
 	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil)
 
 	handler, _ := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
+	handler.userBroker = eventbroker.NewUserEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
-	sub := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", sub)
+	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeEnvelope("permission.asked", map[string]interface{}{
 		"id":         "per_abc",
@@ -349,11 +349,11 @@ func TestNormalizedEvents_PermissionAsked(t *testing.T) {
 
 func TestNormalizedEvents_PermissionResolved(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
+	handler.userBroker = eventbroker.NewUserEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
-	sub := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", sub)
+	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeEnvelope("permission.replied", map[string]interface{}{
 		"id":        "per_abc",
@@ -372,11 +372,11 @@ func TestNormalizedEvents_PermissionResolved(t *testing.T) {
 
 func TestNormalizedEvents_RawEventAlwaysPublished(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
+	handler.userBroker = eventbroker.NewUserEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
-	sub := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", sub)
+	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeEnvelope("session.diff", map[string]interface{}{"some": "data"})
 	handler.onRawEvent("ws-1", "session.diff", envelope)
@@ -394,11 +394,11 @@ func TestNormalizedEvents_RawEventAlwaysPublished(t *testing.T) {
 
 func TestNormalizedEvents_ParseError_NoNormalizedEvent(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
+	handler.userBroker = eventbroker.NewUserEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
-	sub := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", sub)
+	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeEnvelope("question.asked", map[string]interface{}{"invalid": true})
 	handler.onRawEvent("ws-1", "question.asked", envelope)
@@ -490,14 +490,14 @@ func TestNormalizedEvents_E2E_PermissionAsked_ViaProcessEvent(t *testing.T) {
 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
+	handler.userBroker = eventbroker.NewUserEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
 	tracker := sse.NewTracker(&http.Client{Timeout: 2 * time.Second}, &testLogger{}, func(string, string) {})
 	tracker.SetOnRawEvent(handler.onRawEvent)
 
-	sub := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", sub)
+	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makePermissionAskedEvent("per_abc", "ses_xyz", "shell", []string{"rm -rf /tmp"})
 	tracker.ProcessEvent("ws-1", envelope)
@@ -518,14 +518,14 @@ func TestNormalizedEvents_E2E_PermissionAsked_ViaProcessEvent(t *testing.T) {
 func TestNormalizedEvents_E2E_QuestionAsked_ViaProcessEvent(t *testing.T) {
 	handler, err := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
+	handler.userBroker = eventbroker.NewUserEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
 	tracker := sse.NewTracker(&http.Client{Timeout: 2 * time.Second}, &testLogger{}, func(string, string) {})
 	tracker.SetOnRawEvent(handler.onRawEvent)
 
-	sub := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", sub)
+	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeQuestionAskedEvent("que_abc", "ses_xyz")
 	tracker.ProcessEvent("ws-1", envelope)
@@ -545,14 +545,14 @@ func TestNormalizedEvents_E2E_QuestionAsked_ViaProcessEvent(t *testing.T) {
 func TestNormalizedEvents_E2E_PermissionResolved_ViaProcessEvent(t *testing.T) {
 	handler, err := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
+	handler.userBroker = eventbroker.NewUserEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
 	tracker := sse.NewTracker(&http.Client{Timeout: 2 * time.Second}, &testLogger{}, func(string, string) {})
 	tracker.SetOnRawEvent(handler.onRawEvent)
 
-	sub := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", sub)
+	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeResolutionEvent("permission.replied", "per_abc", "ses_xyz", "always")
 	tracker.ProcessEvent("ws-1", envelope)
@@ -638,14 +638,14 @@ func TestEpic13_wsConfig_PopulatesMaxActiveSessions(t *testing.T) {
 func TestNormalizedEvents_E2E_QuestionResolved_ViaProcessEvent(t *testing.T) {
 	handler, err := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
+	handler.userBroker = eventbroker.NewUserEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
 	tracker := sse.NewTracker(&http.Client{Timeout: 2 * time.Second}, &testLogger{}, func(string, string) {})
 	tracker.SetOnRawEvent(handler.onRawEvent)
 
-	sub := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", sub)
+	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeResolutionEvent("question.replied", "que_abc", "ses_xyz", "")
 	tracker.ProcessEvent("ws-1", envelope)

@@ -37,7 +37,7 @@ func setupQueueTestEnv(t *testing.T) (*ProxyHandler, *msgqueue.Service, func()) 
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", &http.Client{}, nil)
 	require.NoError(t, err)
 	handler.SetMessageQueueService(svc)
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
+	handler.userBroker = eventbroker.NewUserEventBroker()
 
 	return handler, svc, func() {
 		_ = client.Close()
@@ -150,8 +150,8 @@ func TestDrainQueuedMessage_EmptyQueue(t *testing.T) {
 	handler, _, cleanup := setupQueueTestEnv(t)
 	defer cleanup()
 
-	sub := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", sub)
+	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	assert.NotPanics(t, func() {
 		handler.drainQueuedMessage("ws-1", "ses-1")
@@ -185,15 +185,15 @@ func TestDrainQueuedMessage_SendsToOpencode(t *testing.T) {
 	defer client.Close()
 	svc := msgqueue.NewWithClient(client)
 	handler.SetMessageQueueService(svc)
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
+	handler.userBroker = eventbroker.NewUserEventBroker()
 
 	setupPasswordSecret(t, handler, "ws-1", "test-pw")
 
 	_, err = svc.Enqueue(context.Background(), "ws-1", "ses-1", "queued msg")
 	require.NoError(t, err)
 
-	sub := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", sub)
+	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	go handler.drainQueuedMessage("ws-1", "ses-1")
 
@@ -234,7 +234,7 @@ func TestDrainQueuedMessage_RequeuesOnFailure(t *testing.T) {
 	defer client.Close()
 	svc := msgqueue.NewWithClient(client)
 	handler.SetMessageQueueService(svc)
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
+	handler.userBroker = eventbroker.NewUserEventBroker()
 
 	setupPasswordSecret(t, handler, "ws-1", "test-pw")
 
@@ -269,7 +269,7 @@ func TestDrainQueuedMessage_DropsAfterMaxRetries(t *testing.T) {
 	defer client.Close()
 	svc := msgqueue.NewWithClient(client)
 	handler.SetMessageQueueService(svc)
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
+	handler.userBroker = eventbroker.NewUserEventBroker()
 
 	setupPasswordSecret(t, handler, "ws-1", "test-pw")
 
@@ -283,8 +283,8 @@ func TestDrainQueuedMessage_DropsAfterMaxRetries(t *testing.T) {
 	err = svc.Requeue(context.Background(), "ws-1", "ses-1", msg)
 	require.NoError(t, err)
 
-	sub := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", sub)
+	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	go handler.drainQueuedMessage("ws-1", "ses-1")
 
@@ -306,10 +306,10 @@ func TestPublishQueueEvent(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
+	handler.userBroker = eventbroker.NewUserEventBroker()
 
-	sub := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", sub)
+	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	handler.publishQueueEvent("ws-1", "ses-1", "sent", "msg_123", "")
 
@@ -334,8 +334,8 @@ func TestDeleteQueueMessage_Success(t *testing.T) {
 	id, err := svc.Enqueue(ctx, "ws-1", "ses-1", "to delete")
 	require.NoError(t, err)
 
-	sub := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", sub)
+	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -419,7 +419,7 @@ func TestOnPhaseChange_SuspendPublishesDismissedAndClears(t *testing.T) {
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
 	require.NoError(t, err)
 	handler.SetMessageQueueService(svc)
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
+	handler.userBroker = eventbroker.NewUserEventBroker()
 
 	ctx := context.Background()
 	id1, err := svc.Enqueue(ctx, "ws-1", "ses-A", "msg 1")
@@ -427,8 +427,8 @@ func TestOnPhaseChange_SuspendPublishesDismissedAndClears(t *testing.T) {
 	id2, err := svc.Enqueue(ctx, "ws-1", "ses-B", "msg 2")
 	require.NoError(t, err)
 
-	sub := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", sub)
+	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	// Build a minimal workspace object in Suspending phase
 	ws := makeWorkspaceCRDWithStatus("ws-1", "", string(v1.WorkspacePhaseSuspending), "")
@@ -492,7 +492,7 @@ func TestAbortSession_FlushesQueueThenAborts(t *testing.T) {
 	defer client.Close()
 	svc := msgqueue.NewWithClient(client)
 	handler.SetMessageQueueService(svc)
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
+	handler.userBroker = eventbroker.NewUserEventBroker()
 
 	setupPasswordSecret(t, handler, "ws-1", "test-pw")
 
@@ -500,8 +500,8 @@ func TestAbortSession_FlushesQueueThenAborts(t *testing.T) {
 	id1, _ := svc.Enqueue(ctx, "ws-1", "ses-1", "queued msg 1")
 	id2, _ := svc.Enqueue(ctx, "ws-1", "ses-1", "queued msg 2")
 
-	sub := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", sub)
+	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -567,7 +567,7 @@ func TestAbortSession_EmptyQueue_JustAborts(t *testing.T) {
 	defer client.Close()
 	svc := msgqueue.NewWithClient(client)
 	handler.SetMessageQueueService(svc)
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
+	handler.userBroker = eventbroker.NewUserEventBroker()
 
 	setupPasswordSecret(t, handler, "ws-1", "test-pw")
 
@@ -592,7 +592,7 @@ func TestClearQueueOnDispose_PublishesDismissedAndClears(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer client.Close()
 	svc := msgqueue.NewWithClient(client)
-	broker := eventbroker.NewWorkspaceEventBroker()
+	broker := eventbroker.NewUserEventBroker()
 
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	_ = k8sMock
@@ -606,8 +606,8 @@ func TestClearQueueOnDispose_PublishesDismissedAndClears(t *testing.T) {
 	id2, err := svc.Enqueue(ctx, "ws-1", "ses-B", "pending msg 2")
 	require.NoError(t, err)
 
-	sub := broker.Subscribe("ws-1")
-	defer broker.Unsubscribe("ws-1", sub)
+	sub , _ := broker.SubscribeWorkspace("ws-1")
+	defer broker.UnsubscribeWorkspace("ws-1", sub)
 
 	handler.clearQueueOnDispose(ctx, "ws-1")
 
@@ -675,7 +675,7 @@ func TestFlushAndAbortAfterIdle_SingleMessage(t *testing.T) {
 	k8sMock := newMockK8sWithWorkspace(t, "ws-1", "10.0.0.1")
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient, nil)
 	require.NoError(t, err)
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
+	handler.userBroker = eventbroker.NewUserEventBroker()
 	setupPasswordSecret(t, handler, "ws-1", "test-pw")
 
 	tracker := ssetracker.NewTracker(httpClient, &testLogger{}, func(workspaceID, sessionID string) {
@@ -741,7 +741,7 @@ func TestFlushAndAbortAfterIdle_MultipleMessages(t *testing.T) {
 	k8sMock := newMockK8sWithWorkspace(t, "ws-1", "10.0.0.1")
 	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient, nil)
 	require.NoError(t, err)
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
+	handler.userBroker = eventbroker.NewUserEventBroker()
 	setupPasswordSecret(t, handler, "ws-1", "test-pw")
 
 	tracker := ssetracker.NewTracker(httpClient, &testLogger{}, func(workspaceID, sessionID string) {
@@ -827,13 +827,13 @@ func TestAbortSession_FailurePreservesQueue(t *testing.T) {
 	defer client.Close()
 	svc := msgqueue.NewWithClient(client)
 	handler.SetMessageQueueService(svc)
-	handler.broker = eventbroker.NewWorkspaceEventBroker()
+	handler.userBroker = eventbroker.NewUserEventBroker()
 
 	ctx := context.Background()
 	_, _ = svc.Enqueue(ctx, "ws-1", "ses-1", "should survive abort failure")
 
-	sub := handler.broker.Subscribe("ws-1")
-	defer handler.broker.Unsubscribe("ws-1", sub)
+	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -870,7 +870,7 @@ func TestBulkReloadHandler_ClearQueueOnDispose(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer client.Close()
 	svc := msgqueue.NewWithClient(client)
-	broker := eventbroker.NewWorkspaceEventBroker()
+	broker := eventbroker.NewUserEventBroker()
 
 	h := &BulkReloadHandler{
 		logger: &testLogger{},
@@ -884,8 +884,8 @@ func TestBulkReloadHandler_ClearQueueOnDispose(t *testing.T) {
 	id2, err := svc.Enqueue(ctx, "ws-bulk", "ses-Y", "bulk msg 2")
 	require.NoError(t, err)
 
-	sub := broker.Subscribe("ws-bulk")
-	defer broker.Unsubscribe("ws-bulk", sub)
+	sub , _ := broker.SubscribeWorkspace("ws-bulk")
+	defer broker.UnsubscribeWorkspace("ws-bulk", sub)
 
 	h.clearQueueOnDispose(ctx, "ws-bulk")
 

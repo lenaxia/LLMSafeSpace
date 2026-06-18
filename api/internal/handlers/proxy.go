@@ -72,7 +72,6 @@ type ProxyHandler struct {
 	watcher         *workspace.Watcher
 	sseTracker      *sse.Tracker
 	sessionIndex    interfaces.SessionIndexService
-	broker          *eventbroker.WorkspaceEventBroker
 	userBroker      *eventbroker.UserEventBroker
 	sessionParents  *sessionParentCache
 

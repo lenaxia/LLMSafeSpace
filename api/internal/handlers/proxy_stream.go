@@ -43,7 +43,7 @@ func (h *ProxyHandler) StreamEvents(c *gin.Context) {
 		return
 	}
 
-	if h.broker == nil {
+	if h.userBroker == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "event broker not initialized"})
 		return
 	}
@@ -55,8 +55,8 @@ func (h *ProxyHandler) StreamEvents(c *gin.Context) {
 	c.Writer.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	sub := h.broker.Subscribe(workspaceID)
-	defer h.broker.Unsubscribe(workspaceID, sub)
+	sub, _ := h.userBroker.SubscribeWorkspace(workspaceID)
+	defer h.userBroker.UnsubscribeWorkspace(workspaceID, sub)
 
 	if h.sseTracker != nil {
 		h.sseTracker.EnsureWatching(workspaceID)
