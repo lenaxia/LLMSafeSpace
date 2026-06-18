@@ -85,7 +85,7 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 
 	ciphertext, err := encryptCredentialData(orgKEK, req.Provider, req.APIKey, req.BaseURL)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode credential"})
 		return
 	}
 
@@ -204,6 +204,7 @@ func (h *OrgCredentialsHandler) Update(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to decrypt existing credential"})
 			return
 		}
+		defer zeroBytes(oldPlaintext) // zero on all exit paths (success and failure)
 		var pd secrets.LLMProviderData
 		if err := json.Unmarshal(oldPlaintext, &pd); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to decode credential"})
@@ -221,12 +222,11 @@ func (h *OrgCredentialsHandler) Update(c *gin.Context) {
 			return
 		}
 		newCiphertext, err = secrets.EncryptSecret(orgKEK, newPlaintext)
+		zeroBytes(newPlaintext)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "re-encryption failed"})
 			return
 		}
-		zeroBytes(newPlaintext)
-		zeroBytes(oldPlaintext)
 		newKeyVersion++
 	}
 

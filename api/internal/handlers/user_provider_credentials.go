@@ -99,7 +99,7 @@ func (h *UserProviderCredentialsHandler) Create(c *gin.Context) {
 
 	ciphertext, err := encryptCredentialData(dek, req.Provider, req.APIKey, req.BaseURL)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode credential"})
 		return
 	}
 

@@ -145,7 +145,7 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 
 	ciphertext, err := encryptCredentialData(kek, req.Provider, req.APIKey, req.BaseURL)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode credential"})
 		return
 	}
 
@@ -270,6 +270,7 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 			})
 			return
 		}
+		defer zeroBytes(existingPlain) // zero on all exit paths (success and failure)
 		var existingData secrets.LLMProviderData
 		if err := json.Unmarshal(existingPlain, &existingData); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
@@ -293,6 +294,7 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 			return
 		}
 		ciphertext, encErr := secrets.EncryptSecret(kek, plaintext)
+		zeroBytes(plaintext)
 		if encErr != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "encryption failed"})
 			return

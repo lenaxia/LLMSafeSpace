@@ -278,9 +278,11 @@ func (s *PgSecretStore) GetCredential(ctx context.Context, ownerType, ownerID, c
 // UpdateCredential updates an existing credential scoped to (ownerType, ownerID).
 //
 // It uses COALESCE for model_allowlist and model_context_limits so a nil value
-// means "don't change this column" (the org handler relies on this — a nil
-// modelContextLimits must NOT overwrite existing limits). An empty/zero-length
-// slice or map is a valid "clear the column" value and is written as-is.
+// means "don't change this column" — the org handler relies on this: a nil
+// modelContextLimits must reach the DB as SQL NULL so COALESCE preserves the
+// existing column value. An empty slice/map is a valid "clear the column" value
+// and is written as-is. Do NOT normalize nil → {} here (it would convert a
+// "don't change" into a "clear all" via COALESCE).
 //
 // For the admin handler (which allows provider changes and re-encrypts up-front),
 // the caller passes the fully-resolved row with non-nil fields; COALESCE is a
@@ -288,12 +290,6 @@ func (s *PgSecretStore) GetCredential(ctx context.Context, ownerType, ownerID, c
 //
 // updated_at is read back via RETURNING (M-8 fix); the DB trigger sets it to now().
 func (s *PgSecretStore) UpdateCredential(ctx context.Context, ownerType, ownerID, credID string, row *CredentialRow) error {
-	if row.ModelContextLimits == nil {
-		// Defensive: COALESCE below treats nil as "no change", but only the
-		// org path legitimately passes nil. Normalize defensively so an
-		// accidental nil from admin/user doesn't silently drop the column.
-		row.ModelContextLimits = map[string]int{}
-	}
 	return s.pool.QueryRow(ctx, `
 		UPDATE provider_credentials
 		SET name = COALESCE(NULLIF($4, ''), name),

@@ -371,6 +371,43 @@ func TestOrgCredentials_Update_NameOnly_NoReEncrypt(t *testing.T) {
 	assert.Equal(t, 3, store.creds["cred-1"].KeyVersion, "key version must not change without re-encryption")
 }
 
+// TestOrgCredentials_Update_NameOnly_PreservesLimits verifies that a metadata-
+// only update (name change) does NOT wipe model_context_limits. Regression test
+// for the critical COALESCE bug: the unified UpdateCredential had a nil→{}
+// normalization that converted "don't change" into "clear all".
+func TestOrgCredentials_Update_NameOnly_PreservesLimits(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "kept"})
+	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
+	require.NoError(t, err)
+	store.creds["cred-1"] = &secrets.CredentialRow{
+		ID:                 "cred-1",
+		OwnerType:          "org",
+		OwnerID:            "org-1",
+		Name:               "old",
+		Provider:           "openai",
+		Ciphertext:         existingCT,
+		KeyVersion:         1,
+		ModelAllowlist:     []string{"glm-5.1"},
+		ModelContextLimits: map[string]int{"glm-5.1": 200000},
+	}
+
+	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	body := `{"name":"renamed"}`
+	req, _ := http.NewRequest("PUT", "/api/v1/orgs/org-1/credentials/cred-1", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	require.Equal(t, "renamed", store.creds["cred-1"].Name)
+	assert.Equal(t, []string{"glm-5.1"}, store.creds["cred-1"].ModelAllowlist, "model_allowlist must be preserved on name-only update")
+	assert.Equal(t, map[string]int{"glm-5.1": 200000}, store.creds["cred-1"].ModelContextLimits, "model_context_limits must be preserved on name-only update")
+}
+
 // TestOrgCredentials_Update_CorruptCiphertext_500 verifies that rotating the
 // API key against a credential whose ciphertext is unreadable returns 500 (not
 // 200 with a zeroed credential). Mirrors the admin-credential C-4 fix.
