@@ -451,3 +451,70 @@ var (
 func RecordQuotaExceeded(eventType string) {
 	quotaExceededTotal.WithLabelValues(eventType).Inc()
 }
+
+var (
+	requestBufferTimeoutTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "workspace_request_buffer_timeout_total",
+			Help: "Total buffered requests that exceeded the buffer timeout",
+		},
+		[]string{"workspace_id"},
+	)
+	requestBufferWaitSeconds = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "workspace_request_buffer_wait_seconds",
+			Help:    "Time buffered requests waited before being forwarded or timing out",
+			Buckets: []float64{0.5, 1, 2, 5, 10, 30},
+		},
+		[]string{"workspace_id"},
+	)
+	requestBufferSize = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "workspace_request_buffer_size",
+			Help: "Current number of buffered requests per workspace",
+		},
+		[]string{"workspace_id"},
+	)
+	requestBufferFullTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "workspace_request_buffer_full_total",
+			Help: "Total requests rejected because the per-workspace buffer was full",
+		},
+		[]string{"workspace_id"},
+	)
+)
+
+func RecordRequestBufferTimeout(workspaceID string) {
+	if workspaceID == "" {
+		workspaceID = "unknown"
+	}
+	requestBufferTimeoutTotal.WithLabelValues(workspaceID).Inc()
+}
+
+func RecordRequestBufferFull(workspaceID string) {
+	if workspaceID == "" {
+		workspaceID = "unknown"
+	}
+	requestBufferFullTotal.WithLabelValues(workspaceID).Inc()
+}
+
+func RecordRequestBufferWait(workspaceID string, d time.Duration) {
+	if workspaceID == "" {
+		workspaceID = "unknown"
+	}
+	requestBufferWaitSeconds.WithLabelValues(workspaceID).Observe(d.Seconds())
+}
+
+func SetRequestBufferSize(workspaceID string, n int) {
+	if workspaceID == "" {
+		workspaceID = "unknown"
+	}
+	requestBufferSize.WithLabelValues(workspaceID).Set(float64(n))
+}
+
+func DeleteRequestBufferMetrics(workspaceID string) {
+	if workspaceID == "" {
+		workspaceID = "unknown"
+	}
+	requestBufferSize.DeleteLabelValues(workspaceID)
+}

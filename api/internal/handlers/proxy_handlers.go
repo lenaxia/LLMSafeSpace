@@ -60,7 +60,7 @@ func (h *ProxyHandler) SendMessage(c *gin.Context) {
 		}
 	}
 
-	h.proxyToWorkspaceWithErrBody(c, "/session/"+sid+"/message", true, sid, errBodyTransform)
+	h.proxyToWorkspaceWithErrBody(c, "/session/"+sid+"/message", true, sid, errBodyTransform, true)
 
 	status := c.Writer.Status()
 	if status < 300 && h.sessionIndex != nil {

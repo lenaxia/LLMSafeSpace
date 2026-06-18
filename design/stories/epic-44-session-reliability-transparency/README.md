@@ -361,28 +361,34 @@ To deliver the user-facing goal ("Frontend shows ⚠️ Agent was terminated"), 
 
 #### US-44.10: API Proxy Request Buffering
 **Problem:** Users see "502 Bad Gateway" errors when sending prompts during opencode restart  
-**Solution:** Buffer `POST /messages` requests in API proxy during restart, forward when healthy  
-**Files:** `api/internal/handlers/proxy.go`, `api/internal/metrics/metrics.go`  
+**Solution:** Buffer `POST /message` requests in API proxy during restart, forward when healthy  
+**Files:** `api/internal/handlers/proxy.go`, `api/internal/handlers/proxy_request_buffer.go` (new), `api/internal/services/metrics/metrics.go`, `api/internal/config/config.go`  
 **Acceptance:**
-- [ ] Proxy detects opencode unhealthy (502/503 from health check)
-- [ ] Buffers only `POST /api/v1/workspaces/:id/sessions/:sessionId/messages` requests
-- [ ] Other requests (GET, DELETE, POST /abort) return 502 immediately (safe to fail)
-- [ ] Buffer limit: 10 requests per workspace (configurable via `REQUEST_BUFFER_SIZE_PER_WORKSPACE`)
-- [ ] Buffer timeout: 30 seconds (configurable via `REQUEST_BUFFER_TIMEOUT_SECONDS`)
-- [ ] Holds HTTP connection open (no response sent to client until forwarded or timeout)
-- [ ] When opencode healthy: forwards buffered requests FIFO (first-in-first-out)
-- [ ] On timeout: return 503 with message "Workspace is restarting, please try again in a moment"
-- [ ] On buffer full: return 429 with message "Too many requests during restart, please try again"
-- [ ] Prometheus metrics:
+- [x] Proxy detects opencode unhealthy *(scope refinement: there is no per-pod health check in the proxy; detection is via the existing `isConnectionError` predicate on the forward path, after the stale-IP retry — `proxy_helpers.go:43`. A connection error during the restart window IS the unhealthy signal.)*
+- [x] Buffers only `POST /api/v1/workspaces/:id/sessions/:sessionId/message` requests *(route is `/message` singular — `router.go:914`; gated via `bufferable=true` passed only by `SendMessage`)*
+- [x] Other requests (GET, DELETE, POST /abort) return 503 immediately (safe to fail) *(existing behavior unchanged — they pass `bufferable=false`)*
+- [x] Buffer limit: 10 requests per workspace (configurable via `LLMSAFESPACE_PROXY_REQUESTBUFFERSIZEPERWORKSPACE`)
+- [x] Buffer timeout: 30 seconds (configurable via `LLMSAFESPACE_PROXY_REQUESTBUFFERTIMEOUTSECONDS`)
+- [x] Holds HTTP connection open (no response sent to client until forwarded or timeout)
+- [x] When opencode healthy: forwards buffered requests FIFO (first-in-first-out) *(serial FIFO via a single per-workspace drainer goroutine)*
+- [x] On timeout: return 503 with message "Workspace is restarting, please try again in a moment"
+- [x] On buffer full: return 429 with message "Too many requests during restart, please try again" *(reachable in production-default config because parked requests release their connection slot — `TestProxyBuffer_DefaultConfigBufferFullReachable`)*
+- [x] Prometheus metrics:
   - `workspace_request_buffer_timeout_total{workspace_id}` - Counter
   - `workspace_request_buffer_wait_seconds{workspace_id}` - Histogram (buckets: 0.5s, 1s, 2s, 5s, 10s, 30s)
   - `workspace_request_buffer_size{workspace_id}` - Gauge (current buffered count)
   - `workspace_request_buffer_full_total{workspace_id}` - Counter (rejections due to full buffer)
-- [ ] Test: Simulate restart, send prompt during restart, verify no 502 error
-- [ ] Test: Send 11 prompts during restart, verify 11th rejected (buffer full)
-- [ ] Test: Restart takes >30s, verify timeout error message
+- [x] Test: Simulate restart, send prompt during restart, verify no 503 error *(flapping transport: 3 refusals then success → 200; asserts `workspace_request_buffer_wait_seconds` observed — proves it transited the buffer, not a naive retry)*
+- [x] Test: Send 11 prompts during restart, verify 11th rejected (buffer full) *(default `maxSize=10`, 11th → 429 "Too many requests during restart")*
+- [x] Test: Restart takes >30s, verify timeout error message *(short-timeout variant → 503 "Workspace is restarting, please try again in a moment")*
 
 **Design Note:** This provides transparent restart experience - user never sees errors during normal restarts (2-5 seconds). Per user requirement (QUESTIONS-ANSWERED.md Q1-Q3).
+
+**Implementation notes (2026-06-18):**
+- A parked request holds no upstream socket, so it **releases its connection slot on park**; the drainer re-acquires (briefly, one at a time) inside the forward closure. This makes the buffer — not `maxConnectionsPerWorkspace` — the real gate, so the buffer-full 429 + metric fire as specified, and 10 parked POSTs do not starve other request types.
+- The drainer **does not retry** a forward that has already written to the client (`errBufferCommitted` sentinel when `c.Writer.Written()`), preventing a partial-write-then-connection-reset from corrupting the response with a second write.
+- **Serial FIFO** forwarding is spec-literal. Known trade-off: a long first buffered turn can cause later buffered requests to exhaust their 30s deadline → 503 even when opencode is healthy (bounded by the per-request deadline; no infinite hang). Concurrent forwarding once healthy is a documented potential follow-up if production `workspace_request_buffer_timeout_total` spikes.
+- `podIP` is captured at park time and is stable for the in-place opencode restart this buffer targets (env-secret/api-key change → agentd restarts opencode in the same pod). Pod-recreating restarts (suspend/resume) go through the not-Active 503 path, never the buffer.
 
 **Estimate:** 3 days
 

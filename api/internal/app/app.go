@@ -93,6 +93,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		cancel()
 		return nil, fmt.Errorf("failed to create proxy handler: %w", err)
 	}
+	proxyHandler.SetRequestBufferConfig(cfg.Proxy.RequestBufferSizePerWorkspace, time.Duration(cfg.Proxy.RequestBufferTimeoutSeconds)*time.Second)
 
 	// Resolve subagent (subtask) sessions back to their root user-visible
 	// session, so permission/question events from child sessions bubble up
