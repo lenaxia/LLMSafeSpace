@@ -53,15 +53,21 @@ func (r *WorkspaceReconciler) handleSuspended(ctx context.Context, workspace *v1
 	// an infinite suspend/resume loop.
 	// A nil pointer means "field not set" or "request already acknowledged"
 	// — treat as "no resume requested."
+	//
+	// Order matters: Status().Update must come FIRST (using the cache's
+	// resourceVersion), then clearSuspendRequest fetches its own fresh
+	// copy. Reversing them would bump the RV via Update, then the
+	// Status().Update would 409 on the stale local RV and the request
+	// would be permanently lost on re-reconcile.
 	if workspace.Spec.Suspend != nil && !*workspace.Spec.Suspend {
-		if err := r.clearSuspendRequest(ctx, workspace); err != nil {
-			return ctrl.Result{}, err
-		}
 		workspacePhaseTransitions.WithLabelValues(string(v1.WorkspacePhaseSuspended), string(v1.WorkspacePhaseResuming)).Inc()
 		workspace.Status.Phase = v1.WorkspacePhaseResuming
 		if err := r.Status().Update(ctx, workspace); err != nil {
 			recordStatusUpdateConflictOnError("handleSuspended_resume", err)
 			return ctrl.Result{}, err
+		}
+		if err := r.clearSuspendRequest(ctx, workspace); err != nil {
+			return ctrl.Result{Requeue: true}, nil
 		}
 		return ctrl.Result{}, nil
 	}

@@ -31,21 +31,24 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 	}
 
 	// US-23.3: if the API set Spec.Suspend=true, transition to Suspending.
-	// The controller is the sole writer of Status.Phase. After acting on
-	// the request, the controller clears Spec.Suspend (sets to nil) to
-	// acknowledge it — otherwise the stale &true would interfere with
-	// future reconciles and a subsequent &false (resume) would be
-	// indistinguishable from "no change requested".
+	// The controller is the sole writer of Status.Phase. After the status
+	// transition commits, clear Spec.Suspend to acknowledge the request.
+	// Order matters: Status().Update must come FIRST (using the cache's
+	// resourceVersion), then clearSuspendRequest fetches its own fresh
+	// copy. Reversing them would bump the RV via Update, then the
+	// Status().Update would 409 on the stale local RV and the request
+	// would be permanently lost on re-reconcile (Spec.Suspend already nil).
 	if workspace.Spec.Suspend != nil && *workspace.Spec.Suspend {
 		logger.Info("Spec.Suspend=true; transitioning to Suspending")
-		if err := r.clearSuspendRequest(ctx, workspace); err != nil {
-			return ctrl.Result{}, err
-		}
 		workspacePhaseTransitions.WithLabelValues(string(v1.WorkspacePhaseActive), string(v1.WorkspacePhaseSuspending)).Inc()
 		workspace.Status.Phase = v1.WorkspacePhaseSuspending
 		if err := r.Status().Update(ctx, workspace); err != nil {
 			recordStatusUpdateConflictOnError("handleActive_suspend", err)
 			return ctrl.Result{}, err
+		}
+		if err := r.clearSuspendRequest(ctx, workspace); err != nil {
+			logger.Error(err, "Failed to clear Spec.Suspend after suspend transition; will retry on next reconcile")
+			return ctrl.Result{Requeue: true}, nil
 		}
 		return ctrl.Result{}, nil
 	}

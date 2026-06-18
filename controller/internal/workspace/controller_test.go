@@ -414,6 +414,52 @@ func TestReconcile_Suspended_NoTTL_NoAction(t *testing.T) {
 	assert.Zero(t, result.RequeueAfter)
 }
 
+// TestReconcile_Active_SpecSuspendTrue_TransitionsToSuspending verifies
+// the full end-to-end Reconcile path for an API-initiated suspend:
+// Spec.Suspend=&true on an Active workspace → Phase=Suspending +
+// Spec.Suspend cleared to nil. Regression test for the stale-RV ordering
+// bug found in review round 2.
+func TestReconcile_Active_SpecSuspendTrue_TransitionsToSuspending(t *testing.T) {
+	ws := makeWorkspace("ws-suspend-req", "default", v1.WorkspacePhaseActive)
+	suspendTrue := true
+	ws.Spec.Suspend = &suspendTrue
+	r := reconcilerFor(t, ws)
+
+	_, err := r.Reconcile(context.Background(), reqFor("ws-suspend-req", "default"))
+	require.NoError(t, err)
+
+	got := &v1.Workspace{}
+	require.NoError(t, r.Get(context.Background(),
+		types.NamespacedName{Name: "ws-suspend-req", Namespace: "default"}, got))
+	assert.Equal(t, v1.WorkspacePhaseSuspending, got.Status.Phase,
+		"Spec.Suspend=&true must transition Active→Suspending")
+	assert.Nil(t, got.Spec.Suspend,
+		"Spec.Suspend must be cleared to nil after the controller acts on it")
+}
+
+// TestReconcile_Suspended_SpecSuspendFalse_TransitionsToResuming verifies
+// the full end-to-end Reconcile path for an API-initiated resume:
+// Spec.Suspend=&false on a Suspended workspace → Phase=Resuming +
+// Spec.Suspend cleared to nil.
+func TestReconcile_Suspended_SpecSuspendFalse_TransitionsToResuming(t *testing.T) {
+	ws := makeWorkspace("ws-resume-req", "default", v1.WorkspacePhaseSuspended)
+	suspendFalse := false
+	ws.Spec.Suspend = &suspendFalse
+	pwSecret := makePasswordSecret("ws-resume-req", "default")
+	r := reconcilerFor(t, ws, pwSecret)
+
+	_, err := r.Reconcile(context.Background(), reqFor("ws-resume-req", "default"))
+	require.NoError(t, err)
+
+	got := &v1.Workspace{}
+	require.NoError(t, r.Get(context.Background(),
+		types.NamespacedName{Name: "ws-resume-req", Namespace: "default"}, got))
+	assert.Equal(t, v1.WorkspacePhaseResuming, got.Status.Phase,
+		"Spec.Suspend=&false must transition Suspended→Resuming")
+	assert.Nil(t, got.Spec.Suspend,
+		"Spec.Suspend must be cleared to nil after the controller acts on it")
+}
+
 func TestReconcile_Resuming_TransitionsToCreating(t *testing.T) {
 	ws := makeWorkspace("ws-resume", "default", v1.WorkspacePhaseResuming)
 	past := metav1.Now()

@@ -144,10 +144,15 @@ func TestContract_ProxyRoutesSendBasicAuth(t *testing.T) {
 	router := gin.New()
 	proxy := router.Group("/api/v1/workspaces/:id")
 	{
-		proxy.GET("/sessions", handler.ListSessions)
-		proxy.POST("/sessions", handler.CreateSession)
+		// This list mirrors registerProxyRoutes in api/internal/server/router.go:921.
+		// If a new proxy route is added there, add it here too. A future
+		// improvement would move this test to the server package and call
+		// registerProxyRoutes directly to eliminate drift.
 		proxy.POST("/sessions/:sessionId/message", handler.SendMessage)
 		proxy.POST("/sessions/:sessionId/prompt", handler.SendPromptAsync)
+		proxy.POST("/sessions/:sessionId/queue", handler.EnqueueMessage)
+		proxy.GET("/sessions/:sessionId/queue", handler.ListQueue)
+		proxy.DELETE("/sessions/:sessionId/queue/:messageId", handler.DeleteQueueMessage)
 		proxy.GET("/sessions/:sessionId/message", handler.GetHistory)
 		proxy.GET("/sessions/:sessionId", handler.GetSession)
 		proxy.POST("/sessions/:sessionId/abort", handler.AbortSession)
@@ -165,10 +170,10 @@ func TestContract_ProxyRoutesSendBasicAuth(t *testing.T) {
 		body   string
 		desc   string
 	}{
-		{"GET", "/api/v1/workspaces/ws-contract/sessions", "", "ListSessions"},
-		{"POST", "/api/v1/workspaces/ws-contract/sessions", `{"title":"test"}`, "CreateSession"},
 		{"POST", "/api/v1/workspaces/ws-contract/sessions/ses_x/message", `{"content":"hi"}`, "SendMessage"},
 		{"POST", "/api/v1/workspaces/ws-contract/sessions/ses_x/prompt", `{"prompt":"hi"}`, "SendPromptAsync"},
+		{"POST", "/api/v1/workspaces/ws-contract/sessions/ses_x/queue", `{"content":"hi"}`, "EnqueueMessage"},
+		{"GET", "/api/v1/workspaces/ws-contract/sessions/ses_x/queue", "", "ListQueue"},
 		{"GET", "/api/v1/workspaces/ws-contract/sessions/ses_x/message", "", "GetHistory"},
 		{"GET", "/api/v1/workspaces/ws-contract/sessions/ses_x", "", "GetSession"},
 		{"POST", "/api/v1/workspaces/ws-contract/sessions/ses_x/abort", "", "AbortSession"},
