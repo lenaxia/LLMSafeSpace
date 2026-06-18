@@ -137,10 +137,11 @@ func TestAcceptInvitationTx_MigratesPersonalWorkspaces(t *testing.T) {
 	mock.ExpectExec(`INSERT INTO org_memberships`).
 		WithArgs("org-1", "user-1", "member").
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	// UPDATE workspaces — the migration (D4). Assert the statement exists.
-	mock.ExpectExec(`UPDATE workspaces SET org_id`).
+	// UPDATE workspaces — the migration (D4). Anchor the full WHERE clause so
+	// a regression that drops deleted_at/org_id/user_id scoping is caught.
+	mock.ExpectExec(`UPDATE workspaces SET org_id = .* WHERE user_id = .* AND org_id IS NULL AND deleted_at IS NULL`).
 		WithArgs("user-1", "org-1").
-		WillReturnResult(sqlmock.NewResult(0, 3)) // 3 personal workspaces migrated
+		WillReturnResult(sqlmock.NewResult(0, 3))
 	// UPDATE invitation accepted
 	mock.ExpectExec(`UPDATE org_invitations SET accepted_at`).
 		WithArgs("inv-1", "user-1").
