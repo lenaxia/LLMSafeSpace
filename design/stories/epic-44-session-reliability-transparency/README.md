@@ -264,14 +264,14 @@ To deliver the user-facing goal ("Frontend shows ⚠️ Agent was terminated"), 
 **Files:** `cmd/workspace-agentd/main.go` (managedProcess supervisor), `api/internal/handlers/history.go`  
 *(opencode is third-party and cannot be modified — all detection is in agentd)*
 **Acceptance:**
-- [ ] agentd `managedProcess.supervise()` detects opencode exit code 137 (SIGKILL from OOM) via `cmd.Wait()`
-- [ ] agentd writes `/home/workspace/.opencode-oom-marker` with timestamp + memory limit
-- [ ] agentd increments `workspace_oom_kills_total{workspace_id}` Prometheus counter
-- [ ] agentd exposes counter on `:9090/metrics` endpoint (requires basic Prometheus setup)
-- [ ] opencode checks marker on startup, emits OOM event via SSE
-- [ ] API proxy includes OOM notice in session history
-- [ ] Terminal shows: "⚠️ Agent was terminated due to memory exhaustion. Previous work may be lost."
-- [ ] Session history includes: `{"event": "oom_detected", "timestamp": "...", "memoryLimit": "2Gi"}`
+- [x] agentd `managedProcess.supervise()` detects opencode exit via SIGKILL signal via `cmd.Wait()` (Go's `exec.ExitError` → `syscall.WaitStatus.Signaled()` + `Signal() == SIGKILL`)
+- [x] agentd writes `/workspace/.opencode-oom-marker` with timestamp + memory limit
+- [x] agentd increments `workspace_oom_kills_total{workspace_id}` Prometheus counter
+- [x] agentd exposes counter on `:9090/metrics` endpoint (already exists for gate timings)
+- [ ] opencode checks marker on startup, emits OOM event via SSE *(DEFERRED — opencode is third-party; agentd writes the marker but cannot force opencode to read it. SSE emission requires US-44.1c broker bridge.)*
+- [ ] API proxy includes OOM notice in session history *(DEFERRED to follow-up)*
+- [ ] Terminal shows: "⚠️ Agent was terminated due to memory exhaustion." *(DEFERRED — frontend, requires broker bridge from US-44.1c)*
+- [ ] Session history includes: `{"event": "oom_detected", ...}` *(DEFERRED to follow-up)*
 
 **Note:** `managedProcess` supervisor already has access to exit code via `cmd.Wait()` (main.go:1132-1220). Add OOM detection logic to existing supervisor loop.
 
