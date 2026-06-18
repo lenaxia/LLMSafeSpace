@@ -128,7 +128,7 @@ The Story 4 harness was independently mutation-tested by the validator: (a) `Che
 - `api/internal/services/workspace/resolve_check_test.go`
 - `api/internal/server/router_workspace_access_test.go`
 - `api/internal/server/workspace_integration_test.go`
-- `worklogs/0359_2026-06-18_workspace-access-middleware.md` (this file)
+- `worklogs/0361_2026-06-18_workspace-access-middleware.md` (this file)
 
 **Modified:**
 - `pkg/types/types.go` (+`ContextKeyWorkspaceMeta`, +`WorkspaceMetaFromCtx`)

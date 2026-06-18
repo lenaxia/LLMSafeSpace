@@ -577,21 +577,24 @@ func (r *secretsPodIPResolver) GetWorkspacePodIP(ctx context.Context, userID, wo
 		return "", nil
 	}
 
-	// Ownership check first: a user must not be able to discover or push
-	// to a pod they do not own. We treat both "not found", "owned by
-	// someone else", and "DB blip" as a uniform empty result. The DB
-	// blip is logged so operators can detect it.
-	if r.db != nil {
-		meta, err := r.db.GetWorkspace(ctx, workspaceID)
-		if err != nil {
-			if r.logger != nil {
-				r.logger.Warn("secretsPodIPResolver: DB lookup failed; downgrading to no-running-pod",
-					"workspaceID", workspaceID, "error", err.Error())
+	// Ownership check: if the middleware has already validated ownership for
+	// this workspace (all HTTP routes on idGroup), trust its decision — it
+	// includes the D5 creator-membership and D6 org-admin checks that the
+	// legacy meta.UserID comparison below lacks. For non-HTTP callers (none
+	// today, but defensively), fall through to the DB-based check.
+	if cm, ok := types.WorkspaceMetaFromCtx(ctx); !ok || cm == nil || cm.ID != workspaceID {
+		if r.db != nil {
+			meta, err := r.db.GetWorkspace(ctx, workspaceID)
+			if err != nil {
+				if r.logger != nil {
+					r.logger.Warn("secretsPodIPResolver: DB lookup failed; downgrading to no-running-pod",
+						"workspaceID", workspaceID, "error", err.Error())
+				}
+				return "", nil
 			}
-			return "", nil
-		}
-		if meta == nil || meta.UserID != userID {
-			return "", nil
+			if meta == nil || meta.UserID != userID {
+				return "", nil
+			}
 		}
 	}
 
