@@ -10,7 +10,7 @@
 // *metav1.Time) so the JSON contract returned to clients is free of
 // Kubernetes-isms (kind, apiVersion, metadata).
 //
-// Types are organised by domain (one file per area):
+// Types are organized by domain (one file per area):
 //
 //   - errors.go      — cross-cutting sentinel errors
 //   - context.go     — context-key types and the WorkspaceMetaFromCtx accessor
