@@ -7,9 +7,12 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/lenaxia/llmsafespace/api/internal/services/wsstate"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
@@ -209,4 +212,53 @@ func TestProxy_Upstream401_DoesNotPanic_WithoutWorkspaceIDInContext(t *testing.T
 	require.NotPanics(t, func() {
 		env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-edge/sessions", nil)
 	})
+}
+
+// --- US-45.4: Redis-backed pwCache integration ---
+//
+// Verifies the E2E wiring: a RedisStore injected via SetStateStore is
+// used by ProxyHandler.getPassword for cache reads/writes, AND that the
+// existing 401→invalidate path correctly DELs the Redis key (not just
+// the in-memory map). README-LLM.md "E2E Wiring Verification" requires
+// this kind of integration test — unit tests on the store alone are
+// insufficient evidence of wiring.
+
+// TestProxy_Upstream401_InvalidatesRedisPasswordCache exercises the
+// full 401→invalidate path through a Redis-backed state store. After
+// the 401, the Redis key for the workspace's password must be deleted
+// (not just an in-memory entry) so the next request on any replica
+// falls through to K8s.
+func TestProxy_Upstream401_InvalidatesRedisPasswordCache(t *testing.T) {
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	redisClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer func() { _ = redisClient.Close() }()
+
+	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("WWW-Authenticate", "Basic realm=\"opencode\"")
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	// Swap the default InMemoryStore for a RedisStore so the test
+	// exercises the Redis code path end-to-end.
+	env.handler.SetStateStore(wsstate.NewRedisStore(redisClient, wsstate.DefaultActiveSessTTL))
+
+	env.setupWorkspacePodWithT(t, "ws-redis-inv", "10.0.0.1", "Active", "")
+	env.setupPasswordWithT(t, "ws-redis-inv", "test-password")
+
+	// First request: triggers getPassword (cache miss → K8s fetch →
+	// SetCachedPassword → Redis SET with TTL) then 401 from upstream
+	// → invalidateCaches → InvalidatePassword (Redis DEL).
+	w1 := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-redis-inv/sessions", nil)
+	assert.Equal(t, http.StatusBadGateway, w1.Code)
+
+	// Verify the Redis key for the cached password is gone — the 401
+	// invalidation reached the Redis layer, not just an in-memory map.
+	pwKey := "ws:{ws-redis-inv}:pw"
+	assert.False(t, mr.Exists(pwKey),
+		"Redis password cache key must be DELeted after 401 — multi-replica invalidation")
+
+	// Verify via the store interface too (defense-in-depth).
+	_, cached := env.handler.GetCachedPasswordForTest("ws-redis-inv")
+	assert.False(t, cached, "GetCachedPassword must return miss after Redis DEL")
 }

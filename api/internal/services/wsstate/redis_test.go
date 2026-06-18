@@ -335,29 +335,10 @@ func TestRedisStore_IsSessionActive_RedisDown_ReturnsFalse(t *testing.T) {
 // Delegation to InMemoryStore for un-migrated sections
 // ---------------------------------------------------------------------------
 
-// TestRedisStore_DelegatesDeletedSessionsToInMemory verifies that until
-// US-45.3 ships, the RedisStore delegates deletedSessions operations to
-// its embedded InMemoryStore. Production behavior must remain correct
-// even though only activeSess is on Redis.
-func TestRedisStore_DelegatesDeletedSessionsToInMemory(t *testing.T) {
-	store, _, _, cleanup := setupRedisStore(t)
-	defer cleanup()
-
-	store.MarkSessionDeleted("ws-1", "s1")
-	assert.True(t, store.IsSessionDeleted("ws-1", "s1"))
-	assert.False(t, store.IsSessionDeleted("ws-1", "s2"))
-}
-
-func TestRedisStore_DelegatesPasswordCacheToInMemory(t *testing.T) {
-	store, _, _, cleanup := setupRedisStore(t)
-	defer cleanup()
-
-	store.SetCachedPassword("ws-1", "hunter2")
-	pw, ok := store.GetCachedPassword("ws-1")
-	require.True(t, ok)
-	assert.Equal(t, "hunter2", pw)
-}
-
+// TestRedisStore_DelegatesWorkspaceConfigToInMemory verifies that until
+// US-45.6 ships, the RedisStore delegates workspace-config operations
+// to its embedded InMemoryStore. Production behavior must remain correct
+// even though only activeSess/deleted/pw are on Redis.
 func TestRedisStore_DelegatesWorkspaceConfigToInMemory(t *testing.T) {
 	store, _, _, cleanup := setupRedisStore(t)
 	defer cleanup()
