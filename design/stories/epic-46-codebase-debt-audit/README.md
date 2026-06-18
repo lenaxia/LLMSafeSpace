@@ -15,7 +15,7 @@ ROI = (correctness + testability + maintainability impact) ÷ engineering days.
 | Story | Title | Effort | ROI | Depends on |
 |-------|-------|--------|-----|------------|
 | [US-46.1](./US-46.1-fix-epic-numbering-and-dup-design-doc.md) | Fix epic numbering collisions + delete duplicate `0018` design doc | Trivial (0.25d) | Very High | — |
-| [US-46.2](./US-46.2-remove-dead-code-stubs.md) | Delete `GCPDriver` stub + `annotateModels` dead branch | Small (0.5d) | Very High | — |
+| [US-46.2](./US-46.2-remove-dead-code-stubs.md) | Delete `GCPDriver` stub (annotateModels guard stays — defense-in-depth) | Small (0.25d) | Very High | — |
 | [US-46.3](./US-46.3-split-pkg-types-types-go.md) | Split `pkg/types/types.go` (71 types → per-domain files) | Small (1d) | High | — |
 | [US-46.4](./US-46.4-introduce-domain-error-type.md) | Introduce `DomainError` type + mapping convention | Small (1d) | High | — |
 | [US-46.5](./US-46.5-propagate-context-everywhere.md) | Replace 187 `context.TODO/Background` with propagated ctx | Medium (2d) | High | — |
@@ -66,7 +66,7 @@ Findings from the production code audit (worklog 0337) that are **not already ow
 - New features
 - Behaviour changes
 - Documentation rewrites (only factual fixes in US-46.15)
-- The 9 dead code locations from Epic 38 (US-46.2 only handles GCPDriver + annotateModels, which Epic 38 did not list)
+- The 9 dead code locations from Epic 38 (US-46.2 only handles the GCPDriver stub, which Epic 38 did not list; the annotateModels guard was originally proposed for removal but is retained as intentional defense-in-depth — see US-46.2)
 
 ---
 
