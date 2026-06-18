@@ -180,6 +180,70 @@ func TestSequenceCheck_AllowGapsFalse_DefaultBehaviorPreserved(t *testing.T) {
 	}
 }
 
+func TestSequenceCheck_AllowGaps_NoGaps_HasWarningsFalse(t *testing.T) {
+	// Happy path: AllowGaps=true AND contiguous sequence. HasWarnings
+	// must be false. Catches the bug class where someone simplifies
+	// HasWarnings() to "return r.GapsAllowed" without the
+	// len(MissingVersions)>0 clause.
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0001_2026-06-18_alpha.md"), "")
+	mustWrite(t, filepath.Join(dir, "0002_2026-06-18_bravo.md"), "")
+	mustWrite(t, filepath.Join(dir, "0003_2026-06-18_charlie.md"), "")
+
+	rep, err := SequenceCheck(SequenceConfig{
+		Dir:       dir,
+		Pattern:   WorklogPattern,
+		AllowGaps: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !rep.OK() {
+		t.Fatalf("expected OK with no gaps; got: %s", rep.String())
+	}
+	if rep.HasWarnings() {
+		t.Fatalf("expected HasWarnings()=false with no gaps; got true")
+	}
+	if !rep.GapsAllowed {
+		t.Fatalf("expected GapsAllowed=true on report")
+	}
+}
+
+func TestSequenceCheck_AllowGaps_GrandfatherBelowExcludesOldGaps(t *testing.T) {
+	// Production config: cmd/repolint/main.go runWorklogs sets BOTH
+	// AllowGaps=true AND GrandfatherBelow=97. Verify gaps strictly
+	// below the threshold are excluded; gaps at or above the
+	// threshold ARE reported.
+	dir := t.TempDir()
+	// Below grandfather threshold: 90 and 92 with a gap at 91 (and at 1..89,
+	// 93..96 which are all before the threshold and thus excluded).
+	mustWrite(t, filepath.Join(dir, "0090_2026-06-18_old-a.md"), "")
+	mustWrite(t, filepath.Join(dir, "0092_2026-06-18_old-b.md"), "")
+	// Above threshold: 97, 98 contiguous, then a real gap at 99.
+	mustWrite(t, filepath.Join(dir, "0097_2026-06-18_new-a.md"), "")
+	mustWrite(t, filepath.Join(dir, "0098_2026-06-18_new-b.md"), "")
+	mustWrite(t, filepath.Join(dir, "0100_2026-06-18_new-c.md"), "")
+
+	rep, err := SequenceCheck(SequenceConfig{
+		Dir:              dir,
+		Pattern:          WorklogPattern,
+		AllowGaps:        true,
+		GrandfatherBelow: 97,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !rep.OK() {
+		t.Fatalf("expected OK (gaps allowed); got: %s", rep.String())
+	}
+	if !rep.HasWarnings() {
+		t.Fatalf("expected HasWarnings()=true (gap at 99)")
+	}
+	if len(rep.MissingVersions) != 1 || rep.MissingVersions[0] != 99 {
+		t.Fatalf("expected MissingVersions=[99] (91 is grandfathered); got %v", rep.MissingVersions)
+	}
+}
+
 func TestSequenceCheck_MissingDownPair(t *testing.T) {
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "000001_a.up.sql"), "")
