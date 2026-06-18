@@ -533,7 +533,7 @@ Both are Tier 2 (admin-mutable) `instance_settings` entries stored in PostgreSQL
 
 **Removed settings:**
 - `workspace.maxStorageSize` — removed. PVC size is set once at creation and never changed; the admission webhook (`webhooks.maxWorkspaceStorageGi: 1024 Gi` in `values.yaml`) is the correct infrastructure-level ceiling. A dynamic DB-backed cap that only applied to the API path added complexity without meaningful safety.
-- `workspace.defaultResources.ephemeralStorage` — removed. With `readOnlyRootFilesystem: true` and all writable paths on PVC subPaths or `Medium: Memory` emptyDirs, ephemeral storage is consumed only by kubelet container log files. This is governed by kubelet's own log rotation (default 10 Mi × 5 files = 50 Mi), not by a tunable admin setting. The pod builder hardcodes `"1Gi"` as the ephemeral limit (`controller/internal/workspace/pod_builder.go:232`).
+- `workspace.defaultResources.ephemeralStorage` — removed alongside the entire ephemeral-storage concept (see "Ephemeral storage — not set on the pod" below).
 
 ### `workspace.defaultStorageSize` — full trace
 
@@ -546,22 +546,22 @@ Both are Tier 2 (admin-mutable) `instance_settings` entries stored in PostgreSQL
 - Takes effect immediately on the next workspace creation — no redeploy needed.
 - The hard ceiling is `webhooks.maxWorkspaceStorageGi` (default `1024 Gi`, Helm value) enforced at the Kubernetes admission layer for all paths including direct `kubectl apply`.
 
-### Ephemeral storage — hardcoded, not admin-configurable
+### Ephemeral storage — not set on the pod
 
-The pod builder sets `ephemeral-storage` request and limit to `"1Gi"` (hardcoded at `controller/internal/workspace/pod_builder.go:232`). This limit exists solely to cap **container log volume** on node disk. With `readOnlyRootFilesystem: true` and all writable paths on the PVC, the container overlay filesystem receives no writes; the only ephemeral storage consumer is kubelet's stdout/stderr log files, which kubelet's own rotation already caps at ~50 Mi.
+The pod builder does NOT set `ephemeral-storage` requests or limits on workspace containers (`controller/internal/workspace/pod_builder.go` `resourceRequirementsFor`). The `Workspace` CRD has no `spec.resources.ephemeralStorage` field, the webhook has no corresponding cap, and Helm has no `maxWorkspaceEphemeralStorageGi` flag. All of these were removed because they protected against a threat (uncontrolled writes to node-local ephemeral storage) that the architecture already mitigates.
 
-**What contributes to ephemeral storage on a workspace pod:**
+**Why nothing meaningful writes to ephemeral storage on a workspace pod:**
 
 | Source | Counts toward ephemeral storage? | Notes |
 |---|---|---|
 | Container writable layer (overlay FS) | No | `readOnlyRootFilesystem: true` — EROFS for all unmounted paths |
-| Container log files (stdout/stderr) | **Yes** | Kubelet writes to `/var/log/pods/` on node disk; kubelet rotation caps at ~50 Mi |
+| Container log files (stdout/stderr) | **Yes** | Kubelet writes to `/var/log/pods/` on node disk; kubelet rotation caps at ~50 Mi (10 Mi × 5 files) regardless of pod limits |
 | `/tmp` (PVC `subPath: tmp`) | No | PVC-backed |
 | `/workspace` (PVC `subPath: workspace`) | No | PVC-backed |
 | `/home/sandbox` (PVC `subPath: home`) | No | PVC-backed |
 | `/sandbox-cfg` (emptyDir, `Medium: Memory`) | No | Counts toward memory, not ephemeral storage |
 
-The webhook cap (`webhooks.maxWorkspaceEphemeralStorageGi: 100` in `values.yaml`) is still enforced by the validating webhook against `spec.resources.ephemeralStorage` on the Workspace CRD for any operator who explicitly sets a custom ephemeral storage value.
+Container logs are the only consumer, and kubelet's own log rotation already bounds them. A per-pod ephemeral-storage limit added no protection beyond that. If a future feature introduces a node-disk-backed `emptyDir` (`Medium: ""`), per-pod ephemeral limits would need to come back, scoped to the actual concern.
 
 ---
 

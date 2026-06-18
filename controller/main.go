@@ -54,7 +54,6 @@ func main() {
 	var maxStorageGi int64
 	var maxCPUMillicores int64
 	var maxMemoryMi int64
-	var maxEphemeralStorageGi int64
 	flag.StringVar(&metricsAddr, "metrics-addr", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
@@ -76,8 +75,6 @@ func main() {
 		"Maximum spec.resources.cpu in millicores (16000 = 16 cores). Set 0 to disable. (G4 / F1.2.3).")
 	flag.Int64Var(&maxMemoryMi, "max-workspace-memory-mi", 65536,
 		"Maximum spec.resources.memory in MiB (65536 = 64GiB). Set 0 to disable. (G4 / F1.2.3).")
-	flag.Int64Var(&maxEphemeralStorageGi, "max-workspace-ephemeral-storage-gi", 100,
-		"Maximum spec.resources.ephemeralStorage in GiB. Set 0 to disable. (G4 / F1.2.3).")
 	var inferenceRelayURL string
 	flag.StringVar(&inferenceRelayURL, "inference-relay-url", "",
 		"Cloudflare Worker URL for free-tier inference relay (Epic 26). "+
@@ -166,7 +163,6 @@ func main() {
 			MaxStorageGi:             maxStorageGi,
 			MaxCPUMillicores:         maxCPUMillicores,
 			MaxMemoryMi:              maxMemoryMi,
-			MaxEphemeralStorageGi:    maxEphemeralStorageGi,
 		},
 	})
 

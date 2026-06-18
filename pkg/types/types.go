@@ -50,9 +50,6 @@ type ResourceRequirements struct {
 	// Memory resource limit
 	Memory string `json:"memory,omitempty"`
 
-	// Ephemeral storage limit
-	EphemeralStorage string `json:"ephemeralStorage,omitempty"`
-
 	// GPU resource limit
 	GPU string `json:"gpu,omitempty"`
 }
@@ -212,9 +209,6 @@ type ResourceStatus struct {
 
 	// Current memory usage
 	MemoryUsage string `json:"memoryUsage,omitempty"`
-
-	// Current ephemeral storage usage
-	EphemeralStorageUsage string `json:"ephemeralStorageUsage,omitempty"`
 }
 
 // PaginationMetadata represents pagination metadata

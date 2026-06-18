@@ -623,7 +623,7 @@ func TestG4_F125_RejectsURLAndPathRequirements(t *testing.T) {
 	}
 }
 
-func TestG4_F123_WebhookCapsCPUMemoryAndEphemeral(t *testing.T) {
+func TestG4_F123_WebhookCapsCPUAndMemory(t *testing.T) {
 	// Validator-found surface: spec.resources.* could declare
 	// 999999999m and stay Pending forever. Webhook caps prevent it.
 	v := &WorkspaceValidator{
@@ -632,7 +632,6 @@ func TestG4_F123_WebhookCapsCPUMemoryAndEphemeral(t *testing.T) {
 		MaxStorageGi:           1024,
 		MaxCPUMillicores:       16000,
 		MaxMemoryMi:            65536,
-		MaxEphemeralStorageGi:  100,
 	}
 	t.Run("cpu over cap", func(t *testing.T) {
 		ws := minimalValidWorkspace()
@@ -646,18 +645,11 @@ func TestG4_F123_WebhookCapsCPUMemoryAndEphemeral(t *testing.T) {
 		resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
 		assert.False(t, resp.Allowed)
 	})
-	t.Run("ephemeral over cap", func(t *testing.T) {
-		ws := minimalValidWorkspace()
-		ws.Spec.Resources = &v1.ResourceRequirements{EphemeralStorage: "200Gi"}
-		resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
-		assert.False(t, resp.Allowed)
-	})
 	t.Run("at cap is allowed", func(t *testing.T) {
 		ws := minimalValidWorkspace()
 		ws.Spec.Resources = &v1.ResourceRequirements{
-			CPU:              "16000m",
-			Memory:           "65536Mi",
-			EphemeralStorage: "100Gi",
+			CPU:    "16000m",
+			Memory: "65536Mi",
 		}
 		resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
 		assert.True(t, resp.Allowed, "%v", resp.Result)
@@ -782,7 +774,6 @@ func TestUS243_WebhookRejectsLimitBelowRequest(t *testing.T) {
 		MaxStorageGi:           1024,
 		MaxCPUMillicores:       16000,
 		MaxMemoryMi:            65536,
-		MaxEphemeralStorageGi:  100,
 	}
 	t.Run("cpuLimit below cpu request", func(t *testing.T) {
 		ws := minimalValidWorkspace()
@@ -819,7 +810,6 @@ func TestUS243_WebhookCapsApplyToLimitFields(t *testing.T) {
 		MaxStorageGi:           1024,
 		MaxCPUMillicores:       4000,
 		MaxMemoryMi:            8192,
-		MaxEphemeralStorageGi:  100,
 	}
 	t.Run("cpuLimit over cap rejected", func(t *testing.T) {
 		ws := minimalValidWorkspace()

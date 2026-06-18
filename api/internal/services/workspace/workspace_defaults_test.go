@@ -323,10 +323,10 @@ func (s *errorSettingsStore) SetInstanceSetting(_ context.Context, _ string, _ j
 // === Edge cases ===
 
 func TestCreateWorkspace_PartialResources_OnlyCPU(t *testing.T) {
-	// Only cpu is set in settings, memory/ephemeral use schema defaults
+	// Only cpu is set in settings, memory uses schema default
 	f := newDefaultsFixture(t, map[string]any{
 		"workspace.defaultResources.cpu": "2000m",
-		// memory and ephemeral will come from schema defaults
+		// memory will come from schema default
 	})
 	ctx := context.Background()
 

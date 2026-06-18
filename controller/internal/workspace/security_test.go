@@ -252,9 +252,8 @@ func TestSandboxPod_VolumeFootprint(t *testing.T) {
 func TestG4_F123_PodAppliesSpecResources(t *testing.T) {
 	ws := newWorkspaceForSecurity(t)
 	ws.Spec.Resources = &v1.ResourceRequirements{
-		CPU:              "750m",
-		Memory:           "1Gi",
-		EphemeralStorage: "2Gi",
+		CPU:    "750m",
+		Memory: "1Gi",
 	}
 	r := reconcilerFor(t)
 
@@ -274,9 +273,13 @@ func TestG4_F123_PodAppliesSpecResources(t *testing.T) {
 	memLimit := main.Resources.Limits[corev1.ResourceMemory]
 	require.Equal(t, "4Gi", memLimit.String(),
 		"memory limit must be 4× spec.resources.memory (burstable QoS)")
-	ephLimit := main.Resources.Limits[corev1.ResourceEphemeralStorage]
-	require.Equal(t, "2Gi", ephLimit.String(),
-		"ephemeral-storage limit must equal spec.resources.ephemeralStorage (no burst)")
+
+	// Ephemeral-storage is intentionally NOT set on the pod (kubelet's
+	// log rotation already bounds the only ephemeral consumer).
+	_, hasEphReq := main.Resources.Requests[corev1.ResourceEphemeralStorage]
+	require.False(t, hasEphReq, "ephemeral-storage must not appear in Requests")
+	_, hasEphLim := main.Resources.Limits[corev1.ResourceEphemeralStorage]
+	require.False(t, hasEphLim, "ephemeral-storage must not appear in Limits")
 }
 
 func TestG4_F123_PodAppliesDefaultsWhenSpecResourcesNil(t *testing.T) {
