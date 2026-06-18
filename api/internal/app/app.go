@@ -154,6 +154,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 
 	// Wire secret management (Epic 10).
 	var secretsHandler *handlers.SecretsHandler
+	var workspaceEnvHandler *handlers.WorkspaceEnvHandler
 	var rotateKeyHandler *handlers.RotateKeyHandler
 	var adminProvCredHandler *handlers.AdminProviderCredentialsHandler
 	var userProvCredHandler *handlers.UserProviderCredentialsHandler
@@ -223,6 +224,10 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		auditStore = asyncAudit
 
 		secretsHandler = handlers.NewSecretsHandler(secretService)
+		// US-29.4: WorkspaceEnvHandler owns the env-var endpoints,
+		// extracted from SecretsHandler. Shares the same SecretService.
+		workspaceEnvHandler = handlers.NewWorkspaceEnvHandler(secretService)
+		workspaceEnvHandler.SetLogger(log)
 		// Wire billing/metering metrics recorder.
 		if metricsSvc, ok := svc.GetMetrics().(*metrics.Service); ok {
 			secretsHandler.SetMetricsRecorder(metricsSvc)
@@ -535,6 +540,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		AdminProviderCredentialsHandler: adminProvCredHandler,
 		UserProviderCredentialsHandler:  userProvCredHandler,
 		SecretsHandler:                  secretsHandler,
+		WorkspaceEnvHandler:             workspaceEnvHandler,
 		RotateKeyHandler:                rotateKeyHandler,
 		OrgsHandler:                     orgsHandler,
 		OrgCredentialsHandler:           orgCredsHandler,

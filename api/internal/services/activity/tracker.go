@@ -11,8 +11,10 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
 
@@ -127,18 +129,22 @@ func (t *ActivityTracker) runFlushLoop() {
 }
 
 func (t *ActivityTracker) flushOne(ctx context.Context, workspaceID string, activityTime time.Time) error {
+	// US-23.3: write LastActivityAt to the metadata annotation via a
+	// strategic-merge Patch instead of Status.UpdateStatus. This uses
+	// the main-resource optimistic-concurrency lane, which is separate
+	// from the Status subresource lane the controller writes to. The
+	// cross-writer race between ActivityTracker and the controller is
+	// eliminated: the Patch only touches annotations, so a conflict-
+	// retry re-applies just the annotation without clobbering status.
+	patch := fmt.Sprintf(`{"metadata":{"annotations":{"%s":"%s"}}}`,
+		v1.AnnotationLastActivityAt, activityTime.Format(time.RFC3339))
 	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
 		v1Client, err := t.k8sClient.LlmsafespaceV1()
 		if err != nil {
 			return fmt.Errorf("initialize LLMSafespaceV1 client: %w", err)
 		}
-		ws, err := v1Client.Workspaces(t.namespace).Get(ctx, workspaceID, metav1.GetOptions{})
-		if err != nil {
-			return err
-		}
-		now := metav1.NewTime(activityTime)
-		ws.Status.LastActivityAt = &now
-		_, err = v1Client.Workspaces(t.namespace).UpdateStatus(ctx, ws)
+		_, err = v1Client.Workspaces(t.namespace).Patch(
+			ctx, workspaceID, types.MergePatchType, []byte(patch), metav1.PatchOptions{})
 		return err
 	})
 }

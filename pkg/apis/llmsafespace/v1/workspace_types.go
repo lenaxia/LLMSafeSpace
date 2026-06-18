@@ -4,6 +4,8 @@
 package v1
 
 import (
+	"time"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -20,6 +22,14 @@ const (
 	// WorkspaceCreateDurationSeconds so the measurement covers the full
 	// user-perceived latency, not just the controller reconcile latency.
 	AnnotationRequestedAt = "llmsafespace.dev/requested-at"
+
+	// AnnotationLastActivityAt stores the last user-activity timestamp
+	// (RFC3339). Written by the API service (activity tracker + activate
+	// flow); read by the controller for idle auto-suspend. Lives in
+	// metadata.annotations so it uses the main-resource optimistic-
+	// concurrency lane and never conflicts with Status().Update
+	// (US-23.3 single-writer migration).
+	AnnotationLastActivityAt = "llmsafespace.dev/last-activity-at"
 )
 
 // WorkspaceStorageConfig defines PVC configuration for a Workspace.
@@ -143,6 +153,32 @@ type WorkspaceSpec struct {
 	// replies "always" to all permission.asked events. Default: false.
 	// +kubebuilder:default=false
 	AutoApprovePermissions bool `json:"autoApprovePermissions,omitempty"`
+
+	// Suspend is a tri-state request flag for workspace lifecycle control
+	// (US-23.3). It uses a pointer so that "field absent" (nil) is
+	// distinguishable from "explicitly set to false":
+	//
+	//   - nil   : request acknowledged or never set. The controller does NOT
+	//             use this to make resume decisions. This is the state of
+	//             workspaces created before the migration, and the state after
+	//             the controller has consumed a suspend/resume request.
+	//   - true  : API requests suspension. handleActive transitions to Suspending,
+	//             then clears the flag.
+	//   - false : API requests resume from Suspended. handleSuspended transitions
+	//             to Resuming, then clears the flag.
+	//
+	// The controller MUST clear this field (set to nil) after acting on it,
+	// otherwise a stale &false would cause handleSuspended to immediately
+	// resume after any controller-initiated suspend (idle/timeout/TTL),
+	// creating an infinite suspend/resume loop.
+	//
+	// The API service is the sole writer of this field (when non-nil); the
+	// controller is the sole writer of Status.Phase and the sole writer of
+	// the nil-clear. This eliminates the cross-writer race that was the root
+	// cause of multiple incidents (see Epic 23 Story 3 design).
+	// +kubebuilder:validation:Optional
+	// +nullable
+	Suspend *bool `json:"suspend,omitempty"`
 }
 
 // WorkspacePhase represents the lifecycle phase of a Workspace.
@@ -234,11 +270,14 @@ type AgentSessionStatus struct {
 }
 
 // WorkspaceStatus defines the observed state of a Workspace.
+// Ownership is documented per-field to enforce the single-writer principle
+// (US-23.3): each field has exactly one owner, eliminating cross-owner
+// optimistic-concurrency conflicts.
 type WorkspaceStatus struct {
+	// Controller-owned: written by the controller's reconcile loop only.
 	Phase              WorkspacePhase       `json:"phase,omitempty"`
 	PVCName            string               `json:"pvcName,omitempty"`
 	ActiveSessions     int32                `json:"activeSessions,omitempty"`
-	LastActivityAt     *metav1.Time         `json:"lastActivityAt,omitempty"`
 	SuspendedAt        *metav1.Time         `json:"suspendedAt,omitempty"`
 	Conditions         []WorkspaceCondition `json:"conditions,omitempty"`
 	Message            string               `json:"message,omitempty"`
@@ -249,7 +288,7 @@ type WorkspaceStatus struct {
 	// parsing free-form Message strings. Empty when not in Failed phase.
 	FailureReason FailureReason `json:"failureReason,omitempty"`
 
-	// Pod status fields (absorbed from Sandbox):
+	// Pod status fields (absorbed from Sandbox) — controller-owned:
 	PodName                   string       `json:"podName,omitempty"`
 	PodNamespace              string       `json:"podNamespace,omitempty"`
 	PodIP                     string       `json:"podIP,omitempty"`
@@ -269,7 +308,14 @@ type WorkspaceStatus struct {
 	LastHealthCheckAt         *metav1.Time `json:"lastHealthCheckAt,omitempty"`
 	ConsecutiveHealthFailures int32        `json:"consecutiveHealthFailures,omitempty"`
 
-	// Agent-reported fields (populated from agentd /v1/statusz scrape):
+	// LastActivityAt is DEPRECATED (US-23.3). The authoritative value is
+	// now the metadata annotation llmsafespace.dev/last-activity-at,
+	// written by the API service. This field is retained for backward
+	// compatibility during the migration window but is no longer written
+	// to by any code path. New readers MUST use GetLastActivityAt().
+	LastActivityAt *metav1.Time `json:"lastActivityAt,omitempty"`
+
+	// Agent-reported fields (populated from agentd /v1/statusz scrape) — controller-owned:
 	Sessions         []AgentSessionStatus `json:"sessions,omitempty"`
 	DiskUsedBytes    int64                `json:"diskUsedBytes,omitempty"`
 	DiskTotalBytes   int64                `json:"diskTotalBytes,omitempty"`
@@ -326,4 +372,29 @@ type WorkspaceList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []Workspace `json:"items"`
+}
+
+// --- LastActivityAt annotation helpers (US-23.3) ---
+//
+// GetLastActivityAt reads the last-activity timestamp from the
+// metadata annotation (authoritative) with a fallback to the
+// deprecated Status.LastActivityAt field for workspaces created
+// before the migration.
+func GetLastActivityAt(ws *Workspace) *metav1.Time {
+	if ws.Annotations != nil {
+		if v, ok := ws.Annotations[AnnotationLastActivityAt]; ok && v != "" {
+			if t, err := time.Parse(time.RFC3339, v); err == nil {
+				mt := metav1.NewTime(t)
+				return &mt
+			}
+		}
+	}
+	return ws.Status.LastActivityAt
+}
+
+// SetLastActivityAtAnnotation writes the last-activity timestamp into
+// the metadata annotation. The caller must ensure the map is initialized
+// (use EnsureAnnotations).
+func SetLastActivityAtAnnotation(annotations map[string]string, t metav1.Time) {
+	annotations[AnnotationLastActivityAt] = t.Format(time.RFC3339)
 }

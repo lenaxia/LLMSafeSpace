@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/informers"
@@ -179,6 +180,13 @@ func (m *MockWorkspaceInterface) Watch(ctx context.Context, opts metav1.ListOpti
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(watch.Interface), args.Error(1)
+}
+func (m *MockWorkspaceInterface) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions) (*v1.Workspace, error) {
+	args := m.Called(ctx, name, pt, data, opts)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*v1.Workspace), args.Error(1)
 }
 
 // MockWatch mocks watch.Interface.

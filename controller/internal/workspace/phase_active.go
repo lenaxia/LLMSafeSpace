@@ -30,6 +30,29 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 		logger.Error(err, "Failed to refresh per-workspace egress NetworkPolicy (continuing)")
 	}
 
+	// US-23.3: if the API set Spec.Suspend=true, transition to Suspending.
+	// The controller is the sole writer of Status.Phase. After the status
+	// transition commits, clear Spec.Suspend to acknowledge the request.
+	// Order matters: Status().Update must come FIRST (using the cache's
+	// resourceVersion), then clearSuspendRequest fetches its own fresh
+	// copy. Reversing them would bump the RV via Update, then the
+	// Status().Update would 409 on the stale local RV and the request
+	// would be permanently lost on re-reconcile (Spec.Suspend already nil).
+	if workspace.Spec.Suspend != nil && *workspace.Spec.Suspend {
+		logger.Info("Spec.Suspend=true; transitioning to Suspending")
+		workspacePhaseTransitions.WithLabelValues(string(v1.WorkspacePhaseActive), string(v1.WorkspacePhaseSuspending)).Inc()
+		workspace.Status.Phase = v1.WorkspacePhaseSuspending
+		if err := r.Status().Update(ctx, workspace); err != nil {
+			recordStatusUpdateConflictOnError("handleActive_suspend", err)
+			return ctrl.Result{}, err
+		}
+		if err := r.clearSuspendRequest(ctx, workspace); err != nil {
+			logger.Error(err, "Failed to clear Spec.Suspend after suspend transition; will retry on next reconcile")
+			return ctrl.Result{Requeue: true}, nil
+		}
+		return ctrl.Result{}, nil
+	}
+
 	// Check restart generation.
 	if workspace.Spec.RestartGeneration > workspace.Status.ObservedRestartGeneration {
 		logger.Info("Restart generation bumped; deleting pod", "gen", workspace.Spec.RestartGeneration)
@@ -188,16 +211,20 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 	}
 
 	// Check idle auto-suspend.
+	// US-23.3: read LastActivityAt from the annotation (authoritative)
+	// with fallback to the deprecated Status field for workspaces
+	// created before the migration.
 	if workspace.Spec.AutoSuspend != nil && workspace.Spec.AutoSuspend.Enabled {
 		timeout := workspace.Spec.AutoSuspend.IdleTimeoutSeconds
 		if timeout <= 0 {
 			timeout = 86400
 		}
-		if workspace.Status.LastActivityAt != nil {
-			idle := time.Since(workspace.Status.LastActivityAt.Time)
+		lastActivity := v1.GetLastActivityAt(workspace)
+		if lastActivity != nil {
+			idle := time.Since(lastActivity.Time)
 			if idle > time.Duration(timeout)*time.Second {
 				logger.Info("Workspace idle timeout exceeded; suspending",
-					"lastActivity", workspace.Status.LastActivityAt, "idle", idle, "timeout", time.Duration(timeout)*time.Second)
+					"lastActivity", lastActivity, "idle", idle, "timeout", time.Duration(timeout)*time.Second)
 				workspace.Status.Phase = v1.WorkspacePhaseSuspending
 				if err := r.Status().Update(ctx, workspace); err != nil {
 					recordStatusUpdateConflictOnError("handleActive_idle", err)

@@ -12,6 +12,8 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8stypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/watch"
 
 	apiinterfaces "github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
@@ -514,6 +516,29 @@ func (m *mockWSInterfaceForMaxActive) List(ctx context.Context, _ metav1.ListOpt
 func (m *mockWSInterfaceForMaxActive) UpdateStatus(ctx context.Context, ws *v1.Workspace) (*v1.Workspace, error) {
 	m.workspaces[ws.Name] = ws
 	return ws, nil
+}
+
+func (m *mockWSInterfaceForMaxActive) Create(ctx context.Context, ws *v1.Workspace) (*v1.Workspace, error) {
+	m.workspaces[ws.Name] = ws
+	return ws, nil
+}
+
+func (m *mockWSInterfaceForMaxActive) Update(ctx context.Context, ws *v1.Workspace) (*v1.Workspace, error) {
+	m.workspaces[ws.Name] = ws
+	return ws, nil
+}
+
+func (m *mockWSInterfaceForMaxActive) Delete(ctx context.Context, name string, _ metav1.DeleteOptions) error {
+	delete(m.workspaces, name)
+	return nil
+}
+
+func (m *mockWSInterfaceForMaxActive) Watch(ctx context.Context, _ metav1.ListOptions) (watch.Interface, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (m *mockWSInterfaceForMaxActive) Patch(ctx context.Context, name string, _ k8stypes.PatchType, data []byte, _ metav1.PatchOptions) (*v1.Workspace, error) {
+	return m.workspaces[name], nil
 }
 
 func TestParseStorageSize(t *testing.T) {

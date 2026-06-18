@@ -53,6 +53,10 @@ type RouterConfig struct {
 	// SecretsHandler is the handler for secret management endpoints (optional)
 	SecretsHandler *handlers.SecretsHandler
 
+	// WorkspaceEnvHandler is the handler for workspace env-var endpoints (optional).
+	// Extracted from SecretsHandler (US-29.4).
+	WorkspaceEnvHandler *handlers.WorkspaceEnvHandler
+
 	// AdminProviderCredentialsHandler handles admin credential CRUD (optional)
 	AdminProviderCredentialsHandler *handlers.AdminProviderCredentialsHandler
 
@@ -316,11 +320,15 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		workspaceGroup.PUT("/:id/bindings", cfg.SecretsHandler.SetBindings)
 		workspaceGroup.GET("/:id/bindings", cfg.SecretsHandler.GetBindings)
 		workspaceGroup.POST("/:id/reload-secrets", cfg.SecretsHandler.ReloadSecrets)
-		workspaceGroup.PUT("/:id/env", cfg.SecretsHandler.SetWorkspaceEnv)
-		workspaceGroup.GET("/:id/env", cfg.SecretsHandler.GetWorkspaceEnv)
-		workspaceGroup.DELETE("/:id/env/:name", cfg.SecretsHandler.DeleteWorkspaceEnv)
 		workspaceGroup.GET("/:id/models", cfg.SecretsHandler.ListModels)
 		workspaceGroup.PUT("/:id/model", cfg.SecretsHandler.SetModel)
+	}
+
+	// Workspace env-var routes (US-29.4: extracted from SecretsHandler)
+	if cfg.WorkspaceEnvHandler != nil {
+		workspaceGroup.PUT("/:id/env", cfg.WorkspaceEnvHandler.SetWorkspaceEnv)
+		workspaceGroup.GET("/:id/env", cfg.WorkspaceEnvHandler.GetWorkspaceEnv)
+		workspaceGroup.DELETE("/:id/env/:name", cfg.WorkspaceEnvHandler.DeleteWorkspaceEnv)
 	}
 
 	// Key rotation endpoint (Epic 10)

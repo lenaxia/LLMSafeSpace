@@ -566,15 +566,21 @@ func (s *Service) SuspendWorkspace(ctx context.Context, userID, workspaceID stri
 		)
 	}
 
-	crd.Status.Phase = v1.WorkspacePhaseSuspending
+	// US-23.3: write Spec.Suspend instead of Status.Phase. The controller
+	// observes the spec change in handleActive and transitions Phase.
+	// This makes the controller the sole writer of Status.Phase.
+	// Pointer semantics: non-nil true is a distinct state from nil
+	// (unspecified) so pre-migration workspaces are not auto-resumed.
+	suspendTrue := true
+	crd.Spec.Suspend = &suspendTrue
 	if _, err := func() (*v1.Workspace, error) {
 		wsClient, wErr := s.workspaceCRDClient()
 		if wErr != nil {
 			return nil, wErr
 		}
-		return wsClient.UpdateStatus(ctx, crd)
+		return wsClient.Update(ctx, crd)
 	}(); err != nil {
-		s.logger.Error("Failed to update workspace status to Suspending", err, "workspaceID", workspaceID)
+		s.logger.Error("Failed to set Spec.Suspend=true", err, "workspaceID", workspaceID)
 		return apierrors.NewInternalError("workspace_suspend_failed", err)
 	}
 
@@ -708,8 +714,10 @@ func (s *Service) GetWorkspaceStatus(ctx context.Context, userID, workspaceID st
 			}
 		}
 	}
-	if crd.Status.LastActivityAt != nil {
-		t := crd.Status.LastActivityAt.Time
+	// US-23.3: read LastActivityAt from the annotation (authoritative)
+	// with fallback to the deprecated Status field.
+	if lastActivity := v1.GetLastActivityAt(crd); lastActivity != nil {
+		t := lastActivity.Time
 		result.LastActivityAt = &t
 	}
 	for _, c := range crd.Status.Conditions {
@@ -1102,17 +1110,29 @@ func (s *Service) ActivateWorkspace(ctx context.Context, userID, workspaceID str
 		)
 	}
 
-	crd.Status.Phase = v1.WorkspacePhaseResuming
+	// US-23.3: write Spec.Suspend=false (pointer non-nil, value false)
+	// instead of Status.Phase. The controller observes the spec change
+	// in handleSuspended and transitions to Resuming → Creating → Active.
+	// This makes the controller the sole writer of Status.Phase.
+	//
+	// LastActivityAt is written to the metadata annotation (not Status)
+	// so it uses a separate optimistic-concurrency lane from
+	// Status().Update, eliminating the cross-writer race.
+	suspendFalse := false
+	crd.Spec.Suspend = &suspendFalse
+	if crd.Annotations == nil {
+		crd.Annotations = make(map[string]string)
+	}
 	now := metav1.Now()
-	crd.Status.LastActivityAt = &now
+	v1.SetLastActivityAtAnnotation(crd.Annotations, now)
 	if _, err := func() (*v1.Workspace, error) {
 		wsClient, wErr := s.workspaceCRDClient()
 		if wErr != nil {
 			return nil, wErr
 		}
-		return wsClient.UpdateStatus(ctx, crd)
+		return wsClient.Update(ctx, crd)
 	}(); err != nil {
-		s.logger.Error("Failed to update workspace status to Resuming", err, "workspaceID", workspaceID)
+		s.logger.Error("Failed to set Spec.Suspend=false", err, "workspaceID", workspaceID)
 		return nil, apierrors.NewInternalError("workspace_resume_failed", err)
 	}
 

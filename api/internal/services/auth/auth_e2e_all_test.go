@@ -244,6 +244,8 @@ func setupRealAuthRouter(t *testing.T) (*gin.Engine, string, *testContext) {
 	secretStore := &memSecretStore{secrets: make(map[string]*secrets.UserSecret), bindings: make(map[string][]string)}
 	secretSvc := secrets.NewSecretService(keySvc, secretStore)
 	secretsHandler := handlers.NewSecretsHandler(secretSvc)
+	// US-29.4: WorkspaceEnvHandler is the new owner of env endpoints.
+	envHandler := handlers.NewWorkspaceEnvHandler(secretSvc)
 	rotateHandler := handlers.NewRotateKeyHandler(keySvc)
 	rotateHandler.SetPasswordUpdater(&bcryptUpdater{db: db})
 
@@ -293,9 +295,9 @@ func setupRealAuthRouter(t *testing.T) (*gin.Engine, string, *testContext) {
 	authed.POST("/secrets", secretsHandler.CreateSecret)
 	authed.GET("/secrets", secretsHandler.ListSecrets)
 	authed.DELETE("/secrets/:id", secretsHandler.DeleteSecret)
-	authed.PUT("/workspaces/:id/env", secretsHandler.SetWorkspaceEnv)
-	authed.GET("/workspaces/:id/env", secretsHandler.GetWorkspaceEnv)
-	authed.DELETE("/workspaces/:id/env/:name", secretsHandler.DeleteWorkspaceEnv)
+	authed.PUT("/workspaces/:id/env", envHandler.SetWorkspaceEnv)
+	authed.GET("/workspaces/:id/env", envHandler.GetWorkspaceEnv)
+	authed.DELETE("/workspaces/:id/env/:name", envHandler.DeleteWorkspaceEnv)
 	authed.POST("/account/rotate-key", rotateHandler.RotateKey)
 	authed.POST("/account/change-password", rotateHandler.ChangePassword)
 	authed.POST("/api-keys", func(c *gin.Context) {

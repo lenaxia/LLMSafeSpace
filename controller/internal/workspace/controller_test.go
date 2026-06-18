@@ -386,6 +386,10 @@ func TestReconcile_Suspending_DeletesPodAndTransitions(t *testing.T) {
 
 func TestReconcile_Suspended_TTLExpired_Terminates(t *testing.T) {
 	ws := makeWorkspace("ws-ttl", "default", v1.WorkspacePhaseSuspended)
+	// US-23.3: nil Spec.Suspend means "no resume requested" — the
+	// controller falls through to TTL evaluation. (&true would also
+	// work; nil is the post-controller-acknowledgement state.)
+	ws.Spec.Suspend = nil
 	ws.Spec.TTLSecondsAfterSuspended = 60
 	past := metav1.NewTime(time.Now().Add(-2 * time.Minute))
 	ws.Status.SuspendedAt = &past
@@ -401,6 +405,8 @@ func TestReconcile_Suspended_TTLExpired_Terminates(t *testing.T) {
 
 func TestReconcile_Suspended_NoTTL_NoAction(t *testing.T) {
 	ws := makeWorkspace("ws-notttl", "default", v1.WorkspacePhaseSuspended)
+	// US-23.3: nil Spec.Suspend means "no resume requested."
+	ws.Spec.Suspend = nil
 	r := reconcilerFor(t, ws)
 
 	result, err := r.Reconcile(context.Background(), reqFor("ws-notttl", "default"))
@@ -408,12 +414,65 @@ func TestReconcile_Suspended_NoTTL_NoAction(t *testing.T) {
 	assert.Zero(t, result.RequeueAfter)
 }
 
+// TestReconcile_Active_SpecSuspendTrue_TransitionsToSuspending verifies
+// the full end-to-end Reconcile path for an API-initiated suspend:
+// Spec.Suspend=&true on an Active workspace → Phase=Suspending +
+// Spec.Suspend cleared to nil. Regression test for the stale-RV ordering
+// bug found in review round 2.
+func TestReconcile_Active_SpecSuspendTrue_TransitionsToSuspending(t *testing.T) {
+	ws := makeWorkspace("ws-suspend-req", "default", v1.WorkspacePhaseActive)
+	suspendTrue := true
+	ws.Spec.Suspend = &suspendTrue
+	r := reconcilerFor(t, ws)
+
+	_, err := r.Reconcile(context.Background(), reqFor("ws-suspend-req", "default"))
+	require.NoError(t, err)
+
+	got := &v1.Workspace{}
+	require.NoError(t, r.Get(context.Background(),
+		types.NamespacedName{Name: "ws-suspend-req", Namespace: "default"}, got))
+	assert.Equal(t, v1.WorkspacePhaseSuspending, got.Status.Phase,
+		"Spec.Suspend=&true must transition Active→Suspending")
+	assert.Nil(t, got.Spec.Suspend,
+		"Spec.Suspend must be cleared to nil after the controller acts on it")
+}
+
+// TestReconcile_Suspended_SpecSuspendFalse_TransitionsToResuming verifies
+// the full end-to-end Reconcile path for an API-initiated resume:
+// Spec.Suspend=&false on a Suspended workspace → Phase=Resuming +
+// Spec.Suspend cleared to nil.
+func TestReconcile_Suspended_SpecSuspendFalse_TransitionsToResuming(t *testing.T) {
+	ws := makeWorkspace("ws-resume-req", "default", v1.WorkspacePhaseSuspended)
+	suspendFalse := false
+	ws.Spec.Suspend = &suspendFalse
+	pwSecret := makePasswordSecret("ws-resume-req", "default")
+	r := reconcilerFor(t, ws, pwSecret)
+
+	_, err := r.Reconcile(context.Background(), reqFor("ws-resume-req", "default"))
+	require.NoError(t, err)
+
+	got := &v1.Workspace{}
+	require.NoError(t, r.Get(context.Background(),
+		types.NamespacedName{Name: "ws-resume-req", Namespace: "default"}, got))
+	assert.Equal(t, v1.WorkspacePhaseResuming, got.Status.Phase,
+		"Spec.Suspend=&false must transition Suspended→Resuming")
+	assert.Nil(t, got.Spec.Suspend,
+		"Spec.Suspend must be cleared to nil after the controller acts on it")
+}
+
 func TestReconcile_Resuming_TransitionsToCreating(t *testing.T) {
 	ws := makeWorkspace("ws-resume", "default", v1.WorkspacePhaseResuming)
 	past := metav1.Now()
 	ws.Status.SuspendedAt = &past
-	// Activity timestamp from before suspension. handleResuming must reset
-	// this; otherwise handleActive will see a long idle and re-suspend.
+	// US-23.3: LastActivityAt is written by the API service to the
+	// annotation; the controller no longer writes it. We set the
+	// annotation here to simulate the API having written it before
+	// transitioning the workspace to Resuming.
+	ws.Annotations = map[string]string{
+		v1.AnnotationLastActivityAt: time.Now().Format(time.RFC3339),
+	}
+	// Legacy Status.LastActivityAt stays stale — the controller must
+	// NOT update it (single-writer principle).
 	staleActivity := metav1.NewTime(time.Now().Add(-3 * time.Hour))
 	ws.Status.LastActivityAt = &staleActivity
 	pwSecret := makePasswordSecret("ws-resume", "default")
@@ -426,9 +485,11 @@ func TestReconcile_Resuming_TransitionsToCreating(t *testing.T) {
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-resume", Namespace: "default"}, updated))
 	assert.Equal(t, v1.WorkspacePhaseCreating, updated.Status.Phase)
 	assert.Nil(t, updated.Status.SuspendedAt)
-	require.NotNil(t, updated.Status.LastActivityAt, "LastActivityAt must be reset on resume")
-	assert.WithinDuration(t, time.Now(), updated.Status.LastActivityAt.Time, 5*time.Second,
-		"LastActivityAt must advance to current time on resume")
+	// US-23.3: the controller no longer writes LastActivityAt. The
+	// deprecated Status field stays at its pre-resume value.
+	require.NotNil(t, updated.Status.LastActivityAt, "Status.LastActivityAt must be preserved (controller no longer touches it)")
+	assert.WithinDuration(t, staleActivity.Time, updated.Status.LastActivityAt.Time, time.Second,
+		"Status.LastActivityAt must be unchanged on resume (single-writer)")
 }
 
 func TestReconcile_Terminating_CleansUp(t *testing.T) {
