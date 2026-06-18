@@ -34,6 +34,13 @@ const DefaultActiveSessTTL = 30 * time.Minute
 // spec and is the same duration as activeSess TTL.
 const DefaultDeletedTTL = 30 * time.Minute
 
+// DefaultPasswordTTL is the TTL for cached workspace passwords.
+// Passwords are stable (only change on workspace recreate), so the TTL
+// can be longer than for active sessions or tombstones. 1 hour matches
+// the design spec. After TTL expiry, the next request re-fetches from
+// K8s (password may have rotated).
+const DefaultPasswordTTL = 1 * time.Hour
+
 // checkAndAddScript atomically checks the active-session set size and
 // adds the session ID if there's room. The atomicity is what makes this
 // safe across replicas: two concurrent calls cannot both observe
@@ -71,13 +78,11 @@ return 1
 `)
 
 // RedisStore is the multi-replica-safe implementation of Store. It
-// backs the active-session set with a Redis SET keyed
-// `ws:{workspace_id}:active` and uses a Lua script for atomic
-// check-and-add (the core fix for the 2026-06-16 stuck-session bug
-// class). The remaining state sections (deletedSessions, pwCache,
-// wsConfig, priorPhase, parentBackfilled) continue to be served by the
-// embedded InMemoryStore; their migration to Redis is the subject of
-// US-45.3 through US-45.8.
+// backs the active-session set, deleted-session tombstones, and
+// password cache with Redis; the remaining state sections (wsConfig,
+// priorPhase, parentBackfilled) continue to be served by the embedded
+// InMemoryStore; their migration to Redis is the subject of US-45.6
+// through US-45.8.
 //
 // Fail-open policy (per design): if Redis is unreachable,
 // CheckAndAddActiveSession returns true (allow the request) and records
@@ -98,6 +103,10 @@ type RedisStore struct {
 	// deletedTTL is the per-key TTL for session tombstones. Each
 	// tombstone expires independently.
 	deletedTTL time.Duration
+
+	// passwordTTL is the TTL for cached workspace passwords. Longer than
+	// activeSessTTL/deletedTTL because passwords are stable.
+	passwordTTL time.Duration
 
 	// logger records fail-open events. Optional — if nil, errors are
 	// surfaced only via Prometheus metrics.
@@ -134,6 +143,7 @@ func NewRedisStoreWithLogger(client *redis.Client, activeSessTTL time.Duration, 
 		client:              client,
 		activeSessTTL:       activeSessTTL,
 		deletedTTL:          DefaultDeletedTTL,
+		passwordTTL:         DefaultPasswordTTL,
 		logger:              logger,
 		inMemory:            NewInMemoryStore(),
 		opDuration:          pkgOpDuration,
@@ -373,19 +383,20 @@ func (s *RedisStore) ClearActiveSessions(workspaceID string) {
 
 // --- InvalidateAll (overrides to clear both Redis and InMemory) ---
 
-// InvalidateAll clears both the Redis-backed state (active sessions +
-// deleted tombstones) and the InMemoryStore-backed state (password cache,
-// workspace config, parent backfill). priorPhase is intentionally
+// InvalidateAll clears both the Redis-backed state (active sessions,
+// deleted tombstones, password cache) and the InMemoryStore-backed
+// state (workspace config, parent backfill). priorPhase is intentionally
 // preserved (per US-45.1 contract — onPhaseChange relies on it).
 func (s *RedisStore) InvalidateAll(workspaceID string) {
-	// Redis-backed: clear active sessions and deleted tombstones.
+	// Redis-backed: clear active sessions, deleted tombstones, password.
 	s.ClearActiveSessions(workspaceID)
 	s.ClearDeletedSessions(workspaceID)
-	// InMemoryStore-backed: clear password, config, parent backfill.
-	// We call the individual methods rather than inMemory.InvalidateAll
-	// because that would also call inMemory.ClearActiveSessions and
-	// inMemory.ClearDeletedSessions — no-ops (state is on Redis) but
-	// wasteful. priorPhase is preserved per US-45.1 contract.
+	s.InvalidatePassword(workspaceID)
+	// InMemoryStore-backed: clear config, parent backfill. We call the
+	// individual methods rather than inMemory.InvalidateAll because that
+	// would also call inMemory.ClearActiveSessions/ClearDeletedSessions/
+	// InvalidatePassword — no-ops (state is on Redis) but wasteful.
+	// priorPhase is preserved per US-45.1 contract.
 	s.inMemory.ClearActiveSessions(workspaceID)
 	s.inMemory.ClearDeletedSessions(workspaceID)
 	s.inMemory.InvalidatePassword(workspaceID)
@@ -482,19 +493,88 @@ func (s *RedisStore) ClearDeletedSessions(workspaceID string) {
 	s.observeOp(op, "ok", start)
 }
 
-// --- Workspace password cache (delegated to InMemoryStore) ---
-// US-45.4 will move this to Redis.
+// --- Workspace password cache (Redis-backed, US-45.4) ---
+//
+// Passwords are stable (only change on workspace recreate). Moving them
+// to Redis eliminates per-replica staleness on phase changes: a 401 on
+// replica A that invalidates the cache is now visible to all replicas.
+//
+// Fail-through-to-K8s policy: Redis is a cache, the source of truth is
+// the K8s Secret. On Redis error, GetCachedPassword returns (empty, false)
+// so the caller (ProxyHandler.getPassword) falls back to fetching the
+// K8s Secret directly. This is NOT fail-closed (no false data) and NOT
+// fail-open (no return true) — it is "fail-through" to the source of truth.
+//
+// The K8s Secret fetch stays in ProxyHandler.getPassword so the store
+// remains pure-state (no I/O dependencies). The store's SetCachedPassword
+// is called only after a successful K8s fetch to populate the shared cache.
 
+func passwordCacheKey(workspaceID string) string {
+	return fmt.Sprintf("ws:{%s}:pw", workspaceID)
+}
+
+// GetCachedPassword returns the cached password for the workspace, if
+// present. Cache-only — never returns false data on Redis error. Returns
+// ("", false) on miss OR on Redis error so the caller falls through to
+// the K8s Secret fetch.
 func (s *RedisStore) GetCachedPassword(workspaceID string) (string, bool) {
-	return s.inMemory.GetCachedPassword(workspaceID)
+	const op = "get_cached_password"
+	start := time.Now()
+	pw, err := s.client.Get(context.Background(), passwordCacheKey(workspaceID)).Result()
+	if err != nil {
+		// redis.Nil = key not found (cache miss) — not an error.
+		if err != redis.Nil {
+			s.recordError(op)
+			s.observeOp(op, "error", start)
+			if s.logger != nil {
+				s.logger.Warn("wsstate: Redis GetCachedPassword failed — falling through to K8s",
+					"error", err, "workspace_id", workspaceID)
+			}
+		} else {
+			s.observeOp(op, "miss", start)
+		}
+		return "", false
+	}
+	s.observeOp(op, "hit", start)
+	return pw, true
 }
 
+// SetCachedPassword populates the password cache for the workspace.
+// Silently fails on Redis error — the next read returns a miss and
+// falls through to K8s. Idempotent: re-setting the same password
+// refreshes the TTL.
 func (s *RedisStore) SetCachedPassword(workspaceID, password string) {
-	s.inMemory.SetCachedPassword(workspaceID, password)
+	const op = "set_cached_password"
+	start := time.Now()
+	if err := s.client.Set(context.Background(), passwordCacheKey(workspaceID), password, s.passwordTTL).Err(); err != nil {
+		s.recordError(op)
+		s.observeOp(op, "error", start)
+		if s.logger != nil {
+			s.logger.Warn("wsstate: Redis SetCachedPassword failed",
+				"error", err, "workspace_id", workspaceID)
+		}
+		return
+	}
+	s.observeOp(op, "ok", start)
 }
 
+// InvalidatePassword clears the cached password for the workspace.
+// DEL is the single source of truth — replicas hitting Redis on miss
+// fall through to K8s. No pubsub needed (per design: replicas hit Redis
+// on every request anyway).
 func (s *RedisStore) InvalidatePassword(workspaceID string) {
-	s.inMemory.InvalidatePassword(workspaceID)
+	const op = "invalidate_password"
+	start := time.Now()
+	if err := s.client.Del(context.Background(), passwordCacheKey(workspaceID)).Err(); err != nil && err != redis.Nil {
+		s.recordError(op)
+		s.observeOp(op, "error", start)
+		if s.logger != nil {
+			s.logger.Warn("wsstate: Redis InvalidatePassword failed",
+				"error", err, "workspace_id", workspaceID)
+		}
+		return
+	}
+	s.observeOp(op, "ok", start)
 }
 
 // --- Workspace config cache (delegated to InMemoryStore) ---

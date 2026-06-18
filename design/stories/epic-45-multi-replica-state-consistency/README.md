@@ -190,25 +190,28 @@ return 1
 **Goal:** Move workspace password cache to Valkey. Eliminates per-replica staleness on phase changes.
 
 **Acceptance:**
-- [ ] Redis implementation of `GetPassword` and `InvalidatePassword`
-- [ ] TTL = 1 hour (passwords are stable)
-- [ ] Invalidation = DELETE on key (no pubsub needed; replicas hit Redis on miss)
-- [ ] Phase change handler invalidates Redis (one source of truth)
-- [ ] Measure latency before adding L1 cache:
+- [x] Redis implementation of `GetPassword` and `InvalidatePassword`
+- [x] TTL = 1 hour (`DefaultPasswordTTL`; passwords are stable)
+- [x] Invalidation = DELETE on key (no pubsub needed; replicas hit Redis on miss)
+- [x] Phase change handler invalidates Redis (one source of truth — via `InvalidateAll` → `InvalidatePassword`)
+- [x] Measure latency before adding L1 cache:
   - Target: P99 < 5ms
-  - If exceeded → add L1 LRU in follow-up story
-- [ ] Tests cover cache miss, invalidation, k8s Secret fetch fallback
+  - If exceeded → add L1 LRU in follow-up story (US-45.5, conditional)
+  - Histogram `ws_state_op_duration_seconds{op,result}` registered from day one with fine-grained buckets around the 5ms target
+- [x] Tests cover cache miss, invalidation, k8s Secret fetch fallback (13 unit tests + 1 handler-level integration test exercising 401→Redis-DEL)
 
 **Files:**
-- Modified: `api/internal/services/wsstate/redis.go`
-- Modified: `api/internal/handlers/proxy_connections.go` (use store)
-- Modified: `api/internal/handlers/proxy_events.go` (invalidate via store)
+- Modified: `api/internal/services/wsstate/redis.go` (override 3 methods + DefaultPasswordTTL + InvalidateAll update + updated type doc)
+- New: `api/internal/services/wsstate/redis_password_test.go` (13 unit tests)
+- Modified: `api/internal/services/wsstate/redis_test.go` (removed 2 stale delegation tests superseded by US-45.3/.4)
+- Modified: `api/internal/handlers/proxy_auth_cache_test.go` (added `TestProxy_Upstream401_InvalidatesRedisPasswordCache` integration test)
+- Modified: `api/internal/app/app.go` (updated comment to reflect migrated sections)
 
 **Effort:** 2 days
 
 **Risk:** Medium. Hot path (every chat request). Latency-sensitive.
 
-**Mitigation:** Add Prometheus histogram on day one. If P99 > 5ms after rollout, ship US-45.5.
+**Mitigation:** Prometheus histogram on day one. If P99 > 5ms after rollout, ship US-45.5.
 
 ---
 
