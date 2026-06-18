@@ -99,9 +99,8 @@ func writeOOMMarker(path, memoryLimit string) error {
 }
 
 // handleOOMExit is called from the supervisor's crash path when OOM is
-// detected. It writes the marker file, increments the Prometheus counter,
-// and logs the event. Errors in marker-writing are logged but do not
-// prevent the supervisor from continuing (the restart must proceed).
+// detected. It writes the marker file, increments the Prometheus counters
+// (OOM kills + restarts), and logs the event.
 func handleOOMExit(workspaceID, markerPath string) {
 	if workspaceID == "" {
 		workspaceID = "unknown"
@@ -115,6 +114,7 @@ func handleOOMExit(workspaceID, markerPath string) {
 	}
 
 	oomKillsCounter.WithLabelValues(workspaceID).Inc()
+	pkgOpsMetrics.RecordRestart(workspaceID, "oom")
 }
 
 // workspaceIDFromEnv reads the WORKSPACE_ID environment variable set by
@@ -152,4 +152,14 @@ func formatBytes(bytes int64) string {
 		return fmt.Sprintf("%dMi", bytes/mi)
 	}
 	return fmt.Sprintf("%d", bytes)
+}
+
+// readCgroupMemoryCurrent reads the current memory usage from cgroup v2.
+// Returns an error if the file is not available (non-Linux, cgroup v1).
+func readCgroupMemoryCurrent() (int64, error) {
+	data, err := os.ReadFile("/sys/fs/cgroup/memory.current")
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
 }

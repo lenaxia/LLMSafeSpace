@@ -328,12 +328,12 @@ To deliver the user-facing goal ("Frontend shows ⚠️ Agent was terminated"), 
 **Solution:** Expose comprehensive Prometheus metrics for SRE dashboards  
 **Files:** `cmd/workspace-agentd/main.go` (extend existing `:9090/metrics` endpoint)  
 **Acceptance:**
-- [ ] `workspace_restarts_total{workspace_id, reason}` - Counter (reasons: env_secrets, api_key, crash, user_requested)
-- [ ] `workspace_memory_bytes{workspace_id}` - Gauge (current memory usage from cgroup)
-- [ ] `workspace_active_sessions{workspace_id}` - Gauge (from sessionStatusTracker)
-- [ ] `workspace_context_tokens{workspace_id}` - Gauge (sum across all sessions)
-- [ ] Metrics exposed on agentd `:9090/metrics` endpoint (already exists for gate timings)
-- [ ] NOT user-facing (SRE/admin dashboards only)
+- [x] `workspace_restarts_total{workspace_id, reason}` - Counter (reasons: env_secrets, api_key, crash, oom, user_requested)
+- [x] `workspace_memory_bytes{workspace_id}` - Gauge (current memory usage from cgroup v2 `memory.current`, sampled every 60s)
+- [x] `workspace_active_sessions{workspace_id}` - Gauge (from sessionStatusTracker, sampled every 60s)
+- [x] `workspace_context_tokens{workspace_id}` - Gauge (sum across all sessions, sampled every 60s)
+- [x] Metrics exposed on agentd `:9090/metrics` endpoint (already exists for gate timings)
+- [x] NOT user-facing (SRE/admin dashboards only)
 
 **Note:** `workspace_oom_kills_total` is in US-44.4. This story moved from P2 to P0 per user requirement: "Ops monitoring is P0 (first-class citizen)".
 
