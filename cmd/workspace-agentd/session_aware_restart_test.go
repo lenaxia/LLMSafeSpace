@@ -4,6 +4,7 @@
 package main
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -214,7 +215,7 @@ func TestSessionAwareRestartDecision_NilTracker_RestartsImmediately(t *testing.T
 // ---------------------------------------------------------------------------
 
 type mockManagedProcess struct {
-	restarts int32
+	restarts atomic.Int32
 	done     chan struct{}
 }
 
@@ -222,9 +223,9 @@ func (m *mockManagedProcess) restart() {
 	if m.done == nil {
 		m.done = make(chan struct{})
 	}
-	m.restarts++
+	m.restarts.Add(1)
 }
 
 func (m *mockManagedProcess) restartCount() int {
-	return int(m.restarts)
+	return int(m.restarts.Load())
 }
