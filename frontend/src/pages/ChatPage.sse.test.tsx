@@ -1463,4 +1463,46 @@ describe("ChatPage SSE event handler", () => {
       });
     });
   });
+
+  describe("agent_died events (US-44.1c)", () => {
+    function makeAgentDiedEvent(workspaceId: string): WorkspaceStreamEvent {
+      return {
+        type: "agent_died",
+        workspace_id: workspaceId,
+        data: { reason: "unknown" },
+      };
+    }
+
+    it("renders the dismissible agent_died banner on receipt of agent_died", async () => {
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      expect(screen.queryByText(/Agent was terminated unexpectedly/i)).not.toBeInTheDocument();
+
+      sendSSEEvent(makeAgentDiedEvent("ws-1"));
+
+      await waitFor(() => {
+        const banner = screen.getByText(/Agent was terminated unexpectedly/i);
+        expect(banner).toBeInTheDocument();
+        expect(banner.closest("[role='alert']")).not.toBeNull();
+      });
+    });
+
+    it("dismisses the agent_died banner when the Dismiss button is clicked", async () => {
+      const user = userEvent.setup();
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      sendSSEEvent(makeAgentDiedEvent("ws-1"));
+      await waitFor(() => expect(screen.getByText(/Agent was terminated unexpectedly/i)).toBeInTheDocument());
+
+      await user.click(screen.getByRole("button", { name: "Dismiss" }));
+
+      await waitFor(() => {
+        expect(screen.queryByText(/Agent was terminated unexpectedly/i)).not.toBeInTheDocument();
+      });
+    });
+  });
 });

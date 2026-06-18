@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -24,6 +25,13 @@ type SessionIdleCallback func(workspaceID, sessionID string)
 type RawEventCallback func(workspaceID, eventType, rawData string)
 
 type InferenceCallback func(workspaceID, modelID, providerID string, inputTokens, outputTokens int64, costDollars float64)
+
+// AgentDiedCallback is invoked when an upstream SSE stream ends after at least
+// one byte of data has been received, signaling that the agent process died
+// mid-stream (OOM, crash, or restart). The tracker cannot distinguish a real
+// death from a normal opencode restart — see US-44.1a/c for the accepted
+// false-positive tradeoff.
+type AgentDiedCallback func(workspaceID string)
 
 // ReconnectCallback is called at the start of each connection attempt, after
 // the pod IP and password are resolved but before the SSE stream is opened.
@@ -58,6 +66,8 @@ type Tracker struct {
 	onRawEvent       RawEventCallback
 	onInference      InferenceCallback
 	onReconnect      ReconnectCallback
+	onAgentDied      AgentDiedCallback
+	idleTimeout      time.Duration
 	tokensMu         sync.Mutex
 	sessionTokenSeen map[string]int64
 	sessionCostSeen  map[string]float64
@@ -87,6 +97,7 @@ func NewTracker(
 		HttpClient:       httpClient,
 		Logger:           logger,
 		onSessionIdle:    onSessionIdle,
+		idleTimeout:      sseIdleTimeout,
 		subscriptions:    make(map[string]context.CancelFunc),
 		sessionTokenSeen: make(map[string]int64),
 		sessionCostSeen:  make(map[string]float64),
@@ -120,6 +131,16 @@ func (t *Tracker) SetSessionMetrics(r SessionMetricsRecorder) {
 
 func (t *Tracker) SetOnRawEvent(callback RawEventCallback) {
 	t.onRawEvent = callback
+}
+
+func (t *Tracker) SetOnAgentDied(cb AgentDiedCallback) {
+	t.onAgentDied = cb
+}
+
+// SetIdleTimeout overrides the SSE idle timeout. Primarily for tests; production
+// uses the package default (sseIdleTimeout).
+func (t *Tracker) SetIdleTimeout(d time.Duration) {
+	t.idleTimeout = d
 }
 
 func (t *Tracker) EnsureWatching(workspaceID string) {
@@ -248,7 +269,7 @@ func (t *Tracker) connectAndRead(ctx context.Context, workspaceID string) error 
 
 	idleCtx, cancelIdle := context.WithCancel(ctx)
 	defer cancelIdle()
-	idleTimer := time.AfterFunc(sseIdleTimeout, cancelIdle)
+	idleTimer := time.AfterFunc(t.idleTimeout, cancelIdle)
 	defer idleTimer.Stop()
 
 	targetURL := fmt.Sprintf("http://%s:%d/event", podIP, agentd.AgentPort)
@@ -274,10 +295,16 @@ func (t *Tracker) connectAndRead(ctx context.Context, workspaceID string) error 
 	scanner.Buffer(make([]byte, 64*1024), 64*1024)
 
 	var eventData strings.Builder
+	var bytesReceived int64
+	// bytesReceived counts len(scanner.Text()) — line content with the trailing
+	// newline stripped by ScanLines. This diverges from US-44.1a's raw
+	// resp.Body.Read byte count, but only the > 0 threshold matters and opencode
+	// always emits real event data before any termination.
 	for scanner.Scan() {
-		idleTimer.Reset(sseIdleTimeout)
+		idleTimer.Reset(t.idleTimeout)
 
 		line := scanner.Text()
+		bytesReceived += int64(len(line))
 
 		if strings.HasPrefix(line, "data: ") {
 			eventData.WriteString(strings.TrimPrefix(line, "data: "))
@@ -288,8 +315,19 @@ func (t *Tracker) connectAndRead(ctx context.Context, workspaceID string) error 
 		}
 	}
 
+	// Non-EOF read error (TCP RST, bufio.ErrTooLong) after data was received.
+	// context.Canceled means idleCtx or parent ctx was canceled — handled by
+	// the idleCtx.Err() check below. A network blip must not be reported as an
+	// agent death; aligns with US-44.1a's network-vs-death distinction.
+	if err := scanner.Err(); err != nil && !errors.Is(err, context.Canceled) {
+		return fmt.Errorf("SSE scanner error for workspace %s: %w", workspaceID, err)
+	}
+
 	if idleCtx.Err() != nil {
 		return fmt.Errorf("SSE idle timeout for workspace %s", workspaceID)
+	}
+	if bytesReceived > 0 && t.onAgentDied != nil {
+		t.onAgentDied(workspaceID)
 	}
 	return fmt.Errorf("SSE stream ended for workspace %s", workspaceID)
 }

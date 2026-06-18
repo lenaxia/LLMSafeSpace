@@ -196,6 +196,16 @@ func (h *ProxyHandler) onRawEvent(workspaceID, eventType, rawData string) {
 	}
 }
 
+func (h *ProxyHandler) onAgentDied(workspaceID string) {
+	if h.userBroker != nil {
+		h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
+			Type:        "agent_died",
+			WorkspaceID: workspaceID,
+			Data:        map[string]string{"reason": "unknown"},
+		})
+	}
+}
+
 func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData string) {
 	if h.userBroker == nil {
 		return
