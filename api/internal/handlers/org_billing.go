@@ -14,24 +14,19 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
-// OrgBilling orchestrates Stripe customer creation, billing-account linkage,
-// and Checkout/Portal session creation for org subscriptions.
+// OrgBilling creates Checkout/Portal sessions for org subscription management
+// (plan upgrades, billing portal access). Customer creation was removed with
+// the self-service org-creation flow (design 0031 D1).
 type OrgBilling interface {
-	CreateCustomer(ctx context.Context, email, name string) (string, error)
 	CreateCheckoutSession(ctx context.Context, customerID, planID, successURL, cancelURL string) (string, error)
 	CreatePortalSession(ctx context.Context, customerID, returnURL string) (string, error)
 }
 
 // stripeBilling adapts a billing.CheckoutProvider to the OrgBilling interface.
-// The indirection exists so handler tests can substitute a fake without depending
-// on the stripe-go types.
 type stripeBilling struct {
 	provider billing.CheckoutProvider
 }
 
-func (s stripeBilling) CreateCustomer(ctx context.Context, email, name string) (string, error) {
-	return s.provider.CreateCustomer(ctx, email, name)
-}
 func (s stripeBilling) CreateCheckoutSession(ctx context.Context, customerID, planID, successURL, cancelURL string) (string, error) {
 	return s.provider.CreateCheckoutSession(ctx, customerID, planID, successURL, cancelURL)
 }

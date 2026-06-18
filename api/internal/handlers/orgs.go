@@ -31,7 +31,6 @@ type orgStore interface {
 	RemoveOrgMember(ctx context.Context, orgID, userID string) error
 	RemoveOrgAdminIfNotLast(ctx context.Context, orgID, targetUserID string) (bool, error)
 	DemoteOrgAdminIfNotLast(ctx context.Context, orgID, targetUserID string) (bool, error)
-	CountOrgAdmins(ctx context.Context, orgID string) (int, error)
 	UpdateOrgMemberRole(ctx context.Context, orgID, userID string, role types.OrgRole) error
 	ListOrgWorkspaces(ctx context.Context, orgID string, limit, offset int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error)
 	GetUserIDByEmail(ctx context.Context, email string) (string, error)

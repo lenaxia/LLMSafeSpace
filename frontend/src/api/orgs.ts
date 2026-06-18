@@ -25,13 +25,11 @@ export interface Organization {
 }
 
 export interface OrgResponse extends Organization {
-  userRole: "admin" | "member";
+  userRole?: "admin" | "member";
   memberCount: number;
 }
 
-export interface CreateOrgResponse extends OrgResponse {
-  checkoutUrl?: string;
-}
+export interface CreateOrgResponse extends OrgResponse {}
 
 export interface OrgMember {
   orgId: string;

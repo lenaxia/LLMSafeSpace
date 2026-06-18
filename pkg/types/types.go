@@ -707,17 +707,18 @@ type UpdateOrgRequest struct {
 }
 
 // CreateOrgResponse is returned by POST /api/v1/orgs. Org creation is
-// platform-admin only (design 0031 D1); CheckoutURL is retained for the
-// future self-service billing portal but is always empty from the create path.
+// platform-admin only (design 0031 D1).
 type CreateOrgResponse struct {
 	OrgResponse
-	CheckoutURL string `json:"checkoutUrl,omitempty"`
 }
 
 // OrgResponse extends Organization with the calling user's membership context.
+// UserRole is omitempty so that an empty string (caller is not a member — e.g.
+// platform admin creating an org for someone else) is omitted from JSON rather
+// than appearing as `"userRole": ""`.
 type OrgResponse struct {
 	Organization
-	UserRole    OrgRole `json:"userRole"`
+	UserRole    OrgRole `json:"userRole,omitempty"`
 	MemberCount int     `json:"memberCount"`
 }
 

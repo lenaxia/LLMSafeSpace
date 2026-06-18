@@ -40,7 +40,6 @@ type OrgStore interface {
 	RemoveOrgMember(ctx context.Context, orgID, userID string) error
 	RemoveOrgAdminIfNotLast(ctx context.Context, orgID, targetUserID string) (bool, error)
 	DemoteOrgAdminIfNotLast(ctx context.Context, orgID, targetUserID string) (bool, error)
-	CountOrgAdmins(ctx context.Context, orgID string) (int, error)
 	IsOrgMember(ctx context.Context, orgID, userID string) (bool, error)
 	IsOrgAdmin(ctx context.Context, orgID, userID string) (bool, error)
 	ListOrgWorkspaces(ctx context.Context, orgID string, limit, offset int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error)
@@ -50,6 +49,9 @@ type OrgStore interface {
 	// enumeration. Users are hard-deleted (no deleted_at column), so no soft-delete
 	// filter is needed.
 	GetUserIDByEmail(ctx context.Context, email string) (string, error)
+	// GetUserEmail resolves a user ID to their email (inverse of GetUserIDByEmail).
+	// Used by invitation acceptance to verify email binding.
+	GetUserEmail(ctx context.Context, userID string) (string, error)
 	// GetUserOrgID returns the user's single org ID (or "" if not in any org).
 	// With single-org enforcement (D8), a user belongs to at most one org. Used
 	// by invitation acceptance (S3 cross-org check) and workspace auto-attribution
@@ -125,6 +127,16 @@ func (s *PgOrgStore) CreateOrgWithAdmin(ctx context.Context, org *types.Organiza
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert org membership: %w", err)
+	}
+
+	// D4: migrate the owner's existing personal workspaces to the org (same as
+	// AcceptInvitationTx). Keeps the two "join the org" paths consistent.
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE workspaces SET org_id = $2, updated_at = NOW()
+		 WHERE user_id = $1 AND org_id IS NULL AND deleted_at IS NULL`,
+		adminUserID, org.ID,
+	); err != nil {
+		return nil, fmt.Errorf("migrate owner personal workspaces to org: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -444,18 +456,6 @@ func (s *PgOrgStore) DemoteOrgAdminIfNotLast(ctx context.Context, orgID, targetU
 	return true, tx.Commit()
 }
 
-func (s *PgOrgStore) CountOrgAdmins(ctx context.Context, orgID string) (int, error) {
-	var count int
-	err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM org_memberships WHERE org_id = $1 AND role = 'admin'`,
-		orgID,
-	).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("count org admins: %w", err)
-	}
-	return count, nil
-}
-
 func (s *PgOrgStore) IsOrgMember(ctx context.Context, orgID, userID string) (bool, error) {
 	var exists bool
 	err := s.db.QueryRowContext(ctx,
@@ -571,6 +571,18 @@ func (s *PgOrgStore) GetUserIDByEmail(ctx context.Context, email string) (string
 		return "", fmt.Errorf("get user id by email: %w", err)
 	}
 	return id, nil
+}
+
+func (s *PgOrgStore) GetUserEmail(ctx context.Context, userID string) (string, error) {
+	var email string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT email FROM users WHERE id = $1`,
+		userID,
+	).Scan(&email)
+	if err != nil {
+		return "", fmt.Errorf("get user email: %w", err)
+	}
+	return email, nil
 }
 
 func (s *PgOrgStore) GetUserOrgID(ctx context.Context, userID string) (string, error) {

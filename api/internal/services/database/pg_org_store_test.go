@@ -8,10 +8,13 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 func TestPgOrgStore_GetUserIDByEmail_Found(t *testing.T) {
@@ -155,6 +158,36 @@ func TestListWorkspaces_S1_IncludesMembershipFilter(t *testing.T) {
 	metas, _, err := svc.ListWorkspaces(context.Background(), "user-1", 10, 0)
 	require.NoError(t, err)
 	assert.Empty(t, metas)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestCreateOrgWithAdmin_MigratesOwnerPersonalWorkspaces verifies M1/D4: the
+// create transaction includes the same workspace migration as AcceptInvitationTx.
+func TestCreateOrgWithAdmin_MigratesOwnerPersonalWorkspaces(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	store := NewPgOrgStore(db)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`INSERT INTO organizations`).
+		WithArgs("org-1", "Acme", "acme", "admin-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "slug", "created_by", "created_at", "updated_at", "status", "plan_id", "subscription_status"}).
+			AddRow("org-1", "Acme", "acme", "admin-1", time.Now(), time.Now(), "pending_activation", "free", "inactive"))
+	// INSERT membership (CreateOrgWithAdmin hardcodes 'admin' as a literal)
+	mock.ExpectExec(`INSERT INTO org_memberships`).
+		WithArgs("org-1", "owner-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	// UPDATE workspaces — the migration (M1/D4). Anchor the full WHERE clause.
+	mock.ExpectExec(`UPDATE workspaces SET org_id = .* WHERE user_id = .* AND org_id IS NULL AND deleted_at IS NULL`).
+		WithArgs("owner-1", "org-1").
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectCommit()
+
+	org := &types.Organization{ID: "org-1", Name: "Acme", Slug: "acme", CreatedBy: "admin-1"}
+	_, err = store.CreateOrgWithAdmin(context.Background(), org, "owner-1")
+	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

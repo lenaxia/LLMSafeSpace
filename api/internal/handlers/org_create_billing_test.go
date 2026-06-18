@@ -14,27 +14,13 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
-// fakeOrgBilling is a controllable OrgBilling for CreateOrg flow tests.
+// fakeOrgBilling is a controllable OrgBilling for billing endpoint tests.
 type fakeOrgBilling struct {
-	customerID    string
-	customerErr   error
 	checkoutURL   string
 	checkoutErr   error
 	portalURL     string
 	portalErr     error
-	customerCalls int
 	checkoutCalls int
-}
-
-func (f *fakeOrgBilling) CreateCustomer(_ context.Context, _, _ string) (string, error) {
-	f.customerCalls++
-	if f.customerErr != nil {
-		return "", f.customerErr
-	}
-	if f.customerID != "" {
-		return f.customerID, nil
-	}
-	return "cus_test_1", nil
 }
 
 func (f *fakeOrgBilling) CreateCheckoutSession(_ context.Context, _, _, _, _ string) (string, error) {

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
 
 	"github.com/lenaxia/llmsafespace/pkg/email"
 	"github.com/lenaxia/llmsafespace/pkg/types"
@@ -30,6 +31,8 @@ type mockInvitationStore struct {
 	acceptErr      error
 	userOrgID      string
 	userOrgIDErr   error
+	userEmail      string
+	userEmailErr   error
 }
 
 func newMockInvitationStore() *mockInvitationStore {
@@ -169,16 +172,32 @@ func (m *mockInvitationStore) GetUserOrgID(_ context.Context, userID string) (st
 	return m.userOrgID, nil
 }
 
+func (m *mockInvitationStore) GetUserEmail(_ context.Context, _ string) (string, error) {
+	if m.userEmailErr != nil {
+		return "", m.userEmailErr
+	}
+	return m.userEmail, nil
+}
+
 // mockCredBinder records calls to BindAllOrgCredentialsToOrgWorkspaces for
 // verifying F7 credential seeding after invitation acceptance.
 type mockCredBinder struct {
+	mu        sync.Mutex
 	bindCalls []string // orgIDs passed
 	bindErr   error
 }
 
 func (m *mockCredBinder) BindAllOrgCredentialsToOrgWorkspaces(_ context.Context, orgID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.bindCalls = append(m.bindCalls, orgID)
 	return m.bindErr
+}
+
+func (m *mockCredBinder) callCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.bindCalls)
 }
 
 func setupInvitationRouter(t *testing.T, store *mockInvitationStore, mailer email.EmailProvider) *gin.Engine {
@@ -298,6 +317,7 @@ func TestInvitations_Accept_BindsOrgCredentials(t *testing.T) {
 		InvitedBy: "user-1", TokenHash: hash, ExpiresAt: time.Now().Add(24 * time.Hour),
 	}
 	store.tokenHashIndex[hash] = "inv-bind"
+	store.userEmail = "new@test.com"
 
 	binder := &mockCredBinder{}
 	router := setupInvitationRouterWithBinder(t, store, nil, binder)
@@ -306,8 +326,12 @@ func TestInvitations_Accept_BindsOrgCredentials(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if len(binder.bindCalls) != 1 || binder.bindCalls[0] != "org-1" {
-		t.Errorf("expected BindAllOrgCredentialsToOrgWorkspaces called once with org-1, got %v", binder.bindCalls)
+	// Credential binding is fire-and-forget — poll for the goroutine to complete.
+	require.Eventually(t, func() bool {
+		return binder.callCount() == 1
+	}, time.Second, 10*time.Millisecond, "expected BindAllOrgCredentialsToOrgWorkspaces called once")
+	if binder.bindCalls[0] != "org-1" {
+		t.Errorf("expected org-1, got %q", binder.bindCalls[0])
 	}
 }
 
@@ -322,6 +346,7 @@ func TestInvitations_Accept_BindError_StillSucceeds(t *testing.T) {
 		InvitedBy: "user-1", TokenHash: hash, ExpiresAt: time.Now().Add(24 * time.Hour),
 	}
 	store.tokenHashIndex[hash] = "inv-bind-err"
+	store.userEmail = "new@test.com"
 
 	binder := &mockCredBinder{bindErr: errors.New("binding failed")}
 	router := setupInvitationRouterWithBinder(t, store, nil, binder)
@@ -330,6 +355,9 @@ func TestInvitations_Accept_BindError_StillSucceeds(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("accept must succeed even if credential binding fails, got %d: %s", w.Code, w.Body.String())
 	}
+	require.Eventually(t, func() bool {
+		return binder.callCount() == 1
+	}, time.Second, 10*time.Millisecond, "binder should still be called once")
 }
 
 func TestInvitations_Accept_Success_Member(t *testing.T) {
@@ -343,6 +371,7 @@ func TestInvitations_Accept_Success_Member(t *testing.T) {
 		InvitedBy: "user-1", TokenHash: hash, ExpiresAt: time.Now().Add(24 * time.Hour),
 	}
 	store.tokenHashIndex[hash] = "inv-1"
+	store.userEmail = "new@test.com"
 
 	router := setupInvitationRouter(t, store, nil)
 	w := doRequest(router, "POST", "/api/v1/invitations/"+token+"/accept", "")
@@ -371,6 +400,7 @@ func TestInvitations_Accept_Success_Admin(t *testing.T) {
 		InvitedBy: "user-1", TokenHash: hash, ExpiresAt: time.Now().Add(24 * time.Hour),
 	}
 	store.tokenHashIndex[hash] = "inv-2"
+	store.userEmail = "admin@test.com"
 
 	router := setupInvitationRouter(t, store, nil)
 	w := doRequest(router, "POST", "/api/v1/invitations/"+token+"/accept", "")
@@ -493,6 +523,44 @@ func TestInvitations_Accept_GetUserOrgIDError_500(t *testing.T) {
 	w := doRequest(router, "POST", "/api/v1/invitations/"+token+"/accept", "")
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("expected 500 on lookup error, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestInvitations_Accept_EmailMismatch_Returns403(t *testing.T) {
+	store := newMockInvitationStore()
+
+	token := "email-mismatch-token"
+	hash := hashToken(token)
+	store.invitations["inv-email"] = &types.OrgInvitation{
+		ID: "inv-email", OrgID: "org-1", Email: "invited@test.com", Role: types.OrgRoleMember,
+		InvitedBy: "user-1", TokenHash: hash, ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+	store.tokenHashIndex[hash] = "inv-email"
+	store.userEmail = "attacker@test.com" // does NOT match invited@test.com
+
+	router := setupInvitationRouter(t, store, nil)
+	w := doRequest(router, "POST", "/api/v1/invitations/"+token+"/accept", "")
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for email mismatch, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestInvitations_Accept_GetUserEmailError_500(t *testing.T) {
+	store := newMockInvitationStore()
+	store.userEmailErr = errors.New("db down")
+
+	token := "email-err-token"
+	hash := hashToken(token)
+	store.invitations["inv-email-err"] = &types.OrgInvitation{
+		ID: "inv-email-err", OrgID: "org-1", Email: "e@test.com", Role: types.OrgRoleMember,
+		InvitedBy: "user-1", TokenHash: hash, ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+	store.tokenHashIndex[hash] = "inv-email-err"
+
+	router := setupInvitationRouter(t, store, nil)
+	w := doRequest(router, "POST", "/api/v1/invitations/"+token+"/accept", "")
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on GetUserEmail error, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

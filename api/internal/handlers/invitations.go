@@ -43,6 +43,9 @@ type invitationStore interface {
 	// GetUserOrgID returns the user's single org ID (or "" if not in any org).
 	// Used by invitation acceptance to enforce single-org membership (S3/D8).
 	GetUserOrgID(ctx context.Context, userID string) (string, error)
+	// GetUserEmail resolves a user ID to their email address. Used by invitation
+	// acceptance to verify the accepting user matches the invited email.
+	GetUserEmail(ctx context.Context, userID string) (string, error)
 }
 
 // orgCredentialBinder binds org credentials to org workspaces. Used after
@@ -303,6 +306,19 @@ func (h *InvitationsHandler) Accept(c *gin.Context) {
 		return
 	}
 
+	// Verify the accepting user's email matches the invited email. This prevents
+	// token theft from granting org membership to an attacker who controls a
+	// different account.
+	userEmail, err := h.store.GetUserEmail(ctx, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify user email"})
+		return
+	}
+	if !strings.EqualFold(userEmail, inv.Email) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "this invitation was sent to a different email address"})
+		return
+	}
+
 	member, alreadyTaken, err := h.store.AcceptInvitationTx(ctx, inv.ID, userID, inv.Role)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to accept invitation"})
@@ -320,12 +336,18 @@ func (h *InvitationsHandler) Accept(c *gin.Context) {
 	// F7: bind all org credentials to the newly-attributed workspaces. The
 	// workspace migration happened inside AcceptInvitationTx (D4); this step
 	// seeds the org's shared credentials into those workspaces immediately.
-	// Best-effort: log on error but do not fail the accept — the credentials
-	// will bind on the next credential reload anyway.
+	// Fire-and-forget: runs in a background goroutine so the user's accept
+	// response isn't blocked by the CROSS JOIN. Credentials will also bind on
+	// the next credential reload if this goroutine fails.
 	if h.credentialBind != nil {
-		if err := h.credentialBind.BindAllOrgCredentialsToOrgWorkspaces(ctx, inv.OrgID); err != nil && h.logger != nil {
-			h.logger.Error("failed to bind org credentials after invitation accept", err, "orgID", inv.OrgID, "userID", userID)
-		}
+		orgID := inv.OrgID
+		uid := userID
+		logger := h.logger
+		go func() {
+			if err := h.credentialBind.BindAllOrgCredentialsToOrgWorkspaces(context.Background(), orgID); err != nil && logger != nil {
+				logger.Error("failed to bind org credentials after invitation accept", err, "orgID", orgID, "userID", uid)
+			}
+		}()
 	}
 
 	c.JSON(http.StatusOK, gin.H{"membership": member})
