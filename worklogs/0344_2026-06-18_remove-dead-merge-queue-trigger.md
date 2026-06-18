@@ -79,4 +79,5 @@ None.
 | File | Action |
 |------|--------|
 | `.github/workflows/ci.yml` | Removed `merge_queue` trigger (2 lines); rewrote `repolint-autofix` job comments (8 lines) to reflect it's the sole defense |
+| `worklogs/0345_2026-06-18_repolint-merge-queue-autofix.md` | Renamed from `0342_` (collision with `0342_post-merge-hardening.md`; renumbered through 0342→0348→0345 to land at the next free contiguous slot) |
 | `worklogs/0344_2026-06-18_remove-dead-merge-queue-trigger.md` | Created (this file; renumbered through 0343→0347→0344 to resolve collisions with concurrent worklogs on main) |
