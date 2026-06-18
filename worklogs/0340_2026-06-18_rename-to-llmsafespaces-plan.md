@@ -113,6 +113,11 @@ own pluralised output (`llmsafespace` will not match within
 `llmsafespaces`), making a re-run safe. A startup guard additionally
 aborts if any non-excluded file already contains the plural form.
 
+Note: the per-pattern occurrence counts in the dry-run output are
+approximate — they include a few extra skipped files (`go.sum`,
+`package-lock.json`) that the execution path correctly excludes. The
+authoritative count is the per-file total (2,923).
+
 ### Phase 3 — Post-rewrite regeneration
 Manual steps (cannot be safely scripted into the rename commit):
 ```

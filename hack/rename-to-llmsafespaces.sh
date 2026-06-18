@@ -16,12 +16,12 @@
 #   lockfiles (regenerated).
 #
 # Re-run safety:
-#   The perl substitution uses lookbehind/lookahead `(?<![sS])...(?! [sS])`
+#   The perl substitution uses lookbehind/lookahead (?<![sS])...(?![sS])
 #   so the singular pattern never matches inside an already-pluralised token
 #   (llmsafespace will not match within llmsafespaces). A startup guard
-#   additionally aborts if any non-excluded file already contains the plural
-#   form, so re-running after a successful rename errors out cleanly rather
-#   than no-op'ing or corrupting.
+#   aborts if any non-excluded file already contains the plural form, so
+#   re-running after a successful rename errors out cleanly rather than
+#   no-op'ing or corrupting.
 # =============================================================================
 
 set -euo pipefail
