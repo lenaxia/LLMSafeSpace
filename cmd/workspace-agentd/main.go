@@ -297,6 +297,23 @@ func (t *sessionStatusTracker) hasAnyData() bool {
 	return len(t.statuses) > 0
 }
 
+// snapshot returns the current busy session count and total prompt
+// tokens across all sessions. Used by the ops metrics loop to update
+// Prometheus gauges without holding the lock for multiple calls.
+func (t *sessionStatusTracker) snapshot() (busyCount int, totalTokens int64) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	for _, s := range t.statuses {
+		if s == "busy" {
+			busyCount++
+		}
+	}
+	for _, tok := range t.promptTokens {
+		totalTokens += tok
+	}
+	return busyCount, totalTokens
+}
+
 // prune removes entries for sessions that no longer exist.
 func (t *sessionStatusTracker) prune(activeIDs []string) {
 	active := make(map[string]struct{}, len(activeIDs))
@@ -834,6 +851,27 @@ func main() {
 		sseTracker.subscribe(bgCtx, client)
 	}()
 
+	// US-44.8: periodic metrics collection for ops dashboards. Updates
+	// memory usage, active sessions, and context token gauges every 60s.
+	bgWg.Add(1)
+	go func() {
+		defer bgWg.Done()
+		wsID := os.Getenv("WORKSPACE_ID")
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-bgCtx.Done():
+				return
+			case <-ticker.C:
+				if memBytes, err := readCgroupMemoryCurrent(); err == nil {
+					pkgOpsMetrics.SetMemoryUsage(wsID, memBytes)
+				}
+				pkgOpsMetrics.UpdateFromTracker(wsID, sseTracker)
+			}
+		}
+	}()
+
 	fillState := &fillGapsState{}
 	bgWg.Add(1)
 	go func() {
@@ -1243,10 +1281,12 @@ func (p *managedProcess) supervise() {
 			continue
 		}
 
-		// Crash path: classify exit, handle OOM, log, backoff, loop.
+		// Crash path: classify exit, handle OOM, record metric, log, backoff, loop.
 		exitKind := classifyExit(waitErr)
 		if isOOMExit(exitKind) {
 			handleOOMExit(workspaceIDFromEnv(), OOMMarkerPath)
+		} else {
+			pkgOpsMetrics.RecordRestart(workspaceIDFromEnv(), "crash")
 		}
 		log.Warn("opencode exited unexpectedly",
 			zap.Error(waitErr),
