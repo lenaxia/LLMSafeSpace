@@ -19,7 +19,7 @@ A focused audit of the production Go code (excluding tests, generated code, and 
 | Rule 2 | Idiomatic Go; custom error types for domain errors | **43 sentinel errors, only 4 custom error types**; callers cannot `errors.As` on domain conditions |
 | Rule 3 | Explicit over implicit; no swallowed errors | **140** swallowed `Close()`/`Error()` calls; **187** `context.TODO()`/`context.Background()` in production code |
 | Rule 4 | Functions ≤50 lines; not over-engineered | `cmd/workspace-agentd/main.go` is **1451 lines, 43 functions, `main()` spans 367 lines**; `pkg/types/types.go` has **71 types in one 905-line file** |
-| Rule 5 | Zero technical debt; remove legacy code | `controller/internal/relay/gcp_driver.go` is a 28-line all-`ErrNotImplemented` stub; documented "fragility" in the 4-writer `agent-config.json` design is unfixed. (The `annotateModels` remap guard at `models.go:454` was originally flagged via README-LLM.md:517 but is retained as intentional defense-in-depth — see US-46.2 and worklog 0338.) |
+| Rule 5 | Zero technical debt; remove legacy code | `controller/internal/relay/gcp_driver.go` is a 28-line all-`ErrNotImplemented` stub; documented "fragility" in the 4-writer `agent-config.json` design is unfixed. (The `annotateModels` remap guard at `models.go:454` was originally flagged via README-LLM.md:517 but is retained as intentional defense-in-depth — see US-46.2 and worklog 0341.) |
 
 Additionally, the codebase is missing **abstractions that would make testing cheaper and extension safer**, while not currently demanding them. These are listed in the Abstraction Opportunities section.
 
@@ -50,7 +50,7 @@ Ranking is *suggested execution order* — top stories first because they are ch
 | # | Story | Effort | ROI | Why this rank |
 |---|-------|--------|-----|---------------|
 | US-46.1 | Remove duplicate design doc + fix epic numbering collisions | Trivial (0.25d) | Very High | Zero risk; clears navigation debt that hides real issues; prerequisite for clean epic tracking |
-| US-46.2 | Delete `GCPDriver` stub (annotateModels guard retained) | Small (0.25d) | Very High | README-LLM.md:517 originally classified the guard as debt; adversarial review found the code author's defense-in-depth argument stronger (see US-46.2 and worklog 0338) |
+| US-46.2 | Delete `GCPDriver` stub (annotateModels guard retained) | Small (0.25d) | Very High | README-LLM.md:517 originally classified the guard as debt; adversarial review found the code author's defense-in-depth argument stronger (see US-46.2 and worklog 0341) |
 | US-46.3 | Split `pkg/types/types.go` (71 types → per-domain files) | Small (1d) | High | Pure mechanical move; unblocks every future type addition; reduces merge conflicts |
 | US-46.4 | Introduce `DomainError` type + error mapping convention | Small (1d) | High | Unblocks typed `errors.As` across all callers; 4 existing types prove the pattern; small surface |
 | US-46.5 | Replace `context.TODO()` / `context.Background()` with propagated context | Medium (2d) | High | 187 sites; mechanical with grep; restores deadline propagation (Rule 3); enables timeout tests |
@@ -163,7 +163,7 @@ This section lists interfaces that **do not currently exist** but would material
 
 ## Success Criteria
 
-1. `controller/internal/relay/gcp_driver.go` is deleted or fully implemented (no `ErrNotImplemented` stub). The `annotateModels` remap guard at `models.go:454` is retained as intentional defense-in-depth (see US-46.2 rationale and worklog 0338).
+1. `controller/internal/relay/gcp_driver.go` is deleted or fully implemented (no `ErrNotImplemented` stub). The `annotateModels` remap guard at `models.go:454` is retained as intentional defense-in-depth (see US-46.2 rationale and worklog 0341).
 2. `pkg/types/` contains ≥6 files, each ≤250 lines, organised by domain (auth, workspace, session, network, secrets, settings).
 3. `cmd/workspace-agentd/` `main.go` is ≤300 lines; supporting logic lives in `agentdhttp/`, `sessiontracker/`, `processsupervisor/`, `sysmetrics/` subpackages.
 4. A `DomainError` type exists in `api/internal/errors/`; ≥10 of the 43 sentinel errors are migrated to wrap it; `errors.As(err, &DomainError{})` works in at least 5 call sites.
