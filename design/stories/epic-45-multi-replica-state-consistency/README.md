@@ -101,23 +101,24 @@ The `{workspace_id}` hash tag ensures all keys for a workspace land on the same 
 **Goal:** Move busy session tracking to Valkey. Fixes today's stuck-session bug class.
 
 **Acceptance:**
-- [ ] Redis implementation of `WorkspaceStateStore.CheckAndAddActiveSession`
-- [ ] Uses Lua script for atomic check-and-add
-- [ ] Hash-tagged keys: `ws:{workspace_id}:active`
-- [ ] TTL = 30 minutes (auto-recovery for stuck entries)
-- [ ] TTL refreshed on every successful operation
-- [ ] Fail-open behavior on Redis errors (log + allow)
-- [ ] Prometheus metrics:
+- [x] Redis implementation of `WorkspaceStateStore.CheckAndAddActiveSession`
+- [x] Uses Lua script for atomic check-and-add (`checkAndAddScript`)
+- [x] Hash-tagged keys: `ws:{workspace_id}:active`
+- [x] TTL = 30 minutes (auto-recovery for stuck entries)
+- [x] TTL refreshed on every successful operation (both new-add and idempotent re-add)
+- [x] Fail-open behavior on Redis errors (log + allow)
+- [x] Prometheus metrics:
   - `ws_state_op_duration_seconds{op,result}` histogram
   - `ws_state_errors_total{op}` counter
-  - `ws_state_active_sessions{workspace_id}` gauge (sampled)
-- [ ] Unit tests for Lua script edge cases:
-  - Concurrent checkAndAdd (verify atomicity)
-  - TTL refresh on existing member
-  - Limit enforcement under contention
-  - Empty set scenarios
-- [ ] Integration test with real Valkey
-- [ ] Load test: 1000 concurrent ops, verify no double-counting
+  - `ws_state_active_sessions{workspace_id}` gauge (sampled on writes; cleaned up on workspace terminate via DeleteLabelValues)
+- [x] Unit tests for Lua script edge cases:
+  - Concurrent checkAndAdd (50 goroutines — `TestRedisStore_CheckAndAddActiveSession_Concurrent_AtLimitNoOversubscribe`)
+  - 1000-op load test (`TestRedisStore_LoadTest_1000ConcurrentOps_NoDoubleCounting`)
+  - TTL refresh on existing member (`TestRedisStore_CheckAndAddActiveSession_TTLRefreshedOnEveryOp`)
+  - Limit enforcement under contention (same tests)
+  - Empty set scenarios (`TestRedisStore_GetActiveSessions_EmptyWorkspace_ReturnsNil`, `TestRedisStore_RemoveActiveSession_LastRemoval_CleansWorkspaceEntry`)
+- [ ] Integration test with real Valkey *(DEFERRED — miniredis with real gopher-lua interpreter covers Lua atomicity; testcontainers-go dependency introduction is a separate, larger change. Tracked as follow-up.)*
+- [x] Load test: 1000 concurrent ops, verify no double-counting
 
 **Lua Script:**
 ```lua
@@ -150,7 +151,9 @@ return 1
 **Files:**
 - New: `api/internal/services/wsstate/redis.go`
 - New: `api/internal/services/wsstate/redis_test.go`
-- Modified: `api/internal/services/services.go` (wire up Redis impl)
+- Modified: `api/internal/handlers/proxy.go` (added `SetStateStore` setter with panic guard for after-Start use)
+- Modified: `api/internal/handlers/proxy_lifecycle.go` (sets `started=true` inside startOnce.Do)
+- Modified: `api/internal/app/app.go` (wire up Redis impl when cache service is available)
 
 **Effort:** 3 days
 
