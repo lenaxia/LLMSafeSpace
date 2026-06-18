@@ -3,8 +3,8 @@
 # llmsafespace → llmsafespaces rename: dry-run reporter + executor.
 #
 # Usage:
-#   DRY_RUN=1 ./rename.sh   # default — report only, no edits
-#   DRY_RUN=0 ./rename.sh   # execute the rename
+#   DRY_RUN=1 ./rename-to-llmsafespaces.sh   # default — report only, no edits
+#   DRY_RUN=0 ./rename-to-llmsafespaces.sh   # execute the rename
 #
 # Policy (per user decision, 2026-06-18):
 #   * K8s API group: llmsafespace.dev → llmsafespaces.dev     (rename)
@@ -14,11 +14,29 @@
 # Excludes (no edits): .git/, worklogs/, design/, bin/, node_modules/,
 #   root binaries (workspace-agentd, redact, tools), go.sum (regenerated),
 #   lockfiles (regenerated).
+#
+# Re-run safety:
+#   The perl substitution uses lookbehind/lookahead `(?<![sS])...(?! [sS])`
+#   so the singular pattern never matches inside an already-pluralised token
+#   (llmsafespace will not match within llmsafespaces). A startup guard
+#   additionally aborts if any non-excluded file already contains the plural
+#   form, so re-running after a successful rename errors out cleanly rather
+#   than no-op'ing or corrupting.
 # =============================================================================
 
 set -euo pipefail
 
-ROOT="/workspace/llmsafespace"
+# F8 — require perl (the rewrite engine).
+command -v perl >/dev/null 2>&1 || {
+  echo "ERROR: perl is required but not found on PATH." >&2
+  exit 1
+}
+
+# F2 — resolve repo root from git, do not hardcode a checkout path.
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "ERROR: not inside a git work tree." >&2
+  exit 1
+}
 cd "$ROOT"
 
 DRY_RUN="${DRY_RUN:-1}"
@@ -31,19 +49,16 @@ DIR_RENAMES=(
   "sdks/vscode-llmsafespace:sdks/vscode-llmsafespaces"
 )
 
-# ---------- Phase 2: content rewrite rules -----------------------------------
-# Case-sensitive. The three case variants are disjoint (verified: zero existing
-# 'llmsafespaces' / 'LLMSafeSpaces' in tree), so order is irrelevant and no
-# word-boundary guarding needed.
+# ---------- Phase 2: content rewrite rule ------------------------------------
+# A single alternation of the three case-variants. The three sources are
+# disjoint (verified: zero existing 'llmsafespaces' / 'LLMSafeSpaces' in
+# tree), so one pass suffices. Lookbehind/lookahead (?<![sS])...(?![sS])
+# prevent the pattern from matching inside its own pluralised output, making
+# a re-run safe (no llmsafespace → llmsafespacess corruption).
 #
-# Each rule: PATTERN:REPLACEMENT
-RULES=(
-  "llmsafespace:llmsafespaces"     # lowercase: module path, CRD group, metrics,
-                                   #   env-var snake prefix, PG role, image repo,
-                                   #   binary name, dir paths, npm scope, etc.
-  "LLMSAFESPACE:LLMSAFESPACES"     # ALL_CAPS: env vars (LLMSAFESPACE_*).
-  "LLMSafeSpace:LLMSafeSpaces"     # MixedCase: repo name (URLs), prose headers.
-)
+# The replacement appends a case-matched 's': uppercase 'S' if the matched
+# token ends in 'E' (i.e. the ALL_CAPS variant), lowercase 's' otherwise.
+PAT='(?<![sS])(llmsafespace|LLMSAFESPACE|LLMSafeSpace)(?![sS])'
 
 # ---------- Files to skip entirely -------------------------------------------
 SKIP_PATH_RE='(^|/)(\.git|worklogs|design|bin|node_modules)/'
@@ -64,15 +79,46 @@ is_skipped() {
   return 1
 }
 
-# Count matches of all three case-variants in a file (case-sensitive).
+# F6 — count *occurrences* (not lines) of the three case-variants in a file,
+# using the same boundary-aware regex as the rewriter so dry-run counts match
+# the actual number of substitutions on DRY_RUN=0.
 count_hits() {
-  local f="$1" total=0 n
-  for pat in llmsafespace LLMSAFESPACE LLMSafeSpace; do
-    n=$(grep -c -- "$pat" "$f" 2>/dev/null || true)
-    total=$((total + n))
-  done
-  echo "$total"
+  perl -e '
+    my $n = 0;
+    open(my $fh, "<", $ARGV[0]) or die "open $ARGV[0]: $!";
+    binmode($fh);
+    while (<$fh>) {
+      while (/(?<![sS])(llmsafespace|LLMSAFESPACE|LLMSafeSpace)(?![sS])/g) { $n++; }
+    }
+    print $n;
+  ' "$1"
 }
+
+# ============================================================================
+# Guard — refuse to run if already renamed (F1)
+# ============================================================================
+
+# Check non-excluded tracked files for any pre-existing plural form; if found,
+# the rename has likely already been applied and re-running risks confusion.
+already_renamed=""
+while IFS= read -r f; do
+  if is_skipped "$f"; then continue; fi
+  # Skip the rename tool + its own artifacts (they legitimately mention the
+  # target name and would false-positive the guard).
+  case "$f" in hack/rename-to-llmsafespaces*) continue;; esac
+  if [ -f "$f" ] && grep -qI -- 'llmsafespaces' "$f" 2>/dev/null; then
+    already_renamed="$f"
+    break
+  fi
+done < <(git ls-files)
+
+if [ -n "$already_renamed" ]; then
+  echo "ERROR: plural form already present in '$already_renamed'." >&2
+  echo "       Rename appears to have been applied already; refusing to run" >&2
+  echo "       to prevent double-pluralisation. Inspect that file and either" >&2
+  echo "       revert it or delete this guard if a partial run occurred." >&2
+  exit 2
+fi
 
 # ============================================================================
 # Main
@@ -107,10 +153,9 @@ echo
 # ----- Phase 2a: enumerate files needing content edits -----------------------
 echo "### Phase 2: content rewrites"
 echo
-echo "Patterns (case-sensitive):"
-for r in "${RULES[@]}"; do
-  printf "   '%s' → '%s'\n" "${r%%:*}" "${r##*:}"
-done
+echo "Pattern (single alternation, case-sensitive, boundary-guarded):"
+echo "   $PAT"
+echo "   → append case-matched 's' (S if token ends in E, else s)"
 echo
 echo "Excluded paths: worklogs/, design/, .git/, bin/, node_modules/"
 echo "Excluded files: go.sum, package-lock.json, workspace-agentd, redact, tools"
@@ -125,6 +170,8 @@ total_hits=0
 
 for f in "${ALL_FILES[@]}"; do
   if is_skipped "$f"; then continue; fi
+  # Never rewrite the rename tool itself or its artifacts.
+  case "$f" in hack/rename-to-llmsafespaces*) continue;; esac
   # Flag stray files whose NAME contains the token (won't be auto-renamed).
   base="${f##*/}"
   if [[ "$base" =~ $NAMED_FILES_RE ]] && \
@@ -134,8 +181,8 @@ for f in "${ALL_FILES[@]}"; do
     NAMED_LIKE+=("$f")
   fi
   if [ ! -f "$f" ]; then continue; fi
-  # Skip binary files (grep -I would exclude them, but check explicitly).
-  if ! grep -qI "" "$f" 2>/dev/null; then continue; fi
+  # F7 — binary detection via a single-char pattern (portable across greps).
+  if ! grep -qI . "$f" 2>/dev/null; then continue; fi
   n=$(count_hits "$f")
   if [ "$n" -gt 0 ]; then
     EDIT_FILES+=("$f|$n")
@@ -146,43 +193,44 @@ done
 # ----- Phase 2b: report (or execute) -----------------------------------------
 if [ "$DRY_RUN" = "1" ]; then
   printf "Files needing edits: %d\n" "${#EDIT_FILES[@]}"
-  printf "Total line-level matches across all files: %d\n" "$total_hits"
+  printf "Total occurrences across all files: %d\n" "$total_hits"
   echo
-  echo "Top 30 files by match count:"
+  echo "Top 30 files by occurrence count:"
   echo "-----------------------------------------------"
   printf "%6s  %s\n" "HITS" "FILE"
   printf "%6s  %s\n" "-----" "----------------------------------------"
   printf "%s\n" "${EDIT_FILES[@]}" \
     | sort -t'|' -k2 -nr | head -30 \
-    | awk -F'|' '{ printf "%6d  %s\n", $2, $1 }'
+    | awk -F'|' '{ printf "%6d  %s\n", $2, $1 }' || true
   echo
 
-  # Per-pattern totals.
-  echo "Per-pattern match counts (entire non-excluded tree):"
+  # Per-pattern totals (occurrence counts via git grep -o, not lines).
+  echo "Per-pattern occurrence counts (non-excluded tree):"
   for pat in llmsafespace LLMSAFESPACE LLMSafeSpace; do
-    c=$(git grep -Ic -- "$pat" -- . 2>/dev/null \
-        | awk -F: '{ for(i=2;i<=NF;i++) s+=$i } END{ print s+0 }')
-    # Subtract matches inside excluded dirs.
-    excl=$(git grep -Ic -- "$pat" -- worklogs design 2>/dev/null \
-           | awk -F: '{ for(i=2;i<=NF;i++) s+=$i } END{ print s+0 }')
-    real=$((c - excl))
-    printf "   %-15s %5d matches (excluded %d in worklogs/+design/)\n" \
-      "$pat" "$real" "$excl"
+    # git grep -o prints each match on its own line; wc -l counts them.
+    # Pathspec excludes keep worklogs/ and design/ out of the count.
+    c=$(git grep -Ioh -- "$pat" -- . \
+        ':(exclude)worklogs/' ':(exclude)design/' \
+        ':(exclude)hack/rename-to-llmsafespaces.sh' \
+        ':(exclude)hack/rename-to-llmsafespaces.dryrun.txt' \
+        2>/dev/null | wc -l || echo 0)
+    printf "   %-15s %5d occurrences\n" "$pat" "$c"
   done
   echo
 else
   printf "Rewriting %d files...\n" "${#EDIT_FILES[@]}"
+  replaced=0
   for entry in "${EDIT_FILES[@]}"; do
     f="${entry%%|*}"
-    # Apply each rule with a perl one-liner (handles all chars safely).
-    for r in "${RULES[@]}"; do
-      pat="${r%%:*}"; rep="${r##*:}"
-      # Escape for perl s/// (paths/patterns are plain ASCII alnum here).
-      perl -i -pe "s/\Q$pat\E/$rep/g" "$f"
-    done
+    # Single perl pass over the alternation; appends case-matched 's'.
+    # -i: in-place edit; -pe: print+exec per line; /g: all matches; /e: eval
+    #   the replacement as perl code (string concat).
+    before=$(count_hits "$f")
+    perl -i -pe 's/(?<![sS])(llmsafespace|LLMSAFESPACE|LLMSafeSpace)(?![sS])/$1 . (substr($1,-1) eq "E" ? "S" : "s")/ge' "$f"
+    replaced=$((replaced + before))
   done
-  printf "  [OK] rewrote %d files (%d total replacements)\n" \
-    "${#EDIT_FILES[@]}" "$total_hits"
+  printf "  [OK] rewrote %d files (%d occurrences replaced)\n" \
+    "${#EDIT_FILES[@]}" "$replaced"
   echo
 fi
 
@@ -208,13 +256,27 @@ echo "### Phase 4: regeneration commands to run after edits"
 echo "            (run these manually; they regenerate derived artifacts)"
 echo
 cat <<'EOF'
+   # --- Go modules (root + SDK) ---
    go mod edit -module github.com/lenaxia/llmsafespaces
    (cd sdks/go && go mod edit -module github.com/lenaxia/llmsafespaces/sdk/go)
    go mod tidy
    (cd sdks/go && go mod tidy)
-   make manifests          # regenerate CRD YAML + zz_generated.deepcopy.go
-   make mocks              # regenerate mocks (if a make target exists)
-   make test lint          # verify
+
+   # --- CRD YAML (controller-gen → config/crd/bases) ---
+   make -C controller manifests
+
+   # --- zz_generated.deepcopy.go (root target → hack/update-deepcopy.sh) ---
+   make deepcopy
+
+   # --- npm lockfiles (3 package.json files were rewritten; their
+   #     sibling package-lock.json is skipped in Phase 2 and must be
+   #     regenerated or `npm ci` fails on name/hash mismatch) ---
+   (cd frontend && npm install --package-lock-only)
+   (cd sdks/typescript && npm install --package-lock-only)
+   (cd sdks/vscode-llmsafespaces && npm install --package-lock-only)
+
+   # --- verify ---
+   make test lint
 EOF
 echo
 
@@ -249,7 +311,7 @@ echo " Summary"
 echo "=================================================================="
 printf "  Dirs to rename        : %d\n" "${#DIR_RENAMES[@]}"
 printf "  Files to edit         : %d\n" "${#EDIT_FILES[@]}"
-printf "  Total line matches    : %d\n" "$total_hits"
+printf "  Total occurrences     : %d\n" "$total_hits"
 printf "  Stray-named files     : %d (manual review)\n" "${#NAMED_LIKE[@]}"
 if [ "$DRY_RUN" = "1" ]; then
   echo

@@ -12,56 +12,55 @@
 
 ### Phase 2: content rewrites
 
-Patterns (case-sensitive):
-   'llmsafespace' → 'llmsafespaces'
-   'LLMSAFESPACE' → 'LLMSAFESPACES'
-   'LLMSafeSpace' → 'LLMSafeSpaces'
+Pattern (single alternation, case-sensitive, boundary-guarded):
+   (?<![sS])(llmsafespace|LLMSAFESPACE|LLMSafeSpace)(?![sS])
+   → append case-matched 's' (S if token ends in E, else s)
 
 Excluded paths: worklogs/, design/, .git/, bin/, node_modules/
 Excluded files: go.sum, package-lock.json, workspace-agentd, redact, tools
 
 Files needing edits: 612
-Total line-level matches across all files: 2791
+Total occurrences across all files: 2923
 
-Top 30 files by match count:
+Top 30 files by occurrence count:
 -----------------------------------------------
   HITS  FILE
  -----  ----------------------------------------
-    65  charts/llmsafespace/templates/prometheus-rules.yaml
+    62  charts/llmsafespace/templates/prometheus-rules.yaml
     60  sdks/vscode-llmsafespace/package.json
-    57  .github/workflows/ci.yml
+    58  .github/workflows/ci.yml
+    51  charts/llmsafespace/dashboards/operational.json
     50  charts/llmsafespace/templates/rbac.yaml
     49  api/internal/app/app_master_key_test.go
-    44  charts/llmsafespace/dashboards/operational.json
+    43  local/test.sh
     43  api/internal/config/config.go
-    42  local/test.sh
-    38  sdks/canary/TESTPLAN.md
+    41  sdks/canary/TESTPLAN.md
+    39  charts/llmsafespace/README.md
     33  controller/internal/metrics/metrics.go
     30  charts/llmsafespace/templates/_helpers.tpl
     30  api/internal/app/app.go
-    29  charts/llmsafespace/chart_test.go
-    28  charts/llmsafespace/README.md
+    28  charts/llmsafespace/chart_test.go
     26  api/internal/services/metrics/metrics.go
     26  README-LLM.md
+    24  charts/llmsafespace/dashboards/billing.json
     24  .github/workflows/migration-safety.yml
     23  charts/llmsafespace/values.yaml
-    23  charts/llmsafespace/dashboards/billing.json
     22  sdks/canary/fission/canary-functions.yaml
-    21  .github/workflows/e2e-nightly.yml
+    22  runtimes/tests/test_runtime.py
+    22  .github/workflows/e2e-nightly.yml
+    21  charts/llmsafespace/templates/NOTES.txt
+    21  api/internal/services/workspace/workspace_service.go
     20  local/bootstrap.sh
     20  charts/llmsafespace/templates/api-deployment.yaml
-    20  api/internal/services/workspace/workspace_service.go
     19  sdks/python/tests/test_async_client.py
-    17  sdks/vscode-llmsafespace/src/services/api.ts
-    17  charts/llmsafespace/templates/NOTES.txt
-    16  runtimes/tests/test_runtime.py
+    18  sdks/vscode-llmsafespace/src/services/api.ts
+    18  local/postgres-redis.yaml
     16  pkg/repolint/crd_drift.go
-    16  local/postgres-redis.yaml
 
-Per-pattern match counts (entire non-excluded tree):
-   llmsafespace     1950 matches (excluded 2247 in worklogs/+design/)
-   LLMSAFESPACE      350 matches (excluded 186 in worklogs/+design/)
-   LLMSafeSpace      498 matches (excluded 352 in worklogs/+design/)
+Per-pattern occurrence counts (non-excluded tree):
+   llmsafespace     2074 occurrences
+   LLMSAFESPACE      358 occurrences
+   LLMSafeSpace      504 occurrences
 
 ### Phase 3: stray files whose NAME contains 'llmsafespace'
             (not under one of the 3 renamed dirs — review individually)
@@ -71,13 +70,27 @@ Per-pattern match counts (entire non-excluded tree):
 ### Phase 4: regeneration commands to run after edits
             (run these manually; they regenerate derived artifacts)
 
+   # --- Go modules (root + SDK) ---
    go mod edit -module github.com/lenaxia/llmsafespaces
    (cd sdks/go && go mod edit -module github.com/lenaxia/llmsafespaces/sdk/go)
    go mod tidy
    (cd sdks/go && go mod tidy)
-   make manifests          # regenerate CRD YAML + zz_generated.deepcopy.go
-   make mocks              # regenerate mocks (if a make target exists)
-   make test lint          # verify
+
+   # --- CRD YAML (controller-gen → config/crd/bases) ---
+   make -C controller manifests
+
+   # --- zz_generated.deepcopy.go (root target → hack/update-deepcopy.sh) ---
+   make deepcopy
+
+   # --- npm lockfiles (3 package.json files were rewritten; their
+   #     sibling package-lock.json is skipped in Phase 2 and must be
+   #     regenerated or `npm ci` fails on name/hash mismatch) ---
+   (cd frontend && npm install --package-lock-only)
+   (cd sdks/typescript && npm install --package-lock-only)
+   (cd sdks/vscode-llmsafespaces && npm install --package-lock-only)
+
+   # --- verify ---
+   make test lint
 
 ### Phase 5: external manual steps
 
@@ -105,7 +118,7 @@ Per-pattern match counts (entire non-excluded tree):
 ==================================================================
   Dirs to rename        : 3
   Files to edit         : 612
-  Total line matches    : 2791
+  Total occurrences     : 2923
   Stray-named files     : 0 (manual review)
 
   Re-run with DRY_RUN=0 to execute.
