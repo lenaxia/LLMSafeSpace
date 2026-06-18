@@ -1,4 +1,10 @@
-# Epic 38: Session Activity State Integrity
+# Epic 39: Session Activity State Integrity
+
+> **Renumbered** from `epic-38` (US-46.1, 2026-06-18): the `epic-38` slot collided
+> with `epic-38-architectural-remediation`. This directory moved to `epic-39` to
+> give every epic a unique number. Internal story IDs remain `US-38.x` (historical
+> labels referenced by append-only worklogs); the directory number is the
+> canonical handle going forward.
 
 **Status:** Implemented
 **Created:** 2026-06-12

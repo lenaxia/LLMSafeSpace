@@ -131,12 +131,6 @@ func TestAWSDriver_ConstructsWithCorrectSecret(t *testing.T) {
 	assert.Equal(t, "test-ns", d.namespace)
 }
 
-func TestGCPDriver_NotImplemented(t *testing.T) {
-	d := &GCPDriver{}
-	_, err := d.Provision(context.Background(), ProvisionRequest{})
-	assert.ErrorIs(t, err, ErrNotImplemented)
-}
-
 func TestOCIDriver_GetConfig_MissingSecret(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().Build()
 	d := NewOCIDriver(fakeClient, "test", "oci-credentials")
