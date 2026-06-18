@@ -160,7 +160,6 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var userProvCredHandler *handlers.UserProviderCredentialsHandler
 	var orgsHandler *handlers.OrgsHandler
 	var orgCredsHandler *handlers.OrgCredentialsHandler
-	var orgStoreForVerifier OrgMembershipChecker
 	var pgOrgStore *database.PgOrgStore
 	var pendingOrgCleaner *handlers.PendingOrgCleaner
 	var invitationsHandler *handlers.InvitationsHandler
@@ -242,9 +241,6 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		adminProvCredHandler = handlers.NewAdminProviderCredentialsHandler(pgStore, deriveServerKey)
 		adminProvCredHandler.SetAutoApplyStore(pgStore)
 		userProvCredHandler = handlers.NewUserProviderCredentialsHandler(pgStore, pgStore, keyService, secrets.NewPgKeyStore(secretsPool))
-		userProvCredHandler.SetWorkspaceOwnerChecker(func(ctx context.Context, userID, wsID string) error {
-			return (&workspaceOwnerVerifierAdapter{db: dbSvc, orgStore: orgStoreForVerifier, logger: log}).VerifyWorkspaceOwner(ctx, userID, wsID)
-		})
 		userProvCredHandler.SetCredentialStateWriter(dbSvc)
 
 		// Seed the free-tier opencode credential (Epic 30 US-30.4).
@@ -279,16 +275,10 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		if authSvc, ok := svc.Auth.(*auth.Service); ok {
 			secretsHandler.SetPasswordVerifier(authSvc)
 		}
-		// Wire workspace-ownership verification into the secret
-		// service so SetBindings/AddBindings/GetBindings/
-		// PrepareSecretsForInjection refuse to operate on another
-		// user's workspace (validator pass-3+4 findings SO-1 and
-		// PARTIAL-1). RequireOwnerVerification flips the service
-		// into fail-closed mode so a future wiring regression
-		// produces a uniform 404 rather than silently re-enabling
-		// cross-tenant pollution (NEW-1).
-		secretService.SetWorkspaceOwnerVerifier(&workspaceOwnerVerifierAdapter{db: dbSvc, orgStore: orgStoreForVerifier, logger: log})
-		secretService.RequireOwnerVerification()
+		// Workspace-ownership enforcement for the bindings / env / reload-secrets
+		// routes lives in WorkspaceAccessMiddleware (design 0041 D1+D5). The
+		// SecretService trusts that decision and no longer carries its own
+		// verifier — see pkg/secrets/secret_service.go.
 		secretService.SetAdminKeyDeriver(deriveServerKey)
 		rotateKeyHandler = handlers.NewRotateKeyHandler(keyService)
 		rotateKeyHandler.SetPasswordUpdater(&bcryptPasswordUpdater{db: svc.Database})
@@ -316,7 +306,6 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		}
 
 		pgOrgStore = database.NewPgOrgStore(dbSvc.DB)
-		orgStoreForVerifier = pgOrgStore
 		orgsHandler = handlers.NewOrgsHandler(pgOrgStore, svc.GetAuth())
 		orgCredsHandler = handlers.NewOrgCredentialsHandler(pgStore, pgStore, deriveServerKey, svc.GetAuth())
 
@@ -329,10 +318,38 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 				keyService.SetAPIKeyStore(&apiKeyStoreAdapter{db: dbSvc}, sp)
 			}
 		}
-		if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
+		wsSvc, wsSvcOk := svc.Workspace.(*workspace.Service)
+		if wsSvcOk {
 			wsSvc.SetSecretInjector(secretService)
 			wsSvc.SetCredentialProvisioner(pgStore)
 			wsSvc.SetOrgStore(pgOrgStore)
+		}
+		// User provider-credential bind/unbind routes are NOT under
+		// /api/v1/workspaces/:id (they live under /api/v1/provider-credentials/:id/bind/:workspaceId),
+		// so WorkspaceAccessMiddleware does not cover them. Wire the
+		// canonical ResolveWorkspace + CheckOwnership path so the
+		// userProvCred surface shares the exact same authorisation
+		// logic as every workspace route — including the D5
+		// creator-membership re-check the old adapter lacked. If the
+		// workspace service is somehow not the concrete type (defense-
+		// in-depth — services.New always constructs *workspace.Service),
+		// install a fail-closed checker that rejects every bind rather
+		// than silently skipping the ownership check.
+		if userProvCredHandler != nil {
+			if wsSvcOk {
+				userProvCredHandler.SetWorkspaceOwnerChecker(func(ctx context.Context, userID, wsID string) error {
+					meta, err := wsSvc.ResolveWorkspace(ctx, wsID)
+					if err != nil {
+						return err
+					}
+					return wsSvc.CheckOwnership(ctx, userID, meta)
+				})
+			} else {
+				log.Error("workspace service is not *workspace.Service; user provider-credential bind/unbind will fail-closed", nil)
+				userProvCredHandler.SetWorkspaceOwnerChecker(func(_ context.Context, _, _ string) error {
+					return fmt.Errorf("ownership verification unavailable: workspace service is misconfigured")
+				})
+			}
 		}
 	}
 

@@ -150,12 +150,6 @@ func (h *TerminalHandler) HandleTicket(c *gin.Context) {
 		return
 	}
 
-	// Ownership check — return 404 (not 403) to avoid leaking existence
-	if ws.Labels["user-id"] != userID {
-		c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
-		return
-	}
-
 	// Phase check
 	if ws.Status.Phase != v1.WorkspacePhaseActive || ws.Status.PodName == "" {
 		c.JSON(http.StatusConflict, gin.H{"error": "workspace not active"})

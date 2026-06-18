@@ -22,7 +22,10 @@ type InjectedSecret struct {
 // and returns the JSON payload for the ephemeral K8s Secret.
 //
 // Uses the multi-source path that queries workspace_credential_bindings
-// and merges by provider priority.
+// and merges by provider priority. Workspace ownership is enforced by
+// WorkspaceAccessMiddleware on POST /:id/reload-secrets (design 0041 D5)
+// and is inherently true for the create/restart/activate call paths
+// inside workspace.Service (the caller is the workspace creator).
 //
 // ARCHITECTURAL NOTE — user credential injection in non-interactive contexts (C-1):
 //
@@ -39,10 +42,6 @@ type InjectedSecret struct {
 // user credentials without the user's session. The reload banner (Epic 27a)
 // prompts the user to refresh credentials when they next open the workspace.
 func (s *SecretService) PrepareSecretsForInjection(ctx context.Context, userID, sessionID, workspaceID string) ([]byte, error) {
-	if err := s.verifyWorkspaceOwner(ctx, userID, workspaceID); err != nil {
-		return nil, err
-	}
-
 	// Cast store to CredentialStore. All production store types implement this.
 	// If the cast fails, a store wrapper was added without implementing CredentialStore —
 	// return an explicit error rather than silently falling back to the legacy path

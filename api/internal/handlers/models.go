@@ -120,19 +120,6 @@ func (h *SecretsHandler) ListModels(c *gin.Context) {
 		return
 	}
 
-	// Explicit ownership check before any pod communication.
-	if h.wsUpdater != nil {
-		meta, err := h.wsUpdater.GetWorkspace(c.Request.Context(), workspaceID)
-		if err != nil || meta == nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
-			return
-		}
-		if meta.UserID != userID {
-			c.JSON(http.StatusForbidden, gin.H{"error": "access denied"})
-			return
-		}
-	}
-
 	podIP, err := h.podIPResolver.GetWorkspacePodIP(c.Request.Context(), userID, workspaceID)
 	if err != nil || podIP == "" {
 		c.JSON(http.StatusNotFound, gin.H{"error": "workspace pod not running"})
@@ -515,17 +502,6 @@ func (h *SecretsHandler) SetModel(c *gin.Context) {
 
 	if h.wsUpdater == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "model selection unavailable"})
-		return
-	}
-
-	// Ownership check: verify the user owns this workspace before mutating.
-	meta, err := h.wsUpdater.GetWorkspace(c.Request.Context(), workspaceID)
-	if err != nil || meta == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
-		return
-	}
-	if meta.UserID != userID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "access denied"})
 		return
 	}
 

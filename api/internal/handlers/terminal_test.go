@@ -162,7 +162,16 @@ func TestHandleTicket_WorkspaceNotActive(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, w.Code)
 }
 
-func TestHandleTicket_NotOwner(t *testing.T) {
+// TestHandleTicket_TrustsMiddlewareForOwnership asserts the handler no longer
+// performs its own ownership comparison against ws.Labels["user-id"]: when the
+// middleware has authorized the request, HandleTicket proceeds to issue a
+// ticket regardless of the CRD label. The CRD-label check was removed in
+// design 0041 Story 2 because it duplicated the middleware's gate and org
+// attribution lives authoritatively in PostgreSQL (the `org-id` CRD label that
+// used to back such checks was deleted in Story 3 as unread dead state).
+// Router-level ownership coverage lives in TestTerminalTicket_E2E_NotOwner
+// (api/internal/server).
+func TestHandleTicket_TrustsMiddlewareForOwnership(t *testing.T) {
 	cache := newMockTerminalCache()
 	wsGetter := &mockWorkspaceGetter{
 		workspaces: map[string]*v1.Workspace{
@@ -186,7 +195,11 @@ func TestHandleTicket_NotOwner(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusNotFound, w.Code) // 404 not 403 — don't leak existence
+	// Handler MUST issue a ticket — the middleware is the single ownership gate.
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp TicketResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.True(t, strings.HasPrefix(resp.Ticket, "tkt_"))
 }
 
 func TestHandleTerminal_InvalidTicket(t *testing.T) {

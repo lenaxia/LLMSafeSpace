@@ -167,7 +167,14 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 	// Authenticated workspace routes
 	workspaceGroup := router.Group("/api/v1/workspaces")
 	workspaceGroup.Use(services.GetAuth().AuthMiddleware())
-	registerWorkspaceRoutes(workspaceGroup, services, proxyHandler, cfg)
+
+	// Design 0041 D1/D3: every /:id workspace route funnels through
+	// WorkspaceAccessMiddleware, the single ownership gate (D5 creator-membership
+	// + D6 org-admin). List/Create have no :id and stay on workspaceGroup.
+	idGroup := workspaceGroup.Group("/:id")
+	idGroup.Use(middleware.WorkspaceAccessMiddleware(services.GetWorkspace()))
+
+	registerWorkspaceRoutes(workspaceGroup, idGroup, services, proxyHandler, cfg)
 
 	// Epic 27b: Bulk agent reload across all pending workspaces.
 	if cfg.BulkReloadHandler != nil {
@@ -176,9 +183,10 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		userGroup.POST("/agents/reload", cfg.BulkReloadHandler.BulkReload)
 	}
 
-	// Sessions/active endpoint — needs proxyHandler for active session data
+	// Sessions/active endpoint — needs proxyHandler for active session data.
+	// Registered on idGroup so it inherits WorkspaceAccessMiddleware.
 	if proxyHandler != nil {
-		workspaceGroup.GET("/:id/sessions/active", func(c *gin.Context) {
+		idGroup.GET("/sessions/active", func(c *gin.Context) {
 			userID := services.GetAuth().GetUserID(c)
 			if userID == "" {
 				c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -198,13 +206,12 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 	}
 
 	// Authenticated workspace CRUD routes (Create, List, Get, Delete, Status).
-	// These do NOT use the proxy ownership middleware because:
-	//   - List/Create have no :id yet
-	//   - Service-level methods perform their own ownership/permission checks
-	// The path prefix is shared with the proxy group; Gin dispatches by full
-	// Proxy routes — registered within workspace group when a ProxyHandler is provided
+	// List/Create have no :id and intentionally bypass WorkspaceAccessMiddleware;
+	// Get/Delete/etc. are registered on idGroup inside registerWorkspaceRoutes
+	// and therefore inherit the middleware.
+	// Proxy routes — registered on idGroup when a ProxyHandler is provided.
 	if proxyHandler != nil {
-		registerProxyRoutes(workspaceGroup, proxyHandler)
+		registerProxyRoutes(idGroup, proxyHandler)
 
 		// S28.3: User-scoped SSE stream (authenticated, rate-limit exempt)
 		eventsGroup := router.Group("/api/v1")
@@ -214,9 +221,12 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 
 	// Terminal proxy routes (WebSocket terminal to sandbox pod)
 	if cfg.TerminalHandler != nil {
-		// Ticket endpoint — on the authenticated workspace group (requires JWT/API key)
-		workspaceGroup.POST("/:id/terminal/ticket", cfg.TerminalHandler.HandleTicket)
-		// WebSocket endpoint — on the ROOT router (auth via one-time ticket, not JWT)
+		// Ticket endpoint — on idGroup so WorkspaceAccessMiddleware runs first.
+		// The handler keeps its existing label-based check (Story 2 removes it).
+		idGroup.POST("/terminal/ticket", cfg.TerminalHandler.HandleTicket)
+		// WebSocket endpoint — on the ROOT router (auth via one-time ticket, not JWT).
+		// Ticket-based auth is by design (design 0041 edge case 3); the ticket was
+		// issued after middleware verification, so it inherits the ownership check.
 		router.GET("/api/v1/workspaces/:id/terminal", cfg.TerminalHandler.HandleTerminal)
 	}
 
@@ -317,18 +327,23 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		secretsGroup.POST("/:id/reveal", cfg.SecretsHandler.RevealSecret)
 		secretsGroup.GET("/:id/bindings", cfg.SecretsHandler.GetSecretBindings)
 
-		workspaceGroup.PUT("/:id/bindings", cfg.SecretsHandler.SetBindings)
-		workspaceGroup.GET("/:id/bindings", cfg.SecretsHandler.GetBindings)
-		workspaceGroup.POST("/:id/reload-secrets", cfg.SecretsHandler.ReloadSecrets)
-		workspaceGroup.GET("/:id/models", cfg.SecretsHandler.ListModels)
-		workspaceGroup.PUT("/:id/model", cfg.SecretsHandler.SetModel)
+		// Secrets/models routes — registered on idGroup so they inherit
+		// WorkspaceAccessMiddleware. Story 2 removes the now-redundant
+		// SecretService.verifyWorkspaceOwner + handler-level meta.UserID checks.
+		// Env routes are registered via WorkspaceEnvHandler below (US-29.4).
+		idGroup.PUT("/bindings", cfg.SecretsHandler.SetBindings)
+		idGroup.GET("/bindings", cfg.SecretsHandler.GetBindings)
+		idGroup.POST("/reload-secrets", cfg.SecretsHandler.ReloadSecrets)
+		idGroup.GET("/models", cfg.SecretsHandler.ListModels)
+		idGroup.PUT("/model", cfg.SecretsHandler.SetModel)
 	}
 
-	// Workspace env-var routes (US-29.4: extracted from SecretsHandler)
+	// Workspace env-var routes (US-29.4: extracted from SecretsHandler).
+	// Registered on idGroup so they inherit WorkspaceAccessMiddleware.
 	if cfg.WorkspaceEnvHandler != nil {
-		workspaceGroup.PUT("/:id/env", cfg.WorkspaceEnvHandler.SetWorkspaceEnv)
-		workspaceGroup.GET("/:id/env", cfg.WorkspaceEnvHandler.GetWorkspaceEnv)
-		workspaceGroup.DELETE("/:id/env/:name", cfg.WorkspaceEnvHandler.DeleteWorkspaceEnv)
+		idGroup.PUT("/env", cfg.WorkspaceEnvHandler.SetWorkspaceEnv)
+		idGroup.GET("/env", cfg.WorkspaceEnvHandler.GetWorkspaceEnv)
+		idGroup.DELETE("/env/:name", cfg.WorkspaceEnvHandler.DeleteWorkspaceEnv)
 	}
 
 	// Key rotation endpoint (Epic 10)
@@ -619,12 +634,17 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, insta
 	})
 }
 
-// registerWorkspaceRoutes adds all /api/v1/workspaces routes to the given group.
+// registerWorkspaceRoutes registers the workspace List/Create routes on rg
+// (no :id, intentionally bypassing WorkspaceAccessMiddleware — List is scoped
+// per-user in the service, Create has no target yet) and every /:id route on
+// idGroup (which has AuthMiddleware + WorkspaceAccessMiddleware inherited
+// from its parent).
+//
 // All routes require authentication (the group already has auth middleware applied).
 //
 // proxyHandler may be nil; it is only used to trigger the optional
 // session-parent backfill on the /sessions endpoint and is otherwise unused.
-func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, proxyHandler *handlers.ProxyHandler, cfg RouterConfig) {
+func registerWorkspaceRoutes(rg *gin.RouterGroup, idGroup *gin.RouterGroup, services interfaces.Services, proxyHandler *handlers.ProxyHandler, cfg RouterConfig) {
 	wsSvc := services.GetWorkspace()
 	authSvc := services.GetAuth()
 
@@ -696,7 +716,7 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, 
 		c.JSON(http.StatusCreated, ws)
 	})
 
-	rg.GET("/:id", func(c *gin.Context) {
+	idGroup.GET("", func(c *gin.Context) {
 		userID := authSvc.GetUserID(c)
 		if userID == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -710,7 +730,7 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, 
 		c.JSON(http.StatusOK, ws)
 	})
 
-	rg.PUT("/:id", func(c *gin.Context) {
+	idGroup.PUT("", func(c *gin.Context) {
 		userID := authSvc.GetUserID(c)
 		if userID == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -730,7 +750,7 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, 
 		c.Status(http.StatusNoContent)
 	})
 
-	rg.DELETE("/:id", func(c *gin.Context) {
+	idGroup.DELETE("", func(c *gin.Context) {
 		userID := authSvc.GetUserID(c)
 		if userID == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -743,7 +763,7 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, 
 		c.Status(http.StatusNoContent)
 	})
 
-	rg.POST("/:id/suspend", func(c *gin.Context) {
+	idGroup.POST("/suspend", func(c *gin.Context) {
 		userID := authSvc.GetUserID(c)
 		if userID == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -763,7 +783,7 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, 
 	// Epic 21 Change A — declarative recovery from Failed (and force-restart
 	// from Active). Bumps spec.restartGeneration; controller observes and
 	// transitions back through Pending. Idempotent at the spec layer.
-	rg.POST("/:id/restart", func(c *gin.Context) {
+	idGroup.POST("/restart", func(c *gin.Context) {
 		userID := authSvc.GetUserID(c)
 		if userID == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -782,10 +802,10 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, 
 
 	// Epic 27a: explicit agent reload (disposes opencode without pod restart).
 	if cfg.AgentReloadHandler != nil {
-		rg.POST("/:id/agent/reload", cfg.AgentReloadHandler.Reload)
+		idGroup.POST("/agent/reload", cfg.AgentReloadHandler.Reload)
 	}
 
-	rg.GET("/:id/status", func(c *gin.Context) {
+	idGroup.GET("/status", func(c *gin.Context) {
 		userID := authSvc.GetUserID(c)
 		if userID == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -799,7 +819,7 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, 
 		c.JSON(http.StatusOK, status)
 	})
 
-	rg.POST("/:id/activate", func(c *gin.Context) {
+	idGroup.POST("/activate", func(c *gin.Context) {
 		userID := authSvc.GetUserID(c)
 		if userID == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -817,7 +837,7 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, 
 		c.JSON(http.StatusOK, resp)
 	})
 
-	rg.GET("/:id/sessions", func(c *gin.Context) {
+	idGroup.GET("/sessions", func(c *gin.Context) {
 		userID := authSvc.GetUserID(c)
 		if userID == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -853,7 +873,7 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, 
 		c.JSON(http.StatusOK, sessions)
 	})
 
-	rg.POST("/:id/sessions/new", func(c *gin.Context) {
+	idGroup.POST("/sessions/new", func(c *gin.Context) {
 		userID := authSvc.GetUserID(c)
 		if userID == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -867,7 +887,7 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, 
 		c.JSON(http.StatusOK, resp)
 	})
 
-	rg.PUT("/:id/sessions/:sessionId/title", func(c *gin.Context) {
+	idGroup.PUT("/sessions/:sessionId/title", func(c *gin.Context) {
 		userID := authSvc.GetUserID(c)
 		if userID == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -902,7 +922,7 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, 
 		c.Status(http.StatusNoContent)
 	})
 
-	rg.PUT("/:id/sessions/:sessionId/seen", func(c *gin.Context) {
+	idGroup.PUT("/sessions/:sessionId/seen", func(c *gin.Context) {
 		userID := authSvc.GetUserID(c)
 		if userID == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
@@ -916,26 +936,27 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, services interfaces.Services, 
 	})
 }
 
-// registerProxyRoutes adds all /api/v1/workspaces/:id proxy routes.
-// All routes require authentication and ownership check (applied on the group).
-func registerProxyRoutes(rg *gin.RouterGroup, proxyHandler *handlers.ProxyHandler) {
-	rg.POST("/:id/sessions/:sessionId/message", proxyHandler.SendMessage)
-	rg.POST("/:id/sessions/:sessionId/prompt", proxyHandler.SendPromptAsync)
-	rg.POST("/:id/sessions/:sessionId/queue", proxyHandler.EnqueueMessage)
-	rg.GET("/:id/sessions/:sessionId/queue", proxyHandler.ListQueue)
-	rg.DELETE("/:id/sessions/:sessionId/queue/:messageId", proxyHandler.DeleteQueueMessage)
-	rg.GET("/:id/sessions/:sessionId/message", proxyHandler.GetHistory)
-	rg.GET("/:id/sessions/:sessionId", proxyHandler.GetSession)
-	rg.POST("/:id/sessions/:sessionId/abort", proxyHandler.AbortSession)
-	rg.DELETE("/:id/sessions/:sessionId", proxyHandler.DeleteSession)
-	rg.GET("/:id/session-events", proxyHandler.StreamEvents)
+// registerProxyRoutes adds all /api/v1/workspaces/:id proxy routes on the
+// provided idGroup. idGroup already has AuthMiddleware + WorkspaceAccessMiddleware
+// applied, so every proxy handler inherits the single ownership gate.
+func registerProxyRoutes(idGroup *gin.RouterGroup, proxyHandler *handlers.ProxyHandler) {
+	idGroup.POST("/sessions/:sessionId/message", proxyHandler.SendMessage)
+	idGroup.POST("/sessions/:sessionId/prompt", proxyHandler.SendPromptAsync)
+	idGroup.POST("/sessions/:sessionId/queue", proxyHandler.EnqueueMessage)
+	idGroup.GET("/sessions/:sessionId/queue", proxyHandler.ListQueue)
+	idGroup.DELETE("/sessions/:sessionId/queue/:messageId", proxyHandler.DeleteQueueMessage)
+	idGroup.GET("/sessions/:sessionId/message", proxyHandler.GetHistory)
+	idGroup.GET("/sessions/:sessionId", proxyHandler.GetSession)
+	idGroup.POST("/sessions/:sessionId/abort", proxyHandler.AbortSession)
+	idGroup.DELETE("/sessions/:sessionId", proxyHandler.DeleteSession)
+	idGroup.GET("/session-events", proxyHandler.StreamEvents)
 
 	// Question/Permission input request routes (Epic 16)
-	rg.GET("/:id/question", proxyHandler.ListQuestions)
-	rg.POST("/:id/question/:requestID/reply", proxyHandler.QuestionReply)
-	rg.POST("/:id/question/:requestID/reject", proxyHandler.QuestionReject)
-	rg.GET("/:id/permission", proxyHandler.ListPermissions)
-	rg.POST("/:id/permission/:requestID/reply", proxyHandler.PermissionReply)
+	idGroup.GET("/question", proxyHandler.ListQuestions)
+	idGroup.POST("/question/:requestID/reply", proxyHandler.QuestionReply)
+	idGroup.POST("/question/:requestID/reject", proxyHandler.QuestionReject)
+	idGroup.GET("/permission", proxyHandler.ListPermissions)
+	idGroup.POST("/permission/:requestID/reply", proxyHandler.PermissionReply)
 }
 
 // respondWithError maps API errors to HTTP responses.

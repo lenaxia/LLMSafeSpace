@@ -179,3 +179,50 @@ func TestSecretsPodIPResolver_EmptyInputs_ReturnsEmpty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, ip)
 }
+
+// TestSecretsPodIPResolver_MiddlewareMetaAuthorizesOrgAdmin is the design 0041
+// regression test: when the middleware has validated ownership for this
+// workspace (including D6 org-admin), the resolver MUST trust that decision
+// and skip its own legacy meta.UserID comparison — otherwise an org admin
+// authorized by CheckOwnership would be rejected by the resolver with a
+// misleading "no running pod" result.
+func TestSecretsPodIPResolver_MiddlewareMetaAuthorizesOrgAdmin(t *testing.T) {
+	r := newSecretsPodIPResolver(
+		&fakeWorkspaceCRDGetter{ws: activeWorkspace("10.0.1.42")},
+		// DB returns a workspace owned by a DIFFERENT user — the org admin
+		// is NOT the creator. Without middleware meta, this would reject.
+		&fakeDBOwnerLookup{meta: &types.WorkspaceMetadata{ID: "ws-1", UserID: "creator-1"}},
+		nil,
+	)
+
+	// Middleware has already validated ownership (D6 org-admin path) and
+	// stored meta for ws-1 in context.
+	ctx := context.WithValue(context.Background(), types.ContextKeyWorkspaceMeta,
+		&types.WorkspaceMetadata{ID: "ws-1", UserID: "creator-1"})
+
+	ip, err := r.GetWorkspacePodIP(ctx, "org-admin-1", "ws-1")
+
+	require.NoError(t, err)
+	assert.Equal(t, "10.0.1.42", ip, "org admin authorized by middleware must reach the pod")
+}
+
+// TestSecretsPodIPResolver_MiddlewareMetaMismatchFallsThrough verifies the
+// meta.ID == workspaceID guard: middleware meta for a DIFFERENT workspace
+// must NOT be trusted — the resolver falls through to the DB-based check.
+func TestSecretsPodIPResolver_MiddlewareMetaMismatchFallsThrough(t *testing.T) {
+	r := newSecretsPodIPResolver(
+		&fakeWorkspaceCRDGetter{ws: activeWorkspace("10.0.1.42")},
+		&fakeDBOwnerLookup{meta: &types.WorkspaceMetadata{UserID: "other-user"}},
+		nil,
+	)
+
+	// Meta in context is for a different workspace — must not bypass the
+	// ownership check for ws-1.
+	ctx := context.WithValue(context.Background(), types.ContextKeyWorkspaceMeta,
+		&types.WorkspaceMetadata{ID: "ws-other", UserID: "u1"})
+
+	ip, err := r.GetWorkspacePodIP(ctx, "u1", "ws-1")
+
+	require.NoError(t, err)
+	assert.Empty(t, ip, "mismatched middleware meta must fall through to DB check, which rejects non-owner")
+}
