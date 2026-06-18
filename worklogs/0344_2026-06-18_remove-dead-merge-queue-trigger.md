@@ -28,7 +28,7 @@ The `merge_queue` trigger is therefore dead code: it never fires (no queue exist
 
 The previous comment block called Merge Queue the "primary defense" and the autofix a "safety net for direct pushes, emergency merges with checks bypassed, or any race the queue doesn't catch." That framing assumed Option B was active. Rewrote to:
 
-> *This is the only merge-time defense. The repo uses Repository Rulesets for branch protection, which do not support GitHub Merge Queue; the residual race (two PRs passing within the same minute) is accepted as the cost of that setup. See worklog 0347 for the decision.*
+> *This is the only merge-time defense. The repo uses Repository Rulesets for branch protection, which do not support GitHub Merge Queue; the residual race (two PRs passing within the same minute) is accepted as the cost of that setup. See worklog 0344 for the decision.*
 
 The user explicitly accepted this trade-off earlier ("not the end of the world").
 
@@ -79,4 +79,4 @@ None.
 | File | Action |
 |------|--------|
 | `.github/workflows/ci.yml` | Removed `merge_queue` trigger (2 lines); rewrote `repolint-autofix` job comments (8 lines) to reflect it's the sole defense |
-| `worklogs/0347_2026-06-18_remove-dead-merge-queue-trigger.md` | Created (this file; renumbered from 0343 to avoid collision with `0343_remove-ephemeral-storage.md` that the autofix job created) |
+| `worklogs/0344_2026-06-18_remove-dead-merge-queue-trigger.md` | Created (this file; renumbered through 0343→0347→0344 to resolve collisions with concurrent worklogs on main) |

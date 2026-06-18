@@ -118,4 +118,4 @@ Both will be validated implicitly when the next worklog collision occurs on main
 | File | Action |
 |------|--------|
 | `.github/workflows/ci.yml` | Added `merge_queue` trigger (line 9-10); added `repolint-autofix` job (~45 lines at end of file) |
-| `worklogs/0342_2026-06-18_repolint-merge-queue-autofix.md` | Created (this file) |
+| `worklogs/0345_2026-06-18_repolint-merge-queue-autofix.md` | Created (this file; renumbered from 0342 → 0348 → 0345 to resolve collisions with `0342_post-merge-hardening.md`) |
