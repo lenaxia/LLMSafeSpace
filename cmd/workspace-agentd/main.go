@@ -1243,7 +1243,11 @@ func (p *managedProcess) supervise() {
 			continue
 		}
 
-		// Crash path: log, backoff, loop.
+		// Crash path: classify exit, handle OOM, log, backoff, loop.
+		exitKind := classifyExit(waitErr)
+		if isOOMExit(exitKind) {
+			handleOOMExit(workspaceIDFromEnv(), OOMMarkerPath)
+		}
 		log.Warn("opencode exited unexpectedly",
 			zap.Error(waitErr),
 			zap.Int("restartCount", p.restartCount))
