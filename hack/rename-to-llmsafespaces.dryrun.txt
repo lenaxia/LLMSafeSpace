@@ -1,0 +1,125 @@
+==================================================================
+ llmsafespace → llmsafespaces rename
+ mode: DRY-RUN (no edits)
+ root: /workspace/llmsafespace
+==================================================================
+
+### Phase 1: directory renames (git mv)
+
+  [DRY] git mv 'pkg/apis/llmsafespace' 'pkg/apis/llmsafespaces'   (10 tracked files)
+  [DRY] git mv 'charts/llmsafespace' 'charts/llmsafespaces'   (115 tracked files)
+  [DRY] git mv 'sdks/vscode-llmsafespace' 'sdks/vscode-llmsafespaces'   (16 tracked files)
+
+### Phase 2: content rewrites
+
+Pattern (single alternation, case-sensitive, boundary-guarded):
+   (?<![sS])(llmsafespace|LLMSAFESPACE|LLMSafeSpace)(?![sS])
+   → append case-matched 's' (S if token ends in E, else s)
+
+Excluded paths: worklogs/, design/, .git/, bin/, node_modules/
+Excluded files: go.sum, package-lock.json, workspace-agentd, redact, tools
+
+Files needing edits: 612
+Total occurrences across all files: 2923
+
+Top 30 files by occurrence count:
+-----------------------------------------------
+  HITS  FILE
+ -----  ----------------------------------------
+    62  charts/llmsafespace/templates/prometheus-rules.yaml
+    60  sdks/vscode-llmsafespace/package.json
+    58  .github/workflows/ci.yml
+    51  charts/llmsafespace/dashboards/operational.json
+    50  charts/llmsafespace/templates/rbac.yaml
+    49  api/internal/app/app_master_key_test.go
+    43  local/test.sh
+    43  api/internal/config/config.go
+    41  sdks/canary/TESTPLAN.md
+    39  charts/llmsafespace/README.md
+    33  controller/internal/metrics/metrics.go
+    30  charts/llmsafespace/templates/_helpers.tpl
+    30  api/internal/app/app.go
+    28  charts/llmsafespace/chart_test.go
+    26  api/internal/services/metrics/metrics.go
+    26  README-LLM.md
+    24  charts/llmsafespace/dashboards/billing.json
+    24  .github/workflows/migration-safety.yml
+    23  charts/llmsafespace/values.yaml
+    22  sdks/canary/fission/canary-functions.yaml
+    22  runtimes/tests/test_runtime.py
+    22  .github/workflows/e2e-nightly.yml
+    21  charts/llmsafespace/templates/NOTES.txt
+    21  api/internal/services/workspace/workspace_service.go
+    20  local/bootstrap.sh
+    20  charts/llmsafespace/templates/api-deployment.yaml
+    19  sdks/python/tests/test_async_client.py
+    18  sdks/vscode-llmsafespace/src/services/api.ts
+    18  local/postgres-redis.yaml
+    16  pkg/repolint/crd_drift.go
+
+Per-pattern occurrence counts (non-excluded tree):
+   llmsafespace     2074 occurrences
+   LLMSAFESPACE      358 occurrences
+   LLMSafeSpace      504 occurrences
+
+### Phase 3: stray files whose NAME contains 'llmsafespace'
+            (not under one of the 3 renamed dirs — review individually)
+
+  (none)
+
+### Phase 4: regeneration commands to run after edits
+            (run these manually; they regenerate derived artifacts)
+
+   # --- Go modules (root + SDK) ---
+   go mod edit -module github.com/lenaxia/llmsafespaces
+   (cd sdks/go && go mod edit -module github.com/lenaxia/llmsafespaces/sdk/go)
+   go mod tidy
+   (cd sdks/go && go mod tidy)
+
+   # --- CRD YAML (controller-gen → config/crd/bases) ---
+   make -C controller manifests
+
+   # --- zz_generated.deepcopy.go (root target → hack/update-deepcopy.sh) ---
+   make deepcopy
+
+   # --- npm lockfiles (3 package.json files were rewritten; their
+   #     sibling package-lock.json is skipped in Phase 2 and must be
+   #     regenerated or `npm ci` fails on name/hash mismatch) ---
+   (cd frontend && npm install --package-lock-only)
+   (cd sdks/typescript && npm install --package-lock-only)
+   (cd sdks/vscode-llmsafespaces && npm install --package-lock-only)
+
+   # --- verify ---
+   make test lint
+
+### Phase 5: external manual steps
+
+   1. GitHub: Settings → Repository → Rename
+        lenaxia/LLMSafeSpace → lenaxia/LLMSafeSpaces
+      (GitHub auto-redirects old URL; existing clones keep working.)
+
+   2. Container registry (ghcr.io): future pushes use new repo path.
+      Old image tags (ghcr.io/lenaxia/llmsafespace/*) become orphans.
+
+   3. npm: publish @llmsafespaces/sdk and vscode-llmsafespaces
+      when cutting next release. Old packages can be deprecated.
+
+   4. PyPI: publish llmsafespaces (sdks/python/pyproject.toml)
+      when cutting next release. Old 'llmsafespace' can be yanked.
+
+   5. Cloudflare Worker: rename 'llmsafespace-inference-relay' to
+      'llmsafespaces-inference-relay' in wrangler.toml + redeploy.
+
+   6. Local Postgres (dev cluster): drop+recreate DB/role as
+      'llmsafespaces' (or update values.yaml + local/bootstrap.sh).
+
+==================================================================
+ Summary
+==================================================================
+  Dirs to rename        : 3
+  Files to edit         : 612
+  Total occurrences     : 2923
+  Stray-named files     : 0 (manual review)
+
+  Re-run with DRY_RUN=0 to execute.
+==================================================================
