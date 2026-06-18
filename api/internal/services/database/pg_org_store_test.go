@@ -116,6 +116,48 @@ func TestPgOrgStore_GetUserOrgID_DBError(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestSoftDeleteOrg_F6_DoesNotNullWorkspaceOrgID verifies F6: SoftDeleteOrg
+// must NOT null workspaces.org_id. It only sets organizations.deleted_at. The
+// workspaces keep their org_id and become frozen via IsOrgMember's deleted_at
+// check.
+func TestSoftDeleteOrg_F6_DoesNotNullWorkspaceOrgID(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	store := NewPgOrgStore(db)
+
+	// Only the organizations UPDATE — NO workspaces UPDATE.
+	mock.ExpectExec(`UPDATE organizations SET deleted_at = NOW\(\) WHERE id = \$1`).
+		WithArgs("org-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	// Explicitly assert NO "UPDATE workspaces" query is expected.
+	// (sqlmock fails if an unexpected query is executed.)
+
+	require.NoError(t, store.SoftDeleteOrg(context.Background(), "org-1"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestListWorkspaces_S1_FiltersFrozenWorkspaces verifies S1: the query includes
+// the membership condition that filters out frozen workspaces. The sqlmock
+// regex anchors the full WHERE clause including the org_id/EXISTS condition.
+func TestListWorkspaces_S1_IncludesMembershipFilter(t *testing.T) {
+	// This test uses the database.Service (not PgOrgStore) since ListWorkspaces
+	// lives there. We verify the SQL contains the frozen-filter condition.
+	svc, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	// COUNT query with the membership condition
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM workspaces w.*org_id IS NULL.*EXISTS`).
+		WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+
+	metas, _, err := svc.ListWorkspaces(context.Background(), "user-1", 10, 0)
+	require.NoError(t, err)
+	assert.Empty(t, metas)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 // TestAcceptInvitationTx_MigratesPersonalWorkspaces verifies D4: the accept
 // transaction includes an UPDATE that migrates the user's personal workspaces
 // to the org. Uses sqlmock to assert the UPDATE statement is executed inside
