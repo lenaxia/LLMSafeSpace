@@ -32,7 +32,6 @@ type OrgStore interface {
 	ListOrgsForUser(ctx context.Context, userID string) ([]*types.OrgResponse, error)
 	UpdateOrg(ctx context.Context, orgID string, req types.UpdateOrgRequest) (*types.Organization, error)
 	SoftDeleteOrg(ctx context.Context, orgID string) error
-	OrgHasActiveWorkspaces(ctx context.Context, orgID string) (bool, error)
 
 	AddOrgMember(ctx context.Context, orgID, userID string, role types.OrgRole) error
 	GetOrgMember(ctx context.Context, orgID, userID string) (*types.OrgMember, error)
@@ -233,37 +232,17 @@ func (s *PgOrgStore) UpdateOrg(ctx context.Context, orgID string, req types.Upda
 }
 
 func (s *PgOrgStore) SoftDeleteOrg(ctx context.Context, orgID string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE workspaces SET org_id = NULL WHERE org_id = $1`, orgID,
-	); err != nil {
-		return fmt.Errorf("null workspace org_id: %w", err)
-	}
-
-	if _, err := tx.ExecContext(ctx,
+	// F6: workspaces keep their org_id after org deletion. The org is
+	// soft-deleted (deleted_at set), so IsOrgMember returns false for all
+	// members → workspaces become frozen (no access by anyone). This prevents
+	// former members from walking away with org workspaces as personal ones.
+	_, err := s.db.ExecContext(ctx,
 		`UPDATE organizations SET deleted_at = NOW() WHERE id = $1`, orgID,
-	); err != nil {
+	)
+	if err != nil {
 		return fmt.Errorf("soft delete organization: %w", err)
 	}
-
-	return tx.Commit()
-}
-
-func (s *PgOrgStore) OrgHasActiveWorkspaces(ctx context.Context, orgID string) (bool, error) {
-	var count int
-	err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM workspaces WHERE org_id = $1 AND deleted_at IS NULL`,
-		orgID,
-	).Scan(&count)
-	if err != nil {
-		return false, fmt.Errorf("count active workspaces: %w", err)
-	}
-	return count > 0, nil
+	return nil
 }
 
 func (s *PgOrgStore) AddOrgMember(ctx context.Context, orgID, userID string, role types.OrgRole) error {

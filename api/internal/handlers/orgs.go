@@ -23,7 +23,6 @@ type orgStore interface {
 	ListOrgsForUser(ctx context.Context, userID string) ([]*types.OrgResponse, error)
 	UpdateOrg(ctx context.Context, orgID string, req types.UpdateOrgRequest) (*types.Organization, error)
 	SoftDeleteOrg(ctx context.Context, orgID string) error
-	OrgHasActiveWorkspaces(ctx context.Context, orgID string) (bool, error)
 	IsOrgMember(ctx context.Context, orgID, userID string) (bool, error)
 	IsOrgAdmin(ctx context.Context, orgID, userID string) (bool, error)
 	GetOrgMember(ctx context.Context, orgID, userID string) (*types.OrgMember, error)
@@ -324,16 +323,10 @@ func (h *OrgsHandler) Delete(c *gin.Context) {
 	orgID := c.Param("id")
 	ctx := c.Request.Context()
 
-	hasWS, err := h.orgStore.OrgHasActiveWorkspaces(ctx, orgID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check active workspaces"})
-		return
-	}
-	if hasWS {
-		c.JSON(http.StatusConflict, gin.H{"error": "organization has active workspaces; remove them before deleting"})
-		return
-	}
-
+	// S12: with always-org-attributed workspaces (D4), every active org has
+	// workspaces, so the old OrgHasActiveWorkspaces guard made deletion
+	// impossible. Workspaces now become frozen (org_id retained, IsOrgMember
+	// returns false for deleted orgs) instead of blocking deletion.
 	if err := h.orgStore.SoftDeleteOrg(ctx, orgID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete organization"})
 		return

@@ -28,7 +28,6 @@ type mockOrgStore struct {
 	listOrgsForUserErr    error
 	createErr             error
 	slugExists            bool
-	orgHasWorkspaces      bool
 	usersByEmail          map[string]string
 	userByEmailErr        error
 	updateStatusErr       error
@@ -113,10 +112,6 @@ func (m *mockOrgStore) SoftDeleteOrg(_ context.Context, orgID string) error {
 	defer m.mu.Unlock()
 	delete(m.orgs, orgID)
 	return nil
-}
-
-func (m *mockOrgStore) OrgHasActiveWorkspaces(_ context.Context, _ string) (bool, error) {
-	return m.orgHasWorkspaces, nil
 }
 
 func (m *mockOrgStore) IsOrgMember(_ context.Context, orgID, userID string) (bool, error) {
@@ -450,18 +445,20 @@ func TestOrgsHandler_ChangeMemberRole_DemoteSelfBlocked(t *testing.T) {
 	}
 }
 
-func TestOrgsHandler_Delete_OrgWithWorkspaces(t *testing.T) {
+func TestOrgsHandler_Delete_SucceedsWithWorkspaces(t *testing.T) {
+	// S12: with always-org-attributed workspaces (D4), deletion succeeds even
+	// when the org has active workspaces — they become frozen, not converted to
+	// personal. The old OrgHasActiveWorkspaces guard is removed.
 	store := newMockOrgStore()
 	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
 	store.members["org-1"] = []*types.OrgMember{
 		{OrgID: "org-1", UserID: "admin-1", Role: types.OrgRoleAdmin},
 	}
-	store.orgHasWorkspaces = true
 	router, _ := setupOrgTestRouter(t, store)
 
 	w := doRequest(router, "DELETE", "/api/v1/orgs/org-1", "")
-	if w.Code != http.StatusConflict {
-		t.Errorf("expected 409 for org with workspaces, got %d", w.Code)
+	if w.Code != http.StatusNoContent {
+		t.Errorf("expected 204 (deletion succeeds), got %d: %s", w.Code, w.Body.String())
 	}
 }
 
