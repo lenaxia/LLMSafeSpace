@@ -55,6 +55,9 @@ type Service struct {
 type OrgMembershipChecker interface {
 	IsOrgMember(ctx context.Context, orgID, userID string) (bool, error)
 	IsOrgAdmin(ctx context.Context, orgID, userID string) (bool, error)
+	// GetUserOrgID returns the user's single org ID (or "" if not in any org).
+	// Used by CreateWorkspace for D4 auto-attribution.
+	GetUserOrgID(ctx context.Context, userID string) (string, error)
 }
 
 // PolicyChecker reads the effective org policy for enforcement. The policy
@@ -203,6 +206,20 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 			map[string]interface{}{"field": "storageSize"},
 			fmt.Errorf("storageSize is empty"),
 		)
+	}
+
+	// D4: workspace auto-attribution. When the user is in an org and did not
+	// supply OrgID, auto-attribute the workspace to their org. Users cannot
+	// create personal workspaces while part of an org. Non-org users get
+	// personal workspaces (org_id stays nil).
+	if (req.OrgID == nil || *req.OrgID == "") && s.orgStore != nil {
+		userOrgID, err := s.orgStore.GetUserOrgID(ctx, userID)
+		if err != nil {
+			s.logger.Warn("Failed to look up user org for auto-attribution", "userID", userID, "error", err)
+			// Non-fatal: proceed as a personal workspace.
+		} else if userOrgID != "" {
+			req.OrgID = &userOrgID
+		}
 	}
 
 	if req.OrgID != nil && *req.OrgID != "" {

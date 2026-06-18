@@ -916,6 +916,17 @@ func (s *PgOrgStore) AcceptInvitationTx(ctx context.Context, invID, userID strin
 		return nil, false, fmt.Errorf("insert membership: %w", err)
 	}
 
+	// D4: migrate the user's personal workspaces to the org. Single atomic
+	// UPDATE inside the accept transaction — if anything else fails, the
+	// migration rolls back too. Only non-deleted workspaces are migrated.
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE workspaces SET org_id = $2, updated_at = NOW()
+		 WHERE user_id = $1 AND org_id IS NULL AND deleted_at IS NULL`,
+		userID, orgID,
+	); err != nil {
+		return nil, false, fmt.Errorf("migrate personal workspaces to org: %w", err)
+	}
+
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE org_invitations SET accepted_at = NOW(), accepted_by = $2 WHERE id = $1`,
 		invID, userID,

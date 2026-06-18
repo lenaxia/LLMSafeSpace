@@ -164,6 +164,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var pgOrgStore *database.PgOrgStore
 	var pendingOrgCleaner *handlers.PendingOrgCleaner
 	var invitationsHandler *handlers.InvitationsHandler
+	var orgCredBinder *secrets.PgSecretStore
 	var policySvc *policy.Service
 	var policyHandler *handlers.PolicyHandler
 	var auditHandler *handlers.AuditHandler
@@ -210,6 +211,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			return nil, fmt.Errorf("create pgxpool for secrets store: %w (refusing to fall back to in-memory; the in-memory secret/key adapters lose data on restart and are not safe for any environment that handles real user secrets)", pgxErr)
 		}
 		pgStore := secrets.NewPgSecretStore(secretsPool)
+		orgCredBinder = pgStore
 		// Wrap the secret store in an async audit logger so audit
 		// writes do not block the request goroutine. The wrapper is
 		// itself a SecretStore (CRUD methods delegate; LogAudit goes
@@ -480,6 +482,9 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			mailer = &emailpkg.NoopProvider{}
 		}
 		invitationsHandler = handlers.NewInvitationsHandler(pgOrgStore, mailer, svc.GetAuth(), cfg.Email.BaseURL, log)
+		if orgCredBinder != nil {
+			invitationsHandler.SetCredentialBinder(orgCredBinder)
+		}
 	}
 
 	// US-43.7: Org policy service + handler.

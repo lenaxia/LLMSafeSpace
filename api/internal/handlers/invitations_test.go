@@ -169,10 +169,29 @@ func (m *mockInvitationStore) GetUserOrgID(_ context.Context, userID string) (st
 	return m.userOrgID, nil
 }
 
+// mockCredBinder records calls to BindAllOrgCredentialsToOrgWorkspaces for
+// verifying F7 credential seeding after invitation acceptance.
+type mockCredBinder struct {
+	bindCalls []string // orgIDs passed
+	bindErr   error
+}
+
+func (m *mockCredBinder) BindAllOrgCredentialsToOrgWorkspaces(_ context.Context, orgID string) error {
+	m.bindCalls = append(m.bindCalls, orgID)
+	return m.bindErr
+}
+
 func setupInvitationRouter(t *testing.T, store *mockInvitationStore, mailer email.EmailProvider) *gin.Engine {
+	return setupInvitationRouterWithBinder(t, store, mailer, nil)
+}
+
+func setupInvitationRouterWithBinder(t *testing.T, store *mockInvitationStore, mailer email.EmailProvider, binder orgCredentialBinder) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	h := NewInvitationsHandler(store, mailer, &mockOrgAuthService{userID: "user-1"}, "https://app.test", nil)
+	if binder != nil {
+		h.SetCredentialBinder(binder)
+	}
 	r := gin.New()
 	r.POST("/api/v1/orgs/:id/invitations", h.Create)
 	r.GET("/api/v1/orgs/:id/invitations", h.List)
@@ -262,6 +281,54 @@ func TestInvitations_GetByToken_NotFound(t *testing.T) {
 	w := doRequest(router, "GET", "/api/v1/invitations/nonexistent", "")
 	if w.Code != http.StatusNotFound {
 		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+// F7: after accepting an invitation, the handler must bind all org credentials
+// to the org's workspaces (including the newly-migrated personal workspaces).
+// Best-effort: even if the binder errors, the accept still succeeds.
+func TestInvitations_Accept_BindsOrgCredentials(t *testing.T) {
+	store := newMockInvitationStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1", Name: "Acme", Slug: "acme"}
+
+	token := "bind-token"
+	hash := hashToken(token)
+	store.invitations["inv-bind"] = &types.OrgInvitation{
+		ID: "inv-bind", OrgID: "org-1", Email: "new@test.com", Role: types.OrgRoleMember,
+		InvitedBy: "user-1", TokenHash: hash, ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+	store.tokenHashIndex[hash] = "inv-bind"
+
+	binder := &mockCredBinder{}
+	router := setupInvitationRouterWithBinder(t, store, nil, binder)
+
+	w := doRequest(router, "POST", "/api/v1/invitations/"+token+"/accept", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(binder.bindCalls) != 1 || binder.bindCalls[0] != "org-1" {
+		t.Errorf("expected BindAllOrgCredentialsToOrgWorkspaces called once with org-1, got %v", binder.bindCalls)
+	}
+}
+
+func TestInvitations_Accept_BindError_StillSucceeds(t *testing.T) {
+	store := newMockInvitationStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1", Name: "Acme", Slug: "acme"}
+
+	token := "bind-err-token"
+	hash := hashToken(token)
+	store.invitations["inv-bind-err"] = &types.OrgInvitation{
+		ID: "inv-bind-err", OrgID: "org-1", Email: "new@test.com", Role: types.OrgRoleMember,
+		InvitedBy: "user-1", TokenHash: hash, ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+	store.tokenHashIndex[hash] = "inv-bind-err"
+
+	binder := &mockCredBinder{bindErr: errors.New("binding failed")}
+	router := setupInvitationRouterWithBinder(t, store, nil, binder)
+
+	w := doRequest(router, "POST", "/api/v1/invitations/"+token+"/accept", "")
+	if w.Code != http.StatusOK {
+		t.Errorf("accept must succeed even if credential binding fails, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
