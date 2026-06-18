@@ -6,6 +6,8 @@ on:
     tags: ['v*.*.*']
   pull_request:
     branches: [main]
+  merge_queue:
+    branches: [main]
 
 env:
   REGISTRY: ghcr.io
@@ -1305,3 +1307,54 @@ jobs:
         run: |
           docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf '${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}@sha256:%s ' *)
+
+  # repolint-autofix: post-merge safety net. If two PRs with the same worklog
+  # number merge back-to-back (race between repolint pass and merge commit),
+  # this job heals main within ~1 minute by running repolint -fix-worklogs-only
+  # and pushing the renumbered files back.
+  #
+  # The primary defense is GitHub Merge Queue (see the merge_queue trigger above
+  # and the "Setup" instructions in worklog 0342); this job is the safety net
+  # for direct pushes, emergency merges with checks bypassed, or any race the
+  # queue doesn't catch.
+  #
+  # [skip ci] in the auto-commit message prevents an infinite loop: this job
+  # pushes, the push would re-trigger this job, but [skip ci] suppresses it.
+  # The next PR's repolint run will see the corrected state.
+  repolint-autofix:
+    name: Auto-fix worklog collisions
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.11"
+          cache: true
+
+      - name: Build repolint
+        run: make repolint-build
+
+      - name: Run worklog collision auto-fix
+        run: ./bin/repolint -fix-worklogs-only
+
+      - name: Commit and push if changed
+        run: |
+          if git diff --quiet -- worklogs/; then
+            echo "No worklog collisions — nothing to fix"
+            exit 0
+          fi
+          echo "Worklog collisions detected — pushing auto-fix:"
+          git --no-pager diff --stat -- worklogs/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add worklogs/
+          git commit -m "chore(repolint): auto-fix worklog numbering collisions [skip ci]"
+          git push
