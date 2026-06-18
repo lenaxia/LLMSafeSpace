@@ -235,15 +235,16 @@ return 1
 **Goal:** Move workspace config cache to Valkey. Same pattern as pwCache.
 
 **Acceptance:**
-- [ ] Redis implementation of `GetWorkspaceConfig` and `InvalidateWorkspaceConfig`
-- [ ] TTL = 5 minutes (config can change more often than passwords)
-- [ ] JSON-serialized config stored in Redis
-- [ ] Tests cover serialization edge cases (nil values, missing fields)
+- [x] Redis implementation of `GetWorkspaceConfig` and `InvalidateWorkspaceConfig`
+- [x] TTL = 5 minutes (`DefaultConfigTTL`; config can change more often than passwords)
+- [x] JSON-serialized config stored in Redis
+- [x] Tests cover serialization edge cases (zero-value Config, missing fields, corrupt JSON)
 
 **Files:**
-- Modified: `api/internal/services/wsstate/redis.go`
-- Modified: `api/internal/handlers/proxy.go` (remove map field)
-- Modified: `api/internal/handlers/proxy_events.go` (use store)
+- Modified: `api/internal/services/wsstate/redis.go` (override 3 methods + DefaultConfigTTL + InvalidateAll update)
+- New: `api/internal/services/wsstate/redis_config_test.go` (16 tests)
+- Modified: `api/internal/services/wsstate/redis_test.go` (removed stale delegation test)
+- Modified: `api/internal/app/app.go` (updated wiring comment)
 
 **Effort:** 1 day
 

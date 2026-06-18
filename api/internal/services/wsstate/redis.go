@@ -5,6 +5,7 @@ package wsstate
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -40,6 +41,11 @@ const DefaultDeletedTTL = 30 * time.Minute
 // the design spec. After TTL expiry, the next request re-fetches from
 // K8s (password may have rotated).
 const DefaultPasswordTTL = 1 * time.Hour
+
+// DefaultConfigTTL is the TTL for cached workspace config. Shorter than
+// password TTL because config (MaxActiveSessions, AutoApprovePermissions)
+// can change via CRD updates. 5 minutes matches the design spec.
+const DefaultConfigTTL = 5 * time.Minute
 
 // checkAndAddScript atomically checks the active-session set size and
 // adds the session ID if there's room. The atomicity is what makes this
@@ -78,11 +84,11 @@ return 1
 `)
 
 // RedisStore is the multi-replica-safe implementation of Store. It
-// backs the active-session set, deleted-session tombstones, and
-// password cache with Redis; the remaining state sections (wsConfig,
-// priorPhase, parentBackfilled) continue to be served by the embedded
-// InMemoryStore; their migration to Redis is the subject of US-45.6
-// through US-45.8.
+// backs the active-session set, deleted-session tombstones, password
+// cache, and workspace-config cache with Redis; the remaining state
+// sections (priorPhase, parentBackfilled) continue to be served by the
+// embedded InMemoryStore; their migration to Redis is the subject of
+// US-45.7 and US-45.8.
 //
 // Fail-open policy (per design): if Redis is unreachable,
 // CheckAndAddActiveSession returns true (allow the request) and records
@@ -107,6 +113,10 @@ type RedisStore struct {
 	// passwordTTL is the TTL for cached workspace passwords. Longer than
 	// activeSessTTL/deletedTTL because passwords are stable.
 	passwordTTL time.Duration
+
+	// configTTL is the TTL for cached workspace config. Shorter than
+	// passwordTTL because config can change via CRD updates.
+	configTTL time.Duration
 
 	// logger records fail-open events. Optional — if nil, errors are
 	// surfaced only via Prometheus metrics.
@@ -144,6 +154,7 @@ func NewRedisStoreWithLogger(client *redis.Client, activeSessTTL time.Duration, 
 		activeSessTTL:       activeSessTTL,
 		deletedTTL:          DefaultDeletedTTL,
 		passwordTTL:         DefaultPasswordTTL,
+		configTTL:           DefaultConfigTTL,
 		logger:              logger,
 		inMemory:            NewInMemoryStore(),
 		opDuration:          pkgOpDuration,
@@ -384,19 +395,14 @@ func (s *RedisStore) ClearActiveSessions(workspaceID string) {
 // --- InvalidateAll (overrides to clear both Redis and InMemory) ---
 
 // InvalidateAll clears both the Redis-backed state (active sessions,
-// deleted tombstones, password cache) and the InMemoryStore-backed
-// state (workspace config, parent backfill). priorPhase is intentionally
-// preserved (per US-45.1 contract — onPhaseChange relies on it).
+// deleted tombstones, password cache, config cache) and the
+// InMemoryStore-backed state (parent backfill). priorPhase is
+// intentionally preserved (per US-45.1 contract).
 func (s *RedisStore) InvalidateAll(workspaceID string) {
-	// Redis-backed: clear active sessions, deleted tombstones, password.
 	s.ClearActiveSessions(workspaceID)
 	s.ClearDeletedSessions(workspaceID)
 	s.InvalidatePassword(workspaceID)
-	// InMemoryStore-backed: clear config, parent backfill. We call the
-	// individual methods rather than inMemory.InvalidateAll because that
-	// would also call inMemory.ClearActiveSessions/ClearDeletedSessions/
-	// InvalidatePassword — no-ops (state is on Redis) but wasteful.
-	// priorPhase is preserved per US-45.1 contract.
+	s.InvalidateWorkspaceConfig(workspaceID)
 	s.inMemory.ClearActiveSessions(workspaceID)
 	s.inMemory.ClearDeletedSessions(workspaceID)
 	s.inMemory.InvalidatePassword(workspaceID)
@@ -577,19 +583,90 @@ func (s *RedisStore) InvalidatePassword(workspaceID string) {
 	s.observeOp(op, "ok", start)
 }
 
-// --- Workspace config cache (delegated to InMemoryStore) ---
-// US-45.6 will move this to Redis.
+// --- Workspace config cache (Redis-backed, US-45.6) ---
+//
+// Config (MaxActiveSessions + AutoApprovePermissions) is fetched from
+// the Workspace CRD on first access and cached. Moving to Redis ensures
+// all replicas share the same config view.
+//
+// Same fail-through pattern as pwCache: Redis is a cache, the source of
+// truth is the Workspace CRD. On Redis error, GetWorkspaceConfig returns
+// (zero, false) so the caller (shouldAutoApprovePermissions) falls back
+// to fetching the CRD.
+
+func configCacheKey(workspaceID string) string {
+	return fmt.Sprintf("ws:{%s}:config", workspaceID)
+}
 
 func (s *RedisStore) GetWorkspaceConfig(workspaceID string) (Config, bool) {
-	return s.inMemory.GetWorkspaceConfig(workspaceID)
+	const op = "get_workspace_config"
+	start := time.Now()
+	raw, err := s.client.Get(context.Background(), configCacheKey(workspaceID)).Bytes()
+	if err != nil {
+		if err != redis.Nil {
+			s.recordError(op)
+			s.observeOp(op, "error", start)
+			if s.logger != nil {
+				s.logger.Warn("wsstate: Redis GetWorkspaceConfig failed — falling through to CRD",
+					"error", err, "workspace_id", workspaceID)
+			}
+		} else {
+			s.observeOp(op, "miss", start)
+		}
+		return Config{}, false
+	}
+	var cfg Config
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		s.recordError(op)
+		s.observeOp(op, "error", start)
+		if s.logger != nil {
+			s.logger.Warn("wsstate: cached config JSON corrupt — falling through to CRD",
+				"error", err, "workspace_id", workspaceID)
+		}
+		return Config{}, false
+	}
+	s.observeOp(op, "hit", start)
+	return cfg, true
 }
 
 func (s *RedisStore) SetWorkspaceConfig(workspaceID string, cfg Config) {
-	s.inMemory.SetWorkspaceConfig(workspaceID, cfg)
+	const op = "set_workspace_config"
+	start := time.Now()
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		s.recordError(op)
+		s.observeOp(op, "error", start)
+		if s.logger != nil {
+			s.logger.Error("wsstate: failed to marshal Config for Redis cache", err,
+				"workspace_id", workspaceID)
+		}
+		return
+	}
+	if err := s.client.Set(context.Background(), configCacheKey(workspaceID), data, s.configTTL).Err(); err != nil {
+		s.recordError(op)
+		s.observeOp(op, "error", start)
+		if s.logger != nil {
+			s.logger.Warn("wsstate: Redis SetWorkspaceConfig failed",
+				"error", err, "workspace_id", workspaceID)
+		}
+		return
+	}
+	s.observeOp(op, "ok", start)
 }
 
 func (s *RedisStore) InvalidateWorkspaceConfig(workspaceID string) {
-	s.inMemory.InvalidateWorkspaceConfig(workspaceID)
+	const op = "invalidate_workspace_config"
+	start := time.Now()
+	if err := s.client.Del(context.Background(), configCacheKey(workspaceID)).Err(); err != nil && err != redis.Nil {
+		s.recordError(op)
+		s.observeOp(op, "error", start)
+		if s.logger != nil {
+			s.logger.Warn("wsstate: Redis InvalidateWorkspaceConfig failed",
+				"error", err, "workspace_id", workspaceID)
+		}
+		return
+	}
+	s.observeOp(op, "ok", start)
 }
 
 // --- Prior phase tracking (delegated to InMemoryStore) ---

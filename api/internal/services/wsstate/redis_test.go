@@ -335,20 +335,6 @@ func TestRedisStore_IsSessionActive_RedisDown_ReturnsFalse(t *testing.T) {
 // Delegation to InMemoryStore for un-migrated sections
 // ---------------------------------------------------------------------------
 
-// TestRedisStore_DelegatesWorkspaceConfigToInMemory verifies that until
-// US-45.6 ships, the RedisStore delegates workspace-config operations
-// to its embedded InMemoryStore. Production behavior must remain correct
-// even though only activeSess/deleted/pw are on Redis.
-func TestRedisStore_DelegatesWorkspaceConfigToInMemory(t *testing.T) {
-	store, _, _, cleanup := setupRedisStore(t)
-	defer cleanup()
-
-	store.SetWorkspaceConfig("ws-1", Config{MaxActiveSessions: 7})
-	cfg, ok := store.GetWorkspaceConfig("ws-1")
-	require.True(t, ok)
-	assert.Equal(t, 7, cfg.MaxActiveSessions)
-}
-
 func TestRedisStore_DelegatesPriorPhaseToInMemory(t *testing.T) {
 	store, _, _, cleanup := setupRedisStore(t)
 	defer cleanup()
