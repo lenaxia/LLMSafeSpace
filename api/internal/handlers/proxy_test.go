@@ -1638,7 +1638,9 @@ func TestActivityTracker_B5_NotFound_RemovesMapEntry(t *testing.T) {
 		schema.GroupResource{Group: "llmsafespace.dev", Resource: "workspaces"},
 		"ws-deleted",
 	)
-	wsMock.On("Get", mock.Anything, "ws-deleted", metav1.GetOptions{}).Return(nil, notFoundErr)
+	// US-23.3: tracker now calls Patch (not Get+UpdateStatus).
+	wsMock.On("Patch", mock.Anything, "ws-deleted", mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, notFoundErr)
 
 	tracker.Record("ws-deleted")
 	require.Equal(t, 1, tracker.PendingCount(), "entry must be present before flush")
@@ -1662,9 +1664,11 @@ func TestActivityTracker_B5_NotFound_DoesNotAffectOtherEntries(t *testing.T) {
 		schema.GroupResource{Group: "llmsafespace.dev", Resource: "workspaces"},
 		"ws-deleted",
 	)
-	wsMock.On("Get", mock.Anything, "ws-deleted", metav1.GetOptions{}).Return(nil, notFoundErr).Once()
-	wsMock.On("Get", mock.Anything, "ws-alive", metav1.GetOptions{}).Return(existing, nil).Once()
-	wsMock.On("UpdateStatus", mock.Anything, mock.Anything).Return(existing, nil).Once()
+	// US-23.3: tracker now calls Patch (not Get+UpdateStatus).
+	wsMock.On("Patch", mock.Anything, "ws-deleted", mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, notFoundErr).Once()
+	wsMock.On("Patch", mock.Anything, "ws-alive", mock.Anything, mock.Anything, mock.Anything).
+		Return(existing, nil).Once()
 
 	tracker.Record("ws-deleted")
 	tracker.Record("ws-alive")
@@ -1673,7 +1677,7 @@ func TestActivityTracker_B5_NotFound_DoesNotAffectOtherEntries(t *testing.T) {
 
 	// ws-deleted must be gone; ws-alive must remain.
 	assert.Equal(t, 1, tracker.PendingCount(), "NotFound workspace must be removed, ws-alive must remain")
-	wsMock.AssertNumberOfCalls(t, "UpdateStatus", 1)
+	wsMock.AssertNumberOfCalls(t, "Patch", 2)
 }
 
 // TestActivityTracker_B5_Delete_RemovesEntry verifies the Delete method

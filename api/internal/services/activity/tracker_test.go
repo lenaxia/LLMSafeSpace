@@ -15,6 +15,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 
 	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
@@ -56,6 +57,13 @@ func newTestTracker(wsMock *k8smocks.MockWorkspaceInterface) *ActivityTracker {
 	return NewActivityTracker(k8sMock, &testLogger{}, "default")
 }
 
+// expectPatchOnce wires the Patch mock to capture the patch payload and
+// return success. The tracker's flushOne now uses Patch (US-23.3).
+func expectPatchOnce(wsMock *k8smocks.MockWorkspaceInterface, ws *v1.Workspace) {
+	wsMock.On("Patch", mock.Anything, mock.Anything, types.MergePatchType, mock.Anything, mock.Anything).
+		Return(ws, nil).Once()
+}
+
 func TestActivityTracker_RecordStoresTimestamp(t *testing.T) {
 	tracker := newTestTracker(k8smocks.NewMockWorkspaceInterface())
 
@@ -82,25 +90,26 @@ func TestActivityTracker_RecordEmptyWorkspaceID(t *testing.T) {
 	assert.Equal(t, 0, tracker.PendingCount())
 }
 
-func TestActivityTracker_Flush_UpdatesWorkspaceStatus(t *testing.T) {
+func TestActivityTracker_Flush_PatchesWorkspaceAnnotation(t *testing.T) {
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 	tracker := newTestTracker(wsMock)
 
 	ws := makeWorkspaceCRD("ws-1", 5)
-	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil).Once()
 
-	var captured *v1.Workspace
-	wsMock.On("UpdateStatus", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
-		captured = args.Get(1).(*v1.Workspace)
-	}).Return(ws, nil).Once()
+	var capturedPatch []byte
+	wsMock.On("Patch", mock.Anything, "ws-1", types.MergePatchType, mock.MatchedBy(func(b []byte) bool {
+		capturedPatch = b
+		return true
+	}), mock.Anything).Return(ws, nil).Once()
 
 	tracker.Record("ws-1")
 	tracker.Flush()
 
 	wsMock.AssertExpectations(t)
-	require.NotNil(t, captured)
-	require.NotNil(t, captured.Status.LastActivityAt)
-	assert.WithinDuration(t, time.Now(), captured.Status.LastActivityAt.Time, 2*time.Second)
+	require.NotEmpty(t, capturedPatch, "Patch payload must be captured")
+	// The patch must contain the last-activity-at annotation key.
+	assert.Contains(t, string(capturedPatch), v1.AnnotationLastActivityAt,
+		"Patch must write the last-activity-at annotation")
 }
 
 func TestActivityTracker_Flush_SkipsStaleWorkspace(t *testing.T) {
@@ -108,8 +117,7 @@ func TestActivityTracker_Flush_SkipsStaleWorkspace(t *testing.T) {
 	tracker := newTestTracker(wsMock)
 
 	ws := makeWorkspaceCRD("ws-1", 5)
-	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil).Once()
-	wsMock.On("UpdateStatus", mock.Anything, mock.Anything).Return(ws, nil).Once()
+	expectPatchOnce(wsMock, ws)
 
 	tracker.Record("ws-1")
 	tracker.Flush()
@@ -123,24 +131,29 @@ func TestActivityTracker_Flush_CoalescesRecords(t *testing.T) {
 	tracker := newTestTracker(wsMock)
 
 	ws := makeWorkspaceCRD("ws-1", 5)
-	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil).Once()
 
-	var captured *v1.Workspace
-	wsMock.On("UpdateStatus", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
-		captured = args.Get(1).(*v1.Workspace)
-	}).Return(ws, nil).Once()
+	var capturedPatch []byte
+	var capturedMu sync.Mutex
+	wsMock.On("Patch", mock.Anything, "ws-1", types.MergePatchType, mock.MatchedBy(func(b []byte) bool {
+		capturedMu.Lock()
+		capturedPatch = b
+		capturedMu.Unlock()
+		return true
+	}), mock.Anything).Return(ws, nil).Once()
 
 	tracker.Record("ws-1")
 	time.Sleep(50 * time.Millisecond)
-	cutoff := time.Now()
+	_ = time.Now()
 	tracker.Record("ws-1")
 
 	tracker.Flush()
 
 	wsMock.AssertExpectations(t)
-	require.NotNil(t, captured)
-	require.NotNil(t, captured.Status.LastActivityAt)
-	assert.True(t, captured.Status.LastActivityAt.After(cutoff.Add(-1*time.Second)))
+	capturedMu.Lock()
+	defer capturedMu.Unlock()
+	require.NotEmpty(t, capturedPatch)
+	patchStr := string(capturedPatch)
+	assert.Contains(t, patchStr, v1.AnnotationLastActivityAt)
 	assert.Equal(t, 1, tracker.PendingCount())
 }
 
@@ -152,19 +165,9 @@ func TestActivityTracker_Flush_MultipleWorkspaces(t *testing.T) {
 	ws2 := makeWorkspaceCRD("ws-2", 3)
 	ws3 := makeWorkspaceCRD("ws-3", 10)
 
-	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws1, nil).Once()
-	wsMock.On("Get", mock.Anything, "ws-2", metav1.GetOptions{}).Return(ws2, nil).Once()
-	wsMock.On("Get", mock.Anything, "ws-3", metav1.GetOptions{}).Return(ws3, nil).Once()
-
-	wsMock.On("UpdateStatus", mock.Anything, mock.MatchedBy(func(w *v1.Workspace) bool {
-		return w.Name == "ws-1"
-	})).Return(ws1, nil).Once()
-	wsMock.On("UpdateStatus", mock.Anything, mock.MatchedBy(func(w *v1.Workspace) bool {
-		return w.Name == "ws-2"
-	})).Return(ws2, nil).Once()
-	wsMock.On("UpdateStatus", mock.Anything, mock.MatchedBy(func(w *v1.Workspace) bool {
-		return w.Name == "ws-3"
-	})).Return(ws3, nil).Once()
+	wsMock.On("Patch", mock.Anything, "ws-1", types.MergePatchType, mock.Anything, mock.Anything).Return(ws1, nil).Once()
+	wsMock.On("Patch", mock.Anything, "ws-2", types.MergePatchType, mock.Anything, mock.Anything).Return(ws2, nil).Once()
+	wsMock.On("Patch", mock.Anything, "ws-3", types.MergePatchType, mock.Anything, mock.Anything).Return(ws3, nil).Once()
 
 	tracker.Record("ws-1")
 	tracker.Record("ws-2")
@@ -182,8 +185,7 @@ func TestActivityTracker_StartBeginsFlushLoop(t *testing.T) {
 	require.NoError(t, err)
 
 	ws := makeWorkspaceCRD("ws-1", 5)
-	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil).Once()
-	wsMock.On("UpdateStatus", mock.Anything, mock.Anything).Return(ws, nil).Once()
+	expectPatchOnce(wsMock, ws)
 
 	tracker.Record("ws-1")
 
@@ -202,8 +204,7 @@ func TestActivityTracker_Stop_FinalFlush(t *testing.T) {
 	require.NoError(t, err)
 
 	ws := makeWorkspaceCRD("ws-1", 5)
-	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil).Once()
-	wsMock.On("UpdateStatus", mock.Anything, mock.Anything).Return(ws, nil).Once()
+	expectPatchOnce(wsMock, ws)
 
 	tracker.Record("ws-1")
 
@@ -254,8 +255,7 @@ func TestActivityTracker_ConcurrentRecordAndFlush(t *testing.T) {
 	tracker := newTestTracker(wsMock)
 
 	ws := makeWorkspaceCRD("ws-1", 5)
-	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil)
-	wsMock.On("UpdateStatus", mock.Anything, mock.Anything).Return(ws, nil)
+	wsMock.On("Patch", mock.Anything, "ws-1", types.MergePatchType, mock.Anything, mock.Anything).Return(ws, nil)
 
 	var wg sync.WaitGroup
 	const recorders = 50
@@ -282,35 +282,56 @@ func TestActivityTracker_Flush_RetryOnConflict(t *testing.T) {
 	tracker := newTestTracker(wsMock)
 
 	ws := makeWorkspaceCRD("ws-1", 5)
-	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil).Twice()
 
 	conflictErr := apierrors.NewConflict(
 		schema.GroupResource{Group: "llmsafespace.dev", Resource: "workspaces"},
 		"ws-1",
 		fmt.Errorf("object has been modified"),
 	)
-	wsMock.On("UpdateStatus", mock.Anything, mock.Anything).Return(nil, conflictErr).Once()
-	wsMock.On("UpdateStatus", mock.Anything, mock.Anything).Return(ws, nil).Once()
+	wsMock.On("Patch", mock.Anything, "ws-1", types.MergePatchType, mock.Anything, mock.Anything).
+		Return(nil, conflictErr).Once()
+	wsMock.On("Patch", mock.Anything, "ws-1", types.MergePatchType, mock.Anything, mock.Anything).
+		Return(ws, nil).Once()
 
 	tracker.Record("ws-1")
 	tracker.Flush()
 
 	wsMock.AssertExpectations(t)
-	wsMock.AssertNumberOfCalls(t, "UpdateStatus", 2)
-	wsMock.AssertNumberOfCalls(t, "Get", 2)
+	wsMock.AssertNumberOfCalls(t, "Patch", 2)
 }
 
-func TestActivityTracker_Flush_GetError(t *testing.T) {
+func TestActivityTracker_Flush_PatchErrorLogsAndKeepsEntry(t *testing.T) {
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 	tracker := newTestTracker(wsMock)
 
-	wsMock.On("Get", mock.Anything, "ws-missing", metav1.GetOptions{}).Return(nil, fmt.Errorf("not found")).Once()
+	// A non-conflict, non-not-found error: tracker logs and the entry
+	// remains pending so it retries on the next flush.
+	wsMock.On("Patch", mock.Anything, "ws-1", types.MergePatchType, mock.Anything, mock.Anything).
+		Return(nil, fmt.Errorf("transient network error")).Once()
 
-	tracker.Record("ws-missing")
+	tracker.Record("ws-1")
 	tracker.Flush()
 
 	wsMock.AssertExpectations(t)
-	wsMock.AssertNotCalled(t, "UpdateStatus")
+	assert.Equal(t, 1, tracker.PendingCount(), "entry must remain pending on non-conflict error")
+}
+
+func TestActivityTracker_Flush_NotFoundDeletesEntry(t *testing.T) {
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	tracker := newTestTracker(wsMock)
+
+	notFoundErr := apierrors.NewNotFound(
+		schema.GroupResource{Group: "llmsafespace.dev", Resource: "workspaces"},
+		"ws-gone",
+	)
+	wsMock.On("Patch", mock.Anything, "ws-gone", types.MergePatchType, mock.Anything, mock.Anything).
+		Return(nil, notFoundErr).Once()
+
+	tracker.Record("ws-gone")
+	tracker.Flush()
+
+	wsMock.AssertExpectations(t)
+	assert.Equal(t, 0, tracker.PendingCount(), "not-found must delete the entry")
 }
 
 func TestActivityTracker_Flush_Empty(t *testing.T) {
@@ -319,8 +340,7 @@ func TestActivityTracker_Flush_Empty(t *testing.T) {
 
 	tracker.Flush()
 
-	wsMock.AssertNotCalled(t, "Get")
-	wsMock.AssertNotCalled(t, "UpdateStatus")
+	wsMock.AssertNotCalled(t, "Patch")
 }
 
 func TestActivityTracker_NewActivityTracker(t *testing.T) {

@@ -1,7 +1,7 @@
 # Epic 23: Controller & API Race Hardening
 
-**Status:** Partially Complete; Stories 2+3 deferred pending metrics (superseded by Epic 24 decision to defer until data justifies)
-**Note:** Stories 1 and 4 shipped in worklog 0105 (2026-05-31). Stories 2 (retry-on-conflict) and 3 (single-writer migration) are deferred until `WorkspaceStatusUpdateConflictsTotal` metric from Story 1 shows >10 conflicts/day.
+**Status:** Stories 1, 3, 4 shipped. Story 2 helper shipped; 21-site migration deferred pending metric data.
+**Note:** Stories 1 and 4 shipped in worklog 0105 (2026-05-31). Story 3 (single-writer migration: LastActivityAt → annotation, Suspend/Resume → `Spec.Suspend *bool` tri-state) shipped in worklog 0342 (2026-06-18). Story 3 uses `*bool` (not the `bool` originally specified) so that `nil` (unspecified/acknowledged) is distinguishable from `&false` (explicit resume request); the controller clears the pointer to nil after consuming a request. Story 2 helper (`updateStatusWithRetry`) shipped in worklog 0342; the 21-site migration to use it is deferred until `WorkspaceStatusUpdateConflictsTotal` shows residual conflict rate warrants it.
 **Created:** 2026-05-31 · **Last revised:** 2026-05-31 (audit pass 3 — three-writer LastActivityAt reality, Story 3 before Story 2 sequencing, Option B annotation migration)
 **Priority:** High (Story 1 is a hot-patch for the recurring incident; Story 4 is a hot-patch for browser-visible auth leak)
 **Depends on:** none (Story 1 ships first; Stories 2-4 sequenced below)

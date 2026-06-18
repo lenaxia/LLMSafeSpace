@@ -946,13 +946,20 @@ func TestSuspendWorkspace_HappyPath(t *testing.T) {
 	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
 	activeCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
 	activeCrd.Status.Phase = v1.WorkspacePhaseActive
+	// US-23.3: Suspend writes Spec.Suspend=true via Update, not Status.Phase via UpdateStatus.
+	var captured *v1.Workspace
 	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(activeCrd, nil)
-	f.ws.On("UpdateStatus", mock.Anything, mock.AnythingOfType("*v1.Workspace")).Return(activeCrd, nil)
+	f.ws.On("Update", mock.Anything, mock.AnythingOfType("*v1.Workspace")).
+		Run(func(args mock.Arguments) { captured = args.Get(1).(*v1.Workspace) }).
+		Return(activeCrd, nil)
 
 	err := f.svc.SuspendWorkspace(ctx, "user1", "ws-1")
 
 	assert.NoError(t, err)
 	f.ws.AssertExpectations(t)
+	require.NotNil(t, captured)
+	require.NotNil(t, captured.Spec.Suspend, "Spec.Suspend must be set (non-nil pointer)")
+	assert.True(t, *captured.Spec.Suspend, "Spec.Suspend must be set to true")
 }
 
 func TestSuspendWorkspace_WrongOwner_ReturnsForbidden(t *testing.T) {
@@ -976,12 +983,15 @@ func TestActivateWorkspace_HappyPath_TransitionsToResuming(t *testing.T) {
 	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
 	suspendedCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
 	suspendedCrd.Status.Phase = v1.WorkspacePhaseSuspended
+	suspendTrue := true
+	suspendedCrd.Spec.Suspend = &suspendTrue
 	staleActivity := metav1.NewTime(time.Now().Add(-2 * time.Hour))
 	suspendedCrd.Status.LastActivityAt = &staleActivity
 
 	var captured *v1.Workspace
 	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(suspendedCrd, nil)
-	f.ws.On("UpdateStatus", mock.Anything, mock.AnythingOfType("*v1.Workspace")).
+	// US-23.3: Activate writes Spec.Suspend=false + annotation via Update.
+	f.ws.On("Update", mock.Anything, mock.AnythingOfType("*v1.Workspace")).
 		Run(func(args mock.Arguments) { captured = args.Get(1).(*v1.Workspace) }).
 		Return(suspendedCrd, nil)
 	// enforceMaxActiveWorkspaces calls List
@@ -993,11 +1003,16 @@ func TestActivateWorkspace_HappyPath_TransitionsToResuming(t *testing.T) {
 	assert.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, "ws-1", resp.Resumed)
-	require.NotNil(t, captured, "UpdateStatus must be called")
-	assert.Equal(t, v1.WorkspacePhaseResuming, captured.Status.Phase)
-	require.NotNil(t, captured.Status.LastActivityAt, "LastActivityAt must be reset on activate")
-	assert.WithinDuration(t, time.Now(), captured.Status.LastActivityAt.Time, 5*time.Second,
-		"LastActivityAt must advance to a recent time, was %v", captured.Status.LastActivityAt.Time)
+	require.NotNil(t, captured, "Update must be called")
+	require.NotNil(t, captured.Spec.Suspend, "Spec.Suspend must be set (non-nil pointer)")
+	assert.False(t, *captured.Spec.Suspend, "Spec.Suspend must be cleared to false")
+	require.NotNil(t, captured.Annotations, "Annotations must be set")
+	annot, ok := captured.Annotations[v1.AnnotationLastActivityAt]
+	require.True(t, ok, "LastActivityAt annotation must be set")
+	parsed, err := time.Parse(time.RFC3339, annot)
+	require.NoError(t, err)
+	assert.WithinDuration(t, time.Now(), parsed, 5*time.Second,
+		"annotation must be a recent time, was %v", parsed)
 }
 
 func TestActivateWorkspace_WrongOwner_ReturnsForbidden(t *testing.T) {
@@ -1024,7 +1039,7 @@ func TestActivateWorkspace_K8sGetFails(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "workspace_get_failed")
-	f.ws.AssertNotCalled(t, "UpdateStatus")
+	f.ws.AssertNotCalled(t, "Update")
 }
 
 func TestActivateWorkspace_K8sUpdateFails(t *testing.T) {
@@ -1036,7 +1051,7 @@ func TestActivateWorkspace_K8sUpdateFails(t *testing.T) {
 	suspendedCrd.Status.Phase = v1.WorkspacePhaseSuspended
 	f.ws.On("List", mock.Anything, mock.Anything).Return(&v1.WorkspaceList{}, nil)
 	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(suspendedCrd, nil)
-	f.ws.On("UpdateStatus", mock.Anything, mock.AnythingOfType("*v1.Workspace")).
+	f.ws.On("Update", mock.Anything, mock.AnythingOfType("*v1.Workspace")).
 		Return((*v1.Workspace)(nil), errors.New("k8s update failed"))
 
 	_, err := f.svc.ActivateWorkspace(ctx, "user1", "ws-1")
@@ -1159,7 +1174,7 @@ func TestSuspendWorkspace_K8sGetFails(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "workspace_get_failed")
-	f.ws.AssertNotCalled(t, "UpdateStatus")
+	f.ws.AssertNotCalled(t, "Update")
 }
 
 func TestSuspendWorkspace_K8sUpdateFails(t *testing.T) {
@@ -1170,7 +1185,7 @@ func TestSuspendWorkspace_K8sUpdateFails(t *testing.T) {
 	activeCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
 	activeCrd.Status.Phase = v1.WorkspacePhaseActive
 	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(activeCrd, nil)
-	f.ws.On("UpdateStatus", mock.Anything, mock.AnythingOfType("*v1.Workspace")).Return((*v1.Workspace)(nil), errors.New("k8s update failed"))
+	f.ws.On("Update", mock.Anything, mock.AnythingOfType("*v1.Workspace")).Return((*v1.Workspace)(nil), errors.New("k8s update failed"))
 
 	err := f.svc.SuspendWorkspace(ctx, "user1", "ws-1")
 
@@ -1221,7 +1236,7 @@ func TestE2E_SuspendWorkspace_OnlyActiveAllowed(t *testing.T) {
 			crd.Status.Phase = tt.phase
 			f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(crd, nil)
 			if !tt.wantErr {
-				f.ws.On("UpdateStatus", mock.Anything, mock.AnythingOfType("*v1.Workspace")).Return(crd, nil)
+				f.ws.On("Update", mock.Anything, mock.AnythingOfType("*v1.Workspace")).Return(crd, nil)
 			}
 
 			err := f.svc.SuspendWorkspace(ctx, "user1", "ws-1")
@@ -1262,7 +1277,7 @@ func TestE2E_ActivateWorkspace_OnlySuspendedOrActiveAllowed(t *testing.T) {
 			crd.Status.Phase = tt.phase
 			f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(crd, nil)
 			if tt.phase == v1.WorkspacePhaseSuspended {
-				f.ws.On("UpdateStatus", mock.Anything, mock.AnythingOfType("*v1.Workspace")).Return(crd, nil)
+				f.ws.On("Update", mock.Anything, mock.AnythingOfType("*v1.Workspace")).Return(crd, nil)
 			}
 
 			_, err := f.svc.ActivateWorkspace(ctx, "user1", "ws-1")
@@ -1288,7 +1303,7 @@ func TestSuspendWorkspace_Idempotent_AlreadySuspended(t *testing.T) {
 	err := f.svc.SuspendWorkspace(ctx, "user1", "ws-1")
 
 	assert.NoError(t, err)
-	f.ws.AssertNotCalled(t, "UpdateStatus")
+	f.ws.AssertNotCalled(t, "Update")
 }
 
 func TestSuspendWorkspace_Idempotent_AlreadySuspending(t *testing.T) {
@@ -1303,7 +1318,7 @@ func TestSuspendWorkspace_Idempotent_AlreadySuspending(t *testing.T) {
 	err := f.svc.SuspendWorkspace(ctx, "user1", "ws-1")
 
 	assert.NoError(t, err)
-	f.ws.AssertNotCalled(t, "UpdateStatus")
+	f.ws.AssertNotCalled(t, "Update")
 }
 
 func TestE2E_CreateWorkspace_SetsOwnerAndStorageInCRD(t *testing.T) {

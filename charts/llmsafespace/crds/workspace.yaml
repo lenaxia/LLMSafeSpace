@@ -148,6 +148,10 @@ spec:
                   type: boolean
                   default: false
                   description: "Auto-approve all agent permission requests without user interaction. Default: false."
+                suspend:
+                  type: boolean
+                  nullable: true
+                  description: "Tri-state request flag (US-23.3). nil=unspecified/acknowledged; true=request suspend; false=request resume from Suspended. No default — the nil state must be reachable so the controller doesn't auto-resume."
             status:
               type: object
               properties:

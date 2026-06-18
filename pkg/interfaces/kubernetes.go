@@ -7,6 +7,7 @@ import (
 	"context"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/informers"
@@ -50,6 +51,7 @@ type WorkspaceInterface interface {
 	Get(ctx context.Context, name string, options metav1.GetOptions) (*v1.Workspace, error)
 	List(ctx context.Context, opts metav1.ListOptions) (*v1.WorkspaceList, error)
 	Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error)
+	Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions) (*v1.Workspace, error)
 }
 
 type InferenceRelayInterface interface {
