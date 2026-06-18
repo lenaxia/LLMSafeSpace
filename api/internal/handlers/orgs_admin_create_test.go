@@ -361,6 +361,20 @@ func TestCreateOrg_Admin_OwnerAlreadyInAnotherOrg_Conflict(t *testing.T) {
 	}
 }
 
+func TestCreateOrg_Admin_GetUserOrgIDError_500(t *testing.T) {
+	store := newMockOrgStore()
+	store.usersByEmail["owner@example.com"] = "owner-1"
+	store.userOrgIDErr = errors.New("db down")
+
+	router, _ := setupAdminCreateRouter(t, store, true, nil)
+
+	w := doRequest(router, "POST", "/api/v1/orgs",
+		`{"name":"Acme","slug":"acme","ownerEmail":"owner@example.com"}`)
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on GetUserOrgID error, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 // --- Error-path branches in Create (reviewer round 1) ---
 
 // CreateOrgWithAdmin succeeds but UpdateOrgStatus fails → 500. The org is left

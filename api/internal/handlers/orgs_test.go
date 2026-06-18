@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -533,6 +534,21 @@ func TestOrgsHandler_AddMember_AlreadyInAnotherOrg_Conflict(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "another organization") {
 		t.Errorf("expected 'another organization' message, got: %s", w.Body.String())
+	}
+}
+
+func TestOrgsHandler_AddMember_GetUserOrgIDError_500(t *testing.T) {
+	store := newMockOrgStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.members["org-1"] = []*types.OrgMember{
+		{OrgID: "org-1", UserID: "admin-1", Role: types.OrgRoleAdmin},
+	}
+	store.userOrgIDErr = errors.New("db down")
+	router, _ := setupOrgTestRouter(t, store)
+
+	w := doRequest(router, "POST", "/api/v1/orgs/org-1/members", `{"userId":"new-user","role":"member"}`)
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on GetUserOrgID error, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
