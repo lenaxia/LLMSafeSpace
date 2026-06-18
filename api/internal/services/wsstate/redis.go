@@ -26,6 +26,14 @@ var _ Store = (*RedisStore)(nil)
 // 2026-06-16 incident. 30 minutes matches the design spec.
 const DefaultActiveSessTTL = 30 * time.Minute
 
+// DefaultDeletedTTL is the TTL for per-session tombstones. Each
+// tombstone expires independently (per-key TTL, not a shared SET TTL).
+// After expiry, late SSE events for that session are no longer
+// suppressed — but by then the session has been gone long enough that
+// any late event is extremely unlikely. 30 minutes matches the design
+// spec and is the same duration as activeSess TTL.
+const DefaultDeletedTTL = 30 * time.Minute
+
 // checkAndAddScript atomically checks the active-session set size and
 // adds the session ID if there's room. The atomicity is what makes this
 // safe across replicas: two concurrent calls cannot both observe
@@ -87,6 +95,10 @@ type RedisStore struct {
 	// entries. Refreshed on every successful CheckAndAddActiveSession.
 	activeSessTTL time.Duration
 
+	// deletedTTL is the per-key TTL for session tombstones. Each
+	// tombstone expires independently.
+	deletedTTL time.Duration
+
 	// logger records fail-open events. Optional — if nil, errors are
 	// surfaced only via Prometheus metrics.
 	logger pkginterfaces.LoggerInterface
@@ -121,6 +133,7 @@ func NewRedisStoreWithLogger(client *redis.Client, activeSessTTL time.Duration, 
 	return &RedisStore{
 		client:              client,
 		activeSessTTL:       activeSessTTL,
+		deletedTTL:          DefaultDeletedTTL,
 		logger:              logger,
 		inMemory:            NewInMemoryStore(),
 		opDuration:          pkgOpDuration,
@@ -360,33 +373,113 @@ func (s *RedisStore) ClearActiveSessions(workspaceID string) {
 
 // --- InvalidateAll (overrides to clear both Redis and InMemory) ---
 
-// InvalidateAll clears both the Redis-backed active session set and the
-// InMemoryStore-backed state (deleted tombstones, password cache,
+// InvalidateAll clears both the Redis-backed state (active sessions +
+// deleted tombstones) and the InMemoryStore-backed state (password cache,
 // workspace config, parent backfill). priorPhase is intentionally
 // preserved (per US-45.1 contract — onPhaseChange relies on it).
 func (s *RedisStore) InvalidateAll(workspaceID string) {
-	// Redis-backed: DEL the entire active set key. Matches
-	// InMemoryStore.ClearActiveSessions behavior (key deletion, not just
-	// member removal).
+	// Redis-backed: clear active sessions and deleted tombstones.
 	s.ClearActiveSessions(workspaceID)
-	// InMemoryStore-backed: delegate to the embedded store, which
-	// implements the same priorPhase-preserving contract.
-	s.inMemory.InvalidateAll(workspaceID)
-}
-
-// --- Deleted-session tombstones (delegated to InMemoryStore) ---
-// US-45.3 will move these to Redis.
-
-func (s *RedisStore) MarkSessionDeleted(workspaceID, sessionID string) {
-	s.inMemory.MarkSessionDeleted(workspaceID, sessionID)
-}
-
-func (s *RedisStore) IsSessionDeleted(workspaceID, sessionID string) bool {
-	return s.inMemory.IsSessionDeleted(workspaceID, sessionID)
-}
-
-func (s *RedisStore) ClearDeletedSessions(workspaceID string) {
+	s.ClearDeletedSessions(workspaceID)
+	// InMemoryStore-backed: clear password, config, parent backfill.
+	// We call the individual methods rather than inMemory.InvalidateAll
+	// because that would also call inMemory.ClearActiveSessions and
+	// inMemory.ClearDeletedSessions — no-ops (state is on Redis) but
+	// wasteful. priorPhase is preserved per US-45.1 contract.
+	s.inMemory.ClearActiveSessions(workspaceID)
 	s.inMemory.ClearDeletedSessions(workspaceID)
+	s.inMemory.InvalidatePassword(workspaceID)
+	s.inMemory.InvalidateWorkspaceConfig(workspaceID)
+	s.inMemory.DeleteParentBackfilled(workspaceID)
+}
+
+// --- Deleted-session tombstones (Redis-backed, US-45.3) ---
+//
+// Tombstones prevent late SSE events from opencode from re-inserting a
+// deleted session into session_index. Moving them to Redis ensures the
+// suppression is cluster-wide.
+//
+// Fail-CLOSED policy (intentional opposite of activeSess fail-OPEN): if
+// Redis is unreachable, IsSessionDeleted returns TRUE (assume deleted to
+// prevent zombie resurrection). The rationale (per design): "If we can't
+// verify, assume deleted; user can recreate session" — data integrity >
+// availability here.
+
+func deletedSessKey(workspaceID, sessionID string) string {
+	return fmt.Sprintf("ws:{%s}:deleted:%s", workspaceID, sessionID)
+}
+
+// MarkSessionDeleted records a per-session tombstone in Redis with TTL.
+// Silently fails on Redis error — the tombstone is not recorded, but the
+// system continues. When Redis recovers, the session can be re-deleted.
+func (s *RedisStore) MarkSessionDeleted(workspaceID, sessionID string) {
+	const op = "mark_session_deleted"
+	start := time.Now()
+	key := deletedSessKey(workspaceID, sessionID)
+	if err := s.client.Set(context.Background(), key, "1", s.deletedTTL).Err(); err != nil {
+		s.recordError(op)
+		s.observeOp(op, "error", start)
+		if s.logger != nil {
+			s.logger.Warn("wsstate: Redis MarkSessionDeleted failed",
+				"error", err, "workspace_id", workspaceID, "session_id", sessionID)
+		}
+		return
+	}
+	s.observeOp(op, "ok", start)
+}
+
+// IsSessionDeleted reports whether the session was recently deleted via
+// the API. Fail-CLOSED: returns TRUE on Redis error (assume deleted to
+// prevent zombie session resurrection).
+func (s *RedisStore) IsSessionDeleted(workspaceID, sessionID string) bool {
+	const op = "is_session_deleted"
+	start := time.Now()
+	n, err := s.client.Exists(context.Background(), deletedSessKey(workspaceID, sessionID)).Result()
+	if err != nil {
+		s.recordError(op)
+		s.observeOp(op, "error", start)
+		return true
+	}
+	s.observeOp(op, "ok", start)
+	return n > 0
+}
+
+// ClearDeletedSessions removes all tombstones for the workspace. Uses
+// SCAN to find keys matching `ws:{workspace_id}:deleted:*` and DELs them
+// in batches. No-op on Redis error (the tombstones will expire via TTL).
+func (s *RedisStore) ClearDeletedSessions(workspaceID string) {
+	const op = "clear_deleted_sessions"
+	start := time.Now()
+	pattern := fmt.Sprintf("ws:{%s}:deleted:*", workspaceID)
+	var cursor uint64
+	for {
+		keys, next, err := s.client.Scan(context.Background(), cursor, pattern, 100).Result()
+		if err != nil {
+			s.recordError(op)
+			s.observeOp(op, "error", start)
+			if s.logger != nil {
+				s.logger.Warn("wsstate: Redis ClearDeletedSessions scan failed",
+					"error", err, "workspace_id", workspaceID)
+			}
+			return
+		}
+		if len(keys) > 0 {
+			if err := s.client.Del(context.Background(), keys...).Err(); err != nil {
+				s.recordError(op)
+				s.observeOp(op, "error", start)
+				if s.logger != nil {
+					s.logger.Warn("wsstate: Redis ClearDeletedSessions del failed",
+						"error", err, "workspace_id", workspaceID)
+				}
+				return
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
+	s.observeOp(op, "ok", start)
 }
 
 // --- Workspace password cache (delegated to InMemoryStore) ---
