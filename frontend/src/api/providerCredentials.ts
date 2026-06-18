@@ -1,50 +1,44 @@
 import { api } from "./client";
+import type {
+  CreateCredentialRequest,
+  CreateCredentialResponse,
+  ProbeModelEntry,
+  ProbeModelsResponse,
+  ProviderCredential,
+  UpdateCredentialRequest,
+} from "./providerCredentialTypes";
+
+// Re-export the shared types so existing imports (`from "./providerCredentials"`)
+// keep working without churn in the consuming components.
+export type {
+  CreateCredentialRequest,
+  CreateCredentialResponse,
+  ProbeModelEntry,
+  ProbeModelsResponse,
+  ProviderCredential,
+  UpdateCredentialRequest,
+};
 
 // ---------------------------------------------------------------------------
 // Admin provider credentials (Epic 30 US-30.7)
 // Routes: /api/v1/admin/provider-credentials
 // ---------------------------------------------------------------------------
 
-export interface AdminProviderCredential {
-  id: string;
-  name: string;
-  provider: string;
-  baseURL?: string;
+// AdminProviderCredential is ProviderCredential with the fields the admin API
+// always returns as non-optional (modelAllowlist / modelContextLimits are
+// guaranteed present for admin creds).
+export interface AdminProviderCredential extends ProviderCredential {
   modelAllowlist: string[];
   modelContextLimits: Record<string, number>;
-  createdAt: string;
-  updatedAt: string;
 }
 
-export interface CreateAdminCredentialRequest {
-  name: string;
-  provider: string;
-  apiKey: string;
-  baseURL?: string;
-  modelAllowlist?: string[];
-  modelContextLimits?: Record<string, number>;
-}
+// CreateAdminCredentialRequest is identical to the shared CreateCredentialRequest
+// (kept as a named alias for readability at call sites).
+export type CreateAdminCredentialRequest = CreateCredentialRequest;
 
-export interface UpdateAdminCredentialRequest {
-  name?: string;
-  apiKey?: string;
-  baseURL?: string;
-  modelAllowlist?: string[];
-  modelContextLimits?: Record<string, number>;
-}
-
-// ProbeModelEntry is one entry from GET /:id/models.
-export interface ProbeModelEntry {
-  id: string;
-  contextLimit: number; // 0 = unknown / not yet configured
-}
-
-// ProbeModelsResponse is the response from GET /provider-credentials/:id/models
-// and GET /admin/provider-credentials/:id/models.
-export interface ProbeModelsResponse {
-  models: ProbeModelEntry[];
-  baseURL?: string;
-  warning?: string;
+export interface UpdateAdminCredentialRequest extends UpdateCredentialRequest {
+  // Admin update allows changing the provider; user/org do not.
+  provider?: string;
 }
 
 // Go handler validates "all" | "user" | "org" — "workspace" is not a valid type.
@@ -87,29 +81,16 @@ export const adminProviderCredentialsApi = {
 // ---------------------------------------------------------------------------
 // User provider credentials (Epic 30 US-30.8)
 // Routes: /api/v1/provider-credentials
-// The backend returns AdminCredentialResponse for user creds too, so include
-// baseURL and modelAllowlist even though users can't set them from the UI yet.
+// The backend returns the shared CredentialResponse for user creds too, so
+// include baseURL and modelAllowlist even though users can't set them from
+// the UI yet.
 // ---------------------------------------------------------------------------
 
-export interface UserProviderCredential {
-  id: string;
-  name: string;
-  provider: string;
-  baseURL?: string;
-  modelAllowlist?: string[];
-  modelContextLimits?: Record<string, number>;
-  createdAt: string;
-  updatedAt: string;
-}
+// UserProviderCredential is the shared ProviderCredential type; kept as a
+// named alias so existing imports read clearly.
+export type UserProviderCredential = ProviderCredential;
 
-export interface CreateUserCredentialRequest {
-  name: string;
-  provider: string;
-  apiKey: string;
-  baseURL?: string;
-  modelAllowlist?: string[];
-  modelContextLimits?: Record<string, number>;
-}
+export type CreateUserCredentialRequest = CreateCredentialRequest;
 
 // CredentialBindingInfo is returned by GET /provider-credentials/:id/bindings.
 // sourceType distinguishes user-initiated (explicit) from seeded (auto) bindings.
@@ -126,8 +107,7 @@ export interface ListBindingsResponse {
 
 // CreateUserCredentialResponse: 201 on success, 207 when credential was created
 // but auto-bind to existing workspaces failed (bindWarning present).
-export interface CreateUserCredentialResponse extends UserProviderCredential {
-  bindWarning?: string;
+export interface CreateUserCredentialResponse extends CreateCredentialResponse {
   credential?: UserProviderCredential; // present on 207 — cred nested under this key
 }
 

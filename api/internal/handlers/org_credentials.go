@@ -6,21 +6,21 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/gin-gonic/gin"
-
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 )
 
-// orgCredentialStore is the minimal OrgCredentialStore interface used by OrgCredentialsHandler.
-type orgCredentialStore interface {
-	CreateOrgCredential(ctx context.Context, orgID, name, provider string, ciphertext []byte, modelAllowlist []string, modelContextLimits map[string]int) (string, error)
-	ListOrgCredentials(ctx context.Context, orgID string) ([]*secrets.OrgCredentialRow, error)
-	GetOrgCredential(ctx context.Context, orgID, credID string) (*secrets.OrgCredentialRow, error)
-	UpdateOrgCredential(ctx context.Context, orgID, credID string, name *string, ciphertext []byte, modelAllowlist []string, modelContextLimits map[string]int, keyVersion int) error
-	DeleteOrgCredential(ctx context.Context, orgID, credID string) error
+// orgBindingAndAutoApplyStore is the org-scoped binding + auto-apply interface
+// used by OrgCredentialsHandler. Credential CRUD itself is served by the shared
+// CredentialStore.
+type orgBindingAndAutoApplyStore interface {
 	BindCredentialToAllOrgWorkspaces(ctx context.Context, credentialID, orgID string) error
 	CreateOrgAutoApply(ctx context.Context, credentialID, orgID string, withinPriority int) error
 	ListOrgAutoApply(ctx context.Context, orgID string) ([]*secrets.AutoApplyRule, error)
@@ -29,14 +29,15 @@ type orgCredentialStore interface {
 
 // OrgCredentialsHandler handles org credential endpoints.
 type OrgCredentialsHandler struct {
-	credStore     orgCredentialStore
+	credStore     CredentialStore
+	orgOps        orgBindingAndAutoApplyStore
 	orgKeyDeriver secrets.AdminKeyDeriver
 	authSvc       orgAuthService
 }
 
 // NewOrgCredentialsHandler creates a new OrgCredentialsHandler.
-func NewOrgCredentialsHandler(store orgCredentialStore, orgKeyDeriver secrets.AdminKeyDeriver, authSvc orgAuthService) *OrgCredentialsHandler {
-	return &OrgCredentialsHandler{credStore: store, orgKeyDeriver: orgKeyDeriver, authSvc: authSvc}
+func NewOrgCredentialsHandler(store CredentialStore, orgOps orgBindingAndAutoApplyStore, orgKeyDeriver secrets.AdminKeyDeriver, authSvc orgAuthService) *OrgCredentialsHandler {
+	return &OrgCredentialsHandler{credStore: store, orgOps: orgOps, orgKeyDeriver: orgKeyDeriver, authSvc: authSvc}
 }
 
 type createOrgCredentialRequest struct {
@@ -56,25 +57,6 @@ type updateOrgCredentialRequest struct {
 	ModelContextLimits map[string]int `json:"modelContextLimits"`
 }
 
-// OrgCredentialResponse is the API response for an org credential. It mirrors
-// AdminCredentialResponse (camelCase JSON tags, never exposes apiKey) and adds
-// OrgID. BaseURL is extracted from the encrypted ciphertext by the handler, so
-// the client never sees the apiKey that shares the same plaintext blob.
-type OrgCredentialResponse struct {
-	ID                 string         `json:"id"`
-	OrgID              string         `json:"orgId"`
-	Name               string         `json:"name"`
-	Provider           string         `json:"provider"`
-	BaseURL            string         `json:"baseURL,omitempty"`
-	ModelAllowlist     []string       `json:"modelAllowlist"`
-	ModelContextLimits map[string]int `json:"modelContextLimits"`
-	CreatedAt          string         `json:"createdAt"`
-	UpdatedAt          string         `json:"updatedAt"`
-	// BindWarning is set only by Create when auto-binding the credential to
-	// existing org workspaces fails (non-fatal — the credential is stored).
-	BindWarning string `json:"bindWarning,omitempty"`
-}
-
 // orgKEK returns the server KEK used to encrypt org credentials, or nil if the
 // key deriver is not configured.
 func (h *OrgCredentialsHandler) orgKEK() []byte {
@@ -82,41 +64,6 @@ func (h *OrgCredentialsHandler) orgKEK() []byte {
 		return nil
 	}
 	return h.orgKeyDeriver("org-credentials")
-}
-
-// buildOrgCredResponse converts a stored org credential row into the API
-// response DTO, decrypting the ciphertext to extract baseURL. A decryption
-// failure is non-fatal: baseURL is omitted and the remaining metadata is still
-// returned (the credential remains usable — only the display field is lost).
-func buildOrgCredResponse(row *secrets.OrgCredentialRow, kek []byte) OrgCredentialResponse {
-	resp := OrgCredentialResponse{
-		ID:                 row.ID,
-		OrgID:              row.OrgID,
-		Name:               row.Name,
-		Provider:           row.Provider,
-		ModelAllowlist:     row.ModelAllowlist,
-		ModelContextLimits: row.ModelContextLimits,
-		CreatedAt:          row.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:          row.UpdatedAt.Format(time.RFC3339),
-	}
-	if resp.ModelAllowlist == nil {
-		resp.ModelAllowlist = []string{}
-	}
-	if resp.ModelContextLimits == nil {
-		resp.ModelContextLimits = map[string]int{}
-	}
-	if kek != nil {
-		if plain, err := secrets.DecryptSecret(kek, row.Ciphertext); err == nil {
-			var pd secrets.LLMProviderData
-			if json.Unmarshal(plain, &pd) == nil {
-				resp.BaseURL = pd.BaseURL
-			}
-			// Zero the decrypted plaintext (contains the API key) so it does
-			// not linger in heap memory longer than necessary.
-			zeroBytes(plain)
-		}
-	}
-	return resp
 }
 
 // Create handles POST /api/v1/orgs/:id/credentials.
@@ -136,30 +83,38 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 		return
 	}
 
-	plaintext, err := json.Marshal(secrets.LLMProviderData{ //nolint:gosec // G117 false positive — APIKey is encrypted before storage
-		Provider: req.Provider,
-		APIKey:   req.APIKey,
-		BaseURL:  req.BaseURL,
-	})
+	ciphertext, err := encryptCredentialData(orgKEK, req.Provider, req.APIKey, req.BaseURL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode credential"})
 		return
 	}
-	ciphertext, err := secrets.EncryptSecret(orgKEK, plaintext)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "encryption failed"})
-		return
-	}
-	zeroBytes(plaintext)
 
 	allowlist := req.ModelAllowlist
 	if allowlist == nil {
 		allowlist = []string{}
 	}
 
-	credID, err := h.credStore.CreateOrgCredential(ctx, orgID, req.Name, req.Provider, ciphertext, allowlist, req.ModelContextLimits)
-	if err != nil {
-		if isDuplicateErr(err) {
+	credID := uuid.New().String()
+	now := time.Now()
+	row := &secrets.CredentialRow{
+		ID:                 credID,
+		OwnerType:          "org",
+		OwnerID:            orgID,
+		Name:               req.Name,
+		Provider:           req.Provider,
+		Ciphertext:         ciphertext,
+		KeyVersion:         1,
+		ModelAllowlist:     allowlist,
+		ModelContextLimits: req.ModelContextLimits,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+	if row.ModelContextLimits == nil {
+		row.ModelContextLimits = map[string]int{}
+	}
+
+	if err := h.credStore.CreateCredential(ctx, "org", orgID, row); err != nil {
+		if errors.Is(ClassifyPostgresError(err), ErrDuplicateCredential) {
 			c.JSON(http.StatusConflict, gin.H{"error": "credential for this provider already exists"})
 			return
 		}
@@ -169,19 +124,19 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 
 	// Fetch the freshly-created row so the response reflects the DB-generated
 	// timestamps and the stored ciphertext (for baseURL extraction).
-	created, err := h.credStore.GetOrgCredential(ctx, orgID, credID)
+	created, err := h.credStore.GetCredential(ctx, "org", orgID, credID)
 	if err != nil || created == nil {
 		// Credential was stored but unreadable — surface a minimal response.
-		c.JSON(http.StatusCreated, OrgCredentialResponse{
+		c.JSON(http.StatusCreated, CredentialResponse{
 			ID: credID, OrgID: orgID, Name: req.Name, Provider: req.Provider,
 			ModelAllowlist: allowlist, ModelContextLimits: req.ModelContextLimits,
 		})
 		return
 	}
 
-	resp := buildOrgCredResponse(created, orgKEK)
+	resp := buildCredentialResponse(created, orgKEK)
 
-	if err := h.credStore.BindCredentialToAllOrgWorkspaces(ctx, credID, orgID); err != nil {
+	if err := h.orgOps.BindCredentialToAllOrgWorkspaces(ctx, credID, orgID); err != nil {
 		resp.BindWarning = "credential created but auto-bind to existing org workspaces failed"
 	}
 
@@ -191,15 +146,20 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 // List handles GET /api/v1/orgs/:id/credentials.
 func (h *OrgCredentialsHandler) List(c *gin.Context) {
 	orgID := c.Param("id")
-	rows, err := h.credStore.ListOrgCredentials(c.Request.Context(), orgID)
+	rows, err := h.credStore.ListCredentials(c.Request.Context(), "org", orgID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list credentials"})
 		return
 	}
+	// The unified ListCredentials returns ASC (matching admin/user). The org
+	// credential list was historically DESC (newest first); preserve that order.
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].CreatedAt.After(rows[j].CreatedAt)
+	})
 	kek := h.orgKEK()
-	resp := make([]OrgCredentialResponse, 0, len(rows))
+	resp := make([]CredentialResponse, 0, len(rows))
 	for _, row := range rows {
-		resp = append(resp, buildOrgCredResponse(row, kek))
+		resp = append(resp, buildCredentialResponse(row, kek))
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -216,7 +176,7 @@ func (h *OrgCredentialsHandler) Update(c *gin.Context) {
 		return
 	}
 
-	existing, err := h.credStore.GetOrgCredential(ctx, orgID, credID)
+	existing, err := h.credStore.GetCredential(ctx, "org", orgID, credID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to retrieve credential"})
 		return
@@ -244,6 +204,7 @@ func (h *OrgCredentialsHandler) Update(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to decrypt existing credential"})
 			return
 		}
+		defer zeroBytes(oldPlaintext) // zero on all exit paths (success and failure)
 		var pd secrets.LLMProviderData
 		if err := json.Unmarshal(oldPlaintext, &pd); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to decode credential"})
@@ -261,35 +222,67 @@ func (h *OrgCredentialsHandler) Update(c *gin.Context) {
 			return
 		}
 		newCiphertext, err = secrets.EncryptSecret(orgKEK, newPlaintext)
+		zeroBytes(newPlaintext)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "re-encryption failed"})
 			return
 		}
-		zeroBytes(newPlaintext)
-		zeroBytes(oldPlaintext)
 		newKeyVersion++
 	}
 
-	if err := h.credStore.UpdateOrgCredential(ctx, orgID, credID, req.Name, newCiphertext, req.ModelAllowlist, req.ModelContextLimits, newKeyVersion); err != nil {
+	// Build the update row. The unified UpdateCredential uses COALESCE so that
+	// nil model_allowlist / model_context_limits / ciphertext mean "don't change";
+	// this preserves the org handler's partial-update semantics. Name is applied
+	// only when the caller supplied one (empty string leaves the column unchanged
+	// via NULLIF). Provider is never changed by org Update (org has no Provider
+	// field in its request), so it is passed through as the existing value.
+	upd := &secrets.CredentialRow{
+		ID:             credID,
+		OwnerType:      "org",
+		OwnerID:        orgID,
+		Name:           existing.Name,
+		Provider:       existing.Provider,
+		Ciphertext:     newCiphertext,
+		KeyVersion:     newKeyVersion,
+		ModelAllowlist: req.ModelAllowlist,
+	}
+	if req.Name != nil {
+		upd.Name = *req.Name
+	}
+	// modelContextLimits is intentionally NOT pre-normalized: a nil value here
+	// must reach the DB as SQL NULL so COALESCE leaves the column unchanged
+	// (preserving the org handler's partial-update contract: nil = "don't
+	// change", empty map = "clear all"). Only set it when the caller supplied
+	// a value.
+	upd.ModelContextLimits = req.ModelContextLimits
+
+	if err := h.credStore.UpdateCredential(ctx, "org", orgID, credID, upd); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update credential"})
 		return
 	}
 
 	// Fetch the updated row so the response carries the DB-generated updated_at
 	// and the (possibly re-encrypted) ciphertext for baseURL extraction.
-	updated, err := h.credStore.GetOrgCredential(ctx, orgID, credID)
+	updated, err := h.credStore.GetCredential(ctx, "org", orgID, credID)
 	if err != nil || updated == nil {
-		c.JSON(http.StatusOK, OrgCredentialResponse{ID: credID, OrgID: orgID})
+		c.JSON(http.StatusOK, CredentialResponse{ID: credID, OrgID: orgID})
 		return
 	}
-	c.JSON(http.StatusOK, buildOrgCredResponse(updated, h.orgKEK()))
+	c.JSON(http.StatusOK, buildCredentialResponse(updated, h.orgKEK()))
 }
 
 // Delete handles DELETE /api/v1/orgs/:id/credentials/:credID.
 func (h *OrgCredentialsHandler) Delete(c *gin.Context) {
 	orgID := c.Param("id")
 	credID := c.Param("credID")
-	if err := h.credStore.DeleteOrgCredential(c.Request.Context(), orgID, credID); err != nil {
+	// The unified DeleteCredential returns pgx.ErrNoRows when no row was affected.
+	// Org delete was historically idempotent (204 even if already gone); preserve
+	// that by treating "not found" as success.
+	if err := h.credStore.DeleteCredential(c.Request.Context(), "org", orgID, credID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			c.Status(http.StatusNoContent)
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete credential"})
 		return
 	}
@@ -305,28 +298,19 @@ func (h *OrgCredentialsHandler) ProbeModels(c *gin.Context) {
 	credID := c.Param("credID")
 	ctx := c.Request.Context()
 
-	row, err := h.credStore.GetOrgCredential(ctx, orgID, credID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get credential"})
+	resolveKey := func(_ context.Context) ([]byte, string, int) {
+		if k := h.orgKEK(); k != nil {
+			return k, "", 0
+		}
+		return nil, "server key not configured", http.StatusServiceUnavailable
+	}
+	plaintext, limits, perr := getCredentialForProbe(ctx, h.credStore, "org", orgID, credID, resolveKey)
+	if perr != nil {
+		c.JSON(perr.status, gin.H{"error": perr.msg})
 		return
 	}
-	if row == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "credential not found"})
-		return
-	}
-
-	kek := h.orgKEK()
-	if kek == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "server key not configured"})
-		return
-	}
-	plaintext, err := secrets.DecryptSecret(kek, row.Ciphertext)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to decrypt credential"})
-		return
-	}
-
-	c.JSON(http.StatusOK, probeCredentialModels(ctx, plaintext, row.ModelContextLimits))
+	defer zeroBytes(plaintext)
+	c.JSON(http.StatusOK, probeCredentialModels(ctx, plaintext, limits))
 }
 
 // CreateAutoApply handles POST /api/v1/orgs/:id/credentials/:credID/auto-apply.
@@ -335,7 +319,7 @@ func (h *OrgCredentialsHandler) CreateAutoApply(c *gin.Context) {
 	credID := c.Param("credID")
 	ctx := c.Request.Context()
 
-	cred, err := h.credStore.GetOrgCredential(ctx, orgID, credID)
+	cred, err := h.credStore.GetCredential(ctx, "org", orgID, credID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify credential"})
 		return
@@ -345,8 +329,8 @@ func (h *OrgCredentialsHandler) CreateAutoApply(c *gin.Context) {
 		return
 	}
 
-	if err := h.credStore.CreateOrgAutoApply(ctx, credID, orgID, 5); err != nil {
-		if isDuplicateErr(err) {
+	if err := h.orgOps.CreateOrgAutoApply(ctx, credID, orgID, 5); err != nil {
+		if errors.Is(ClassifyPostgresError(err), ErrDuplicateCredential) {
 			c.JSON(http.StatusConflict, gin.H{"error": "auto-apply rule already exists"})
 			return
 		}
@@ -363,7 +347,7 @@ func (h *OrgCredentialsHandler) ListAutoApply(c *gin.Context) {
 
 	credID := c.Param("credID")
 	if credID != "" {
-		cred, err := h.credStore.GetOrgCredential(ctx, orgID, credID)
+		cred, err := h.credStore.GetCredential(ctx, "org", orgID, credID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify credential"})
 			return
@@ -374,7 +358,7 @@ func (h *OrgCredentialsHandler) ListAutoApply(c *gin.Context) {
 		}
 	}
 
-	rules, err := h.credStore.ListOrgAutoApply(ctx, orgID)
+	rules, err := h.orgOps.ListOrgAutoApply(ctx, orgID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list auto-apply rules"})
 		return
@@ -389,7 +373,7 @@ func (h *OrgCredentialsHandler) ListAutoApply(c *gin.Context) {
 func (h *OrgCredentialsHandler) DeleteAutoApply(c *gin.Context) {
 	orgID := c.Param("id")
 	credID := c.Param("credID")
-	if err := h.credStore.DeleteOrgAutoApply(c.Request.Context(), credID, orgID); err != nil {
+	if err := h.orgOps.DeleteOrgAutoApply(c.Request.Context(), credID, orgID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete auto-apply rule"})
 		return
 	}

@@ -17,6 +17,7 @@ import {
 } from "../../api/providerCredentials";
 import { useToast } from "../../providers/ToastProvider";
 import { Spinner } from "../ui/Spinner";
+import { ModelConfigTable, type ModelRow } from "../shared/ModelConfigTable";
 import { MetaRow } from "./MetaRow";
 import {
   Shield,
@@ -472,78 +473,6 @@ function AddAutoApplyRuleForm({
   );
 }
 
-// ─── Shared model config table ────────────────────────────────────────────────
-// Used by both admin and user create forms. Shows models fetched from the
-// provider's /v1/models endpoint and lets the user enable/disable each one
-// and optionally enter a context window size.
-
-interface ModelRow {
-  id: string;
-  enabled: boolean;
-  contextLimit: string; // stored as string for controlled input
-}
-
-function ModelConfigTable({
-  rows,
-  onChange,
-}: {
-  rows: ModelRow[];
-  onChange: (rows: ModelRow[]) => void;
-}) {
-  const update = (idx: number, patch: Partial<ModelRow>) =>
-    onChange(rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
-
-  if (rows.length === 0) {
-    return (
-      <p className="text-xs text-muted-foreground italic">
-        No models found. Check your API key and base URL, or add models manually below.
-      </p>
-    );
-  }
-
-  return (
-    <div className="max-h-48 overflow-y-auto rounded-md border border-border">
-      <table className="w-full text-xs">
-        <thead className="sticky top-0 bg-muted/80 backdrop-blur-sm">
-          <tr>
-            <th className="px-2 py-1.5 text-left font-medium text-muted-foreground w-8">On</th>
-            <th className="px-2 py-1.5 text-left font-medium text-muted-foreground">Model ID</th>
-            <th className="px-2 py-1.5 text-left font-medium text-muted-foreground w-40">
-              Context window <span className="text-muted-foreground/50">(tokens)</span>
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, idx) => (
-            <tr key={row.id} className="border-t border-border/50 hover:bg-muted/30">
-              <td className="px-2 py-1">
-                <input
-                  type="checkbox"
-                  checked={row.enabled}
-                  onChange={(e) => update(idx, { enabled: e.target.checked })}
-                  className="h-3.5 w-3.5"
-                />
-              </td>
-              <td className="px-2 py-1 font-mono">{row.id}</td>
-              <td className="px-2 py-1">
-                <input
-                  type="number"
-                  min={0}
-                  value={row.contextLimit}
-                  onChange={(e) => update(idx, { contextLimit: e.target.value })}
-                  placeholder="e.g. 200000"
-                  disabled={!row.enabled}
-                  className="h-6 w-full rounded border border-border bg-background px-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-40"
-                />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 // ─── Create form ──────────────────────────────────────────────────────────────
 
 function CreateAdminCredentialForm({
@@ -674,7 +603,11 @@ function CreateAdminCredentialForm({
         )}
         {error && <p className="text-xs text-destructive">{error}</p>}
 
-        <ModelConfigTable rows={modelRows} onChange={setModelRows} />
+        <ModelConfigTable
+          rows={modelRows}
+          onChange={setModelRows}
+          emptyMessage="No models found. Check your API key and base URL, or add models manually below."
+        />
 
         <div className="flex gap-2 pt-1">
           <button

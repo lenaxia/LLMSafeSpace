@@ -16,18 +16,25 @@ import (
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 )
 
-// AdminCredentialStore abstracts DB operations for admin provider credentials.
-type AdminCredentialStore interface {
-	CreateAdminCredential(ctx context.Context, row *secrets.AdminCredentialRow) error
-	ListAdminCredentials(ctx context.Context) ([]*secrets.AdminCredentialRow, error)
-	GetAdminCredential(ctx context.Context, id string) (*secrets.AdminCredentialRow, error)
-	UpdateAdminCredential(ctx context.Context, row *secrets.AdminCredentialRow) error
-	DeleteAdminCredential(ctx context.Context, id string) error
+// CredentialStore is the unified DB interface for provider credential CRUD,
+// scoped by (ownerType, ownerID) for multi-tenant isolation. All three
+// credential handlers (admin/user/org) depend on it; their specialized stores
+// (bindings, auto-apply) are wired separately.
+type CredentialStore interface {
+	CreateCredential(ctx context.Context, ownerType, ownerID string, row *secrets.CredentialRow) error
+	ListCredentials(ctx context.Context, ownerType, ownerID string) ([]*secrets.CredentialRow, error)
+	GetCredential(ctx context.Context, ownerType, ownerID, credID string) (*secrets.CredentialRow, error)
+	UpdateCredential(ctx context.Context, ownerType, ownerID, credID string, row *secrets.CredentialRow) error
+	DeleteCredential(ctx context.Context, ownerType, ownerID, credID string) error
 }
 
-// AdminCredentialResponse is the API response for an admin credential (never exposes apiKey).
-type AdminCredentialResponse struct {
+// CredentialResponse is the API response for any provider credential.
+// Never exposes apiKey. BaseURL is extracted from the encrypted ciphertext.
+// OrgID is populated only for org-scoped credentials (omitted otherwise).
+// BindWarning is set only by org Create when auto-bind fails (non-fatal).
+type CredentialResponse struct {
 	ID                 string         `json:"id"`
+	OrgID              string         `json:"orgId,omitempty"`
 	Name               string         `json:"name"`
 	Provider           string         `json:"provider"`
 	BaseURL            string         `json:"baseURL,omitempty"`
@@ -35,6 +42,7 @@ type AdminCredentialResponse struct {
 	ModelContextLimits map[string]int `json:"modelContextLimits"`
 	CreatedAt          string         `json:"createdAt"`
 	UpdatedAt          string         `json:"updatedAt"`
+	BindWarning        string         `json:"bindWarning,omitempty"`
 }
 
 type createAdminCredentialRequest struct {
@@ -57,15 +65,53 @@ type updateAdminCredentialRequest struct {
 	ModelContextLimits map[string]int `json:"modelContextLimits"`
 }
 
+// buildCredentialResponse converts a stored credential row into the API
+// response DTO, decrypting the ciphertext to extract baseURL. A decryption
+// failure is non-fatal: baseURL is omitted and the remaining metadata is
+// returned (the credential remains usable — only the display field is lost).
+// The decrypted plaintext (which contains the API key) is zeroed before return.
+func buildCredentialResponse(row *secrets.CredentialRow, key []byte) CredentialResponse {
+	resp := CredentialResponse{
+		ID:                 row.ID,
+		Name:               row.Name,
+		Provider:           row.Provider,
+		ModelAllowlist:     row.ModelAllowlist,
+		ModelContextLimits: row.ModelContextLimits,
+		CreatedAt:          row.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:          row.UpdatedAt.Format(time.RFC3339),
+	}
+	// OrgID is populated only for org-scoped credentials; admin/user credentials
+	// omit it (OwnerID is "_platform" or a user id — not meaningful to clients).
+	if row.OwnerType == "org" {
+		resp.OrgID = row.OwnerID
+	}
+	if resp.ModelAllowlist == nil {
+		resp.ModelAllowlist = []string{}
+	}
+	if resp.ModelContextLimits == nil {
+		resp.ModelContextLimits = map[string]int{}
+	}
+	if key != nil {
+		if plain, err := secrets.DecryptSecret(key, row.Ciphertext); err == nil {
+			var pd secrets.LLMProviderData
+			if json.Unmarshal(plain, &pd) == nil {
+				resp.BaseURL = pd.BaseURL
+			}
+			zeroBytes(plain)
+		}
+	}
+	return resp
+}
+
 // AdminProviderCredentialsHandler handles CRUD for admin provider credentials.
 type AdminProviderCredentialsHandler struct {
-	store          AdminCredentialStore
+	store          CredentialStore
 	autoApplyStore AutoApplyStore
 	deriveKey      secrets.AdminKeyDeriver
 }
 
 // NewAdminProviderCredentialsHandler creates a new handler.
-func NewAdminProviderCredentialsHandler(store AdminCredentialStore, deriveKey secrets.AdminKeyDeriver) *AdminProviderCredentialsHandler {
+func NewAdminProviderCredentialsHandler(store CredentialStore, deriveKey secrets.AdminKeyDeriver) *AdminProviderCredentialsHandler {
 	return &AdminProviderCredentialsHandler{store: store, deriveKey: deriveKey}
 }
 
@@ -97,23 +143,14 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 		return
 	}
 
-	plaintext, marshalErr := json.Marshal(secrets.LLMProviderData{ //nolint:gosec // marshaling for encryption, not API response
-		Provider: req.Provider,
-		APIKey:   req.APIKey,
-		BaseURL:  req.BaseURL,
-	})
-	if marshalErr != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode credential"})
-		return
-	}
-	ciphertext, err := secrets.EncryptSecret(kek, plaintext)
+	ciphertext, err := encryptCredentialData(kek, req.Provider, req.APIKey, req.BaseURL)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "encryption failed"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode credential"})
 		return
 	}
 
 	now := time.Now()
-	row := &secrets.AdminCredentialRow{
+	row := &secrets.CredentialRow{
 		ID:                 uuid.New().String(),
 		Name:               req.Name,
 		Provider:           req.Provider,
@@ -131,7 +168,7 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 		row.ModelContextLimits = map[string]int{}
 	}
 
-	if err := h.store.CreateAdminCredential(c.Request.Context(), row); err != nil {
+	if err := h.store.CreateCredential(c.Request.Context(), "admin", "_platform", row); err != nil {
 		if errors.Is(ClassifyPostgresError(err), ErrDuplicateCredential) {
 			c.JSON(http.StatusConflict, gin.H{"error": "credential for this provider already exists"})
 			return
@@ -140,7 +177,7 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, AdminCredentialResponse{
+	c.JSON(http.StatusCreated, CredentialResponse{
 		ID:                 row.ID,
 		Name:               row.Name,
 		Provider:           row.Provider,
@@ -154,39 +191,16 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 
 // List handles GET /api/v1/admin/provider-credentials.
 func (h *AdminProviderCredentialsHandler) List(c *gin.Context) {
-	rows, err := h.store.ListAdminCredentials(c.Request.Context())
+	rows, err := h.store.ListCredentials(c.Request.Context(), "admin", "_platform")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list credentials"})
 		return
 	}
 
 	kek := h.kek()
-	resp := make([]AdminCredentialResponse, 0, len(rows))
+	resp := make([]CredentialResponse, 0, len(rows))
 	for _, row := range rows {
-		r := AdminCredentialResponse{
-			ID:                 row.ID,
-			Name:               row.Name,
-			Provider:           row.Provider,
-			ModelAllowlist:     row.ModelAllowlist,
-			ModelContextLimits: row.ModelContextLimits,
-			CreatedAt:          row.CreatedAt.Format(time.RFC3339),
-			UpdatedAt:          row.UpdatedAt.Format(time.RFC3339),
-		}
-		if r.ModelAllowlist == nil {
-			r.ModelAllowlist = []string{}
-		}
-		if r.ModelContextLimits == nil {
-			r.ModelContextLimits = map[string]int{}
-		}
-		if kek != nil {
-			if plain, decErr := secrets.DecryptSecret(kek, row.Ciphertext); decErr == nil {
-				var pd secrets.LLMProviderData
-				if json.Unmarshal(plain, &pd) == nil {
-					r.BaseURL = pd.BaseURL
-				}
-			}
-		}
-		resp = append(resp, r)
+		resp = append(resp, buildCredentialResponse(row, kek))
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -194,7 +208,7 @@ func (h *AdminProviderCredentialsHandler) List(c *gin.Context) {
 // Get handles GET /api/v1/admin/provider-credentials/:id.
 func (h *AdminProviderCredentialsHandler) Get(c *gin.Context) {
 	id := c.Param("id")
-	row, err := h.store.GetAdminCredential(c.Request.Context(), id)
+	row, err := h.store.GetCredential(c.Request.Context(), "admin", "_platform", id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get credential"})
 		return
@@ -203,37 +217,13 @@ func (h *AdminProviderCredentialsHandler) Get(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "credential not found"})
 		return
 	}
-
-	r := AdminCredentialResponse{
-		ID:                 row.ID,
-		Name:               row.Name,
-		Provider:           row.Provider,
-		ModelAllowlist:     row.ModelAllowlist,
-		ModelContextLimits: row.ModelContextLimits,
-		CreatedAt:          row.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:          row.UpdatedAt.Format(time.RFC3339),
-	}
-	if r.ModelAllowlist == nil {
-		r.ModelAllowlist = []string{}
-	}
-	if r.ModelContextLimits == nil {
-		r.ModelContextLimits = map[string]int{}
-	}
-	if kek := h.kek(); kek != nil {
-		if plain, decErr := secrets.DecryptSecret(kek, row.Ciphertext); decErr == nil {
-			var pd secrets.LLMProviderData
-			if json.Unmarshal(plain, &pd) == nil {
-				r.BaseURL = pd.BaseURL
-			}
-		}
-	}
-	c.JSON(http.StatusOK, r)
+	c.JSON(http.StatusOK, buildCredentialResponse(row, h.kek()))
 }
 
 // Update handles PUT /api/v1/admin/provider-credentials/:id.
 func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 	id := c.Param("id")
-	existing, err := h.store.GetAdminCredential(c.Request.Context(), id)
+	existing, err := h.store.GetCredential(c.Request.Context(), "admin", "_platform", id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get credential"})
 		return
@@ -280,6 +270,7 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 			})
 			return
 		}
+		defer zeroBytes(existingPlain) // zero on all exit paths (success and failure)
 		var existingData secrets.LLMProviderData
 		if err := json.Unmarshal(existingPlain, &existingData); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
@@ -303,6 +294,7 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 			return
 		}
 		ciphertext, encErr := secrets.EncryptSecret(kek, plaintext)
+		zeroBytes(plaintext)
 		if encErr != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "encryption failed"})
 			return
@@ -311,7 +303,7 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 		existing.KeyVersion++ // increment on every ciphertext write (M-2 fix)
 	}
 
-	if err := h.store.UpdateAdminCredential(c.Request.Context(), existing); err != nil {
+	if err := h.store.UpdateCredential(c.Request.Context(), "admin", "_platform", existing.ID, existing); err != nil {
 		if errors.Is(ClassifyPostgresError(err), ErrDuplicateCredential) {
 			c.JSON(http.StatusConflict, gin.H{"error": "a credential for that provider already exists"})
 			return
@@ -321,34 +313,14 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 	}
 
 	// existing.UpdatedAt is now populated from RETURNING updated_at (M-8 fix).
-	// Decrypt to include baseURL in the response (consistent with GET/List).
-	resp := AdminCredentialResponse{
-		ID:                 existing.ID,
-		Name:               existing.Name,
-		Provider:           existing.Provider,
-		ModelAllowlist:     existing.ModelAllowlist,
-		ModelContextLimits: existing.ModelContextLimits,
-		CreatedAt:          existing.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:          existing.UpdatedAt.Format(time.RFC3339),
-	}
-	if resp.ModelContextLimits == nil {
-		resp.ModelContextLimits = map[string]int{}
-	}
-	if kek := h.kek(); kek != nil {
-		if plain, decErr := secrets.DecryptSecret(kek, existing.Ciphertext); decErr == nil {
-			var pd secrets.LLMProviderData
-			if json.Unmarshal(plain, &pd) == nil {
-				resp.BaseURL = pd.BaseURL
-			}
-		}
-	}
-	c.JSON(http.StatusOK, resp)
+	// buildCredentialResponse decrypts to include baseURL (consistent with GET/List).
+	c.JSON(http.StatusOK, buildCredentialResponse(existing, h.kek()))
 }
 
 // Delete handles DELETE /api/v1/admin/provider-credentials/:id.
 func (h *AdminProviderCredentialsHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
-	if err := h.store.DeleteAdminCredential(c.Request.Context(), id); err != nil {
+	if err := h.store.DeleteCredential(c.Request.Context(), "admin", "_platform", id); err != nil {
 		if errors.Is(ClassifyPostgresError(err), ErrCredentialNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "credential not found"})
 			return
