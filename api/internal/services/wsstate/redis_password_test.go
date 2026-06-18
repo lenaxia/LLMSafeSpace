@@ -22,6 +22,9 @@ import (
 // 401 while replica B kept serving the old password and got 502s. With
 // a shared cache, all replicas agree.
 //
+// Hash-tagged key ws:{workspace_id}:pw forces co-location with activeSess
+// and deletedSessions keys for future cluster migration.
+//
 // Fail-through-to-K8s policy: on Redis error, GetCachedPassword returns
 // (empty, false) so the caller (ProxyHandler.getPassword) falls back to
 // fetching the K8s Secret directly. Redis is a performance optimization;
@@ -33,8 +36,6 @@ import (
 // - InvalidatePassword = DEL on key (single source of truth)
 // - No fail-closed: this is a CACHE, not authoritative state. The K8s
 //   Secret fetch is the source of truth.
-
-const testPasswordTTL = 1 * time.Hour
 
 // passwordKey returns the canonical Redis key for a workspace's cached password.
 func passwordKey(workspaceID string) string {
