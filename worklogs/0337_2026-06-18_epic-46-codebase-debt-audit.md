@@ -30,7 +30,7 @@ Measured rule violations against `README-LLM.md` Rules 0–5:
 Additional findings:
 - **Epic numbering broken**: epic-38 and epic-43 each used twice; epic-39 missing.
 - **Duplicate design doc**: `design/0018_..._wARmpool.md` and `design/0018_..._warmpool.md` are byte-identical.
-- **README-LLM.md link drift**: lines 57, 58, 183, 185 reference wrong design-doc numbers.
+- **README-LLM.md link drift**: lines 57, 58, 185, 186 reference wrong design-doc numbers.
 - **No shared Service interface** despite 30 `*Service` structs; two parallel mock trees.
 - **Setter injection antipattern**: `SecretsHandler` has 9 setters, `auth.Service` has 4 (including security-critical `SetMasterKey`).
 
