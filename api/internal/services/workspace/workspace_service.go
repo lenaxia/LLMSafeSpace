@@ -761,6 +761,21 @@ func (s *Service) verifyOwner(ctx context.Context, userID, workspaceID string) e
 		return apierrors.NewNotFoundError("workspace", workspaceID, fmt.Errorf("workspace not found"))
 	}
 	if meta.UserID == userID {
+		// D5: for org-attributed workspaces, the creator must be a CURRENT org
+		// member. Offboarded users lose access automatically — no account
+		// suspension needed. Personal workspaces (no org_id) are unaffected.
+		if meta.OrgID != nil && *meta.OrgID != "" && s.orgStore != nil {
+			isMember, err := s.orgStore.IsOrgMember(ctx, *meta.OrgID, userID)
+			if err != nil {
+				return fmt.Errorf("check org membership: %w", err)
+			}
+			if !isMember {
+				return apierrors.NewForbiddenError(
+					"workspace access denied",
+					fmt.Errorf("user %s is no longer a member of org %s", userID, *meta.OrgID),
+				)
+			}
+		}
 		return nil
 	}
 	if meta.OrgID != nil && *meta.OrgID != "" && s.orgStore != nil {
@@ -778,10 +793,10 @@ func (s *Service) verifyOwner(ctx context.Context, userID, workspaceID string) e
 	)
 }
 
-// verifyOwner (above) is the single access check post-D6. It grants access to
-// the workspace creator or, for org workspaces, an org admin. The former
-// verifyOrgAdmin was identical in behavior and has been removed; its call sites
-// now use verifyOwner directly.
+// verifyOwner (above) is the single access check post-D5/D6. It grants access
+// to: (1) the workspace creator, IF they are still a current org member for
+// org-attributed workspaces (D5); (2) an org admin for org workspaces (D6).
+// Offboarded creators lose access automatically.
 
 // buildWorkspaceCRD constructs a v1.Workspace CRD from an API request.
 func buildWorkspaceCRD(workspaceID, userID string, req types.CreateWorkspaceRequest, namespace string) *v1.Workspace {

@@ -553,11 +553,28 @@ func (s *Service) MarkWorkspaceDeleted(ctx context.Context, workspaceID string) 
 // workspaces use the dedicated GET /orgs/:id/workspaces endpoint
 // (OrgStore.ListOrgWorkspaces).
 func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offset int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error) {
+	// S1: filter out frozen workspaces — org-attributed workspaces where the
+	// user is no longer a current member of the org (offboarded or org
+	// soft-deleted). Personal workspaces (org_id IS NULL) are always shown.
+	// The membership check mirrors IsOrgMember: joins organizations for the
+	// deleted_at + status guards.
+	membershipCondition := `
+        AND (
+            w.org_id IS NULL
+            OR EXISTS (
+                SELECT 1 FROM org_memberships m
+                JOIN organizations o ON o.id = m.org_id
+                WHERE m.org_id = w.org_id AND m.user_id = $1
+                  AND o.deleted_at IS NULL AND o.status != 'suspended'
+            )
+        )`
+
 	var total int
 	if err := s.DB.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM workspaces w
-		WHERE w.deleted_at IS NULL AND w.user_id = $1
-	`, userID).Scan(&total); err != nil {
+		WHERE w.deleted_at IS NULL AND w.user_id = $1`+membershipCondition,
+		userID,
+	).Scan(&total); err != nil {
 		return nil, nil, fmt.Errorf("failed to count workspaces: %w", err)
 	}
 	pagination := &types.PaginationMetadata{
@@ -581,7 +598,7 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
                w.org_id
         FROM workspaces w
         LEFT JOIN workspace_agent_state s ON s.workspace_id = w.id
-        WHERE w.deleted_at IS NULL AND w.user_id = $1
+        WHERE w.deleted_at IS NULL AND w.user_id = $1`+membershipCondition+`
         ORDER BY w.created_at DESC
         LIMIT $2 OFFSET $3
     `, userID, limit, offset)

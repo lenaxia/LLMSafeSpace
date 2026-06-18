@@ -97,9 +97,9 @@ func TestVerifyOwner_D6_OrgAdminAllowed(t *testing.T) {
 	}
 }
 
-// TestVerifyOwner_D6_CreatorAlwaysAllowed verifies the workspace creator keeps
-// access regardless of org role.
-func TestVerifyOwner_D6_CreatorAlwaysAllowed(t *testing.T) {
+// TestVerifyOwner_D6_CreatorMemberAllowed verifies the workspace creator keeps
+// access when they are a current member of the org (D5: membership-gated).
+func TestVerifyOwner_D6_CreatorMemberAllowed(t *testing.T) {
 	f := newFixture(t)
 	orgID := "org-1"
 	wsID := "ws-1"
@@ -109,10 +109,12 @@ func TestVerifyOwner_D6_CreatorAlwaysAllowed(t *testing.T) {
 		ID: wsID, UserID: creatorID, OrgID: &orgID,
 	}, nil)
 
-	f.svc.SetOrgStore(newStubOrgChecker())
+	org := newStubOrgChecker()
+	org.members[orgID+":"+creatorID] = true
+	f.svc.SetOrgStore(org)
 
 	if err := f.svc.verifyOwner(context.Background(), creatorID, wsID); err != nil {
-		t.Fatalf("creator must always be allowed; got err=%v", err)
+		t.Fatalf("creator who is a current member must be allowed; got err=%v", err)
 	}
 }
 
