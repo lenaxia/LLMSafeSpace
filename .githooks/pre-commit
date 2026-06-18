@@ -249,9 +249,9 @@ fi
 # Migration safety: only when .sql files are staged AND docker is
 # available. Spins up a throwaway postgres:16 container and runs the full
 # round-trip + idempotency + fk-cascade + data-cleanup suite — the same
-# four checks CI runs (.github/workflows/migration-safety.yml). Catches a
-# broken migration (bad SQL, a down that doesn't reverse its up, a missing
-# IF NOT EXISTS) BEFORE push instead of waiting for CI.
+# four checks CI runs (.github/workflows/migration-safety.yml). Requires
+# host-side psql/pg_isready (the migration scripts invoke these directly).
+# Catches a broken migration BEFORE push instead of waiting for CI.
 #
 # Auto-skips on docker-less machines and on commits that don't touch .sql,
 # so it never adds latency where it can't help. Costs ~20-40s when it runs.

@@ -453,8 +453,8 @@ migration-safety: migration-roundtrip migration-idempotent migration-fk-cascade 
 
 # migration-safety-docker: run the full migration-safety suite against a
 # throwaway postgres:16 container that this target starts and tears down.
-# No PG* env vars or manual database setup required — only a working Docker
-# daemon. Mirrors .github/workflows/migration-safety.yml exactly (all four
+# Requires Docker + host-side PostgreSQL client tools (psql, pg_isready).
+# Mirrors .github/workflows/migration-safety.yml exactly (all four
 # checks), so what runs in CI runs identically here.
 #
 # Used by .githooks/pre-commit (only when .sql files are staged AND docker

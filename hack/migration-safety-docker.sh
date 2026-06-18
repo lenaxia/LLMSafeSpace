@@ -3,8 +3,9 @@
 #
 # Spin up a throwaway postgres:16 container, run the full migration-safety
 # suite (round-trip + idempotency + FK cascade + data cleanup) against it,
-# then tear it down. Zero manual setup — the only requirement is a working
-# Docker daemon.
+# then tear it down. Requires Docker + host-side PostgreSQL client tools
+# (psql, pg_dump, pg_isready) — the underlying migration scripts invoke
+# these directly against the container's published port.
 #
 # This is the local equivalent of .github/workflows/migration-safety.yml.
 # It exists so the pre-commit hook (and developers) can validate that
@@ -18,7 +19,7 @@
 # Exit codes:
 #   0  all checks passed
 #   1  a migration-safety check failed (see output for which one)
-#   2  prerequisites missing (docker daemon unreachable / image pull failed)
+#   2  prerequisites missing (docker / psql / pg_isready not available)
 #
 # Escape hatch: set LSS_SKIP_MIGRATION_GATE=1 in the environment to make
 # this script exit 0 immediately. Used by the pre-commit hook when a
@@ -48,6 +49,18 @@ if ! docker info >/dev/null 2>&1; then
     echo "  you supply via PG* env vars)." >&2
     exit 2
 fi
+
+# The underlying migration scripts (hack/migration-roundtrip.sh etc.) invoke
+# psql, pg_dump, and pg_isready directly against the container's published
+# port. Fail fast before starting the container if these are missing.
+for cmd in psql pg_isready; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "migration-safety-docker: $cmd not found on PATH." >&2
+        echo "  Install PostgreSQL client tools (e.g. 'brew install libpq' or" >&2
+        echo "  'apt install postgresql-client'), then re-run." >&2
+        exit 2
+    fi
+done
 
 PGIMAGE="${LSS_PGIMAGE:-postgres:16}"
 PGUSER_VAL="llmsafespace"
