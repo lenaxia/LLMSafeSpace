@@ -51,6 +51,11 @@ type OrgStore interface {
 	// enumeration. Users are hard-deleted (no deleted_at column), so no soft-delete
 	// filter is needed.
 	GetUserIDByEmail(ctx context.Context, email string) (string, error)
+	// GetUserOrgID returns the user's single org ID (or "" if not in any org).
+	// With single-org enforcement (D8), a user belongs to at most one org. Used
+	// by invitation acceptance (S3 cross-org check) and workspace auto-attribution
+	// (D4). Returns ("", nil) on no membership. S7 in 0034.
+	GetUserOrgID(ctx context.Context, userID string) (string, error)
 
 	// US-43.1: Stripe lifecycle. UpdateOrgStatus sets the operational status
 	// (active/suspended) and/or subscription_status and/or plan_id. A nil/empty
@@ -587,6 +592,21 @@ func (s *PgOrgStore) GetUserIDByEmail(ctx context.Context, email string) (string
 		return "", fmt.Errorf("get user id by email: %w", err)
 	}
 	return id, nil
+}
+
+func (s *PgOrgStore) GetUserOrgID(ctx context.Context, userID string) (string, error) {
+	var orgID string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT org_id FROM org_memberships WHERE user_id = $1`,
+		userID,
+	).Scan(&orgID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("get user org id: %w", err)
+	}
+	return orgID, nil
 }
 
 func (s *PgOrgStore) UpdateOrgStatus(ctx context.Context, orgID string, status *types.OrgStatus, subStatus *types.OrgSubscriptionStatus, planID *types.OrgPlan) error {

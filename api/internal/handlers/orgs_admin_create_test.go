@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -331,6 +332,47 @@ func (m *mockOrgStore) orgsLen() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.orgs)
+}
+
+// --- Single-org enforcement (D8): Create path must pre-check the owner ---
+
+// A platform admin creating an org for an owner who is already in another org
+// must get a clear 409 "owner is already a member of another organization",
+// NOT a misleading "slug already in use" (the 23505 from the unique index on
+// org_memberships(user_id) would be misclassified by isDuplicateErr without
+// the pre-check). Reviewer round 1 finding C1.
+func TestCreateOrg_Admin_OwnerAlreadyInAnotherOrg_Conflict(t *testing.T) {
+	store := newMockOrgStore()
+	store.usersByEmail["owner@example.com"] = "owner-1"
+	store.userOrgID["owner-1"] = "org-existing" // owner is already in another org
+
+	router, _ := setupAdminCreateRouter(t, store, true, nil)
+
+	w := doRequest(router, "POST", "/api/v1/orgs",
+		`{"name":"Acme","slug":"acme","ownerEmail":"owner@example.com"}`)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "another organization") {
+		t.Errorf("expected 'another organization' message, got: %s", w.Body.String())
+	}
+	if store.orgsLen() != 0 {
+		t.Errorf("no org should be created when the owner is already in another org")
+	}
+}
+
+func TestCreateOrg_Admin_GetUserOrgIDError_500(t *testing.T) {
+	store := newMockOrgStore()
+	store.usersByEmail["owner@example.com"] = "owner-1"
+	store.userOrgIDErr = errors.New("db down")
+
+	router, _ := setupAdminCreateRouter(t, store, true, nil)
+
+	w := doRequest(router, "POST", "/api/v1/orgs",
+		`{"name":"Acme","slug":"acme","ownerEmail":"owner@example.com"}`)
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on GetUserOrgID error, got %d: %s", w.Code, w.Body.String())
+	}
 }
 
 // --- Error-path branches in Create (reviewer round 1) ---

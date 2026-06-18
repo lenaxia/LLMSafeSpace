@@ -40,6 +40,9 @@ type invitationStore interface {
 	CountInvitationsLastHour(ctx context.Context, orgID string) (int, error)
 	GetOrg(ctx context.Context, orgID string) (*types.Organization, error)
 	GetOrgMember(ctx context.Context, orgID, userID string) (*types.OrgMember, error)
+	// GetUserOrgID returns the user's single org ID (or "" if not in any org).
+	// Used by invitation acceptance to enforce single-org membership (S3/D8).
+	GetUserOrgID(ctx context.Context, userID string) (string, error)
 }
 
 // InvitationsHandler handles org invitation CRUD and the accept/decline flows.
@@ -270,6 +273,19 @@ func (h *InvitationsHandler) Accept(c *gin.Context) {
 	}
 	if existing != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "user is already a member of this org"})
+		return
+	}
+
+	// Single-org enforcement (D8/S3): with the unique index on
+	// org_memberships(user_id), a user in a different org would hit a raw DB
+	// constraint violation on insert. Pre-check here to return a clear 409.
+	currentOrgID, err := h.store.GetUserOrgID(ctx, userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check existing org membership"})
+		return
+	}
+	if currentOrgID != "" {
+		c.JSON(http.StatusConflict, gin.H{"error": "user is already a member of another organization"})
 		return
 	}
 
