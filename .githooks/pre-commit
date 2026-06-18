@@ -15,6 +15,8 @@
 #   - missing/wrong Go imports (goimports)              (imports-check)
 #   - golangci-lint findings (errcheck, bodyclose, …)   (lint, NEW issues only)
 #   - broken Helm templates / undefined values          (helm-render)
+#   - migrations that don't apply / round-trip cleanly  (migration-safety-docker,
+#                                                        SQL-staged + docker only)
 #   - secrets accidentally committed                    (gitleaks, optional)
 #
 # Wired up by `make install-hooks`. Each gate runs from a Make target so the
@@ -35,6 +37,10 @@
 #      reports only NEW findings introduced by your branch — pre-existing
 #      issues from earlier commits are no longer your problem to fix.
 #      (CI runs the full lint, so escapes are still caught at PR time.)
+#   4. migration-safety-docker only runs when .sql files are staged AND
+#      docker is available. Saves ~20-40s on non-SQL commits and never
+#      blocks on a docker-less machine. Mirrors the migration-safety CI
+#      workflow exactly (round-trip + idempotency + fk-cascade + data-cleanup).
 
 set -euo pipefail
 
@@ -238,6 +244,39 @@ if [ "$CHART_STAGED" -eq 1 ]; then
     - missing required fields in Chart.yaml"
 else
     show_skip "helm-render" "no charts/ files staged"
+fi
+
+# Migration safety: only when .sql files are staged AND docker is
+# available. Spins up a throwaway postgres:16 container and runs the full
+# round-trip + idempotency + fk-cascade + data-cleanup suite — the same
+# four checks CI runs (.github/workflows/migration-safety.yml). Requires
+# host-side psql/pg_isready (the migration scripts invoke these directly).
+# Catches a broken migration BEFORE push instead of waiting for CI.
+#
+# Auto-skips on docker-less machines and on commits that don't touch .sql,
+# so it never adds latency where it can't help. Costs ~20-40s when it runs.
+#
+# Escape hatches:
+#   LSS_SKIP_MIGRATION_GATE=1 git commit ...   (skip just this gate)
+#   git commit --no-verify                      (skip all gates)
+if [ "$SQL_STAGED" -eq 1 ]; then
+    if [ "${LSS_SKIP_MIGRATION_GATE:-0}" = "1" ]; then
+        show_skip "migration-safety-docker" "LSS_SKIP_MIGRATION_GATE=1"
+    elif ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+        show_skip "migration-safety-docker" "docker not installed / daemon not running"
+    else
+        run_gate "migration-safety-docker" "migration-safety-docker" \
+            "A migration-safety check failed against the throwaway Postgres.
+    Re-run 'make migration-safety-docker' to see the SQL error, then fix
+    the migration. Common causes:
+      - syntax error / typo in a .up.sql or .down.sql
+      - down migration doesn't fully reverse its up (round-trip drift)
+      - CREATE/ALTER TABLE missing IF NOT EXISTS / IF EXISTS
+      - FK constraint rejected because of orphan rows
+    Skip just this gate: LSS_SKIP_MIGRATION_GATE=1 git commit ..."
+    fi
+else
+    show_skip "migration-safety-docker" "no .sql files staged"
 fi
 
 # Gitleaks (secrets in working tree). Always runs — cheap (~3s) and a
