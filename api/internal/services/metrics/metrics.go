@@ -512,6 +512,13 @@ func SetRequestBufferSize(workspaceID string, n int) {
 	requestBufferSize.WithLabelValues(workspaceID).Set(float64(n))
 }
 
+// DeleteRequestBufferMetrics removes the per-workspace gauge series for the
+// request buffer when a workspace's queue drains. Only the gauge is cleaned
+// up: the timeout/full counters and the wait histogram are cumulative across
+// the workspace's lifetime, so deleting them on drain would under-count and
+// lose history. The gauge is the only instantaneous (non-cumulative) metric
+// and must be removed to prevent orphan-label cardinality growth as
+// workspaces come and go.
 func DeleteRequestBufferMetrics(workspaceID string) {
 	if workspaceID == "" {
 		workspaceID = "unknown"

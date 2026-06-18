@@ -54,11 +54,13 @@ func (q *wsBufferQueue) popHead() {
 }
 
 // deliverBuffered hands the drainer's terminal outcome to the parked handler.
-// It is a blocking send and is provably non-blocking: result is cap-1, the
-// drainer is the sole sender, and it delivers exactly once per request (always
-// paired with popHead, so the buffer is empty at send time → 0→1 transition).
-// The handler always receives exactly once (F2: it blocks on <-result in both
-// select arms), so the send can never block and the value is never dropped.
+// The send uses blocking channel syntax but is guaranteed never to actually
+// block (deadlock-free): result is cap-1, the drainer is the sole sender, and
+// it delivers exactly once per request (always paired with popHead, so the
+// slot is free at send time → a 0→1 transition). The handler always reaches a
+// <-result receive exactly once (F2: in both select arms, including after
+// ctx.Done it blocks on <-result), so a receiver is always waiting and the
+// value is never dropped.
 func deliverBuffered(req *bufferedRequest, err error) {
 	req.result <- err
 }
