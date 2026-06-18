@@ -271,6 +271,12 @@ export interface QueueUpdateEvent {
   data: { event: "enqueued" | "sent" | "error"; messageID: string; error?: string };
 }
 
+export interface AgentDiedEvent {
+  type: "agent_died";
+  workspace_id?: string;
+  data: { reason: string };
+}
+
 /**
  * Discriminated union of all event types delivered over the workspace SSE stream.
  * Narrow on `type` to access type-specific fields.
@@ -283,4 +289,5 @@ export type WorkspaceStreamEvent =
   | AgentQuestionResolvedEvent
   | AgentPermissionEvent
   | AgentPermissionResolvedEvent
-  | QueueUpdateEvent;
+  | QueueUpdateEvent
+  | AgentDiedEvent;

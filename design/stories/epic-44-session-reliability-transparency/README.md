@@ -206,14 +206,20 @@ To deliver the user-facing goal ("Frontend shows ⚠️ Agent was terminated"), 
 #### US-44.1c: Broker-side agent_died bridge (split from US-44.1b, 2026-06-17)
 **Problem:** Frontend listens on `/workspaces/:id/session-events` (broker), not on the proxied SSE body. The proxy-side emission (US-44.1a) is invisible to the frontend.  
 **Solution:** When `sseTracker.connectAndRead` exits after receiving data (the same bytesReceived>0 heuristic), publish a workspace-scoped `agent_died` event to the broker. Frontend then renders the "⚠️ Agent was terminated" message.  
-**Files:** `api/internal/services/sse/tracker.go`, `api/internal/handlers/proxy_events.go`, `frontend/src/pages/ChatPage.tsx`  
+**Files:** `api/internal/services/sse/tracker.go`, `api/internal/handlers/proxy_events.go`, `api/internal/handlers/proxy_lifecycle.go`, `frontend/src/api/types.ts`, `frontend/src/pages/ChatPage.tsx`  
 **Acceptance:**
-- [ ] `sseTracker` tracks bytesReceived across `scanner.Scan()` iterations
-- [ ] On stream end (the existing `"SSE stream ended for workspace %s"` return path), if bytesReceived > 0, invoke a new `onAgentDied(workspaceID)` callback
-- [ ] ProxyHandler wires `onAgentDied` to publish `WorkspaceSSEEvent{Type: "agent_died", WorkspaceID: workspaceID, Data: {"reason":"unknown"}}` to the broker
-- [ ] Frontend ChatPage.tsx renders the terminal warning on receipt of `agent_died`
-- [ ] Unit tests for tracker callback invocation
-- [ ] Integration test: kill upstream SSE → broker publishes agent_died → frontend handler fires
+- [x] `sseTracker` tracks bytesReceived across `scanner.Scan()` iterations
+- [x] On stream end (the existing `"SSE stream ended for workspace %s"` return path), if bytesReceived > 0, invoke a new `onAgentDied(workspaceID)` callback
+- [x] ProxyHandler wires `onAgentDied` to publish `WorkspaceSSEEvent{Type: "agent_died", WorkspaceID: workspaceID, Data: {"reason":"unknown"}}` to the broker
+- [x] Frontend ChatPage.tsx renders the terminal warning on receipt of `agent_died` *(dismissible yellow banner with `role="alert"`, mirrors the `sessionWasInterrupted` pattern)*
+- [x] Unit tests for tracker callback invocation *(7 tests: fires-on-EOF-after-data, no-fire-on-zero-data, no-fire-on-non-200, no-fire-on-idle-timeout, fires-once-per-stream-end, no-fire-on-non-EOF-scanner-error, nil-callback-safe)*
+- [x] Integration test: kill upstream SSE → broker publishes agent_died → frontend handler fires *(E2E: real Tracker wired via `SetOnAgentDied(handler.onAgentDied)` → real ProxyHandler + UserEventBroker → real upstream SSE death → workspace subscriber receives `agent_died`; frontend banner render + dismiss covered by ChatPage.sse.test.tsx)*
+
+**Implementation notes (2026-06-18):**
+- `bytesReceived` counts `len(scanner.Text())` (line content, newlines stripped by `bufio.ScanLines`) rather than raw bytes — diverges from US-44.1a's raw `resp.Body.Read` count but immaterial since only the `> 0` threshold matters and opencode always emits real event data first.
+- A `scanner.Err()` guard suppresses `agent_died` on non-EOF read errors (TCP RST, `bufio.ErrTooLong`) — aligns with US-44.1a's `io.EOF`/`io.ErrUnexpectedEOF` vs network-error distinction. A real opencode death (OOM/SIGKILL) produces a clean EOF (`scanner.Err()` returns nil) so the guard does not suppress genuine deaths; only the rare RST-on-death case is missed (accepted, documented tradeoff).
+- The tracker cannot distinguish a real death from a normal opencode restart (secrets reload) — both end the SSE stream after data. `agent_died` therefore fires on both. This is the same accepted false-positive tradeoff as US-44.1a (`TestProxy_US44_1_SSECleanClose_AcceptableFalsePositive`); the banner is dismissible, and the durable recovery signal is `reconcileSessionState` (onReconnect) which clears stale active sessions on the next successful reconnect.
+- `agent_died` is published via `PublishToWorkspace` (no replay buffer) — transient by design; a frontend reconnecting after the event will miss it. Acceptable for a dismissible banner; the workspace phase stream and session-status events carry the durable state.
 
 **Estimate:** 1.5 days (revised from US-44.1b's 0.5 days; the broker bridge + frontend handler is non-trivial)
 
