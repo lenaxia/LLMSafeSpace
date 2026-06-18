@@ -301,6 +301,43 @@ subjects:
     name: {{ include "llmsafespace.api.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 ---
+{{- if .Values.controller.inferenceRelay.enabled }}
+# ClusterRole for the API service account to manage the `relay-fleet`
+# InferenceRelay CR. InferenceRelay is cluster-scoped, so a namespace
+# Role is insufficient. Gated on controller.inferenceRelay.enabled —
+# only deployed when the relay subsystem is active.
+#
+# Least-privilege: the API admin handler (api/internal/handlers/relay_admin.go)
+# performs only List/Get/Create/Update against inferencerelays. It never
+# deletes, watches, patches, or writes the /status or /finalizers
+# subresources, so those verbs and resources are intentionally omitted.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-api-inferencerelay
+  labels:
+    {{- include "llmsafespace.api.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["llmsafespace.dev"]
+    resources: ["inferencerelays"]
+    verbs: ["get", "list", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "llmsafespace.fullname" . }}-api-inferencerelay
+  labels:
+    {{- include "llmsafespace.api.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "llmsafespace.fullname" . }}-api-inferencerelay
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "llmsafespace.api.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+---
 # API — release-namespace Role for relay-router Deployment read (Epic 43).
 # The relay setup wizard's checkRouter probe reads the Deployment to verify
 # the router is deployed. This Role is scoped to the exact Deployment name
