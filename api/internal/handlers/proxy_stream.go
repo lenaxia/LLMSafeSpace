@@ -43,10 +43,17 @@ func (h *ProxyHandler) StreamEvents(c *gin.Context) {
 		return
 	}
 
-	if h.broker == nil {
+	if h.userBroker == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "event broker not initialized"})
 		return
 	}
+
+	sub, subErr := h.userBroker.SubscribeWorkspace(workspaceID)
+	if subErr != nil {
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many SSE connections for this workspace"})
+		return
+	}
+	defer h.userBroker.UnsubscribeWorkspace(workspaceID, sub)
 
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
@@ -54,9 +61,6 @@ func (h *ProxyHandler) StreamEvents(c *gin.Context) {
 	c.Header("X-Accel-Buffering", "no")
 	c.Writer.WriteHeader(http.StatusOK)
 	flusher.Flush()
-
-	sub := h.broker.Subscribe(workspaceID)
-	defer h.broker.Unsubscribe(workspaceID, sub)
 
 	if h.sseTracker != nil {
 		h.sseTracker.EnsureWatching(workspaceID)

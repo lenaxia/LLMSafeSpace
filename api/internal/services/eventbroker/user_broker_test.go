@@ -341,6 +341,26 @@ func TestUserBroker_WorkspaceIsolation(t *testing.T) {
 	}
 }
 
+func TestUserBroker_WorkspaceSubscriberCount(t *testing.T) {
+	b := NewUserEventBroker()
+
+	assert.Equal(t, 0, b.WorkspaceSubscriberCount("ws-count"))
+
+	s1, err := b.SubscribeWorkspace("ws-count")
+	require.NoError(t, err)
+	assert.Equal(t, 1, b.WorkspaceSubscriberCount("ws-count"))
+
+	s2, err := b.SubscribeWorkspace("ws-count")
+	require.NoError(t, err)
+	assert.Equal(t, 2, b.WorkspaceSubscriberCount("ws-count"))
+
+	b.UnsubscribeWorkspace("ws-count", s1)
+	assert.Equal(t, 1, b.WorkspaceSubscriberCount("ws-count"))
+
+	b.UnsubscribeWorkspace("ws-count", s2)
+	assert.Equal(t, 0, b.WorkspaceSubscriberCount("ws-count"))
+}
+
 func TestUserBroker_RecordAndLookupWorkspaceOwner(t *testing.T) {
 	b := NewUserEventBroker()
 

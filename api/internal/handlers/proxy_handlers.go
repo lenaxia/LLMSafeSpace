@@ -257,7 +257,7 @@ func (h *ProxyHandler) DeleteSession(c *gin.Context) {
 		if h.sessionParents != nil {
 			h.sessionParents.invalidate(workspaceID)
 		}
-		if h.broker != nil {
+		if h.userBroker != nil {
 			h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
 				Type:      "session.status",
 				SessionID: sid,
@@ -418,7 +418,7 @@ func (h *ProxyHandler) EnqueueMessage(c *gin.Context) {
 		return
 	}
 
-	if h.broker != nil {
+	if h.userBroker != nil {
 		h.publishWorkspaceEvent(wid, apitypes.WorkspaceSSEEvent{
 			Type:      "queue.update",
 			SessionID: sid,
@@ -479,7 +479,7 @@ func (h *ProxyHandler) DeleteQueueMessage(c *gin.Context) {
 		return
 	}
 
-	if h.broker != nil {
+	if h.userBroker != nil {
 		h.publishWorkspaceEvent(wid, apitypes.WorkspaceSSEEvent{
 			Type:      "queue.update",
 			SessionID: sid,

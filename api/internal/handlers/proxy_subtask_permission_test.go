@@ -53,9 +53,9 @@ func TestSubtaskPermission_BubblesToRootSession(t *testing.T) {
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.handler.EnableSessionParentResolution()
 
-	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
-	sub := env.handler.broker.Subscribe("ws-1")
-	defer env.handler.broker.Unsubscribe("ws-1", sub)
+	env.handler.userBroker = eventbroker.NewUserEventBroker()
+	sub, _ := env.handler.userBroker.SubscribeWorkspace("ws-1")
+	defer env.handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeEnvelope("permission.asked", map[string]interface{}{
 		"id":         "per_subtask",
@@ -77,10 +77,10 @@ func TestSubtaskPermission_BubblesToRootSession(t *testing.T) {
 
 func TestSubtaskPermission_ResolutionDisabled_RootEqualsSelf(t *testing.T) {
 	env := newInputTestEnv(t)
-	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
+	env.handler.userBroker = eventbroker.NewUserEventBroker()
 
-	sub := env.handler.broker.Subscribe("ws-1")
-	defer env.handler.broker.Unsubscribe("ws-1", sub)
+	sub, _ := env.handler.userBroker.SubscribeWorkspace("ws-1")
+	defer env.handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeEnvelope("permission.asked", map[string]interface{}{
 		"id":         "per_x",
@@ -119,9 +119,9 @@ func TestSubtaskPermission_TopLevelSession_RootEqualsSelf(t *testing.T) {
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.handler.EnableSessionParentResolution()
 
-	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
-	sub := env.handler.broker.Subscribe("ws-1")
-	defer env.handler.broker.Unsubscribe("ws-1", sub)
+	env.handler.userBroker = eventbroker.NewUserEventBroker()
+	sub, _ := env.handler.userBroker.SubscribeWorkspace("ws-1")
+	defer env.handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeEnvelope("permission.asked", map[string]interface{}{
 		"id":         "per_top",
@@ -159,9 +159,9 @@ func TestSubtaskQuestion_BubblesToRootSession(t *testing.T) {
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.handler.EnableSessionParentResolution()
 
-	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
-	sub := env.handler.broker.Subscribe("ws-1")
-	defer env.handler.broker.Unsubscribe("ws-1", sub)
+	env.handler.userBroker = eventbroker.NewUserEventBroker()
+	sub, _ := env.handler.userBroker.SubscribeWorkspace("ws-1")
+	defer env.handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeEnvelope("question.asked", map[string]interface{}{
 		"id":        "que_subtask",
@@ -199,9 +199,9 @@ func TestSubtaskPermission_FetcherFails_FallsBackToSelf(t *testing.T) {
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.handler.EnableSessionParentResolution()
 
-	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
-	sub := env.handler.broker.Subscribe("ws-1")
-	defer env.handler.broker.Unsubscribe("ws-1", sub)
+	env.handler.userBroker = eventbroker.NewUserEventBroker()
+	sub, _ := env.handler.userBroker.SubscribeWorkspace("ws-1")
+	defer env.handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeEnvelope("permission.asked", map[string]interface{}{
 		"id":         "per_x",
@@ -261,7 +261,7 @@ func TestE2E_SubtaskPermission_BubblesThroughSSE(t *testing.T) {
 	}
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
-	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
+	env.handler.userBroker = eventbroker.NewUserEventBroker()
 	env.handler.EnableSessionParentResolution()
 
 	router := newStreamEventsRouter(env.handler)
@@ -271,7 +271,7 @@ func TestE2E_SubtaskPermission_BubblesThroughSSE(t *testing.T) {
 	defer body.Close()
 
 	require.Eventually(t, func() bool {
-		return env.handler.broker.SubscriberCount("ws-1") > 0
+		return env.handler.userBroker.WorkspaceSubscriberCount("ws-1") > 0
 	}, 2*time.Second, 5*time.Millisecond, "subscriber should register on /events open")
 
 	envelope := makeEnvelope("permission.asked", map[string]interface{}{
@@ -318,7 +318,7 @@ func TestE2E_SubtaskQuestion_BubblesThroughSSE(t *testing.T) {
 	}
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
-	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
+	env.handler.userBroker = eventbroker.NewUserEventBroker()
 	env.handler.EnableSessionParentResolution()
 
 	router := newStreamEventsRouter(env.handler)
@@ -327,7 +327,7 @@ func TestE2E_SubtaskQuestion_BubblesThroughSSE(t *testing.T) {
 	defer body.Close()
 
 	require.Eventually(t, func() bool {
-		return env.handler.broker.SubscriberCount("ws-1") > 0
+		return env.handler.userBroker.WorkspaceSubscriberCount("ws-1") > 0
 	}, 2*time.Second, 5*time.Millisecond)
 
 	envelope := makeEnvelope("question.asked", map[string]interface{}{
@@ -376,7 +376,7 @@ func TestE2E_NestedSubtask_TwoLevelsBubbleToRoot(t *testing.T) {
 	}
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	env.setupPasswordWithT(t, "ws-1", "test-password")
-	env.handler.broker = eventbroker.NewWorkspaceEventBroker()
+	env.handler.userBroker = eventbroker.NewUserEventBroker()
 	env.handler.EnableSessionParentResolution()
 
 	router := newStreamEventsRouter(env.handler)
@@ -385,7 +385,7 @@ func TestE2E_NestedSubtask_TwoLevelsBubbleToRoot(t *testing.T) {
 	defer body.Close()
 
 	require.Eventually(t, func() bool {
-		return env.handler.broker.SubscriberCount("ws-1") > 0
+		return env.handler.userBroker.WorkspaceSubscriberCount("ws-1") > 0
 	}, 2*time.Second, 5*time.Millisecond)
 
 	envelope := makeEnvelope("permission.asked", map[string]interface{}{

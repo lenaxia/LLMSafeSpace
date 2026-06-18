@@ -26,7 +26,6 @@ func (h *ProxyHandler) Start() error {
 	var startErr error
 	h.startOnce.Do(func() {
 		h.started = true
-		h.broker = eventbroker.NewWorkspaceEventBroker()
 		h.userBroker = eventbroker.NewUserEventBroker()
 
 		h.activityTracker = activity.NewActivityTracker(h.k8sClient, h.logger, h.namespace)
@@ -109,10 +108,10 @@ func (h *ProxyHandler) GetMessageQueueService() interfaces.MessageQueueService {
 }
 
 func (h *ProxyHandler) GetBroker() BrokerPublisher {
-	if h.broker == nil {
+	if h.userBroker == nil {
 		return nil
 	}
-	return h.broker
+	return h.userBroker
 }
 
 func (h *ProxyHandler) GetWorkspaceOwner(workspaceID string) string {
@@ -123,14 +122,7 @@ func (h *ProxyHandler) GetWorkspaceOwner(workspaceID string) string {
 }
 
 // publishWorkspaceEvent fans out a workspace-scoped SSE event to subscribers.
-// During the S28.5 broker migration it bridges both the legacy
-// WorkspaceEventBroker and the new UserEventBroker so subscribers on either
-// path receive the event. Once the migration completes (all callers and
-// tests moved to userBroker.SubscribeWorkspace) the legacy branch deletes.
 func (h *ProxyHandler) publishWorkspaceEvent(workspaceID string, evt apitypes.WorkspaceSSEEvent) {
-	if h.broker != nil {
-		h.broker.Publish(workspaceID, evt)
-	}
 	if h.userBroker != nil {
 		h.userBroker.PublishToWorkspace(workspaceID, evt)
 	}
