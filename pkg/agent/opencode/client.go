@@ -250,3 +250,53 @@ type authPayload struct {
 	Key      string            `json:"key"`
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
+
+// ListModels calls GET /provider on opencode and returns the raw JSON body.
+// The caller is responsible for parsing the response shape (it varies by
+// opencode version). The body is size-limited to 1 MiB.
+func (c *Client) ListModels(ctx context.Context) ([]byte, error) {
+	url := c.baseURL + "/provider"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build GET /provider: %w", err)
+	}
+	req.SetBasicAuth(agentd.AuthUsername, c.password)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GET /provider: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	if resp.StatusCode >= 400 {
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("GET /provider returned %d: %s", resp.StatusCode, string(errBody))
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+}
+
+// PatchConfig calls PATCH /global/config on opencode with the given config
+// map. Used by SetModel to change the active model.
+func (c *Client) PatchConfig(ctx context.Context, config map[string]any) error {
+	body, err := json.Marshal(config)
+	if err != nil {
+		return fmt.Errorf("marshal config patch: %w", err)
+	}
+	url := c.baseURL + "/global/config"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build PATCH /global/config: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth(agentd.AuthUsername, c.password)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("PATCH /global/config: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("PATCH /global/config returned %d", resp.StatusCode)
+	}
+	return nil
+}
