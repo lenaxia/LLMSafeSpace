@@ -4,10 +4,12 @@
 package types
 
 import (
+	"context"
 	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestWorkspaceType_HasExpectedFields(t *testing.T) {
@@ -46,4 +48,40 @@ func TestWorkspaceMetadata_DoesNotCachePhaseOrPVCState(t *testing.T) {
 		assert.False(t, ok,
 			"WorkspaceMetadata.%s must not exist; phase/pvc state are owned by the Workspace CRD", forbidden)
 	}
+}
+
+// TestWorkspaceMetaFromCtx covers the neutral context-accessor used by both
+// WorkspaceAccessMiddleware (gin layer) and workspace.Service.verifyOwner
+// (service layer) so the two never diverge on the key or value shape. Keeping
+// the accessor next to the key in pkg/types avoids a layering inversion
+// (service importing the HTTP middleware package).
+func TestWorkspaceMetaFromCtx(t *testing.T) {
+	t.Run("missing_returns_false_nil", func(t *testing.T) {
+		got, ok := WorkspaceMetaFromCtx(context.Background())
+		assert.False(t, ok)
+		assert.Nil(t, got)
+	})
+
+	t.Run("wrong_type_returns_false_nil", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), ContextKeyWorkspaceMeta, "not a meta")
+		got, ok := WorkspaceMetaFromCtx(ctx)
+		assert.False(t, ok)
+		assert.Nil(t, got)
+	})
+
+	t.Run("nil_value_returns_false_nil", func(t *testing.T) {
+		ctx := context.WithValue(context.Background(), ContextKeyWorkspaceMeta, (*WorkspaceMetadata)(nil))
+		got, ok := WorkspaceMetaFromCtx(ctx)
+		assert.False(t, ok)
+		assert.Nil(t, got)
+	})
+
+	t.Run("present_returns_meta_true", func(t *testing.T) {
+		want := &WorkspaceMetadata{ID: "ws-1", UserID: "user-1"}
+		ctx := context.WithValue(context.Background(), ContextKeyWorkspaceMeta, want)
+		got, ok := WorkspaceMetaFromCtx(ctx)
+		require.True(t, ok)
+		require.NotNil(t, got)
+		assert.Same(t, want, got)
+	})
 }

@@ -622,124 +622,8 @@ func TestValidateMountPath(t *testing.T) {
 	}
 }
 
-// fakeWorkspaceOwnerVerifier returns ErrWorkspaceNotOwned for any
-// (userID, workspaceID) pair not in the allowedPairs map. Used to
-// exercise the cross-tenant binding-pollution defense (validator
-// pass-3 finding SO-1).
-type fakeWorkspaceOwnerVerifier struct {
-	allowedPairs map[string]map[string]struct{} // userID -> set of workspaceIDs
-}
-
-func (f *fakeWorkspaceOwnerVerifier) VerifyWorkspaceOwner(_ context.Context, userID, workspaceID string) error {
-	if pairs, ok := f.allowedPairs[userID]; ok {
-		if _, ok := pairs[workspaceID]; ok {
-			return nil
-		}
-	}
-	return ErrWorkspaceNotOwned
-}
-
-// TestSecretService_SetBindings_RejectsForeignWorkspace is the
-// regression test for SO-1: SetBindings/AddBindings must verify the
-// caller owns the workspace, not just the secrets being bound.
-// Pre-fix any user with a leaked workspaceID could pollute another
-// user's binding rows.
-func TestSecretService_SetBindings_RejectsForeignWorkspace(t *testing.T) {
-	svc, _, sessionID := setupSecretService(t)
-	ctx := context.Background()
-
-	verifier := &fakeWorkspaceOwnerVerifier{
-		allowedPairs: map[string]map[string]struct{}{
-			"user-1": {"ws-mine": {}},
-		},
-	}
-	svc.SetWorkspaceOwnerVerifier(verifier)
-
-	created, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "mine", Type: SecretTypeEnvSecret, Value: "v",
-		Metadata: []byte(`{"var_name":"X"}`),
-	})
-	if err != nil {
-		t.Fatalf("CreateSecret: %v", err)
-	}
-
-	// Owned workspace: SetBindings succeeds.
-	if _, err := svc.SetBindings(ctx, "user-1", "ws-mine", []string{created.ID}); err != nil {
-		t.Fatalf("SetBindings on owned workspace: %v", err)
-	}
-
-	// Foreign workspace: must reject with ErrWorkspaceNotOwned.
-	_, err = svc.SetBindings(ctx, "user-1", "ws-other", []string{created.ID})
-	if !errors.Is(err, ErrWorkspaceNotOwned) {
-		t.Errorf("SO-1: SetBindings on foreign workspace must return ErrWorkspaceNotOwned, got %v", err)
-	}
-
-	// AddBindings must also reject.
-	_, err = svc.AddBindings(ctx, "user-1", "ws-other", []string{created.ID})
-	if !errors.Is(err, ErrWorkspaceNotOwned) {
-		t.Errorf("SO-1: AddBindings on foreign workspace must return ErrWorkspaceNotOwned, got %v", err)
-	}
-}
-
-// TestSecretService_RequireOwnerVerification_FailsClosed is the
-// regression test for NEW-1 + N-4: when RequireOwnerVerification has
-// been called but no verifier is wired (e.g. a future wiring
-// regression in app.New), every binding/read operation that touches
-// a workspace must return ErrWorkspaceNotOwned. Pre-flag the same
-// configuration silently bypassed the check, which would re-enable
-// cross-tenant binding pollution and enumeration.
-func TestSecretService_RequireOwnerVerification_FailsClosed(t *testing.T) {
-	svc, _, sessionID := setupSecretService(t)
-	ctx := context.Background()
-
-	created, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "mine", Type: SecretTypeEnvSecret, Value: "v",
-		Metadata: []byte(`{"var_name":"X"}`),
-	})
-	if err != nil {
-		t.Fatalf("CreateSecret: %v", err)
-	}
-
-	// Default service: no verifier wired, requireWsVerifier=false.
-	// SetBindings should succeed (test ergonomics).
-	if _, err := svc.SetBindings(ctx, "user-1", "ws-1", []string{created.ID}); err != nil {
-		t.Fatalf("default SecretService: SetBindings should succeed without verifier: %v", err)
-	}
-
-	// Flip into fail-closed mode WITHOUT wiring a verifier.
-	svc.RequireOwnerVerification()
-
-	// Every workspace-touching method must now refuse.
-	cases := []struct {
-		name string
-		fn   func() error
-	}{
-		{"SetBindings", func() error {
-			_, err := svc.SetBindings(ctx, "user-1", "ws-1", []string{created.ID})
-			return err
-		}},
-		{"AddBindings", func() error {
-			_, err := svc.AddBindings(ctx, "user-1", "ws-1", []string{created.ID})
-			return err
-		}},
-		{"GetBindings", func() error {
-			_, err := svc.GetBindings(ctx, "user-1", "ws-1")
-			return err
-		}},
-		{"PrepareSecretsForInjection", func() error {
-			_, err := svc.PrepareSecretsForInjection(ctx, "user-1", sessionID, "ws-1")
-			return err
-		}},
-	}
-	for _, c := range cases {
-		err := c.fn()
-		if !errors.Is(err, ErrWorkspaceNotOwned) {
-			t.Errorf("NEW-1/N-4: %s must return ErrWorkspaceNotOwned when verifier is required but missing, got %v",
-				c.name, err)
-		}
-	}
-}
-
+// TestSecretService_CreateSecret_DuplicateName verifies that creating a secret
+// with a name that already exists for the user returns ErrDuplicateSecret.
 func TestSecretService_CreateSecret_DuplicateName(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
@@ -1025,13 +909,6 @@ func TestSecretService_AddBindings_HappyPath_AppendsAndAudits(t *testing.T) {
 	svc, secretStore, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	verifier := &fakeWorkspaceOwnerVerifier{
-		allowedPairs: map[string]map[string]struct{}{
-			"user-1": {"ws-1": {}},
-		},
-	}
-	svc.SetWorkspaceOwnerVerifier(verifier)
-
 	pre, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
 		Name: "pre", Type: SecretTypeEnvSecret, Value: "p",
 		Metadata: json.RawMessage(`{"var_name":"PRE"}`),
@@ -1099,13 +976,6 @@ func TestSecretService_AddBindings_HappyPath_AppendsAndAudits(t *testing.T) {
 func TestSecretService_AddBindings_Idempotent(t *testing.T) {
 	svc, secretStore, sessionID := setupSecretService(t)
 	ctx := context.Background()
-
-	verifier := &fakeWorkspaceOwnerVerifier{
-		allowedPairs: map[string]map[string]struct{}{
-			"user-1": {"ws-1": {}},
-		},
-	}
-	svc.SetWorkspaceOwnerVerifier(verifier)
 
 	s, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
 		Name: "s", Type: SecretTypeEnvSecret, Value: "v",
@@ -1176,13 +1046,6 @@ func TestSecretService_GetSecretByName_OwnerAndCrossUser(t *testing.T) {
 func TestSecretService_GetBindingsForSecret_OwnershipEnforced(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
-
-	verifier := &fakeWorkspaceOwnerVerifier{
-		allowedPairs: map[string]map[string]struct{}{
-			"user-1": {"ws-1": {}},
-		},
-	}
-	svc.SetWorkspaceOwnerVerifier(verifier)
 
 	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
 		Name: "lookup-me", Type: SecretTypeEnvSecret, Value: "v",

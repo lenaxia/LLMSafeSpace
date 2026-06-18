@@ -34,6 +34,18 @@ func (m *MockWorkspaceService) GetWorkspace(ctx context.Context, userID, workspa
 	return args.Get(0).(*types.Workspace), args.Error(1)
 }
 
+func (m *MockWorkspaceService) ResolveWorkspace(ctx context.Context, workspaceID string) (*types.WorkspaceMetadata, error) {
+	args := m.Called(ctx, workspaceID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.WorkspaceMetadata), args.Error(1)
+}
+
+func (m *MockWorkspaceService) CheckOwnership(ctx context.Context, userID string, meta *types.WorkspaceMetadata) error {
+	return m.Called(ctx, userID, meta).Error(0)
+}
+
 func (m *MockWorkspaceService) ListWorkspaces(ctx context.Context, userID string, opts types.ListOptions) (*types.WorkspaceListResult, error) {
 	args := m.Called(ctx, userID, opts)
 	if args.Get(0) == nil {

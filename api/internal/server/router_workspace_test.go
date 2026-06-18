@@ -15,6 +15,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	apilogger "github.com/lenaxia/llmsafespace/api/internal/logger"
 	imocks "github.com/lenaxia/llmsafespace/api/internal/mocks"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // mockServices is a minimal implementation of interfaces.Services for router tests.
@@ -53,6 +54,15 @@ func newRouterFixture(t *testing.T) (*gin.Engine, *mockServices) {
 	met.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
 	met.On("IncrementActiveConnections", mock.Anything, mock.Anything).Maybe()
 	met.On("DecrementActiveConnections", mock.Anything, mock.Anything).Maybe()
+
+	// Design 0041: WorkspaceAccessMiddleware runs on every :id route and calls
+	// ResolveWorkspace + CheckOwnership. Default to allow so the dozens of
+	// existing router tests (which only stub the per-route handler method)
+	// continue to drive outcomes via their handler-level mocks. Tests that
+	// need to assert middleware behavior override these expectations.
+	ws.On("ResolveWorkspace", mock.Anything, mock.Anything).
+		Return(&types.WorkspaceMetadata{ID: "ws-1", UserID: "test-user"}, nil).Maybe()
+	ws.On("CheckOwnership", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	auth.On("AuthMiddleware").Return(gin.HandlerFunc(func(c *gin.Context) {
 		if c.GetHeader("Authorization") == "" {

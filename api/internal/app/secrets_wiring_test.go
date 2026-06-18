@@ -7,18 +7,26 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+
 	"github.com/lenaxia/llmsafespace/api/internal/handlers"
+	imocks "github.com/lenaxia/llmsafespace/api/internal/mocks"
 	"github.com/lenaxia/llmsafespace/api/internal/server"
+	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
+	kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
+	lmocks "github.com/lenaxia/llmsafespace/mocks/logger"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	"github.com/lenaxia/llmsafespace/pkg/secrets"
 	"github.com/lenaxia/llmsafespace/pkg/types"
-
-	"github.com/gin-gonic/gin"
 )
 
 // TestSecretsWiring_E2E tests that the secrets handler is properly wired
@@ -154,6 +162,84 @@ func TestRouterConfig_SecretsHandler(t *testing.T) {
 	// Should not panic with nil SecretsHandler
 	if cfg.SecretsHandler != nil {
 		t.Error("Default config should have nil SecretsHandler")
+	}
+}
+
+// TestUserProvCredChecker_DelegatesToWorkspaceService is the design 0041
+// Story 2 regression test for the userProvCred wiring rewire. The old
+// adapter (workspaceOwnerVerifierAdapter) was deleted because it lacked
+// the D5 creator-membership re-check. The replacement is a closure that
+// calls workspace.Service.ResolveWorkspace + CheckOwnership directly.
+// This test reproduces that closure shape against a real *workspace.Service
+// (with mocked DB) and asserts (a) the happy path delegates to ResolveWorkspace
+// and returns nil, (b) ResolveWorkspace errors propagate, and (c)
+// CheckOwnership returns Forbidden for a non-owner.
+func TestUserProvCredChecker_DelegatesToWorkspaceService(t *testing.T) {
+	const userID, wsID = "user-1", "ws-1"
+
+	mkSvc := func(t *testing.T, db *imocks.MockDatabaseService) *workspace.Service {
+		t.Helper()
+		log := lmocks.NewMockLogger()
+		log.On("Info", mock.Anything, mock.Anything).Maybe()
+		log.On("Warn", mock.Anything, mock.Anything).Maybe()
+		log.On("Error", mock.Anything, mock.Anything, mock.Anything).Maybe()
+		log.On("With", mock.Anything).Return(log).Maybe()
+		k8s := kmocks.NewMockKubernetesClient()
+		met := &imocks.MockMetricsService{}
+		met.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+		svc, err := workspace.New(log, k8s, db, nil, met, &workspace.Config{Namespace: "default"})
+		if err != nil {
+			t.Fatalf("workspace.New: %v", err)
+		}
+		return svc
+	}
+
+	t.Run("happy_path_returns_nil", func(t *testing.T) {
+		db := &imocks.MockDatabaseService{}
+		db.On("GetWorkspace", mock.Anything, wsID).
+			Return(&types.WorkspaceMetadata{ID: wsID, UserID: userID}, nil)
+		svc := mkSvc(t, db)
+
+		checker := mkUserProvCredChecker(svc)
+		err := checker(context.Background(), userID, wsID)
+		assert.NoError(t, err)
+		db.AssertCalled(t, "GetWorkspace", mock.Anything, wsID)
+	})
+
+	t.Run("resolve_error_propagates", func(t *testing.T) {
+		db := &imocks.MockDatabaseService{}
+		want := fmt.Errorf("db down")
+		db.On("GetWorkspace", mock.Anything, wsID).Return((*types.WorkspaceMetadata)(nil), want)
+		svc := mkSvc(t, db)
+
+		checker := mkUserProvCredChecker(svc)
+		err := checker(context.Background(), userID, wsID)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "db down")
+	})
+
+	t.Run("non_owner_returns_forbidden", func(t *testing.T) {
+		db := &imocks.MockDatabaseService{}
+		db.On("GetWorkspace", mock.Anything, wsID).
+			Return(&types.WorkspaceMetadata{ID: wsID, UserID: "other-user"}, nil)
+		svc := mkSvc(t, db)
+
+		checker := mkUserProvCredChecker(svc)
+		err := checker(context.Background(), userID, wsID)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "workspace access denied")
+	})
+}
+
+// mkUserProvCredChecker mirrors the closure wired in app.New so the test
+// exercises the same shape production uses.
+func mkUserProvCredChecker(wsSvc *workspace.Service) func(ctx context.Context, userID, wsID string) error {
+	return func(ctx context.Context, userID, wsID string) error {
+		meta, err := wsSvc.ResolveWorkspace(ctx, wsID)
+		if err != nil {
+			return err
+		}
+		return wsSvc.CheckOwnership(ctx, userID, meta)
 	}
 }
 

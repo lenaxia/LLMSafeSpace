@@ -98,4 +98,4 @@ Manual verification:
 | `design/0037_2026-06-18_epic-46-codebase-debt-audit.md` | 3 references to "worklog 0338" → "worklog 0341" |
 | `design/stories/epic-46-codebase-debt-audit/US-46.2-remove-dead-code-stubs.md` | 1 reference "worklog 0338" → "worklog 0341" |
 | `worklogs/0338_2026-06-18_us-46.2-keep-annotatemodels-guard.md` | Renamed to `worklogs/0341_2026-06-18_us-46.2-keep-annotatemodels-guard.md` (fixes main's 0338 collision) |
-| `worklogs/0340_2026-06-18_readme-llm-annotatemodels-reclassification.md` | Created (this file); updated to reflect collision fix |
+| `worklogs/0342_2026-06-18_readme-llm-annotatemodels-reclassification.md` | Created (this file); originally 0340, renumbered to 0342 to clear a collision with the post-merge-hardening worklog |

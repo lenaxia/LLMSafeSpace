@@ -342,66 +342,14 @@ func (a *dbSecretStoreAdapter) QueryAudit(_ context.Context, userID string, _ se
 	return result, nil
 }
 
-// workspaceOwnerVerifierAdapter implements secrets.WorkspaceOwnerVerifier
-// against the api-side DatabaseService. Both "workspace not found"
-// and "workspace owned by someone else" collapse to the single
-// secrets.ErrWorkspaceNotOwned sentinel so the response shape does
-// not differentiate between the two — preventing cross-user
-// workspace-existence enumeration via the bindings API (validator
-// pass-3 finding SO-1).
-//
-// DB-error events surface at Warn (validator pass-4 finding NEW-2)
-// — without operator visibility, a Postgres outage would silently
-// turn every binding op across the fleet into uniform 404s with
-// zero log signal. Matches the precedent set by secretsPodIPResolver.
-type workspaceOwnerVerifierAdapter struct {
-	db       interfaces.DatabaseService
-	orgStore OrgMembershipChecker
-	logger   pkginterfaces.LoggerInterface
-}
-
-type OrgMembershipChecker interface {
-	IsOrgMember(ctx context.Context, orgID, userID string) (bool, error)
-	IsOrgAdmin(ctx context.Context, orgID, userID string) (bool, error)
-}
-
-func (a *workspaceOwnerVerifierAdapter) VerifyWorkspaceOwner(ctx context.Context, userID, workspaceID string) error {
-	if a.db == nil || userID == "" || workspaceID == "" {
-		return secrets.ErrWorkspaceNotOwned
-	}
-	meta, err := a.db.GetWorkspace(ctx, workspaceID)
-	if err != nil {
-		if a.logger != nil {
-			a.logger.Warn("workspaceOwnerVerifier: DB lookup failed; downgrading to not-owned",
-				"workspaceID", workspaceID, "userID", userID, "error", err.Error())
-		}
-		return secrets.ErrWorkspaceNotOwned
-	}
-	if meta == nil {
-		return secrets.ErrWorkspaceNotOwned
-	}
-	if meta.UserID == userID {
-		return nil
-	}
-	if meta.OrgID != nil && *meta.OrgID != "" && a.orgStore != nil {
-		// Per Epic 43 decision D6, cross-user access to an org workspace
-		// requires org admin (not mere membership). This mirrors
-		// workspace.Service.verifyOwner so the secrets surface and the
-		// workspace surface enforce the same access boundary.
-		isAdmin, err := a.orgStore.IsOrgAdmin(ctx, *meta.OrgID, userID)
-		if err != nil {
-			if a.logger != nil {
-				a.logger.Warn("workspaceOwnerVerifier: org admin check failed; downgrading to not-owned",
-					"workspaceID", workspaceID, "userID", userID, "orgID", *meta.OrgID, "error", err.Error())
-			}
-			return secrets.ErrWorkspaceNotOwned
-		}
-		if isAdmin {
-			return nil
-		}
-	}
-	return secrets.ErrWorkspaceNotOwned
-}
+// workspaceOwnerVerifierAdapter and its local OrgMembershipChecker interface
+// were removed in design 0041 Story 2. WorkspaceAccessMiddleware is now the
+// single ownership gate for every /:id workspace route (including bindings,
+// env, and reload-secrets), and the user provider-credential bind/unbind
+// routes — which live outside /:id — are wired directly against
+// workspace.Service.ResolveWorkspace + CheckOwnership in app.New. The old
+// adapter lacked the D5 creator-membership re-check that CheckOwnership
+// carries, so consolidating onto the canonical path also closes that gap.
 
 type duplicateErr struct{ name string }
 

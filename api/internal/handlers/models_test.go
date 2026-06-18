@@ -191,30 +191,12 @@ func TestListModels_Unauthenticated(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
-func TestListModels_OwnershipDenied(t *testing.T) {
-	clearModelCache()
-	gin.SetMode(gin.TestMode)
-
-	// wsUpdater returns workspace owned by "other-user"
-	handler := NewSecretsHandler(nil)
-	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
-	handler.SetWorkspaceMetadataUpdater(&mockWSUpdater{ownerUserID: "other-user"})
-	handler.SetPasswordGetter(mockPasswordGetter("pw"))
-
-	router := gin.New()
-	router.Use(func(c *gin.Context) {
-		c.Set("userID", "user-1")
-		c.Next()
-	})
-	router.GET("/api/v1/workspaces/:id/models", handler.ListModels)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/models", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusForbidden, w.Code)
-	require.Contains(t, w.Body.String(), "access denied")
-}
+// Ownership-denied coverage for ListModels / SetModel now lives at the
+// router level (api/internal/server/router_workspace_access_test.go) — the
+// WorkspaceAccessMiddleware gates both GET /:id/models and PUT /:id/model
+// before the handler is reached, so a handler-level ownership test would
+// either duplicate that coverage or assert behavior the handler no longer
+// has. The handler trusts the middleware's decision per design 0041 D5.
 
 // --- SetModel Tests ---
 
@@ -403,33 +385,6 @@ func TestSetModel_Unauthenticated(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestSetModel_OwnershipDenied(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	// wsUpdater returns a workspace owned by "other-user" — not "user-1"
-	updater := &mockWSUpdater{ownerUserID: "other-user"}
-	handler := NewSecretsHandler(nil)
-	handler.SetWorkspaceMetadataUpdater(updater)
-	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
-	handler.SetPasswordGetter(mockPasswordGetter("pw"))
-
-	router := gin.New()
-	router.Use(func(c *gin.Context) {
-		c.Set("userID", "user-1")
-		c.Next()
-	})
-	router.PUT("/api/v1/workspaces/:id/model", handler.SetModel)
-
-	body, _ := json.Marshal(map[string]string{"model": "test/model"})
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/workspaces/ws-1/model", bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	require.Equal(t, http.StatusForbidden, w.Code)
-	require.Contains(t, w.Body.String(), "access denied")
 }
 
 func TestListModels_NoPasswordGetter_Returns503(t *testing.T) {

@@ -341,6 +341,13 @@ func newRouterFixtureWithProxy(t *testing.T) (*gin.Engine, *mockServices, *handl
 	met.On("IncrementActiveConnections", mock.Anything, mock.Anything).Maybe()
 	met.On("DecrementActiveConnections", mock.Anything, mock.Anything).Maybe()
 
+	// Design 0041: WorkspaceAccessMiddleware on :id routes. Default-allow so
+	// handler-level mocks drive outcomes; override per-test for middleware
+	// behavior assertions.
+	ws.On("ResolveWorkspace", mock.Anything, mock.Anything).
+		Return(&types.WorkspaceMetadata{ID: "ws-1", UserID: "test-user"}, nil).Maybe()
+	ws.On("CheckOwnership", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
 	auth.On("AuthMiddleware").Return(gin.HandlerFunc(func(c *gin.Context) {
 		if c.GetHeader("Authorization") == "" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})

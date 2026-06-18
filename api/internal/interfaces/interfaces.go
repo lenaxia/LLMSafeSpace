@@ -128,6 +128,8 @@ type MetricsService interface {
 type WorkspaceService interface {
 	CreateWorkspace(ctx context.Context, userID string, req types.CreateWorkspaceRequest) (*types.Workspace, error)
 	GetWorkspace(ctx context.Context, userID, workspaceID string) (*types.Workspace, error)
+	ResolveWorkspace(ctx context.Context, workspaceID string) (*types.WorkspaceMetadata, error)
+	CheckOwnership(ctx context.Context, userID string, meta *types.WorkspaceMetadata) error
 	ListWorkspaces(ctx context.Context, userID string, opts types.ListOptions) (*types.WorkspaceListResult, error)
 	DeleteWorkspace(ctx context.Context, userID, workspaceID string) error
 	SuspendWorkspace(ctx context.Context, userID, workspaceID string) error

@@ -17,10 +17,12 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
 	"github.com/lenaxia/llmsafespace/api/internal/handlers"
 	apilogger "github.com/lenaxia/llmsafespace/api/internal/logger"
 	imocks "github.com/lenaxia/llmsafespace/api/internal/mocks"
 	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -77,6 +79,7 @@ func newTerminalTestRouter(t *testing.T) (*gin.Engine, *terminalMockCache) {
 
 	auth := &imocks.MockAuthMiddlewareService{}
 	met := &imocks.MockMetricsService{}
+	ws := &imocks.MockWorkspaceService{}
 
 	auth.On("AuthMiddleware").Return(gin.HandlerFunc(func(c *gin.Context) {
 		c.Set("userID", "user-1")
@@ -85,7 +88,28 @@ func newTerminalTestRouter(t *testing.T) (*gin.Engine, *terminalMockCache) {
 	auth.On("GetUserID", mock.Anything).Return("user-1")
 	met.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
 
-	svc := &mockServices{auth: auth, metrics: met}
+	// Design 0041 D1: WorkspaceAccessMiddleware now runs before the terminal
+	// ticket handler and resolves ownership via the workspace service (Postgres
+	// metadata). Mirror the existing wsGetter ownership semantics so the E2E
+	// terminal tests exercise the same allow/deny decisions through the new
+	// gate. Known-but-not-owned workspaces now return 403 (design mandates
+	// 403-for-known / 404-for-unknown), replacing the handler's prior 404.
+	ws.On("ResolveWorkspace", mock.Anything, "ws-active").
+		Return(&types.WorkspaceMetadata{ID: "ws-active", UserID: "user-1"}, nil)
+	ws.On("ResolveWorkspace", mock.Anything, "ws-suspended").
+		Return(&types.WorkspaceMetadata{ID: "ws-suspended", UserID: "user-1"}, nil)
+	ws.On("ResolveWorkspace", mock.Anything, "ws-other").
+		Return(&types.WorkspaceMetadata{ID: "ws-other", UserID: "other-user"}, nil)
+	ws.On("ResolveWorkspace", mock.Anything, mock.Anything).
+		Return(nil, apierrors.NewNotFoundError("workspace", mock.Anything, fmt.Errorf("not found"))).Maybe()
+	ws.On("CheckOwnership", mock.Anything, "user-1", mock.MatchedBy(func(m *types.WorkspaceMetadata) bool {
+		return m != nil && m.UserID == "user-1"
+	})).Return(nil)
+	ws.On("CheckOwnership", mock.Anything, "user-1", mock.MatchedBy(func(m *types.WorkspaceMetadata) bool {
+		return m != nil && m.UserID != "user-1"
+	})).Return(apierrors.NewForbiddenError("workspace access denied", fmt.Errorf("not owner")))
+
+	svc := &mockServices{auth: auth, metrics: met, workspace: ws}
 
 	cache := newTerminalMockCache()
 	wsGetter := &terminalMockWSGetter{
@@ -175,8 +199,12 @@ func TestTerminalTicket_E2E_NotOwner(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	// Returns 404 (not 403) to avoid leaking existence
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	// Design 0041 D1: WorkspaceAccessMiddleware returns 403 for a known
+	// workspace the caller does not own, and 404 only for unknown workspaces
+	// (no existence leak via 404, but no false 404 either). Pre-middleware the
+	// terminal handler returned 404 to mask existence; the middleware gate is
+	// the design-mandated behavior now.
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func TestTerminalTicket_E2E_WorkspaceNotFound(t *testing.T) {

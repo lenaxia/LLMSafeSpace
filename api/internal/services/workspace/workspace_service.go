@@ -752,26 +752,41 @@ func (s *Service) GetWorkspaceStatus(ctx context.Context, userID, workspaceID st
 	return result, nil
 }
 
-// verifyOwner returns a forbidden or not-found error if the user does not own
-// the workspace. Returns nil when the user is the owner.
-//
-// Per Epic 43 decision D6, access to an org workspace requires either being the
-// creator (meta.UserID) or an org admin (IsOrgAdmin). Plain org members can only
-// access workspaces they themselves created — they can no longer reach other
-// members' org workspaces. This makes verifyOwner equivalent to the former
-// verifyOrgAdmin; that method has been consolidated into this one.
-func (s *Service) verifyOwner(ctx context.Context, userID, workspaceID string) error {
+// ResolveWorkspace fetches workspace metadata by ID. It is the pure-fetch half
+// of verifyOwner and the entry point for WorkspaceAccessMiddleware. Returns a
+// NotFound APIError when the workspace does not exist (or the id is empty,
+// mirroring GetWorkspace's empty-input contract) and an Internal APIError when
+// the underlying lookup fails.
+func (s *Service) ResolveWorkspace(ctx context.Context, workspaceID string) (*types.WorkspaceMetadata, error) {
 	meta, err := s.dbService.GetWorkspace(ctx, workspaceID)
 	if err != nil {
-		return apierrors.NewInternalError("workspace_retrieval_failed", err)
+		return nil, apierrors.NewInternalError("workspace_retrieval_failed", err)
 	}
 	if meta == nil {
-		return apierrors.NewNotFoundError("workspace", workspaceID, fmt.Errorf("workspace not found"))
+		return nil, apierrors.NewNotFoundError("workspace", workspaceID, fmt.Errorf("workspace not found"))
+	}
+	return meta, nil
+}
+
+// CheckOwnership is the pure-authorisation half of verifyOwner, operating on a
+// previously-resolved *types.WorkspaceMetadata so callers can avoid a second
+// DB hit. Behavior is identical to the post-fetch portion of verifyOwner:
+//
+//   - nil meta → fail-closed Forbidden (defense-in-depth; ResolveWorkspace
+//     already returns NotFound for missing rows).
+//   - creator match → for org-attributed workspaces the creator must still be
+//     a CURRENT org member (D5 offboarding); personal workspaces pass.
+//   - non-creator on an org workspace → allowed only as org admin (D6).
+//   - anything else → Forbidden.
+//
+// Org-store failures propagate as wrapped errors (NOT *APIError) so callers
+// can distinguish infrastructure failure from authorisation denial — this
+// preserves the exact return-shape contract verifyOwner had before the split.
+func (s *Service) CheckOwnership(ctx context.Context, userID string, meta *types.WorkspaceMetadata) error {
+	if meta == nil {
+		return apierrors.NewForbiddenError("workspace access denied", fmt.Errorf("nil metadata"))
 	}
 	if meta.UserID == userID {
-		// D5: for org-attributed workspaces, the creator must be a CURRENT org
-		// member. Offboarded users lose access automatically — no account
-		// suspension needed. Personal workspaces (no org_id) are unaffected.
 		if meta.OrgID != nil && *meta.OrgID != "" && s.orgStore != nil {
 			isMember, err := s.orgStore.IsOrgMember(ctx, *meta.OrgID, userID)
 			if err != nil {
@@ -797,23 +812,45 @@ func (s *Service) verifyOwner(ctx context.Context, userID, workspaceID string) e
 	}
 	return apierrors.NewForbiddenError(
 		"workspace access denied",
-		fmt.Errorf("user %s does not have access to workspace %s", userID, workspaceID),
+		fmt.Errorf("user %s does not have access to workspace %s", userID, meta.ID),
 	)
 }
 
-// verifyOwner (above) is the single access check post-D5/D6. It grants access
-// to: (1) the workspace creator, IF they are still a current org member for
-// org-attributed workspaces (D5); (2) an org admin for org workspaces (D6).
-// Offboarded creators lose access automatically.
+// verifyOwner returns a forbidden or not-found error if the user does not own
+// the workspace. Returns nil when the user is the owner.
+//
+// As of design 0041 Story 2 this is a thin wrapper over ResolveWorkspace +
+// CheckOwnership that trusts WorkspaceAccessMiddleware's prior decision when
+// the middleware has already validated ownership for THIS workspace in the
+// current request context. The short-circuit is what makes the middleware the
+// single ownership gate without forcing the 11 service-layer callers to drop
+// their defense-in-depth check: on the HTTP path the check becomes free, on
+// background-job paths (no middleware) it still runs the full Resolve +
+// Check (design 0041 edge case 5). The meta.ID == workspaceID guard is
+// defensive — without it a caller could forge ownership of any workspace by
+// stuffing an unrelated meta into context.
+//
+// Per Epic 43 decision D6, access to an org workspace requires either being the
+// creator (meta.UserID) or an org admin (IsOrgAdmin). Plain org members can only
+// access workspaces they themselves created — they can no longer reach other
+// members' org workspaces. This makes verifyOwner equivalent to the former
+// verifyOrgAdmin; that method has been consolidated into this one.
+func (s *Service) verifyOwner(ctx context.Context, userID, workspaceID string) error {
+	if meta, ok := types.WorkspaceMetaFromCtx(ctx); ok && meta.ID == workspaceID {
+		return nil
+	}
+	resolved, err := s.ResolveWorkspace(ctx, workspaceID)
+	if err != nil {
+		return err
+	}
+	return s.CheckOwnership(ctx, userID, resolved)
+}
 
 // buildWorkspaceCRD constructs a v1.Workspace CRD from an API request.
 func buildWorkspaceCRD(workspaceID, userID string, req types.CreateWorkspaceRequest, namespace string) *v1.Workspace {
 	labels := map[string]string{
 		"app":     "llmsafespace",
 		"user-id": userID,
-	}
-	if req.OrgID != nil && *req.OrgID != "" {
-		labels["org-id"] = *req.OrgID
 	}
 	for k, v := range req.Labels {
 		labels[k] = v
