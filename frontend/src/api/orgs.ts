@@ -1,4 +1,5 @@
 import { api } from "./client";
+import type { ProviderCredential } from "./providerCredentialTypes";
 import type { WorkspaceListItem } from "./types";
 
 export type OrgStatus = "pending_activation" | "active" | "suspended";
@@ -41,16 +42,10 @@ export interface OrgMember {
   createdAt: string;
 }
 
-export interface OrgCredential {
-  id: string;
+export interface OrgCredential extends ProviderCredential {
   orgId: string;
-  name: string;
-  provider: string;
-  baseURL?: string;
   modelAllowlist: string[];
   modelContextLimits: Record<string, number>;
-  createdAt: string;
-  updatedAt: string;
   /** Present when the credential was created but org-workspace auto-bind failed. */
   bindWarning?: string;
 }
