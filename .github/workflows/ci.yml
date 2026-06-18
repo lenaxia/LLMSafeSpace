@@ -6,8 +6,6 @@ on:
     tags: ['v*.*.*']
   pull_request:
     branches: [main]
-  merge_queue:
-    branches: [main]
 
 env:
   REGISTRY: ghcr.io
@@ -1313,10 +1311,10 @@ jobs:
   # this job heals main within ~1 minute by running repolint -fix-worklogs-only
   # and pushing the renumbered files back.
   #
-  # The primary defense is GitHub Merge Queue (see the merge_queue trigger above
-  # and the "Setup" instructions in worklog 0342); this job is the safety net
-  # for direct pushes, emergency merges with checks bypassed, or any race the
-  # queue doesn't catch.
+  # This is the only merge-time defense. The repo uses Repository Rulesets for
+  # branch protection, which do not support GitHub Merge Queue; the residual
+  # race (two PRs passing within the same minute) is accepted as the cost of
+  # that setup. See worklog 0343 for the decision.
   #
   # [skip ci] in the auto-commit message prevents an infinite loop: this job
   # pushes, the push would re-trigger this job, but [skip ci] suppresses it.
