@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { orgsApi } from "../../api/orgs";
 import { ApiClientError } from "../../api/client";
 
@@ -13,12 +14,14 @@ export function DangerZone({ orgId, orgName }: DangerZoneProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   const handleDelete = async () => {
     setLoading(true);
     setError("");
     try {
       await orgsApi.delete(orgId);
+      await queryClient.invalidateQueries({ queryKey: ["user-orgs"] });
       navigate("/chat");
     } catch (e) {
       if (e instanceof ApiClientError) {
