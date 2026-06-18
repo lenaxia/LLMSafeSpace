@@ -54,7 +54,7 @@ func TestSubtaskPermission_BubblesToRootSession(t *testing.T) {
 	env.handler.EnableSessionParentResolution()
 
 	env.handler.userBroker = eventbroker.NewUserEventBroker()
-	sub , _ := env.handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := env.handler.userBroker.SubscribeWorkspace("ws-1")
 	defer env.handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeEnvelope("permission.asked", map[string]interface{}{
@@ -79,7 +79,7 @@ func TestSubtaskPermission_ResolutionDisabled_RootEqualsSelf(t *testing.T) {
 	env := newInputTestEnv(t)
 	env.handler.userBroker = eventbroker.NewUserEventBroker()
 
-	sub , _ := env.handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := env.handler.userBroker.SubscribeWorkspace("ws-1")
 	defer env.handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeEnvelope("permission.asked", map[string]interface{}{
@@ -120,7 +120,7 @@ func TestSubtaskPermission_TopLevelSession_RootEqualsSelf(t *testing.T) {
 	env.handler.EnableSessionParentResolution()
 
 	env.handler.userBroker = eventbroker.NewUserEventBroker()
-	sub , _ := env.handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := env.handler.userBroker.SubscribeWorkspace("ws-1")
 	defer env.handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeEnvelope("permission.asked", map[string]interface{}{
@@ -160,7 +160,7 @@ func TestSubtaskQuestion_BubblesToRootSession(t *testing.T) {
 	env.handler.EnableSessionParentResolution()
 
 	env.handler.userBroker = eventbroker.NewUserEventBroker()
-	sub , _ := env.handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := env.handler.userBroker.SubscribeWorkspace("ws-1")
 	defer env.handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeEnvelope("question.asked", map[string]interface{}{
@@ -200,7 +200,7 @@ func TestSubtaskPermission_FetcherFails_FallsBackToSelf(t *testing.T) {
 	env.handler.EnableSessionParentResolution()
 
 	env.handler.userBroker = eventbroker.NewUserEventBroker()
-	sub , _ := env.handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := env.handler.userBroker.SubscribeWorkspace("ws-1")
 	defer env.handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeEnvelope("permission.asked", map[string]interface{}{

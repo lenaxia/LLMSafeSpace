@@ -96,7 +96,7 @@ func TestE2E_StepEndedEvent_PersistsContextUsed(t *testing.T) {
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	sub , _ := env.handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := env.handler.userBroker.SubscribeWorkspace("ws-1")
 	defer env.handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	env.handler.onRawEvent("ws-1", "session.next.step.ended", `{

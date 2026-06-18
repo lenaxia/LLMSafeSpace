@@ -1956,7 +1956,7 @@ func TestProxy_DeleteSession_PublishesSSEEvent(t *testing.T) {
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	sub , _ := env.handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := env.handler.userBroker.SubscribeWorkspace("ws-1")
 	defer env.handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	w := env.doRequestWithT(t, "DELETE", "/api/v1/workspaces/ws-1/sessions/s1", nil)
@@ -1983,7 +1983,7 @@ func TestProxy_DeleteSession_NoSSEWhenOpencodeFails(t *testing.T) {
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	sub , _ := env.handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := env.handler.userBroker.SubscribeWorkspace("ws-1")
 	defer env.handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	w := env.doRequestWithT(t, "DELETE", "/api/v1/workspaces/ws-1/sessions/s1", nil)

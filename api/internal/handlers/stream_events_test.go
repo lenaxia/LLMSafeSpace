@@ -332,7 +332,7 @@ func TestStreamEvents_OnSessionIdle_PublishesToBroker(t *testing.T) {
 	broker := eventbroker.NewUserEventBroker()
 	handler.userBroker = broker
 
-	sub , _ := broker.SubscribeWorkspace("ws-1")
+	sub, _ := broker.SubscribeWorkspace("ws-1")
 	defer broker.UnsubscribeWorkspace("ws-1", sub)
 
 	handler.onSessionIdle("ws-1", "s1")
@@ -362,7 +362,7 @@ func TestStreamEvents_OnRawEvent_PublishesOpenCodeEvent(t *testing.T) {
 	broker := eventbroker.NewUserEventBroker()
 	handler.userBroker = broker
 
-	sub , _ := broker.SubscribeWorkspace("ws-1")
+	sub, _ := broker.SubscribeWorkspace("ws-1")
 	defer broker.UnsubscribeWorkspace("ws-1", sub)
 
 	rawData := `{"directory":"ws-1","payload":{"type":"message.part.updated","properties":{"sessionID":"sess-1","part":{"type":"text","text":"hello"}}}}`
@@ -394,7 +394,7 @@ func TestStreamEvents_OnRawEvent_PublishesAllEventTypes(t *testing.T) {
 	broker := eventbroker.NewUserEventBroker()
 	handler.userBroker = broker
 
-	sub , _ := broker.SubscribeWorkspace("ws-1")
+	sub, _ := broker.SubscribeWorkspace("ws-1")
 	defer broker.UnsubscribeWorkspace("ws-1", sub)
 
 	events := []struct {
@@ -446,7 +446,7 @@ func TestStreamEvents_OnRawEvent_UnparsableJSONData(t *testing.T) {
 	broker := eventbroker.NewUserEventBroker()
 	handler.userBroker = broker
 
-	sub , _ := broker.SubscribeWorkspace("ws-1")
+	sub, _ := broker.SubscribeWorkspace("ws-1")
 	defer broker.UnsubscribeWorkspace("ws-1", sub)
 
 	handler.onRawEvent("ws-1", "session.status", "not-json-at-all")
@@ -474,7 +474,7 @@ func TestStreamEvents_OnRawEvent_PreservesNestedStructure(t *testing.T) {
 	broker := eventbroker.NewUserEventBroker()
 	handler.userBroker = broker
 
-	sub , _ := broker.SubscribeWorkspace("ws-1")
+	sub, _ := broker.SubscribeWorkspace("ws-1")
 	defer broker.UnsubscribeWorkspace("ws-1", sub)
 
 	rawData := `{"directory":"ws-1","payload":{"type":"message.part.updated","properties":{"sessionID":"sess-1","part":{"type":"text","text":"hello world"}}}}`
@@ -554,9 +554,9 @@ func TestStreamEvents_OnRawEvent_DifferentWorkspaceIsolation(t *testing.T) {
 	broker := eventbroker.NewUserEventBroker()
 	handler.userBroker = broker
 
-	sub1 , _ := broker.SubscribeWorkspace("ws-1")
+	sub1, _ := broker.SubscribeWorkspace("ws-1")
 	defer broker.UnsubscribeWorkspace("ws-1", sub1)
-	sub2 , _ := broker.SubscribeWorkspace("ws-2")
+	sub2, _ := broker.SubscribeWorkspace("ws-2")
 	defer broker.UnsubscribeWorkspace("ws-2", sub2)
 
 	handler.onRawEvent("ws-1", "message.part.updated", `{"directory":"ws-1","payload":{"type":"message.part.updated","properties":{"sessionID":"s1"}}}`)
@@ -592,7 +592,7 @@ func TestStreamEvents_OnSessionActive_PublishesToBroker(t *testing.T) {
 
 	handler.SetWorkspaceConfigForTest("ws-1", wsstate.Config{MaxActiveSessions: 5})
 
-	sub , _ := broker.SubscribeWorkspace("ws-1")
+	sub, _ := broker.SubscribeWorkspace("ws-1")
 	defer broker.UnsubscribeWorkspace("ws-1", sub)
 
 	handler.onSessionActive("ws-1", "s2")

@@ -153,7 +153,7 @@ func TestDrainMiss_SSEDownWhenSessionGoesIdle(t *testing.T) {
 	require.NoError(t, err)
 
 	// Subscribe to SSE events so we can detect if a queue.update ever fires.
-	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
 	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	// Start watching — this establishes the first SSE connection (which drops quickly).
@@ -522,7 +522,7 @@ func TestReconcileStrandedQueues_Non200Statusz(t *testing.T) {
 	_, err := svc.Enqueue(context.Background(), "ws-1", "ses-1", "queued msg")
 	require.NoError(t, err)
 
-	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
 	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	assert.NotPanics(t, func() {
@@ -758,7 +758,7 @@ func TestReconcileSessionState_PublishesIdleEventOnStaleClear(t *testing.T) {
 	handler.SetActiveSessionsForTest("ws-1", []string{"stuck-session"})
 
 	// Subscribe BEFORE triggering reconcile so we don't miss the event.
-	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
 	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	handler.reconcileSessionState("ws-1", "127.0.0.1", "test-pw")

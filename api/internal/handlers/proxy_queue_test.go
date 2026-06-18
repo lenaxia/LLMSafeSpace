@@ -150,7 +150,7 @@ func TestDrainQueuedMessage_EmptyQueue(t *testing.T) {
 	handler, _, cleanup := setupQueueTestEnv(t)
 	defer cleanup()
 
-	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
 	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	assert.NotPanics(t, func() {
@@ -192,7 +192,7 @@ func TestDrainQueuedMessage_SendsToOpencode(t *testing.T) {
 	_, err = svc.Enqueue(context.Background(), "ws-1", "ses-1", "queued msg")
 	require.NoError(t, err)
 
-	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
 	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	go handler.drainQueuedMessage("ws-1", "ses-1")
@@ -283,7 +283,7 @@ func TestDrainQueuedMessage_DropsAfterMaxRetries(t *testing.T) {
 	err = svc.Requeue(context.Background(), "ws-1", "ses-1", msg)
 	require.NoError(t, err)
 
-	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
 	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	go handler.drainQueuedMessage("ws-1", "ses-1")
@@ -308,7 +308,7 @@ func TestPublishQueueEvent(t *testing.T) {
 	require.NoError(t, err)
 	handler.userBroker = eventbroker.NewUserEventBroker()
 
-	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
 	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	handler.publishQueueEvent("ws-1", "ses-1", "sent", "msg_123", "")
@@ -334,7 +334,7 @@ func TestDeleteQueueMessage_Success(t *testing.T) {
 	id, err := svc.Enqueue(ctx, "ws-1", "ses-1", "to delete")
 	require.NoError(t, err)
 
-	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
 	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	gin.SetMode(gin.TestMode)
@@ -427,7 +427,7 @@ func TestOnPhaseChange_SuspendPublishesDismissedAndClears(t *testing.T) {
 	id2, err := svc.Enqueue(ctx, "ws-1", "ses-B", "msg 2")
 	require.NoError(t, err)
 
-	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
 	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	// Build a minimal workspace object in Suspending phase
@@ -500,7 +500,7 @@ func TestAbortSession_FlushesQueueThenAborts(t *testing.T) {
 	id1, _ := svc.Enqueue(ctx, "ws-1", "ses-1", "queued msg 1")
 	id2, _ := svc.Enqueue(ctx, "ws-1", "ses-1", "queued msg 2")
 
-	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
 	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	gin.SetMode(gin.TestMode)
@@ -606,7 +606,7 @@ func TestClearQueueOnDispose_PublishesDismissedAndClears(t *testing.T) {
 	id2, err := svc.Enqueue(ctx, "ws-1", "ses-B", "pending msg 2")
 	require.NoError(t, err)
 
-	sub , _ := broker.SubscribeWorkspace("ws-1")
+	sub, _ := broker.SubscribeWorkspace("ws-1")
 	defer broker.UnsubscribeWorkspace("ws-1", sub)
 
 	handler.clearQueueOnDispose(ctx, "ws-1")
@@ -832,7 +832,7 @@ func TestAbortSession_FailurePreservesQueue(t *testing.T) {
 	ctx := context.Background()
 	_, _ = svc.Enqueue(ctx, "ws-1", "ses-1", "should survive abort failure")
 
-	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
 	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	gin.SetMode(gin.TestMode)
@@ -884,7 +884,7 @@ func TestBulkReloadHandler_ClearQueueOnDispose(t *testing.T) {
 	id2, err := svc.Enqueue(ctx, "ws-bulk", "ses-Y", "bulk msg 2")
 	require.NoError(t, err)
 
-	sub , _ := broker.SubscribeWorkspace("ws-bulk")
+	sub, _ := broker.SubscribeWorkspace("ws-bulk")
 	defer broker.UnsubscribeWorkspace("ws-bulk", sub)
 
 	h.clearQueueOnDispose(ctx, "ws-bulk")

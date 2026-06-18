@@ -240,7 +240,7 @@ func TestNormalizedEvents_QuestionAsked(t *testing.T) {
 	handler.userBroker = eventbroker.NewUserEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
-	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
 	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeEnvelope("question.asked", map[string]interface{}{
@@ -273,7 +273,7 @@ func TestNormalizedEvents_QuestionResolved(t *testing.T) {
 	handler.userBroker = eventbroker.NewUserEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
-	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
 	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeEnvelope("question.replied", map[string]interface{}{
@@ -298,7 +298,7 @@ func TestNormalizedEvents_QuestionRejected(t *testing.T) {
 	handler.userBroker = eventbroker.NewUserEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
-	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
 	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeEnvelope("question.rejected", map[string]interface{}{
@@ -328,7 +328,7 @@ func TestNormalizedEvents_PermissionAsked(t *testing.T) {
 	handler.userBroker = eventbroker.NewUserEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
-	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
 	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeEnvelope("permission.asked", map[string]interface{}{
@@ -352,7 +352,7 @@ func TestNormalizedEvents_PermissionResolved(t *testing.T) {
 	handler.userBroker = eventbroker.NewUserEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
-	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
 	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeEnvelope("permission.replied", map[string]interface{}{
@@ -375,7 +375,7 @@ func TestNormalizedEvents_RawEventAlwaysPublished(t *testing.T) {
 	handler.userBroker = eventbroker.NewUserEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
-	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
 	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeEnvelope("session.diff", map[string]interface{}{"some": "data"})
@@ -397,7 +397,7 @@ func TestNormalizedEvents_ParseError_NoNormalizedEvent(t *testing.T) {
 	handler.userBroker = eventbroker.NewUserEventBroker()
 	handler.dialect = &agentoc.Dialect{}
 
-	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
 	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeEnvelope("question.asked", map[string]interface{}{"invalid": true})
@@ -496,7 +496,7 @@ func TestNormalizedEvents_E2E_PermissionAsked_ViaProcessEvent(t *testing.T) {
 	tracker := sse.NewTracker(&http.Client{Timeout: 2 * time.Second}, &testLogger{}, func(string, string) {})
 	tracker.SetOnRawEvent(handler.onRawEvent)
 
-	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
 	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makePermissionAskedEvent("per_abc", "ses_xyz", "shell", []string{"rm -rf /tmp"})
@@ -524,7 +524,7 @@ func TestNormalizedEvents_E2E_QuestionAsked_ViaProcessEvent(t *testing.T) {
 	tracker := sse.NewTracker(&http.Client{Timeout: 2 * time.Second}, &testLogger{}, func(string, string) {})
 	tracker.SetOnRawEvent(handler.onRawEvent)
 
-	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
 	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeQuestionAskedEvent("que_abc", "ses_xyz")
@@ -551,7 +551,7 @@ func TestNormalizedEvents_E2E_PermissionResolved_ViaProcessEvent(t *testing.T) {
 	tracker := sse.NewTracker(&http.Client{Timeout: 2 * time.Second}, &testLogger{}, func(string, string) {})
 	tracker.SetOnRawEvent(handler.onRawEvent)
 
-	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
 	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeResolutionEvent("permission.replied", "per_abc", "ses_xyz", "always")
@@ -644,7 +644,7 @@ func TestNormalizedEvents_E2E_QuestionResolved_ViaProcessEvent(t *testing.T) {
 	tracker := sse.NewTracker(&http.Client{Timeout: 2 * time.Second}, &testLogger{}, func(string, string) {})
 	tracker.SetOnRawEvent(handler.onRawEvent)
 
-	sub , _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	sub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
 	defer handler.userBroker.UnsubscribeWorkspace("ws-1", sub)
 
 	envelope := makeResolutionEvent("question.replied", "que_abc", "ses_xyz", "")
