@@ -16,7 +16,7 @@ ROI = (correctness + testability + maintainability impact) ÷ engineering days.
 |-------|-------|--------|-----|------------|
 | [US-46.1](./US-46.1-fix-epic-numbering-and-dup-design-doc.md) | Fix epic numbering collisions + delete duplicate `0018` design doc | Trivial (0.25d) | Very High | — |
 | [US-46.2](./US-46.2-remove-dead-code-stubs.md) | Delete `GCPDriver` stub + `annotateModels` dead branch | Small (0.5d) | Very High | — |
-| [US-46.3](./US-46.3-split-pkg-types-types-go.md) | Split `pkg/types/types.go` (76 types → per-domain files) | Small (1d) | High | — |
+| [US-46.3](./US-46.3-split-pkg-types-types-go.md) | Split `pkg/types/types.go` (71 types → per-domain files) | Small (1d) | High | — |
 | [US-46.4](./US-46.4-introduce-domain-error-type.md) | Introduce `DomainError` type + mapping convention | Small (1d) | High | — |
 | [US-46.5](./US-46.5-propagate-context-everywhere.md) | Replace 187 `context.TODO/Background` with propagated ctx | Medium (2d) | High | — |
 | [US-46.6](./US-46.6-split-workspace-agentd-main-go.md) | Split `cmd/workspace-agentd/main.go` (1451 → ≤300 lines/file) | Medium (3d) | High | — |

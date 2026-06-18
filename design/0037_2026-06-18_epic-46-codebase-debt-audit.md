@@ -18,7 +18,7 @@ A focused audit of the production Go code (excluding tests, generated code, and 
 | Rule 1 | Type safety first; no `map[string]interface{}` for structured data | **458** `interface{}`/`any` usages; worst in `pkg/mcp/client.go`, `pkg/settings/instance_service.go`, `pkg/utilities/masking.go` |
 | Rule 2 | Idiomatic Go; custom error types for domain errors | **43 sentinel errors, only 4 custom error types**; callers cannot `errors.As` on domain conditions |
 | Rule 3 | Explicit over implicit; no swallowed errors | **140** swallowed `Close()`/`Error()` calls; **187** `context.TODO()`/`context.Background()` in production code |
-| Rule 4 | Functions ≤50 lines; not over-engineered | `cmd/workspace-agentd/main.go` is **1451 lines, 43 functions, `main()` spans 367 lines**; `pkg/types/types.go` has **76 types in one 905-line file** |
+| Rule 4 | Functions ≤50 lines; not over-engineered | `cmd/workspace-agentd/main.go` is **1451 lines, 43 functions, `main()` spans 367 lines**; `pkg/types/types.go` has **71 types in one 905-line file** |
 | Rule 5 | Zero technical debt; remove legacy code | `controller/internal/relay/gcp_driver.go` is a 28-line all-`ErrNotImplemented` stub; documented "fragility" in the 4-writer `agent-config.json` design is unfixed; dead `annotateModels` branch confirmed by README-LLM.md:517 remains in `api/internal/handlers/models.go:454` |
 
 Additionally, the codebase is missing **abstractions that would make testing cheaper and extension safer**, while not currently demanding them. These are listed in the Abstraction Opportunities section.
@@ -51,7 +51,7 @@ Ranking is *suggested execution order* — top stories first because they are ch
 |---|-------|--------|-----|---------------|
 | US-46.1 | Remove duplicate design doc + fix epic numbering collisions | Trivial (0.25d) | Very High | Zero risk; clears navigation debt that hides real issues; prerequisite for clean epic tracking |
 | US-46.2 | Delete `GCPDriver` stub and `annotateModels` dead branch | Small (0.5d) | Very High | README-LLM.md already justifies both; removes interface-satisfying-for-no-purpose; mechanical |
-| US-46.3 | Split `pkg/types/types.go` (76 types → per-domain files) | Small (1d) | High | Pure mechanical move; unblocks every future type addition; reduces merge conflicts |
+| US-46.3 | Split `pkg/types/types.go` (71 types → per-domain files) | Small (1d) | High | Pure mechanical move; unblocks every future type addition; reduces merge conflicts |
 | US-46.4 | Introduce `DomainError` type + error mapping convention | Small (1d) | High | Unblocks typed `errors.As` across all callers; 4 existing types prove the pattern; small surface |
 | US-46.5 | Replace `context.TODO()` / `context.Background()` with propagated context | Medium (2d) | High | 187 sites; mechanical with grep; restores deadline propagation (Rule 3); enables timeout tests |
 | US-46.6 | Split `cmd/workspace-agentd/main.go` (1451 lines → ≤300 lines/file) | Medium (3d) | High | Unblocks US-46.10; necessary for test isolation; pure file move + package extraction |
@@ -63,7 +63,7 @@ Ranking is *suggested execution order* — top stories first because they are ch
 | US-46.12 | Add missing tests documented in `MISSINGTESTS.md` | Medium (2d) | Medium | Rule 0 compliance; the file is itself a Rule 0 violation; focuses on Auth Middleware RBAC + Rate Limiting bursting (highest-signal gaps) |
 | US-46.13 | Add `funlen` / `gocyclo` to golangci-lint with current-state baseline | Small (0.5d) | Medium | Locks in the splits from US-46.6; prevents regressions; baseline file excludes existing offenders so the rule is opt-in progressive |
 | US-46.14 | Archive V1 design docs (`design/0001`–`design/0020`) to `design/archive/v1/` | Trivial (0.25d) | Medium | README-LLM.md:52 marks them "reference only — superseded"; they currently pollute `design/` navigation |
-| US-46.15 | Fix README-LLM.md stale design-doc references | Trivial (0.25d) | Low-Medium | README-LLM.md:57 cites `0006_runtimeenv.md` and :58 cites `0007_network.md` but actual files are `0007_runtimeenv.md` and `0020_network.md` |
+| US-46.15 | Fix README-LLM.md stale design-doc references | Trivial (0.25d) | Low-Medium | README-LLM.md:57 cites `0007_network.md` and :58 cites `0006_runtimeenv.md` but actual files are `0020_network.md` and `0007_runtimeenv.md` |
 
 **Total estimated effort:** ~21 engineering days (4 working weeks for one engineer; parallelisable across 2 engineers in ~2.5 weeks given dependency order).
 

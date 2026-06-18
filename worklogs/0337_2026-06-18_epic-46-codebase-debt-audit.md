@@ -24,7 +24,7 @@ Measured rule violations against `README-LLM.md` Rules 0–5:
 | Rule 1 (Type Safety) | `interface{}` / `any` usages; worst in `pkg/mcp/client.go`, `pkg/settings/instance_service.go`, `pkg/utilities/masking.go` | 458 |
 | Rule 2 (Idiomatic Go) | Sentinel errors vs custom error types | 43 sentinel, 4 custom types |
 | Rule 3 (Explicit) | Swallowed errors (`_ = .Close()`, `_ = .Error()`); `context.TODO()` / `context.Background()` in production | 140 swallowed; 187 context |
-| Rule 4 (Code Quality) | God files: `cmd/workspace-agentd/main.go` (1451 lines, 43 functions, `main()` 367 lines); `pkg/types/types.go` (76 types, 905 lines) | 2 critical |
+| Rule 4 (Code Quality) | God files: `cmd/workspace-agentd/main.go` (1451 lines, 43 functions, `main()` 367 lines); `pkg/types/types.go` (71 types, 905 lines) | 2 critical |
 | Rule 5 (Zero Tech Debt) | `controller/internal/relay/gcp_driver.go` all-`ErrNotImplemented` stub; `annotateModels` dead branch (README:517 confirms); four-writer `agent-config.json` fragility (README:453 confirms) | 3 critical |
 
 Additional findings:
@@ -93,7 +93,7 @@ None. This was a design + documentation session; no code changes to test. Per Ru
 Manual verification performed:
 - `ls design/0018*` → confirmed two byte-identical files (15153 bytes each).
 - `wc -l cmd/workspace-agentd/main.go` → confirmed 1451 lines.
-- `grep -c '^type ' pkg/types/types.go` → confirmed 76 types.
+- `grep -c '^type ' pkg/types/types.go` → confirmed 71 types (initially miscounted as 76 — corrected during PR review).
 - `grep -rn "context.TODO()\|context.Background()" --include="*.go" | grep -v _test.go | wc -l` → confirmed 187.
 - `grep -rn "GCPDriver" --include="*.go"` → confirmed 28-line stub exists.
 - `ls design/stories/ | grep epic | sort -V` → confirmed epic-38 and epic-43 collisions; epic-39 missing.
