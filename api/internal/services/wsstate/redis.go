@@ -93,18 +93,10 @@ return 1
 
 // RedisStore is the multi-replica-safe implementation of Store. All
 // six state sections (activeSess, deletedSessions, pwCache, wsConfig,
-// priorPhase, parentBackfilled) are backed by Redis. The embedded
-// InMemoryStore is retained for defense-in-depth (InvalidateAll clears
-// both sides) but will be removed in US-45.9 when all sections are
-// verified stable in production.
-//
-// Fail-open policy (per design): if Redis is unreachable,
-// CheckAndAddActiveSession returns true (allow the request) and records
-// the error via the metrics. Read methods (IsSessionActive,
-// ActiveSessionCount, GetActiveSessions) return their safe defaults
-// (false, 0, nil) under outage — see each method's doc comment.
-//
-// All methods are safe for concurrent use.
+// priorPhase, parentBackfilled) are backed by Redis. The RedisStore is
+// the sole production path — the InMemoryStore exists only as the
+// default for ProxyHandler when no Redis client is configured (unit
+// tests, local dev without Redis).
 type RedisStore struct {
 	// client is borrowed — its lifecycle is managed by the caller
 	// (typically the cache service). RedisStore does not close it.
@@ -136,12 +128,6 @@ type RedisStore struct {
 	// surfaced only via Prometheus metrics.
 	logger pkginterfaces.LoggerInterface
 
-	// inMemory serves the un-migrated sections of the Store interface
-	// (everything except activeSess). Each section is migrated to Redis
-	// in its own story; when all are migrated (US-45.9), this field is
-	// removed.
-	inMemory *InMemoryStore
-
 	// Prometheus metrics required by US-45.2.
 	opDuration          *prometheus.HistogramVec
 	errorsTotal         *prometheus.CounterVec
@@ -172,7 +158,6 @@ func NewRedisStoreWithLogger(client *redis.Client, activeSessTTL time.Duration, 
 		priorPhaseTTL:       DefaultPriorPhaseTTL,
 		backfilledTTL:       DefaultBackfilledTTL,
 		logger:              logger,
-		inMemory:            NewInMemoryStore(),
 		opDuration:          pkgOpDuration,
 		errorsTotal:         pkgErrorsTotal,
 		activeSessionsGauge: pkgActiveSessionsGauge,
@@ -408,7 +393,7 @@ func (s *RedisStore) ClearActiveSessions(workspaceID string) {
 	}
 }
 
-// --- InvalidateAll (overrides to clear both Redis and InMemory) ---
+// --- InvalidateAll ---
 
 // InvalidateAll clears all Redis-backed state (active sessions, deleted
 // tombstones, password cache, config cache, parent backfill) for the
@@ -422,13 +407,6 @@ func (s *RedisStore) InvalidateAll(workspaceID string) {
 	s.InvalidatePassword(workspaceID)
 	s.InvalidateWorkspaceConfig(workspaceID)
 	s.DeleteParentBackfilled(workspaceID)
-	// InMemoryStore cleanup for defense-in-depth (no-ops for migrated
-	// sections but harmless).
-	s.inMemory.ClearActiveSessions(workspaceID)
-	s.inMemory.ClearDeletedSessions(workspaceID)
-	s.inMemory.InvalidatePassword(workspaceID)
-	s.inMemory.InvalidateWorkspaceConfig(workspaceID)
-	s.inMemory.DeleteParentBackfilled(workspaceID)
 }
 
 // --- Deleted-session tombstones (Redis-backed, US-45.3) ---
