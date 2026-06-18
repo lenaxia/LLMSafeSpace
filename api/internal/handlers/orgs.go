@@ -35,6 +35,7 @@ type orgStore interface {
 	UpdateOrgMemberRole(ctx context.Context, orgID, userID string, role types.OrgRole) error
 	ListOrgWorkspaces(ctx context.Context, orgID string, limit, offset int) ([]*types.WorkspaceMetadata, *types.PaginationMetadata, error)
 	GetUserIDByEmail(ctx context.Context, email string) (string, error)
+	GetUserOrgID(ctx context.Context, userID string) (string, error)
 	GetStripeCustomerID(ctx context.Context, orgID string) (string, error)
 	UpdateOrgStatus(ctx context.Context, orgID string, status *types.OrgStatus, subStatus *types.OrgSubscriptionStatus, planID *types.OrgPlan) error
 }
@@ -395,6 +396,19 @@ func (h *OrgsHandler) AddMember(c *gin.Context) {
 	}
 	if existing != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "user is already a member"})
+		return
+	}
+
+	// Single-org enforcement (D8): adding a user already in another org would
+	// hit the unique index on org_memberships(user_id) as a raw constraint error.
+	// Pre-check to return a clear 409.
+	currentOrgID, err := h.orgStore.GetUserOrgID(ctx, req.UserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check existing org membership"})
+		return
+	}
+	if currentOrgID != "" {
+		c.JSON(http.StatusConflict, gin.H{"error": "user is already a member of another organization"})
 		return
 	}
 

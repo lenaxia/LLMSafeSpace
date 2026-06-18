@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -30,6 +31,8 @@ type mockOrgStore struct {
 	usersByEmail          map[string]string
 	userByEmailErr        error
 	updateStatusErr       error
+	userOrgID             map[string]string
+	userOrgIDErr          error
 }
 
 func newMockOrgStore() *mockOrgStore {
@@ -39,6 +42,7 @@ func newMockOrgStore() *mockOrgStore {
 		adminCounts:     make(map[string]int),
 		billingAccounts: make(map[string]string),
 		usersByEmail:    make(map[string]string),
+		userOrgID:       make(map[string]string),
 	}
 }
 
@@ -252,6 +256,13 @@ func (m *mockOrgStore) GetUserIDByEmail(_ context.Context, email string) (string
 		return "", m.userByEmailErr
 	}
 	return m.usersByEmail[email], nil
+}
+
+func (m *mockOrgStore) GetUserOrgID(_ context.Context, userID string) (string, error) {
+	if m.userOrgIDErr != nil {
+		return "", m.userOrgIDErr
+	}
+	return m.userOrgID[userID], nil
 }
 
 func (m *mockOrgStore) GetStripeCustomerID(_ context.Context, orgID string) (string, error) {
@@ -504,6 +515,24 @@ func TestOrgsHandler_AddMember_AdminRole(t *testing.T) {
 	}
 	if member.Role != types.OrgRoleAdmin {
 		t.Errorf("expected role=admin, got %q", member.Role)
+	}
+}
+
+func TestOrgsHandler_AddMember_AlreadyInAnotherOrg_Conflict(t *testing.T) {
+	store := newMockOrgStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.members["org-1"] = []*types.OrgMember{
+		{OrgID: "org-1", UserID: "admin-1", Role: types.OrgRoleAdmin},
+	}
+	store.userOrgID["taken-user"] = "org-2"
+	router, _ := setupOrgTestRouter(t, store)
+
+	w := doRequest(router, "POST", "/api/v1/orgs/org-1/members", `{"userId":"taken-user","role":"member"}`)
+	if w.Code != http.StatusConflict {
+		t.Errorf("expected 409 for user already in another org, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "another organization") {
+		t.Errorf("expected 'another organization' message, got: %s", w.Body.String())
 	}
 }
 

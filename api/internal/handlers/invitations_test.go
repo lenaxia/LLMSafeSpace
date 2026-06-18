@@ -6,6 +6,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -27,6 +28,8 @@ type mockInvitationStore struct {
 	countLastHour  int
 	createErr      error
 	acceptErr      error
+	userOrgID      string
+	userOrgIDErr   error
 }
 
 func newMockInvitationStore() *mockInvitationStore {
@@ -157,6 +160,13 @@ func (m *mockInvitationStore) GetOrgMember(_ context.Context, orgID, userID stri
 		}
 	}
 	return nil, nil
+}
+
+func (m *mockInvitationStore) GetUserOrgID(_ context.Context, userID string) (string, error) {
+	if m.userOrgIDErr != nil {
+		return "", m.userOrgIDErr
+	}
+	return m.userOrgID, nil
 }
 
 func setupInvitationRouter(t *testing.T, store *mockInvitationStore, mailer email.EmailProvider) *gin.Engine {
@@ -363,6 +373,59 @@ func TestInvitations_Accept_AlreadyMember_Conflict(t *testing.T) {
 	w := doRequest(router, "POST", "/api/v1/invitations/"+token+"/accept", "")
 	if w.Code != http.StatusConflict {
 		t.Errorf("expected 409 for already member, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// Cross-org enforcement (S3 in 0034, D8 in 0031): a user already in org A
+// accepting an invitation to org B must get a clear 409, not a raw DB
+// constraint-violation 500. The Accept handler must check the user's existing
+// org membership before attempting the insert.
+func TestInvitations_Accept_AlreadyInAnotherOrg_Conflict(t *testing.T) {
+	store := newMockInvitationStore()
+	store.orgs["org-2"] = &types.Organization{ID: "org-2", Name: "Beta", Slug: "beta"}
+	store.userOrgID = "org-2" // user-1 is already a member of a DIFFERENT org
+
+	token := "cross-org-token"
+	hash := hashToken(token)
+	store.invitations["inv-6"] = &types.OrgInvitation{
+		ID: "inv-6", OrgID: "org-1", Email: "e@test.com", Role: types.OrgRoleMember,
+		InvitedBy: "user-1", TokenHash: hash, ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+	store.tokenHashIndex[hash] = "inv-6"
+
+	router := setupInvitationRouter(t, store, nil)
+	w := doRequest(router, "POST", "/api/v1/invitations/"+token+"/accept", "")
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for cross-org membership, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "another organization") {
+		t.Errorf("expected a clear 'another organization' message, got: %s", w.Body.String())
+	}
+	// The invitation must NOT be marked accepted.
+	store.mu.Lock()
+	inv := store.invitations["inv-6"]
+	store.mu.Unlock()
+	if inv.AcceptedAt != nil {
+		t.Errorf("invitation must not be marked accepted when cross-org check fails")
+	}
+}
+
+func TestInvitations_Accept_GetUserOrgIDError_500(t *testing.T) {
+	store := newMockInvitationStore()
+	store.userOrgIDErr = errors.New("db down")
+
+	token := "lookup-err-token"
+	hash := hashToken(token)
+	store.invitations["inv-7"] = &types.OrgInvitation{
+		ID: "inv-7", OrgID: "org-1", Email: "e@test.com", Role: types.OrgRoleMember,
+		InvitedBy: "user-1", TokenHash: hash, ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+	store.tokenHashIndex[hash] = "inv-7"
+
+	router := setupInvitationRouter(t, store, nil)
+	w := doRequest(router, "POST", "/api/v1/invitations/"+token+"/accept", "")
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on lookup error, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
