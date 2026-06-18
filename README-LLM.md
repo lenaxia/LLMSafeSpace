@@ -2,8 +2,8 @@
 
 > **Repository:** `github.com/lenaxia/llmsafespace`
 
-**Version:** 1.13
-**Last Updated:** 2026-06-12
+**Version:** 1.14
+**Last Updated:** 2026-06-18
 **Project Status:** Active Development
 
 ---
@@ -514,9 +514,13 @@ This is acceptable: the Phase 1 window is ~7s, and users are unlikely to interac
 the workspace within the first 20s of pod boot. The stale window is purely cosmetic
 (models show `providerID="opencode"` instead of `"opencode-relay"`) and self-corrects.
 
-#### annotateModels remap — dead code (tech debt to remove)
+#### annotateModels remap — intentional defense-in-depth
 
-The remap guard `relayGloballyEnabled && relayInjected && p.ID=="opencode"` is unreachable in Phase 2 (because `disabled_providers` removes `opencode` from `connected[]`) and correctly suppressed in Phase 1. The code is defense-in-depth for a hypothetical future opencode change but is effectively dead code. Should be removed as tech debt — the `disabled_providers` mechanism is the correct solution.
+The remap guard `relayGloballyEnabled && relayInjected && avail == ModelFreeTier && p.ID=="opencode"` is unreachable in Phase 2 (because `disabled_providers` removes `opencode` from `connected[]`) and correctly suppressed in Phase 1. **It is intentionally retained as defense-in-depth**, not removed as tech debt.
+
+The guard protects against a failure mode we have already lived through: if an opencode version ever keeps the built-in `opencode` provider in `connected[]` despite `disabled_providers`, this code correctly remaps free-tier models to `opencode-relay` rather than silently routing users to a disabled provider. `disabled_providers` is an upstream mechanism we do not control; single mechanisms fail, which is why the guard layers on top of it.
+
+History supports keeping it: the guard was specifically *narrowed* (not added) in worklog 0178 to fix a real `ProviderModelNotFoundError` bug, and the comment block was re-reasoned in worklog 0189 after a follow-up audit. The ~20 LoC cost (4-line conditional + 2 tests + 14-line comment at `models.go:450-456`) is justified by the silent-failure mode it prevents. See worklog 0338 for the full rationale.
 
 ---
 
@@ -1418,6 +1422,7 @@ The API service is configured via `api/config/config.yaml` with environment vari
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.14 | 2026-06-18 | Reclassified annotateModels remap guard from "dead code (tech debt to remove)" to "intentional defense-in-depth" — aligns the doc with the code author's documented reasoning at `models.go:450-456` and the hardening history from worklogs 0178/0189 (see worklog 0338) |
 | 1.13 | 2026-06-12 | Removed redundant Bug Status, Confirmed Bugs, Implementation Status, Branch Management sections; simplified repo structure, worklog template, multi-agent workflow, PR adversarial assessment; folded scoring bullets into tables; compressed relay write sequences and version history; removed backwards compat; updated annotateModels remap note |
 | 1.12 | 2026-06-11 | Fixed repo structure, CRD count, architecture diagram, API reference, tech stack, SSE paths, route docs |
 | 1.11 | 2026-06-08 | Added relay config subsystem: bugs, volume layout, config merge order, design, gap fixes |
