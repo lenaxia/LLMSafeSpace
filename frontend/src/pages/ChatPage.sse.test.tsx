@@ -4,7 +4,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, waitFor, act, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ChatPage } from "./ChatPage";
 import { TooltipProvider } from "../components/ui";
@@ -86,6 +86,31 @@ function renderChat(qc: QueryClient, path: string) {
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[path]}>
+        <TooltipProvider delayDuration={0}>
+          <Routes>
+            <Route path="/chat/:workspaceId" element={<ChatPage />} />
+            <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
+          </Routes>
+        </TooltipProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+// renderChatNavigable renders the same tree as renderChat but also exposes a
+// captured navigate() so a test can drive a real in-app route change against the
+// SAME mounted ChatPage instance — required to exercise [sessionId] effects.
+let capturedNavigate: ((to: string) => void) | null = null;
+function NavigateCapturer() {
+  capturedNavigate = useNavigate();
+  return null;
+}
+function renderChatNavigable(qc: QueryClient, path: string) {
+  capturedNavigate = null;
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={[path]}>
+        <NavigateCapturer />
         <TooltipProvider delayDuration={0}>
           <Routes>
             <Route path="/chat/:workspaceId" element={<ChatPage />} />
@@ -1460,6 +1485,65 @@ describe("ChatPage SSE event handler", () => {
 
       await waitFor(() => {
         expect(screen.queryByText(/rate limited/i)).not.toBeInTheDocument();
+      });
+    });
+  });
+
+  describe("agent_died events (US-44.1c)", () => {
+    function makeAgentDiedEvent(workspaceId: string): WorkspaceStreamEvent {
+      return {
+        type: "agent_died",
+        workspace_id: workspaceId,
+        data: { reason: "unknown" },
+      };
+    }
+
+    it("renders the dismissible agent_died banner on receipt of agent_died", async () => {
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      expect(screen.queryByText(/Agent was terminated unexpectedly/i)).not.toBeInTheDocument();
+
+      sendSSEEvent(makeAgentDiedEvent("ws-1"));
+
+      await waitFor(() => {
+        const banner = screen.getByText(/Agent was terminated unexpectedly/i);
+        expect(banner).toBeInTheDocument();
+        expect(banner.closest("[role='alert']")).not.toBeNull();
+      });
+    });
+
+    it("dismisses the agent_died banner when the Dismiss button is clicked", async () => {
+      const user = userEvent.setup();
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      renderChat(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      sendSSEEvent(makeAgentDiedEvent("ws-1"));
+      await waitFor(() => expect(screen.getByText(/Agent was terminated unexpectedly/i)).toBeInTheDocument());
+
+      await user.click(screen.getByRole("button", { name: "Dismiss" }));
+
+      await waitFor(() => {
+        expect(screen.queryByText(/Agent was terminated unexpectedly/i)).not.toBeInTheDocument();
+      });
+    });
+
+    it("clears the agent_died banner when the active session changes", async () => {
+      (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active" });
+      renderChatNavigable(makeQueryClient(), "/chat/ws-1/sess-1");
+      await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+      sendSSEEvent(makeAgentDiedEvent("ws-1"));
+      await waitFor(() => expect(screen.getByText(/Agent was terminated unexpectedly/i)).toBeInTheDocument());
+
+      await act(async () => {
+        capturedNavigate?.("/chat/ws-1/sess-2");
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByText(/Agent was terminated unexpectedly/i)).not.toBeInTheDocument();
       });
     });
   });

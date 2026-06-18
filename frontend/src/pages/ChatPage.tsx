@@ -285,6 +285,7 @@ export function ChatPage() {
   }, [serverBusy, localStreaming]);
 
   const [sessionWasInterrupted, setSessionWasInterrupted] = useState(false);
+  const [agentDied, setAgentDied] = useState(false);
   const hasAutoAbortedRef = useRef(false);
 
   // Reset reconnect state on session change
@@ -293,6 +294,7 @@ export function ChatPage() {
     hasAutoAbortedRef.current = false;
     knownLivePartIds.current.clear();
     setSessionWasInterrupted(false);
+    setAgentDied(false);
     // S36.4: Reset compaction state when navigating to a different session
     prevContextUsedRef.current = undefined;
     setCompactionDetected(false);
@@ -693,6 +695,8 @@ export function ChatPage() {
       const { request_id } = event.data as { request_id: string };
       setPendingPermissions((prev) => prev.filter((p) => p.id !== request_id));
       removePendingAction(request_id);
+    } else if (event.type === "agent_died") {
+      setAgentDied(true);
     }
   }, [queryClient, workspaceId, sessionId, parseStreamEvent, notifySessionIdle, reconcileOnIdle, queue, addPendingAction, removePendingAction]);
 
@@ -900,6 +904,18 @@ export function ChatPage() {
           <button
             className="ml-auto shrink-0 underline hover:no-underline"
             onClick={() => setSessionWasInterrupted(false)}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {isReady && agentDied && (
+        <div role="alert" className="flex items-center gap-2 border-b border-yellow-200 bg-yellow-50 px-4 py-2 text-xs text-yellow-800 dark:border-yellow-800 dark:bg-yellow-950 dark:text-yellow-200">
+          <span>⚠ Agent was terminated unexpectedly (OOM, crash, or restart). If mid-task, the session will recover or show as idle shortly.</span>
+          <button
+            className="ml-auto shrink-0 underline hover:no-underline"
+            onClick={() => setAgentDied(false)}
           >
             Dismiss
           </button>
