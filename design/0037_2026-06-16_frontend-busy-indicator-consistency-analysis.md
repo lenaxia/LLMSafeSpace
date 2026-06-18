@@ -143,7 +143,7 @@ This is the classic "100% LLM-developed" hazard the user flagged: a newer tree i
 
 ### F5 — Dead code: `api/events.ts` BroadcastChannel SSE client (never wired) [Severity: Medium | Confidence: High]
 
-`api/events.ts` (`createEventStream`) implements a `BroadcastChannel`-multiplexed SSE client with leader election — exactly the cross-tab scheme described in `design/0026_2026-05-23_frontend.md` §10.3 (line 730). It is **not used by any production code**: the only importers are `api/events.test.ts`. The live streams use `lib/sseConnection.ts` (`createSSEConnection`, raw `fetch` reader loop), opened independently per tab.
+`api/events.ts` (`createEventStream`) implements a `BroadcastChannel`-multiplexed SSE client with leader election — exactly the cross-tab scheme described in `design/0026_2026-05-23_frontend.md` §10.3 (line 730). It is **not used by any production code**: the only importers are test files (`api/events.test.ts` and `useChatStream.test.ts:13`). The live streams use `lib/sseConnection.ts` (`createSSEConnection`, raw `fetch` reader loop), opened independently per tab.
 
 Consequences:
 - **Design divergence.** The documented cross-tab SSE multiplexing (one leader tab holds the connection; others subscribe via `BroadcastChannel`) was never wired up / was removed. Each browser tab opens **two** SSE connections (user stream + workspace stream). With the opencode-pod connection budget discussed in `design/0026` §10.3, a user with N tabs consumes 2N connections to a single sandbox pod.

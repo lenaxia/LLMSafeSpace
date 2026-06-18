@@ -190,7 +190,7 @@ The absence of these common smell-signals is itself worth noting: the code is *t
 ## 10. Files examined (additional to 0037/0038)
 
 - `frontend/src/components/workspace/WorkspaceSettingsDrawer.tsx`
-- `frontend/src/components/layout/Sidebar.tsx:408-412` (the `onSave={async () => {}}` site)
+- `frontend/src/components/layout/Sidebar.tsx:417-421` (the `onSave={async () => {}}` site)
 - `frontend/src/hooks/useChatStream.ts` (AbortController)
 - `frontend/src/api/messages.ts` (sendAsync signal)
 - `frontend/src/lib/stream.ts` + tests

@@ -80,4 +80,4 @@ No tests — documentation only. CI on PR #219: all frontend checks pass (unit, 
 - `design/0038_2026-06-16_frontend-broader-findings.md` (created)
 - `design/0039_2026-06-16_frontend-quirks-dead-code-silent-failures.md` (created)
 - `design/0040_2026-06-16_frontend-path-forward-and-consolidation-roadmap.md` (created)
-- `worklogs/0327_2026-06-18_frontend-consistency-analysis.md` (this worklog, created)
+- `worklogs/0333_2026-06-18_frontend-consistency-analysis.md` (this worklog, created)
