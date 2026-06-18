@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { workspacesApi } from "../../api/workspaces";
+import { orgsApi } from "../../api/orgs";
 import { ApiClientError } from "../../api/client";
 import { useAuth } from "../../providers/AuthProvider";
 import { useIsSessionBusy, useIsSessionUnread, useWorkspaceBusyCount, useSessionPendingActions } from "../../providers/SessionActivityProvider";
@@ -13,6 +14,7 @@ import type { KebabMenuItem } from "../ui/KebabMenu";
 import {
   Settings,
   LogOut,
+  Building2,
   Plus,
   Circle,
   MessageSquare,
@@ -51,6 +53,15 @@ export function Sidebar({ onNavigate }: Props) {
     queryKey: ["workspaces"],
     queryFn: () => workspacesApi.list(),
   });
+
+  const { data: userOrgs } = useQuery({
+    queryKey: ["user-orgs"],
+    queryFn: () => orgsApi.list(),
+    staleTime: 60_000,
+  });
+  const orgAdminLink = userOrgs && userOrgs.length > 0 && userOrgs[0]!.userRole === "admin"
+    ? `/orgs/${userOrgs[0]!.id}`
+    : null;
 
   useEffect(() => {
     if (workspaces?.items) {
@@ -239,6 +250,11 @@ export function Sidebar({ onNavigate }: Props) {
         <div className="flex items-center justify-between">
           <span className="truncate px-2 text-xs text-muted-foreground">{user?.username}</span>
           <div className="flex gap-1">
+            {orgAdminLink && (
+              <button onClick={() => { navigate(orgAdminLink); onNavigate?.(); }} className="rounded p-1.5 hover:bg-accent" aria-label="Organisation" title="Organisation">
+                <Building2 className="h-4 w-4" />
+              </button>
+            )}
             <button onClick={() => { navigate("/settings"); onNavigate?.(); }} className="rounded p-1.5 hover:bg-accent" aria-label="Settings">
               <Settings className="h-4 w-4" />
             </button>

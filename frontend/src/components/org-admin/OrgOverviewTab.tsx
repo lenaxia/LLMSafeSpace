@@ -1,6 +1,7 @@
 import { useOutletContext } from "react-router-dom";
 import type { OrgResponse } from "../../api/orgs";
 import { Badge } from "../ui/Badge";
+import { DangerZone } from "./DangerZone";
 
 interface OverviewContext {
   org: OrgResponse;
@@ -8,7 +9,7 @@ interface OverviewContext {
 }
 
 export function OrgOverviewTab() {
-  const { org } = useOutletContext<OverviewContext>();
+  const { org, isAdmin } = useOutletContext<OverviewContext>();
 
   return (
     <div className="space-y-6">
@@ -55,6 +56,8 @@ export function OrgOverviewTab() {
           <dd>{new Date(org.createdAt).toLocaleDateString()}</dd>
         </dl>
       </div>
+
+      {isAdmin && <DangerZone orgId={org.id} orgName={org.name} />}
     </div>
   );
 }

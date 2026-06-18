@@ -49,6 +49,12 @@ vi.mock("../../api/workspaces", () => ({
   },
 }));
 
+vi.mock("../../api/orgs", () => ({
+  orgsApi: {
+    list: vi.fn().mockResolvedValue([]),
+  },
+}));
+
 import { workspacesApi } from "../../api/workspaces";
 import { ApiClientError } from "../../api/client";
 
