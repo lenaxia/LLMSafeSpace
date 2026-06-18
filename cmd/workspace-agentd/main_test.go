@@ -233,7 +233,7 @@ func TestStatuszEndpoint_ContextUsage_PerSessionContextUsed(t *testing.T) {
 	client, cache, tracker := newStatuszTestFixture(t, opencodeSrv)
 	tracker.setPromptTokens("ses_1", 15000)
 	tracker.setPromptTokens("ses_2", 80000)
-	handler := buildStatuszHandler(client, cache, tracker, time.Now())
+	handler := buildStatuszHandler(client, cache, tracker, newMemoryPressureMonitor(), time.Now())
 
 	req := httptest.NewRequest("GET", "/v1/statusz", nil)
 	w := httptest.NewRecorder()
@@ -261,7 +261,7 @@ func TestStatuszEndpoint_ContextUsage_EmptySessions(t *testing.T) {
 	defer opencodeSrv.Close()
 
 	client, cache, tracker := newStatuszTestFixture(t, opencodeSrv)
-	handler := buildStatuszHandler(client, cache, tracker, time.Now())
+	handler := buildStatuszHandler(client, cache, tracker, newMemoryPressureMonitor(), time.Now())
 
 	req := httptest.NewRequest("GET", "/v1/statusz", nil)
 	w := httptest.NewRecorder()
@@ -302,7 +302,7 @@ func TestStatuszEndpoint_ContextUsage_ColdStart(t *testing.T) {
 	defer opencodeSrv.Close()
 
 	client, cache, tracker := newStatuszTestFixture(t, opencodeSrv)
-	handler := buildStatuszHandler(client, cache, tracker, time.Now())
+	handler := buildStatuszHandler(client, cache, tracker, newMemoryPressureMonitor(), time.Now())
 
 	req := httptest.NewRequest("GET", "/v1/statusz", nil)
 	w := httptest.NewRecorder()
@@ -343,7 +343,7 @@ func TestStatuszEndpoint_OldFieldsUnchanged(t *testing.T) {
 	tracker := newSessionStatusTracker()
 	startedAt := time.Now()
 
-	handler := buildStatuszHandler(client, cache, tracker, startedAt)
+	handler := buildStatuszHandler(client, cache, tracker, newMemoryPressureMonitor(), startedAt)
 
 	req := httptest.NewRequest("GET", "/v1/statusz", nil)
 	w := httptest.NewRecorder()
@@ -467,7 +467,7 @@ func TestBuildStatuszHandler_ContextUsed_PerSession(t *testing.T) {
 	startedAt := time.Now()
 
 	// Use the real buildStatuszHandler, not a hand-rolled copy.
-	handler := buildStatuszHandler(client, cache, tracker, startedAt)
+	handler := buildStatuszHandler(client, cache, tracker, newMemoryPressureMonitor(), startedAt)
 
 	req := httptest.NewRequest("GET", "/v1/statusz", nil)
 	w := httptest.NewRecorder()
@@ -514,7 +514,7 @@ func TestBuildStatuszHandler_NoContextUsed_WhenTrackerEmpty(t *testing.T) {
 	tracker := newSessionStatusTracker() // empty — no SSE data yet
 	startedAt := time.Now()
 
-	handler := buildStatuszHandler(client, cache, tracker, startedAt)
+	handler := buildStatuszHandler(client, cache, tracker, newMemoryPressureMonitor(), startedAt)
 
 	req := httptest.NewRequest("GET", "/v1/statusz", nil)
 	w := httptest.NewRecorder()

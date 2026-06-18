@@ -230,6 +230,7 @@ const (
 	WorkspaceConditionAgentHealthy         WorkspaceConditionType = "AgentHealthy"
 	WorkspaceConditionProviderReady        WorkspaceConditionType = "ProviderReady"
 	WorkspaceConditionDiskPressure         WorkspaceConditionType = "DiskPressure"
+	WorkspaceConditionMemoryPressure       WorkspaceConditionType = "MemoryPressure"
 )
 
 const (
@@ -249,6 +250,7 @@ const (
 	ReasonProvidersReady        = "ProvidersReady"
 	ReasonProvidersNotConnected = "ProvidersNotConnected"
 	ReasonDiskPressure          = "DiskPressure"
+	ReasonMemoryPressure        = "MemoryPressure"
 )
 
 // WorkspaceCondition describes a condition of a Workspace.

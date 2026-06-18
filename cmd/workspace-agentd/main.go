@@ -730,6 +730,7 @@ func buildStatuszHandler(
 	client *OpenCodeClient,
 	cache *providerCache,
 	tracker *sessionStatusTracker,
+	pressureMon *memoryPressureMonitor,
 	startedAt time.Time,
 ) http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -764,6 +765,21 @@ func buildStatuszHandler(
 			}
 		}
 
+		// US-44.6: enrich sessions with estimated memory from context tokens.
+		for i := range sessions {
+			tokens := int64(0)
+			if sessions[i].Tokens != nil {
+				tokens = sessions[i].Tokens.Input + sessions[i].Tokens.CacheRead + sessions[i].Tokens.CacheWrite
+			}
+			if tokens == 0 {
+				tokens = sessions[i].ContextUsed
+			}
+			sessions[i].EstimatedMemoryMB = estimateSessionMemoryMB(tokens)
+		}
+
+		// US-44.5: surface memory pressure state.
+		pressure, _, _ := pressureMon.snapshot()
+
 		_ = json.NewEncoder(w).Encode(agentd.StatuszResponse{
 			Healthy:             healthy,
 			Ready:               ready,
@@ -780,6 +796,7 @@ func buildStatuszHandler(
 			Memory:              getMemoryUsage(),
 			CPU:                 getCPUUsage(),
 			Context:             contextUsage,
+			MemoryPressure:      pressure,
 		})
 	})
 }
@@ -858,6 +875,15 @@ func main() {
 
 	// US-44.8: periodic metrics collection for ops dashboards. Updates
 	// memory usage, active sessions, and context token gauges every 60s.
+	// US-44.5: memory pressure monitor checks cgroup usage against the
+	// 85% threshold and surfaces the state via statusz.
+	pressureMonitor := newMemoryPressureMonitor()
+	bgWg.Add(1)
+	go func() {
+		defer bgWg.Done()
+		pressureMonitor.run(bgCtx, log)
+	}()
+
 	bgWg.Add(1)
 	go func() {
 		defer bgWg.Done()
@@ -998,7 +1024,7 @@ func main() {
 	// Performance contract: NO upper bound. Callers must use a generous
 	// timeout (controller uses 30s). Do NOT use this endpoint for liveness
 	// or readiness probes — use /v1/healthz and /v1/readyz respectively.
-	statuszHandler := buildStatuszHandler(client, cache, sseTracker, startedAt)
+	statuszHandler := buildStatuszHandler(client, cache, sseTracker, pressureMonitor, startedAt)
 	adminMux.Handle("/v1/statusz", requireBearerToken(adminToken, statuszHandler))
 
 	// S18.10: Expose Prometheus metrics on admin port so the cluster-level
