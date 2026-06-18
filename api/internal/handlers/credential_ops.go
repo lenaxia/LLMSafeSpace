@@ -50,7 +50,7 @@ func getCredentialForProbe(
 
 	key, errMsg, status := resolveKey(ctx)
 	if key == nil {
-		// errMsg empty means the resolver signalled "not configured" (503).
+		// errMsg empty means the resolver signaled "not configured" (503).
 		if errMsg == "" {
 			errMsg = "encryption unavailable"
 		}
