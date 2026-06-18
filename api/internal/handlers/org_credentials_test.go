@@ -300,8 +300,8 @@ func TestOrgCredentials_Update_NilKEK_503(t *testing.T) {
 	require.NoError(t, err)
 	store.creds["cred-1"] = &secrets.CredentialRow{
 		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Provider: "openai",
-		Ciphertext:            existingCT,
-		KeyVersion:            1,
+		Ciphertext: existingCT,
+		KeyVersion: 1,
 	}
 
 	deriver := func(string) []byte { return nil }
@@ -349,8 +349,8 @@ func TestOrgCredentials_Update_NameOnly_NoReEncrypt(t *testing.T) {
 	require.NoError(t, err)
 	store.creds["cred-1"] = &secrets.CredentialRow{
 		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Name: "old", Provider: "openai",
-		Ciphertext:            existingCT,
-		KeyVersion:            3,
+		Ciphertext: existingCT,
+		KeyVersion: 3,
 	}
 
 	deriver := func(string) []byte { return kek }
@@ -387,8 +387,8 @@ func TestOrgCredentials_Update_CorruptCiphertext_500(t *testing.T) {
 	require.NoError(t, err)
 	store.creds["cred-1"] = &secrets.CredentialRow{
 		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Provider: "openai",
-		Ciphertext:            corruptCT,
-		KeyVersion:            1,
+		Ciphertext: corruptCT,
+		KeyVersion: 1,
 	}
 
 	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
@@ -433,8 +433,8 @@ func TestOrgCredentials_ProbeModels_NilKEK_503(t *testing.T) {
 	require.NoError(t, err)
 	store.creds["cred-1"] = &secrets.CredentialRow{
 		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Provider: "openai",
-		Ciphertext:            existingCT,
-		KeyVersion:            1,
+		Ciphertext: existingCT,
+		KeyVersion: 1,
 	}
 
 	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return nil }, &mockOrgAuthService{userID: "admin-1"})
@@ -714,8 +714,8 @@ func TestOrgCredentials_Update_BaseURLOnly_Persists(t *testing.T) {
 	require.NoError(t, err)
 	store.creds["cred-1"] = &secrets.CredentialRow{
 		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Name: "k", Provider: "openai",
-		Ciphertext:            existingCT,
-		KeyVersion:            1,
+		Ciphertext: existingCT,
+		KeyVersion: 1,
 	}
 
 	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
@@ -781,8 +781,8 @@ func TestOrgCredentials_Update_GetFails_GracefulFallback(t *testing.T) {
 	require.NoError(t, err)
 	store.creds["cred-1"] = &secrets.CredentialRow{
 		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Name: "old", Provider: "openai",
-		Ciphertext:            existingCT,
-		KeyVersion:            1,
+		Ciphertext: existingCT,
+		KeyVersion: 1,
 	}
 	store.getFailOnAttempt = 2 // 1st Get (existing) succeeds; 2nd Get (post-update) fails
 
@@ -816,8 +816,8 @@ func TestOrgCredentials_Update_APIKeyAndBaseURL_Combined(t *testing.T) {
 	require.NoError(t, err)
 	store.creds["cred-1"] = &secrets.CredentialRow{
 		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Name: "k", Provider: "openai",
-		Ciphertext:            existingCT,
-		KeyVersion:            1,
+		Ciphertext: existingCT,
+		KeyVersion: 1,
 	}
 
 	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
@@ -857,8 +857,8 @@ func TestOrgCredentials_List_PartialDecryptFailure_NonFatal(t *testing.T) {
 	require.NoError(t, err)
 	store.creds["cred-good"] = &secrets.CredentialRow{
 		ID: "cred-good", OwnerType: "org", OwnerID: "org-1", Name: "good", Provider: "openai",
-		Ciphertext:            goodCT,
-		KeyVersion:            1,
+		Ciphertext: goodCT,
+		KeyVersion: 1,
 	}
 	// cred-corrupt: ciphertext encrypted with a DIFFERENT key → decrypt fails.
 	otherKEK := make([]byte, 32)
@@ -866,8 +866,8 @@ func TestOrgCredentials_List_PartialDecryptFailure_NonFatal(t *testing.T) {
 	require.NoError(t, err)
 	store.creds["cred-corrupt"] = &secrets.CredentialRow{
 		ID: "cred-corrupt", OwnerType: "org", OwnerID: "org-1", Name: "corrupt", Provider: "openai",
-		Ciphertext:            corruptCT,
-		KeyVersion:            1,
+		Ciphertext: corruptCT,
+		KeyVersion: 1,
 	}
 
 	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})

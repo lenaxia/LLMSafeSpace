@@ -225,7 +225,7 @@ func TestAdminProviderCredentials_Get_NotFound(t *testing.T) {
 func TestAdminProviderCredentials_Delete(t *testing.T) {
 	store := newFakeAdminCredStore()
 	store.creds["del-id"] = &secrets.CredentialRow{
-		OwnerType: "admin", OwnerID: "_platform",ID: "del-id", Name: "x", Provider: "anthropic"}
+		OwnerType: "admin", OwnerID: "_platform", ID: "del-id", Name: "x", Provider: "anthropic"}
 	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return make([]byte, 32) })
 	router := setupAdminCredRouter(h)
 

@@ -37,7 +37,9 @@ func (e *probeError) Error() string { return fmt.Sprintf("probe: %s (%d)", e.msg
 // (probeCredentialModels copies out what it needs but does not zero).
 func getCredentialForProbe(
 	ctx context.Context,
-	c interface{ JSON(code int, obj interface{}) },
+	c interface {
+		JSON(code int, obj interface{})
+	},
 	store CredentialStore,
 	ownerType, ownerID, credID string,
 	resolveKey credentialKeyResolver,

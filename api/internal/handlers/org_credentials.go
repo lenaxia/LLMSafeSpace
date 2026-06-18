@@ -231,13 +231,13 @@ func (h *OrgCredentialsHandler) Update(c *gin.Context) {
 	// via NULLIF). Provider is never changed by org Update (org has no Provider
 	// field in its request), so it is passed through as the existing value.
 	upd := &secrets.CredentialRow{
-		ID:           credID,
-		OwnerType:    "org",
-		OwnerID:      orgID,
-		Name:         existing.Name,
-		Provider:     existing.Provider,
-		Ciphertext:   newCiphertext,
-		KeyVersion:   newKeyVersion,
+		ID:             credID,
+		OwnerType:      "org",
+		OwnerID:        orgID,
+		Name:           existing.Name,
+		Provider:       existing.Provider,
+		Ciphertext:     newCiphertext,
+		KeyVersion:     newKeyVersion,
 		ModelAllowlist: req.ModelAllowlist,
 	}
 	if req.Name != nil {

@@ -316,7 +316,7 @@ func TestUserProviderCredentials_Bind_OwnershipCheck(t *testing.T) {
 	store := newFakeUserCredStore()
 	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "user-1", Name: "test", Provider: "openai"}
 	h := &UserProviderCredentialsHandler{
-		store: store,
+		store:    store,
 		bindings: store,
 		wsOwnerCheck: func(_ context.Context, _, _ string) error {
 			return errors.New("not owned")
@@ -348,7 +348,7 @@ func TestUserProviderCredentials_Bind_Success(t *testing.T) {
 	store := newFakeUserCredStore()
 	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "user-1", Name: "test", Provider: "openai"}
 	h := &UserProviderCredentialsHandler{
-		store: store,
+		store:    store,
 		bindings: store,
 		wsOwnerCheck: func(_ context.Context, _, _ string) error {
 			return nil // owned
@@ -495,7 +495,7 @@ func TestUserProviderCredentials_Unbind_RemovesBinding(t *testing.T) {
 	store.bindings["c1"] = []string{"ws-1", "ws-2"}
 	h := &UserProviderCredentialsHandler{
 		store:        store,
-		bindings: store,
+		bindings:     store,
 		wsOwnerCheck: func(_ context.Context, _, _ string) error { return nil },
 	}
 	router := setupUserCredRouter(h)
@@ -518,7 +518,7 @@ func TestUserProviderCredentials_Unbind_RejectsAutoBinding(t *testing.T) {
 	store.autoBinds["ws-auto"] = true // simulate auto-bound
 	h := &UserProviderCredentialsHandler{
 		store:        store,
-		bindings: store,
+		bindings:     store,
 		wsOwnerCheck: func(_ context.Context, _, _ string) error { return nil },
 	}
 	router := setupUserCredRouter(h)
@@ -539,7 +539,7 @@ func TestUserProviderCredentials_Delete_NotifiesBoundWorkspaces(t *testing.T) {
 
 	notified := make(map[string]bool)
 	h := &UserProviderCredentialsHandler{
-		store: store,
+		store:    store,
 		bindings: store,
 		credStateWriter: &mockCredStateWriter{fn: func(ctx context.Context, wsID string) error {
 			notified[wsID] = true
