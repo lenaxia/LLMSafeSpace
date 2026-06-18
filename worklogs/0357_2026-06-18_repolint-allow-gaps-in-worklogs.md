@@ -88,4 +88,4 @@ $ golangci-lint run --timeout=5m
 | `pkg/repolint/sequence.go` | Added `AllowGaps` field, `GapsAllowed` field, `HasWarnings()` method; updated `OK()` |
 | `pkg/repolint/sequence_test.go` | Five new tests covering gap-allowed semantics |
 | `cmd/repolint/main.go` | `runWorklogs` opts in to `AllowGaps`; emits WARN line on gaps; updated failure text |
-| `worklogs/0356_2026-06-18_repolint-allow-gaps-in-worklogs.md` | This file |
+| `worklogs/0357_2026-06-18_repolint-allow-gaps-in-worklogs.md` | This file |

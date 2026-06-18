@@ -527,7 +527,7 @@ func TestLive_Migrations_NoCollisionsOrGaps(t *testing.T) {
 	}
 }
 
-func TestLive_Worklogs_NoCollisionsOrGaps(t *testing.T) {
+func TestLive_Worklogs_NoDuplicates(t *testing.T) {
 	root := repoRoot(t)
 	rep, err := SequenceCheck(SequenceConfig{
 		Dir:           filepath.Join(root, "worklogs"),
@@ -538,14 +538,21 @@ func TestLive_Worklogs_NoCollisionsOrGaps(t *testing.T) {
 		// before this lint existed. Renumbering them would require
 		// updating ~26 cross-references and is too risky relative to
 		// benefit. Cut the line at 0097 (worklog 0097 is where this
-		// lint was introduced) and require strict sequencing forward.
+		// lint was introduced).
 		GrandfatherBelow: 97,
+		// Mirror cmd/repolint/main.go runWorklogs: gaps are warnings,
+		// not failures. Concurrent merges + auto-rename hooks
+		// produce gaps the autofix bot cannot heal without breaking
+		// MainlineCheck. Uniqueness is what's load-bearing here;
+		// duplicates still fail OK() regardless of AllowGaps. See
+		// worklog 0357 for the rationale.
+		AllowGaps: true,
 	})
 	if err != nil {
 		t.Fatalf("scanning worklogs: %v", err)
 	}
 	if !rep.OK() {
-		t.Fatalf("worklogs/ has issues at >= 0097:\n%s", rep.String())
+		t.Fatalf("worklogs/ has duplicate version(s) at >= 0097:\n%s", rep.String())
 	}
 }
 
