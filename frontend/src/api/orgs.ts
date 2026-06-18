@@ -25,7 +25,7 @@ export interface Organization {
 }
 
 export interface OrgResponse extends Organization {
-  userRole: "admin" | "member";
+  userRole?: "admin" | "member";
   memberCount: number;
 }
 

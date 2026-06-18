@@ -1,7 +1,7 @@
 # 0041: Workspace Access Middleware — Centralized Ownership Enforcement
 
-**Date:** 2026-06-18
-**Status:** Design — ready for implementation
+**Date:** 2026-06-18 (revised)
+**Status:** Design — needs revision before implementation
 **Depends on:** Epic 43 / design 0031 (Stories 1-9 merged)
 **Blocks:** None (hardening epic)
 
@@ -11,96 +11,133 @@
 
 Design 0031 introduced org membership offboarding (D5, D6). When a user is removed from an org, they should lose access to all org-attributed workspaces. The `verifyOwner` method in the workspace service was correctly updated (Story 5) — offboarded creators now get 403.
 
-**However, `verifyOwner` is only called by the workspace CRUD endpoints** (GET/PUT/DELETE/suspend/activate). Three other surfaces access workspaces by ID without calling `verifyOwner`:
+**However, `verifyOwner` is only called by the workspace CRUD endpoints.** Three other surfaces access workspaces by ID with different (or no) ownership checks:
 
 | Surface | Routes | Access check today |
 |---------|--------|--------------------|
-| **Proxy** (session message, history, terminal, questions) | `/workspaces/:id/sessions/...` | None — fetches CRD + password, proxies to pod |
-| **Secrets API** (bindings, env, reload-secrets, model) | `/workspaces/:id/bindings`, `/env`, `/model` | `workspaceOwnerVerifierAdapter` — has D6 admin check but misses D5 membership |
+| **Proxy** (message, history, terminal, questions) | `/workspaces/:id/sessions/...` | None — fetches CRD + password, proxies to pod |
+| **Secrets API** (bindings, env, reload-secrets, model) | `/workspaces/:id/bindings`, `/env`, `/model` | Mixed — `SetBindings`/`GetBindings`/`ReloadSecrets` call `SecretService.verifyWorkspaceOwner` (has D6 but misses D5); `SetWorkspaceEnv`/`GetWorkspaceEnv`/`DeleteWorkspaceEnv` have **no check at all**; `ListModels`/`SetModel` use a handler-level `meta.UserID != userID` check (no org awareness) |
 | **Terminal** (ticket + WebSocket) | `/workspaces/:id/terminal/ticket` | CRD label `user-id` (stale, no org awareness) |
 
 An offboarded user who knows a workspace ID can still: send messages, read history, open a terminal shell, rebind credentials, set env vars, and change models. This defeats the offboarding threat model.
 
-**Root cause:** Workspace ownership enforcement is scattered across 3+ independent implementations, each with different logic. There is no single gate that all workspace-access routes pass through.
+**Root cause:** Workspace ownership enforcement is scattered across 4+ independent implementations, each with different logic. There is no single gate that all workspace-access routes pass through.
 
 ---
 
-## Decision: WorkspaceAccessMiddleware
+## Design Flaws Identified During Self-Review (Revision 2)
 
-**D1: A single gin middleware on the `workspaceGroup` resolves ownership once.**
+The original design proposed a `WorkspaceAccessMiddleware` that fetches metadata from PostgreSQL and calls `verifyOwner`. Self-review against the actual codebase revealed four flaws:
 
-```
-Request → AuthMiddleware → WorkspaceAccessMiddleware → Handler
-                              ↓
-                    1. Extract :id from path
-                    2. Fetch WorkspaceMetadata from PostgreSQL (not CRD)
-                    3. Call canonical verifyOwner(userID, meta)
-                    4. Store meta + ownership result in gin.Context
-                    5. Reject (403/404) if not owned
-```
+### Flaw 1: Double metadata fetch
 
-All downstream handlers (CRUD, proxy, secrets, terminal) read ownership from context — they no longer implement their own checks. The middleware replaces:
-- `workspace_service.verifyOwner` (inline calls in CRUD handlers)
-- `workspaceOwnerVerifierAdapter.VerifyWorkspaceOwner` (secrets adapter)
-- `terminal.go` CRD-label check
+`verifyOwner` internally calls `s.dbService.GetWorkspace(ctx, workspaceID)` (workspace_service.go:756). If the middleware also fetches metadata, every request does two `SELECT` queries. The design must split `verifyOwner` into:
+- `ResolveWorkspace(ctx, workspaceID) → (*types.WorkspaceMetadata, error)` — pure data fetch
+- `CheckOwnership(ctx, userID, *types.WorkspaceMetadata) → error` — pure authorization
 
-**D2: The middleware fetches metadata from PostgreSQL, not the CRD.**
+The middleware calls `ResolveWorkspace` once, stores `meta` in context, then calls `CheckOwnership`.
 
-The CRD (`v1.Workspace`) does not carry `org_id` — it's only in the `workspaces` PostgreSQL table. The middleware must read from the DB to get `OrgID` for the membership check. The CRD fetch (for phase/PodIP) remains in the proxy handler — it's a different concern (readiness, not ownership).
+### Flaw 2: Performance regression on the proxy hot path
 
-**D3: The middleware is opt-in per route (not blanket).**
+The proxy currently does zero DB queries for ownership — it fetches the CRD from K8s (cached by the client-go informer cache). Adding a PostgreSQL SELECT to every chat message is a real regression.
 
-Routes without `:id` (List, Create) don't need it. The middleware is applied to the `/:id` subgroup, not the parent group. This avoids unnecessary DB lookups on list/create.
+**Solution: Add `org_id` to the Workspace CRD.** Write `org_id` as a CRD annotation on workspace creation and update. The proxy already fetches the CRD — the annotation carries `org_id` without a DB query. The middleware reads `org_id` from the CRD, not PostgreSQL.
+
+This is a controller change (the reconciler or the API writes the annotation) but it's the correct long-term solution — the CRD is the source of truth for pod lifecycle, and it should carry the ownership context for the proxy that communicates with the pod.
+
+### Flaw 3: Router topology requires restructure
+
+Routes are flat on `workspaceGroup` — there is no `/:id` subgroup. List/Create share the same group as `/:id` routes. The middleware must either:
+(a) Run on the parent group and skip non-`:id` routes (fragile `c.Param("id") == ""` check), or
+(b) Restructure into `workspaceGroup` (List/Create) + `idGroup` (all `/:id` routes with middleware).
+
+Option (b) is correct but touches 20+ route registrations.
+
+### Flaw 4: Secrets API has cross-layer ownership checks
+
+The secrets surface has ownership enforcement in two places:
+- Handler layer: `ListModels`/`SetModel` (inline `meta.UserID != userID`)
+- Service layer: `SecretService.verifyWorkspaceOwner` (called by `SetBindings`/`GetBindings`/`ReloadSecrets`)
+
+The middleware (handler layer) can't cleanly remove service-layer checks without making `SecretService` context-aware or trusting the middleware's result. And `SetWorkspaceEnv`/`GetWorkspaceEnv`/`DeleteWorkspaceEnv` have NO check at all — the middleware fixes these.
 
 ---
 
-## Implementation Stories
+## Revised Decision
 
-### Story 1: WorkspaceAccessMiddleware (backend)
-Create `api/internal/middleware/workspace_access.go`. The middleware:
-- Extracts `:id` from the gin context
-- Calls `dbService.GetWorkspace(ctx, workspaceID)` to get metadata
-- Calls `workspaceService.VerifyOwner(ctx, userID, workspaceID)` (exported from the service)
-- Stores the metadata in gin context (`c.Set("workspaceMeta", meta)`)
-- Returns 404 if workspace not found, 403 if not owned
-Wire it on the `/:id` route group in `router.go`, covering CRUD + proxy + secrets + terminal.
+### D1: Phase 1 — WorkspaceAccessMiddleware (handler-layer gate)
+
+Add a gin middleware that resolves workspace ownership for ALL `/:id` routes. It:
+1. Extracts `:id` from the path
+2. Fetches metadata from PostgreSQL (Phase 1 — DB query; Phase 2 adds CRD annotation)
+3. Calls `CheckOwnership(userID, meta)` — the extracted authorization logic
+4. Stores metadata in gin context
+5. Returns 404/403 if not authorized
+
+Apply via router restructure: `workspaceGroup` → `idGroup` with middleware.
+
+Remove all inline ownership checks from handlers (`ListModels`, `SetModel`, `terminal.go`).
+
+### D2: Phase 2 — `org_id` on the Workspace CRD
+
+Write `org_id` as a CRD annotation (`llmsafespace.dev/org-id`) on workspace creation (API service) and update (workspace migration on org join/leave). The middleware reads from the CRD annotation instead of PostgreSQL, eliminating the DB query on the proxy hot path.
+
+This is a schema change (add annotation to the CRD type) + a controller validation (the annotation is set by the API, not the controller).
+
+### D3: Phase 3 — Remove service-layer ownership checks
+
+Once the middleware is the single handler-layer gate, remove `SecretService.verifyWorkspaceOwner` and the `workspaceOwnerVerifierAdapter`. Services trust the middleware's context-stored metadata.
+
+---
+
+## Implementation Stories (Revised)
+
+### Story 1: Split verifyOwner + router restructure (backend)
+- Split `verifyOwner` into `ResolveWorkspace` + `CheckOwnership`
+- Restructure `workspaceGroup` into `workspaceGroup` (List/Create) + `idGroup` (all `/:id` routes)
+- Add `WorkspaceAccessMiddleware` on `idGroup` (DB-backed metadata fetch)
+- Remove inline checks from `ListModels`, `SetModel`, `terminal.go`
+
+**Effort:** 6h
+**Verification:** Offboarded user → 403 on all endpoints. Authorized user → 200. List/Create unaffected.
+
+### Story 2: CRD `org_id` annotation (backend + controller)
+- Add `org_id` annotation to `v1.Workspace` type
+- Write annotation on workspace creation (API)
+- Update annotation on workspace org_id migration (org join/leave)
+- Middleware reads annotation from CRD (falls back to DB if missing)
 
 **Effort:** 4h
-**Verification:** Offboarded user calling any workspace endpoint → 403. Creator still member → 200. Personal workspace creator → 200.
+**Depends on:** Story 1
+**Verification:** No DB query on proxy hot path. CRD carries org_id.
 
-### Story 2: Remove scattered ownership checks (backend)
-Remove the duplicate ownership logic from:
-- `workspace_service.go` — CRUD handlers read from context instead of calling `verifyOwner`
-- `secrets_adapters.go` — `VerifyWorkspaceOwner` delegates to context-stored result
-- `terminal.go` — replace CRD-label check with context-stored result
+### Story 3: Remove scattered checks + secrets cleanup (backend)
+- Remove `SecretService.verifyWorkspaceOwner` + `workspaceOwnerVerifierAdapter`
+- Add ownership to `SetWorkspaceEnv`/`GetWorkspaceEnv`/`DeleteWorkspaceEnv` (they currently have none — the middleware covers them now)
+- Services read metadata from context
 
 **Effort:** 3h
 **Depends on:** Story 1
-**Verification:** All existing workspace tests pass. No behavioral change for authorized users.
+**Verification:** All existing workspace/secrets tests pass.
 
-### Story 3: Integration test harness (backend)
-Build `setupWorkspaceIntegrationRouter` that mounts real `AuthMiddleware` + `WorkspaceAccessMiddleware` + real handlers + mock store. Tests verify:
-- Offboarded user → 403 on all workspace endpoints
-- Creator still member → 200
-- Non-owner → 403
-- Personal workspace → 200
+### Story 4: Integration test harness (backend)
+Build `setupWorkspaceIntegrationRouter` with real middleware + mock store.
 
 **Effort:** 3h
-**Depends on:** Story 2
-**Verification:** Route-wiring regressions caught.
+**Depends on:** Story 3
+**Verification:** Route-wiring regressions caught. All 4 ownership scenarios tested.
 
 ---
 
 ## What This Does NOT Change
 
-- The proxy's CRD fetch (phase/PodIP check) stays in the proxy handler — it's a readiness concern, not ownership.
-- The workspace password mechanism stays — the middleware is an authorization gate, not an authentication mechanism for the pod.
-- `verifyOwner` stays as a method on the workspace service — the middleware calls it. It's not deleted, just no longer called redundantly by each handler.
+- The proxy's CRD fetch (phase/PodIP) stays in the proxy handler — readiness concern, not ownership.
+- The workspace password mechanism stays — the middleware is authorization, not pod authentication.
+- `verifyOwner` (as `CheckOwnership`) stays as a service method — internal callers that don't go through the middleware (rare) can still call it directly.
 
 ---
 
 ## Deferred
 
-- **M7 (fat interfaces):** The `orgStore`/`OrgStore` ISP violations are real but low-impact (Go's implicit interfaces mitigate). Deferred to a future cleanup epic.
-- **M8 (redundant queries in Get):** Fold into Story 2 — the middleware already fetches metadata, so `Get` can read from context instead of re-querying.
-- **Caching the ownership result:** A short-TTL Redis cache of `{userID, workspaceID} → bool` would avoid the DB lookup on every request. Deferred — the DB lookup is a single indexed SELECT, acceptable at current scale. Add caching if profiling shows it's hot.
+- **Redis caching of ownership result:** the CRD annotation (Story 2) eliminates the need — the CRD is already cached by client-go.
+- **Fat interface cleanup (M7):** low-priority ISP improvement.

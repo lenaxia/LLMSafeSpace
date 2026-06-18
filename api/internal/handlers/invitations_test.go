@@ -32,6 +32,7 @@ type mockInvitationStore struct {
 	userOrgID      string
 	userOrgIDErr   error
 	userEmail      string
+	userEmailErr   error
 }
 
 func newMockInvitationStore() *mockInvitationStore {
@@ -172,6 +173,9 @@ func (m *mockInvitationStore) GetUserOrgID(_ context.Context, userID string) (st
 }
 
 func (m *mockInvitationStore) GetUserEmail(_ context.Context, _ string) (string, error) {
+	if m.userEmailErr != nil {
+		return "", m.userEmailErr
+	}
 	return m.userEmail, nil
 }
 
@@ -519,6 +523,44 @@ func TestInvitations_Accept_GetUserOrgIDError_500(t *testing.T) {
 	w := doRequest(router, "POST", "/api/v1/invitations/"+token+"/accept", "")
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("expected 500 on lookup error, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestInvitations_Accept_EmailMismatch_Returns403(t *testing.T) {
+	store := newMockInvitationStore()
+
+	token := "email-mismatch-token"
+	hash := hashToken(token)
+	store.invitations["inv-email"] = &types.OrgInvitation{
+		ID: "inv-email", OrgID: "org-1", Email: "invited@test.com", Role: types.OrgRoleMember,
+		InvitedBy: "user-1", TokenHash: hash, ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+	store.tokenHashIndex[hash] = "inv-email"
+	store.userEmail = "attacker@test.com" // does NOT match invited@test.com
+
+	router := setupInvitationRouter(t, store, nil)
+	w := doRequest(router, "POST", "/api/v1/invitations/"+token+"/accept", "")
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for email mismatch, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestInvitations_Accept_GetUserEmailError_500(t *testing.T) {
+	store := newMockInvitationStore()
+	store.userEmailErr = errors.New("db down")
+
+	token := "email-err-token"
+	hash := hashToken(token)
+	store.invitations["inv-email-err"] = &types.OrgInvitation{
+		ID: "inv-email-err", OrgID: "org-1", Email: "e@test.com", Role: types.OrgRoleMember,
+		InvitedBy: "user-1", TokenHash: hash, ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+	store.tokenHashIndex[hash] = "inv-email-err"
+
+	router := setupInvitationRouter(t, store, nil)
+	w := doRequest(router, "POST", "/api/v1/invitations/"+token+"/accept", "")
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on GetUserEmail error, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
