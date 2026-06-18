@@ -70,6 +70,14 @@ type SequenceConfig struct {
 	// rewriting them is impractical (e.g. cross-references in 20+
 	// files); the goal is to prevent NEW drift, not relitigate old.
 	GrandfatherBelow int
+	// AllowGaps, when true, treats sequence gaps as warnings rather
+	// than failures. Duplicates and unpaired-files are still hard
+	// failures. Use this for append-only artifacts (worklogs) where
+	// gaps from concurrent merges + auto-renames are an expected
+	// failure mode that the autofix bot cannot heal without breaking
+	// MainlineCheck. Migrations should NEVER allow gaps — an
+	// out-of-sequence migration breaks schema rebuild.
+	AllowGaps bool
 }
 
 // Duplicate is two or more files claiming the same version number.
@@ -93,11 +101,31 @@ type SequenceReport struct {
 	// UnpairedFiles lists filenames that lack their matching up/down
 	// counterpart (only populated when RequirePaired=true).
 	UnpairedFiles []string
+	// GapsAllowed mirrors SequenceConfig.AllowGaps. When true, OK()
+	// ignores MissingVersions; callers can detect the warning state
+	// via HasWarnings().
+	GapsAllowed bool
 }
 
-// OK reports whether the dir is in a healthy state.
+// OK reports whether the dir is in a healthy state. When GapsAllowed
+// is true, missing versions do not affect OK; use HasWarnings() to
+// detect those.
 func (r SequenceReport) OK() bool {
-	return len(r.Duplicates) == 0 && len(r.MissingVersions) == 0 && len(r.UnpairedFiles) == 0
+	if len(r.Duplicates) != 0 || len(r.UnpairedFiles) != 0 {
+		return false
+	}
+	if !r.GapsAllowed && len(r.MissingVersions) != 0 {
+		return false
+	}
+	return true
+}
+
+// HasWarnings reports whether the report contains warning-class
+// findings — currently only "gap-allowed sequence has gaps". Always
+// false when GapsAllowed is false (in which case gaps are reported
+// via OK() == false).
+func (r SequenceReport) HasWarnings() bool {
+	return r.GapsAllowed && len(r.MissingVersions) > 0
 }
 
 // String returns a human-readable failure description, or "(ok)".
@@ -194,7 +222,7 @@ func SequenceCheck(cfg SequenceConfig) (SequenceReport, error) {
 	}
 
 	// Build the report.
-	rep := SequenceReport{}
+	rep := SequenceReport{GapsAllowed: cfg.AllowGaps}
 	for v, recs := range byVersion {
 		rep.SeenVersions = append(rep.SeenVersions, v)
 		if v > rep.MaxVersion {

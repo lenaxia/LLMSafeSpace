@@ -96,6 +96,90 @@ func TestSequenceCheck_GapInSequence(t *testing.T) {
 	}
 }
 
+func TestSequenceCheck_AllowGaps_GapStillReportedButOKTrue(t *testing.T) {
+	// Worklog-style scenario: contiguous numbers required by some
+	// callers, but for append-only docs we want gaps to be warnings,
+	// not failures. Verify OK() is true while MissingVersions is
+	// still populated and HasWarnings() reports the gap.
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0001_2026-06-18_alpha.md"), "")
+	// Gap at 2.
+	mustWrite(t, filepath.Join(dir, "0003_2026-06-18_charlie.md"), "")
+
+	rep, err := SequenceCheck(SequenceConfig{
+		Dir:       dir,
+		Pattern:   WorklogPattern,
+		AllowGaps: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !rep.OK() {
+		t.Fatalf("expected OK with AllowGaps=true; got: %s", rep.String())
+	}
+	if !rep.HasWarnings() {
+		t.Fatalf("expected HasWarnings=true with gap, got false")
+	}
+	if len(rep.MissingVersions) != 1 || rep.MissingVersions[0] != 2 {
+		t.Fatalf("expected MissingVersions=[2], got %v", rep.MissingVersions)
+	}
+	if !rep.GapsAllowed {
+		t.Fatalf("expected GapsAllowed=true on report")
+	}
+}
+
+func TestSequenceCheck_AllowGaps_DuplicatesStillFail(t *testing.T) {
+	// Even with AllowGaps=true, duplicate version numbers must still
+	// fail OK(). The whole point of the check is referential
+	// uniqueness; relaxing gaps doesn't relax that.
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0001_2026-06-18_alpha.md"), "")
+	mustWrite(t, filepath.Join(dir, "0001_2026-06-18_bravo.md"), "")
+
+	rep, err := SequenceCheck(SequenceConfig{
+		Dir:       dir,
+		Pattern:   WorklogPattern,
+		AllowGaps: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rep.OK() {
+		t.Fatalf("expected NOT OK on duplicate even with AllowGaps; got: %s", rep.String())
+	}
+	if len(rep.Duplicates) != 1 {
+		t.Fatalf("expected 1 duplicate, got %d", len(rep.Duplicates))
+	}
+}
+
+func TestSequenceCheck_AllowGapsFalse_DefaultBehaviorPreserved(t *testing.T) {
+	// Migrations and any caller that doesn't pass AllowGaps must
+	// still fail on gaps — this is load-bearing for migration
+	// safety. Explicit regression guard against accidentally
+	// flipping the default.
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "000001_a.up.sql"), "")
+	mustWrite(t, filepath.Join(dir, "000001_a.down.sql"), "")
+	mustWrite(t, filepath.Join(dir, "000003_c.up.sql"), "")
+	mustWrite(t, filepath.Join(dir, "000003_c.down.sql"), "")
+
+	rep, err := SequenceCheck(SequenceConfig{
+		Dir:           dir,
+		Pattern:       MigrationPattern,
+		RequirePaired: true,
+		// AllowGaps NOT set → defaults to false.
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rep.OK() {
+		t.Fatalf("expected NOT OK; AllowGaps default must be false. got: %s", rep.String())
+	}
+	if rep.HasWarnings() {
+		t.Fatalf("HasWarnings() must be false when GapsAllowed is false")
+	}
+}
+
 func TestSequenceCheck_MissingDownPair(t *testing.T) {
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "000001_a.up.sql"), "")
