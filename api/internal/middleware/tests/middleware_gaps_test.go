@@ -82,7 +82,7 @@ func TestMiddlewareChain_AbortStopsChain(t *testing.T) {
 	r.Use(func(c *gin.Context) {
 		executed = append(executed, "guard")
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "blocked"})
-		return
+		
 	})
 	r.Use(func(c *gin.Context) {
 		executed = append(executed, "should-not-run")
