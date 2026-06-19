@@ -1,4 +1,4 @@
-# Worklog 0362 — Relay Deploy Handler Fix + US-42.8 Network-Agnostic Redesign
+# Worklog 0381 — Relay Deploy Handler Fix + US-42.8 Network-Agnostic Redesign
 
 **Date:** 2026-06-18
 **Session:** Triage operator-reported relay deploy failure (`failed to deploy relay fleet: inferencerelays.llmsafespace.dev "relay-fleet" not found`), audit the entire Epic 42/48 relay subsystem to identify what was actually built vs designed, fix the immediate handler bug, and redesign US-42.8 to be network-agnostic.
@@ -88,7 +88,7 @@ This was originally planned with a hard MetalLB dependency, but worklog `0294_20
 // client at pkg/kubernetes/client_crds.go pre-allocates an empty struct
 // and returns it alongside the NotFound error, so a nil-pointer check is
 // always false and we would always fall into the Update branch — which
-// then fails with NotFound on a fresh cluster (worklog 0362).
+// then fails with NotFound on a fresh cluster (worklog 0381).
 ```
 
 3. **Other Get/Create-or-Update sites audited.** `Rotate` (`relay_admin.go:546`), `Pause` (570), `Resume` (594) all use `Get` followed by an `Update` after explicit annotation mutation. Those are correct **only** when the CR already exists, which is the actual contract of those endpoints (you can't rotate what doesn't exist). Their `apierrors.IsNotFound` handling is correct (returns 404 when the CR is missing). No fix needed for those three.
@@ -162,7 +162,7 @@ Zero real findings.
 - `api/internal/handlers/relay_admin.go` — gate Create-vs-Update branch on `apierrors.IsNotFound(err)` instead of `existing != nil`.
 - `api/internal/handlers/relay_admin_test.go` — added `TestRelayDeploy_Create_RealClientNotFoundSemantics` regression test exercising real-client semantics.
 - `design/stories/epic-42-multi-cloud-inference-relay/README.md` — Layer 2 redesign (network-agnostic 4-mode ingress); A21, DQ2, OQ4 updated; story-table US-42.8 row rewritten; stale MetalLB references in diagram caption, Phase 2 plan, example values, and security summary updated.
-- `worklogs/0362_2026-06-18_relay-deploy-handler-fix-and-us-42-8-network-agnostic.md` — this worklog.
+- `worklogs/0381_2026-06-18_relay-deploy-handler-fix-and-us-42-8-network-agnostic.md` — this worklog.
 
 ---
 
