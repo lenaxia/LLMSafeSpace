@@ -69,3 +69,4 @@ Companion PRs: chart+endpoint (#266), auth (#267); the dependent db/handler PR (
 - `api/internal/handlers/org_sso.go` — F8 `errorReason` mapping + F11 forwarded-header warning.
 - `api/internal/handlers/org_sso_idp_helpers_test.go` — email_verified default in `signRS256`.
 - `pkg/types/auth.go` — pre-existing gofmt drift fix per Rule 5.
+- `charts/llmsafespaces/templates/prometheus-rules.yaml` — pre-existing rename-miss fix: 3 alerts (`SSEBrokerDroppingEvents`, `SafeModeActive`, `StatusUpdateConflicts`) left singular `LLMSafeSpace*` by the module-rename PR, failing `TestMonitoring_PrometheusRule_ContainsAllAlerts` on main. Completed the rename to `LLMSafeSpaces*` (Rule 5). Bundled here because it blocked this PR's full-test-suite CI gate; also applied to companion PRs #266/#267.
