@@ -183,9 +183,9 @@ issues:
   # are silently grandfathered. To regenerate the baseline after cleaning up
   # violations:
   #   1. Fix some violations via normal PRs
-  #   2. Update from-rev to the new HEAD
+  #   2. Update new-from-rev to the new HEAD
   #   3. Verify CI passes
   # Target: reduce to zero grandfathered violations within 2 quarters, then
-  # remove the new section entirely so ALL violations are caught.
-  new:
-    from-rev: 06a4822487ee29dbf746aca7c5e6692ff4c080a4
+  # remove the new/new-from-rev keys entirely so ALL violations are caught.
+  new: true
+  new-from-rev: 06a4822487ee29dbf746aca7c5e6692ff4c080a4
