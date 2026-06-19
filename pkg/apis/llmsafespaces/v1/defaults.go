@@ -101,7 +101,7 @@ func SetDefaults_InferenceRelaySpec(spec *InferenceRelaySpec) {
 	}
 
 	if spec.UpstreamURL == "" {
-		spec.UpstreamURL = "https://opencode.ai/zen/v1"
+		spec.UpstreamURL = "https://ai.thekao.cloud/v1"
 	}
 
 	setDefaultsWireGuard(&spec.WireGuard)

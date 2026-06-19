@@ -17,7 +17,7 @@ import (
 
 const (
 	defaultRouterListen     = ":8080"
-	defaultRouterUpstream   = "https://opencode.ai/zen/v1"
+	defaultRouterUpstream   = "https://ai.thekao.cloud/v1"
 	defaultHealthInterval   = 15 * time.Second
 	defaultHealthTimeout    = 5 * time.Second
 	defaultHealthThreshold  = 3

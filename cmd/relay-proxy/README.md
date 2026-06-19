@@ -1,6 +1,6 @@
 # relay-proxy
 
-Standalone Go binary that transparently proxies HTTP requests to an upstream LLM endpoint (`opencode.ai/zen/v1`). Runs on OCI and GCP free-tier VMs, reachable only via WireGuard tunnels. No TLS, no auth — WireGuard is the security boundary.
+Standalone Go binary that transparently proxies HTTP requests to an upstream LLM endpoint (default `ai.thekao.cloud/v1`). Runs on OCI and GCP free-tier VMs, reachable only via WireGuard tunnels. No TLS, no auth — WireGuard is the security boundary.
 
 ## Endpoints
 
@@ -22,7 +22,7 @@ Standalone Go binary that transparently proxies HTTP requests to an upstream LLM
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `UPSTREAM_URL` | `https://opencode.ai/zen/v1` | Upstream LLM endpoint |
+| `UPSTREAM_URL` | `https://ai.thekao.cloud/v1` | Upstream LLM endpoint |
 | `LISTEN_ADDR` | `10.42.42.2:8080` | Listen address (WG interface only) |
 | `KEEPALIVE_INTERVAL` | `30s` | Upstream probe interval |
 
@@ -40,7 +40,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o deploy/relay-proxy-amd64 ./cmd
 ## Run locally
 
 ```bash
-UPSTREAM_URL=https://opencode.ai/zen/v1 \
+UPSTREAM_URL=https://ai.thekao.cloud/v1 \
 LISTEN_ADDR=127.0.0.1:8080 \
 go run ./cmd/relay-proxy/
 ```

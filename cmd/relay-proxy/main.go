@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	defaultUpstreamURL       = "https://opencode.ai/zen/v1"
+	defaultUpstreamURL       = "https://ai.thekao.cloud/v1"
 	defaultListenAddr        = "10.42.42.2:8080"
 	defaultKeepaliveInterval = 30 * time.Second
 )

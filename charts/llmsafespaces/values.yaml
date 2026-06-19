@@ -215,7 +215,7 @@ controller:
     # WireGuard tunnel; it is never persisted on a relay VM disk. Leave
     # upstreamAuth.keySecret empty to disable injection (router forwards the
     # client header unchanged — the pre-A23 behavior, which 401s on Zen).
-    upstreamURL: "https://opencode.ai/zen/v1"
+    upstreamURL: "https://ai.thekao.cloud/v1"
     upstreamAuth:
       # K8s Secret (in the release namespace) holding the real upstream key.
       # The chart mounts keySecret.name[keySecret.key] as UPSTREAM_AUTH_KEY.

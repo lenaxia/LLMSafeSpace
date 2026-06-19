@@ -142,7 +142,10 @@ type RotationConfig struct {
 // InferenceRelaySpec defines the desired state of an InferenceRelay.
 type InferenceRelaySpec struct {
 	// UpstreamURL is the LLM provider endpoint the relays proxy to.
-	// +kubebuilder:default="https://opencode.ai/zen/v1"
+	// Defaults to the maintainer's gateway (ai.thekao.cloud); operators
+	// should override to their own endpoint. opencode.ai/zen's anonymous
+	// `public` key no longer authorizes inference (A23, worklog 0420).
+	// +kubebuilder:default="https://ai.thekao.cloud/v1"
 	UpstreamURL string `json:"upstreamURL"`
 
 	// Providers configures the relay VMs. The default fleet is 1 AWS
