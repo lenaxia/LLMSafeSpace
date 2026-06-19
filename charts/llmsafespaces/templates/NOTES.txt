@@ -256,7 +256,9 @@ remain individually hardened (non-root, ALL caps dropped, read-only root FS).
 ACTION REQUIRED: your release namespace ({{ .Release.Namespace }}) is NOT
 created by this chart, so the chart could not relax its Pod Security profile.
 Before the relay-router pod will start, ensure that namespace carries
-`pod-security.kubernetes.io/enforce=privileged` (or `baseline`):
+`pod-security.kubernetes.io/enforce=privileged` (or remove the label /
+set it to "" to disable PSA entirely). `baseline` is NOT sufficient — it
+forbids hostPath and NET_ADMIN/NET_RAW, both of which the sidecar requires.
 
     kubectl label namespace {{ .Release.Namespace }} \
       pod-security.kubernetes.io/enforce=privileged \
