@@ -452,10 +452,10 @@ func (s *SecretService) audit(ctx context.Context, userID, action string, secret
 		entry.WorkspaceID = &ws
 	}
 	if len(auditMeta) > 0 {
-		entry.Metadata, _ = json.Marshal(auditMeta)
+		entry.Metadata, _ = json.Marshal(auditMeta) //nolint:errcheck // marshalling map[string]string cannot fail
 	}
 	// Fire-and-forget audit logging (async in production, sync in tests)
-	_ = s.store.LogAudit(ctx, entry)
+	_ = s.store.LogAudit(ctx, entry) //nolint:errcheck // audit log is best-effort; failure doesn't affect the secret operation
 }
 
 // validateValue validates type-specific constraints on the plaintext secret

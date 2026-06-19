@@ -216,7 +216,9 @@ func (h *InvitationsHandler) Resend(c *gin.Context) {
 	}
 	// Invalidate the old invitation AFTER the new one is persisted so a
 	// failure between create and delete doesn't lose the invitation.
-	_ = h.store.DeleteInvitation(ctx, invID)
+	if err := h.store.DeleteInvitation(ctx, invID); err != nil && h.logger != nil {
+		h.logger.Warn("failed to delete old invitation after resend", "error", err, "invitationID", invID)
+	}
 	h.sendInvitationEmail(ctx, existing.Email, token, "", orgID, existing.Role)
 
 	c.JSON(http.StatusOK, inv)

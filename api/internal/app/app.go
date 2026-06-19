@@ -97,6 +97,7 @@ func newEmailMailer(cfg *config.Config) (emailpkg.EmailProvider, error) {
 	}
 }
 
+//nolint:funlen,gocyclo // Sequential service initialization; decomposition would require a 20-field return struct with no clarity gain
 func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -363,7 +364,9 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 				Metadata:  []byte(`{}`),
 				Timestamp: time.Now(),
 			}
-			_ = auditStore.LogAudit(context.Background(), entry)
+			if err := auditStore.LogAudit(context.Background(), entry); err != nil {
+				log.Warn("Failed to log audit entry for key rotation", "error", err)
+			}
 		})
 
 		rkp := newRootKeyProvider(cfg, log)

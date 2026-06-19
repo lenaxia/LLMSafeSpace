@@ -123,18 +123,23 @@ linters:
   settings:
     funlen:
       # Thresholds set above the current maximums so CI passes on existing
-      # code with ZERO grandfathered violations. Any NEW function exceeding
-      # these thresholds will be caught.
-      # Current max: 519 lines (app.New).
+      # code. app.New is the only function >350 lines (502) — it is
+      # inherently sequential service initialization that resists further
+      # decomposition without massive plumbing. It has an explicit
+      # //nolint:funlen directive with justification.
+      #
       # Target: tighten incrementally — 300 → 200 → 100 → 60 (Rule 4).
       # Test files are excluded (see exclusions) since table-driven tests
       # are naturally long.
-      lines: 520
+      lines: 350
       statements: 250
     gocyclo:
-      # Threshold set above the current maximum (70) so CI passes on existing
-      # code. Target: tighten incrementally — first to 30, then 15.
-      min-complexity: 75
+      # Threshold set above the current max (68 for app.New, 70 for
+      # proxyToWorkspaceWithErrBody). After extracting checkProxyQuota,
+      # proxyToWorkspaceWithErrBody is ~55. config.Load (63) is inherently
+      # branchy config parsing.
+      # Target: tighten incrementally — 55 → 30 → 15.
+      min-complexity: 65
     errcheck:
       check-type-assertions: false
       check-blank: false

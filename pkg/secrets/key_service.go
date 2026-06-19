@@ -563,7 +563,9 @@ func (s *KeyService) rewrapAPIKeyDEKs(ctx context.Context, userID string, newDEK
 				s.logger.Warn("rewrapAPIKeyDEKs: failed to decrypt key_ciphertext",
 					"keyID", key.ID, "error", decErr.Error())
 			}
-			_ = s.apiKeyStore.UpdateAPIKeyDEK(ctx, key.ID, nil, nil, false)
+			if err := s.apiKeyStore.UpdateAPIKeyDEK(ctx, key.ID, nil, nil, false); err != nil && s.logger != nil {
+				s.logger.Warn("rewrapAPIKeyDEKs: failed to mark key as decrypt_access=false", "keyID", key.ID, "error", err.Error())
+			}
 			continue
 		}
 
@@ -574,7 +576,9 @@ func (s *KeyService) rewrapAPIKeyDEKs(ctx context.Context, userID string, newDEK
 				s.logger.Warn("rewrapAPIKeyDEKs: failed to derive API KEK",
 					"keyID", key.ID, "error", deriveErr.Error())
 			}
-			_ = s.apiKeyStore.UpdateAPIKeyDEK(ctx, key.ID, nil, nil, false)
+			if err := s.apiKeyStore.UpdateAPIKeyDEK(ctx, key.ID, nil, nil, false); err != nil && s.logger != nil {
+				s.logger.Warn("rewrapAPIKeyDEKs: failed to mark key as decrypt_access=false", "keyID", key.ID, "error", err.Error())
+			}
 			continue
 		}
 
@@ -585,7 +589,9 @@ func (s *KeyService) rewrapAPIKeyDEKs(ctx context.Context, userID string, newDEK
 				s.logger.Warn("rewrapAPIKeyDEKs: failed to wrap new DEK",
 					"keyID", key.ID, "error", wrapErr.Error())
 			}
-			_ = s.apiKeyStore.UpdateAPIKeyDEK(ctx, key.ID, nil, nil, false)
+			if err := s.apiKeyStore.UpdateAPIKeyDEK(ctx, key.ID, nil, nil, false); err != nil && s.logger != nil {
+				s.logger.Warn("rewrapAPIKeyDEKs: failed to mark key as decrypt_access=false", "keyID", key.ID, "error", err.Error())
+			}
 			continue
 		}
 

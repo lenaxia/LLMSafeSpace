@@ -93,7 +93,7 @@ func (s *Service) getOrgPolicy(ctx context.Context, orgID string) (*types.OrgPol
 	}
 
 	if s.cache != nil {
-		_ = s.cache.SetObject(ctx, cacheKey(orgID), vals, cacheTTL)
+		_ = s.cache.SetObject(ctx, cacheKey(orgID), vals, cacheTTL) //nolint:errcheck // best-effort cache write; next Get recomputes on miss
 	}
 	return vals, nil
 }

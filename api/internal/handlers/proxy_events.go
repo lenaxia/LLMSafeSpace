@@ -184,7 +184,9 @@ func (h *ProxyHandler) onRawEvent(workspaceID, eventType, rawData string) {
 
 	if h.userBroker != nil {
 		var parsed interface{}
-		_ = json.Unmarshal([]byte(rawData), &parsed)
+		if err := json.Unmarshal([]byte(rawData), &parsed); err != nil {
+			h.logger.Debug("Failed to parse opencode event for relay", "error", err, "eventType", eventType)
+		}
 		h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
 			Type:      "opencode.event",
 			EventType: eventType,
@@ -256,7 +258,7 @@ func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData 
 			ID        string `json:"id"`
 			SessionID string `json:"sessionID"`
 		}
-		_ = json.Unmarshal(properties, &resolution)
+		_ = json.Unmarshal(properties, &resolution) //nolint:errcheck // best-effort parse; nil fields produce empty strings in the event
 		h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
 			Type: "agent.question.resolved",
 			Data: map[string]string{
@@ -287,7 +289,7 @@ func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData 
 			SessionID string `json:"sessionID"`
 			Reply     string `json:"reply"`
 		}
-		_ = json.Unmarshal(properties, &resolution)
+		_ = json.Unmarshal(properties, &resolution) //nolint:errcheck // best-effort parse; nil fields produce empty strings in the event
 		h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
 			Type: "agent.permission.resolved",
 			Data: map[string]string{
@@ -330,10 +332,14 @@ func (h *ProxyHandler) persistTitleFromEvent(workspaceID, rawData string) {
 		return
 	}
 	if evt.Properties.Info.Title != "" {
-		_ = h.sessionIndex.UpsertTitle(context.Background(), workspaceID, id, evt.Properties.Info.Title)
+		if err := h.sessionIndex.UpsertTitle(context.Background(), workspaceID, id, evt.Properties.Info.Title); err != nil {
+			h.logger.Warn("Failed to upsert session title", "error", err, "workspaceID", workspaceID, "sessionID", id)
+		}
 	}
 	if evt.Properties.Info.ParentID != "" {
-		_ = h.sessionIndex.UpsertParent(context.Background(), workspaceID, id, evt.Properties.Info.ParentID)
+		if err := h.sessionIndex.UpsertParent(context.Background(), workspaceID, id, evt.Properties.Info.ParentID); err != nil {
+			h.logger.Warn("Failed to upsert session parent", "error", err, "workspaceID", workspaceID, "sessionID", id)
+		}
 	}
 }
 
@@ -365,7 +371,9 @@ func (h *ProxyHandler) persistContextFromEvent(workspaceID, rawData string) {
 	promptTokens := evt.Properties.Tokens.Input +
 		evt.Properties.Tokens.Cache.Read +
 		evt.Properties.Tokens.Cache.Write
-	_ = h.sessionIndex.UpsertContextUsed(context.Background(), workspaceID, evt.Properties.SessionID, promptTokens)
+	if err := h.sessionIndex.UpsertContextUsed(context.Background(), workspaceID, evt.Properties.SessionID, promptTokens); err != nil {
+		h.logger.Warn("Failed to upsert session context usage", "error", err, "workspaceID", workspaceID, "sessionID", evt.Properties.SessionID)
+	}
 }
 
 func (h *ProxyHandler) getPodIPForSSE(workspaceID string) string {
