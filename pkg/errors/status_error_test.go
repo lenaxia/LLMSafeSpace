@@ -48,29 +48,6 @@ func TestStatusError_Unwrap_Nil(t *testing.T) {
 	}
 }
 
-func TestStatusError_Wrap(t *testing.T) {
-	original := &StatusError{Status: 404, Code: "not_found", Message: "not found"}
-	cause := fmt.Errorf("query failed")
-	wrapped := original.Wrap(cause)
-
-	if wrapped.Status != original.Status {
-		t.Errorf("Wrap().Status = %d, want %d", wrapped.Status, original.Status)
-	}
-	if wrapped.Code != original.Code {
-		t.Errorf("Wrap().Code = %q, want %q", wrapped.Code, original.Code)
-	}
-	if wrapped.Message != original.Message {
-		t.Errorf("Wrap().Message = %q, want %q", wrapped.Message, original.Message)
-	}
-	if wrapped.Cause != cause {
-		t.Errorf("Wrap().Cause = %v, want %v", wrapped.Cause, cause)
-	}
-	// Original must be unchanged
-	if original.Cause != nil {
-		t.Errorf("original.Cause = %v, want nil (Wrap must not mutate)", original.Cause)
-	}
-}
-
 func TestStatusError_ErrorsIs_SentinelPointer(t *testing.T) {
 	sentinel := &StatusError{Status: 404, Code: "secret_not_found", Message: "secret not found"}
 	wrapped := fmt.Errorf("lookup failed: %w", sentinel)

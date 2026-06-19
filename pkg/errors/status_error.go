@@ -67,19 +67,6 @@ func (e *StatusError) Unwrap() error {
 	return e.Cause
 }
 
-// Wrap returns a copy of e with the given cause set, preserving Status,
-// Code, and Message. Use this when a sentinel needs per-call context:
-//
-//	return ErrSecretNotFound.Wrap(fmt.Errorf("user %s", userID))
-func (e *StatusError) Wrap(cause error) *StatusError {
-	return &StatusError{
-		Status:  e.Status,
-		Code:    e.Code,
-		Message: e.Message,
-		Cause:   cause,
-	}
-}
-
 // NewStatusError creates a new StatusError with the given fields.
 func NewStatusError(status int, code, message string) *StatusError {
 	return &StatusError{

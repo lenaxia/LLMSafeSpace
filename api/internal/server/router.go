@@ -1071,13 +1071,7 @@ func respondWithError(c *gin.Context, err error) {
 	}
 	var statusErr interface{ StatusCode() int }
 	if errors.As(err, &statusErr) {
-		var msg string
-		if e, ok := err.(interface{ Error() string }); ok {
-			msg = e.Error()
-		} else {
-			msg = "error"
-		}
-		c.JSON(statusErr.StatusCode(), gin.H{"error": msg})
+		c.JSON(statusErr.StatusCode(), gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
