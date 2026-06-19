@@ -292,7 +292,7 @@ workspace:
   cgroupV2Required: true
 
 # ----------------------------------------------------------------------------
-# CRds
+# CRDs
 # ----------------------------------------------------------------------------
 # CRDs are installed from the chart's crds/ directory by default.
 # Set install: false to manage CRDs out-of-band (recommended for production

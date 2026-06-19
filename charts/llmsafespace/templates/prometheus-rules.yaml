@@ -242,16 +242,16 @@ spec:
               Agentd pods are taking {{ `{{ $value | humanizeDuration }}` }} to reach readyz=200
               at p95. Check opencode boot, provider connections, or relay injection.
 
-        {{- /* llmsafespace_relay_injector_total is emitted by both
-              workspace-agentd (cmd/workspace-agentd/relay_injector.go)
-              and the API service (api/internal/services/metrics/metrics.go).
-              Using $apiJob catches API-side recordings. For full coverage
-              of pod-side emissions, the chart's PodMonitor
+        {{- /* llmsafespace_relay_injector_total is emitted ONLY by
+              workspace-agentd (cmd/workspace-agentd/relay_injector.go) — the
+              API service does NOT emit it. The chart's PodMonitor
               (monitoring.serviceMonitors.agentdPodMonitor) scrapes workspace
-              pods with job=<release>-agentd. */}}
+              pods with job=<release>-agentd; matching job=~".*agentd.*" makes
+              this alert fire on the pod-side data. (Pre-PodMonitor this alert
+              was dead — nothing scraped workspace pods.) */}}
         - alert: LLMSafeSpaceRelayInjectorFailures
           expr: |
-            sum(increase(llmsafespace_relay_injector_total{job=~"{{ $apiJob }}",outcome=~"config_write_failed|auth_write_failed|unhealthy_timeout"}[1h])) > 0
+            sum(increase(llmsafespace_relay_injector_total{job=~".*agentd.*",outcome=~"config_write_failed|auth_write_failed|unhealthy_timeout"}[1h])) > 0
           for: 1m
           labels:
             severity: warning
