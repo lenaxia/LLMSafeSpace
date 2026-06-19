@@ -6,6 +6,7 @@ package webhooks
 import (
 	"context"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -17,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+	"github.com/lenaxia/llmsafespaces/pkg/settings"
 )
 
 // =============================================================================
@@ -837,4 +839,72 @@ func TestUS243_WebhookCapsApplyToLimitFields(t *testing.T) {
 		resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
 		assert.True(t, resp.Allowed, "%v", resp.Result)
 	})
+}
+
+// =============================================================================
+// Drift guard: webhook regex MUST accept the same set of inputs as
+// the canonical patterns in pkg/settings/quantity_patterns.go.
+// =============================================================================
+//
+// The original "8gi" production bug was caused by the schema and the
+// webhook drifting apart: schema had no pattern, webhook had a strict
+// one. Now they both reference the same canonical pattern from
+// pkg/settings, but the webhook's regex variables additionally have
+// capture groups for parsing. This test verifies the accept-set is
+// identical despite the parser-side decoration.
+//
+// If anyone changes either side without updating the other, this
+// fires.
+
+func TestWebhookRegexAcceptsSameInputsAsSettingsPattern(t *testing.T) {
+	matrix := []struct {
+		name     string
+		webhook  *regexp.Regexp
+		settings string
+		probes   []string
+	}{
+		{
+			name:     "memory",
+			webhook:  memoryPattern,
+			settings: settings.MemoryQuantityPattern,
+			probes: []string{
+				"1Gi", "8Gi", "512Mi", "1024Ki", "16Gi", "1Mi", // valid
+				"0Gi", "0Mi", "0Ki", // zero-magnitude — both must reject
+				"8gi", "8GB", "banana", "", "-1Gi", "8.5Gi", "8 Gi", "00Gi", // invalid
+			},
+		},
+		{
+			name:     "storage",
+			webhook:  storageSizePattern,
+			settings: settings.StorageQuantityPattern,
+			probes: []string{
+				"1Gi", "15Gi", "1024Mi", // valid
+				"0Gi", "0Mi", // zero — both must reject
+				"15gi", "15GB", "15Ti", "banana", "", "-1Gi", // invalid
+			},
+		},
+		{
+			name:     "cpu",
+			webhook:  cpuPattern,
+			settings: settings.CPUQuantityPattern,
+			probes: []string{
+				"500m", "1000m", "1.0", "0.5", "16.0", // valid
+				"banana", "1 core", "1000M", "", "-500m", // invalid
+			},
+		},
+	}
+
+	for _, c := range matrix {
+		settingsRe := regexp.MustCompile(c.settings)
+		for _, in := range c.probes {
+			webhookOK := c.webhook.MatchString(in)
+			settingsOK := settingsRe.MatchString(in)
+			if webhookOK != settingsOK {
+				t.Errorf("%s drift on input %q: webhook accepts=%v, settings accepts=%v. "+
+					"The webhook regex variable in workspace_webhook.go and the canonical "+
+					"pattern in pkg/settings/quantity_patterns.go must accept identical inputs.",
+					c.name, in, webhookOK, settingsOK)
+			}
+		}
+	}
 }

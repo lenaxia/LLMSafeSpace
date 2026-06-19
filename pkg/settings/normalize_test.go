@@ -34,11 +34,7 @@ func TestNormalize_Memory_LowercaseUnit(t *testing.T) {
 		"1gi":   "1Gi",
 	}
 	for in, want := range cases {
-		got, err := Normalize(def, in)
-		if err != nil {
-			t.Errorf("Normalize(%q) errored: %v", in, err)
-			continue
-		}
+		got := Normalize(def, in)
 		if got != want {
 			t.Errorf("Normalize(%q) = %q; want %q", in, got, want)
 		}
@@ -58,11 +54,7 @@ func TestNormalize_Memory_WhitespaceAndCaseSplit(t *testing.T) {
 		"8\tGi":   "8Gi",
 	}
 	for in, want := range cases {
-		got, err := Normalize(def, in)
-		if err != nil {
-			t.Errorf("Normalize(%q) errored: %v", in, err)
-			continue
-		}
+		got := Normalize(def, in)
 		if got != want {
 			t.Errorf("Normalize(%q) = %q; want %q", in, got, want)
 		}
@@ -76,11 +68,7 @@ func TestNormalize_Memory_AlreadyCanonical(t *testing.T) {
 
 	canonical := []string{"512Mi", "1Gi", "8Gi", "16Gi", "1024Ki"}
 	for _, v := range canonical {
-		got, err := Normalize(def, v)
-		if err != nil {
-			t.Errorf("Normalize(%q) errored: %v", v, err)
-			continue
-		}
+		got := Normalize(def, v)
 		if got != v {
 			t.Errorf("Normalize(%q) = %q; want unchanged", v, got)
 		}
@@ -91,6 +79,12 @@ func TestNormalize_Memory_AmbiguousFallsThrough(t *testing.T) {
 	// Unambiguous near-misses are normalized; everything else passes
 	// through unchanged so the Pattern validator can reject it. The
 	// normalizer's job is "auto-correct typos", not "guess wildly".
+	//
+	// `Normalize` cannot fail (no error return); the contract is
+	// strictly "transform or pass through". Asserting equality
+	// directly catches a regression where a future contributor
+	// added a unit mapping that silently transforms an ambiguous
+	// input.
 	idx := InstanceSettingIndex()
 	def := idx["workspace.defaultResources.memory"]
 
@@ -103,15 +97,7 @@ func TestNormalize_Memory_AmbiguousFallsThrough(t *testing.T) {
 		"8 G",       // bare G is ambiguous (could be Giga or Gibi)
 	}
 	for _, v := range passthrough {
-		got, err := Normalize(def, v)
-		if err != nil {
-			// Normalizer errors are fine for clearly-broken inputs;
-			// either passthrough (for Pattern to reject) or an
-			// explicit error from the normalizer is acceptable.
-			continue
-		}
-		// If it didn't error, it must have passed through unchanged
-		// (so Validate sees the original and rejects via Pattern).
+		got := Normalize(def, v)
 		if got != v {
 			t.Errorf("Normalize(%q) silently transformed to %q; "+
 				"normalizer should pass ambiguous inputs through "+
@@ -131,11 +117,7 @@ func TestNormalize_CPU_SuffixCase(t *testing.T) {
 		"500 m":  "500m",
 	}
 	for in, want := range cases {
-		got, err := Normalize(def, in)
-		if err != nil {
-			t.Errorf("Normalize(%q) errored: %v", in, err)
-			continue
-		}
+		got := Normalize(def, in)
 		if got != want {
 			t.Errorf("Normalize(%q) = %q; want %q", in, got, want)
 		}
@@ -153,11 +135,7 @@ func TestNormalize_StorageSize_LowercaseUnit(t *testing.T) {
 		"15 mi":  "15Mi",
 	}
 	for in, want := range cases {
-		got, err := Normalize(def, in)
-		if err != nil {
-			t.Errorf("Normalize(%q) errored: %v", in, err)
-			continue
-		}
+		got := Normalize(def, in)
 		if got != want {
 			t.Errorf("Normalize(%q) = %q; want %q", in, got, want)
 		}
@@ -171,10 +149,7 @@ func TestNormalize_NonResourceSettings_PassThrough(t *testing.T) {
 	idx := InstanceSettingIndex()
 
 	def := idx["instance.name"]
-	got, err := Normalize(def, "  Mixed Case   With Spaces  ")
-	if err != nil {
-		t.Fatalf("Normalize(instance.name) errored: %v", err)
-	}
+	got := Normalize(def, "  Mixed Case   With Spaces  ")
 	if got != "  Mixed Case   With Spaces  " {
 		t.Errorf("Normalize(instance.name) trimmed/touched a free-form string; got %q", got)
 	}
@@ -196,11 +171,7 @@ func TestNormalize_PreservesNonStringTypes(t *testing.T) {
 	}
 	for _, tc := range tests {
 		def := idx[tc.key]
-		got, err := Normalize(def, tc.value)
-		if err != nil {
-			t.Errorf("Normalize(%s) errored: %v", tc.key, err)
-			continue
-		}
+		got := Normalize(def, tc.value)
 		// any-to-any equality is reasonable here because all our test
 		// values are comparable scalar types.
 		if got != tc.value {
@@ -218,10 +189,7 @@ func TestNormalize_ThenValidate_FixesTheBug(t *testing.T) {
 	idx := InstanceSettingIndex()
 	def := idx["workspace.defaultResources.memory"]
 
-	got, err := Normalize(def, "8gi")
-	if err != nil {
-		t.Fatalf("Normalize(\"8gi\") errored: %v", err)
-	}
+	got := Normalize(def, "8gi")
 	if got != "8Gi" {
 		t.Fatalf("Normalize(\"8gi\") = %q; want %q", got, "8Gi")
 	}

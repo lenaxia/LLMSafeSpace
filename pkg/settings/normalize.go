@@ -26,35 +26,31 @@ import (
 //     "8gigabyte", "8 G") pass through unchanged so Validate's
 //     pattern check rejects them with a precise error.
 //
-// Normalize never errors today — it returns its input unchanged for
-// anything it doesn't recognize. The (string, error) signature is
-// reserved for future cases where we might want to reject inputs the
-// normalizer recognizes as deliberately wrong (e.g. negative
-// quantities). Callers should treat (value, nil) and (input, nil) as
-// equally valid; let Validate() be the rejection authority.
-//
 // Only string-typed settings with a known shape are normalized. Bool,
 // int, enum, []string, and string settings without a registered
 // normalizer pass through untouched.
-func Normalize(def SettingDef, value any) (any, error) {
+//
+// Normalize cannot fail — rejection is Validate's job. Returning
+// (value) without an error keeps the call sites simple.
+func Normalize(def SettingDef, value any) any {
 	if def.Type != TypeString {
-		return value, nil
+		return value
 	}
 	s, ok := value.(string)
 	if !ok {
-		return value, nil
+		return value
 	}
 	switch def.Key {
 	case "workspace.defaultResources.memory":
-		return normalizeMemory(s), nil
+		return normalizeMemory(s)
 	case "workspace.defaultStorageSize":
 		// Storage uses Gi/Mi only (no Ki) per the schema pattern, but
 		// the input shapes we want to fix up are the same.
-		return normalizeMemory(s), nil
+		return normalizeMemory(s)
 	case "workspace.defaultResources.cpu":
-		return normalizeCPU(s), nil
+		return normalizeCPU(s)
 	}
-	return s, nil
+	return s
 }
 
 // memoryNormalizePattern matches "<digits>[whitespace]<unit>" where

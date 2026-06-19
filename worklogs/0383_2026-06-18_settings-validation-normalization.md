@@ -150,19 +150,43 @@ Test Files  109 passed (109)
 - (Out of scope, longer-term) extend `Normalize()` to other resource-shaped fields if more get added (e.g. ephemeral-storage caps, GPU quantities). The pattern is established; it's a one-line case to add per setting.
 - (Out of scope) consider adding a "preview" indicator on the form: small `→ 8Gi` annotation while the user is typing `"8gi"`, before they blur. Lower priority — the on-blur auto-correction is already discoverable.
 
+## Review-Feedback Addendum (2026-06-19)
+
+The first review (PR #269) raised three substantive findings, all addressed in a follow-up commit on the same branch:
+
+1. **Zero-magnitude validation gap.** The original schema regex `^[0-9]+(Ki|Mi|Gi)$` accepted `"0Gi"` because `[0-9]+` matches `"0"`. Webhook's `parseMemoryMi` rejects `n < 1`, so `"0Gi"` was the same failure class as `"8gi"`: passes settings, breaks workspace creation. Tightened the schema and webhook patterns to `^[1-9][0-9]*(Ki|Mi|Gi)$`. Added probes for `"0Gi"`, `"0Mi"`, `"0Ki"`, `"00Gi"` to `TestValidate_Memory_RejectsLowercaseUnit` and storage equivalents.
+
+2. **Drift guard didn't actually guard webhook drift.** The first version compared schema patterns against test-local constants (`expectedMemoryPattern` etc.), so a developer could change the webhook regex without breaking the test. Replaced with two layered guards:
+   - Created `pkg/settings/quantity_patterns.go` with canonical exported constants `MemoryQuantityPattern`, `StorageQuantityPattern`, `CPUQuantityPattern`. Schema references these directly (no literal strings).
+   - Added `TestWebhookRegexAcceptsSameInputsAsSettingsPattern` in the webhook's own test file, which imports `pkg/settings`, compiles both the canonical patterns and the webhook's regex variables, and probes them with the same input matrix (including zero-magnitude). If either drifts, the test fails on the first input where they diverge.
+
+3. **Two unrelated changes in one PR.** Branch had a `fix(relay)` commit (`dd62cce1`) bundled with the settings work. Rebased to drop it; the relay fix is preserved as its own branch `fix/relay-create-on-first-deploy` for a separate PR.
+
+Plus minor:
+
+4. **Speculative `error` return on `Normalize()`.** Reviewer correctly identified this as YAGNI. Dropped the `error`; `Normalize` now has signature `func Normalize(def SettingDef, value any) any`. Both callers (`InstanceService.Set`, `UserService.Set`) simplified accordingly.
+
+5. **`SchemaVersion` not bumped.** Per `pkg/settings/schema.go:6` ("Incremented on any schema change (add/remove/modify keys)"), adding `Pattern` and tightening `Pattern` on existing keys is a "modify keys" event. Bumped from `2` → `3` and updated the canary in `sdks/canary/go/scenarios/s-user-settings/main.go` so it doesn't fail on the version mismatch.
+
+6. **`TestNormalize_Memory_AmbiguousFallsThrough` swallowed errors silently.** The `if err != nil { continue }` made the test pass vacuously if `Normalize` ever started returning errors. Eliminated by removing the error path entirely (Finding 4 above) — the test now asserts equality directly without an err check.
+
 ## Files Modified
 
 | File | Change |
 |---|---|
-| `pkg/settings/schema.go` | Added `Pattern` to `workspace.defaultResources.{cpu,memory}` |
-| `pkg/settings/normalize.go` | New: `Normalize(def, value)` + helpers |
-| `pkg/settings/normalize_test.go` | New: 9 unit tests for normalization rules |
-| `pkg/settings/schema_test.go` | New: 5 tests pinning the resource-pattern contract + drift guard |
-| `pkg/settings/instance_service.go` | `Set()` runs `Normalize()` before `Validate()` |
+| `pkg/settings/quantity_patterns.go` | **New (review feedback)**: canonical exported constants for memory/CPU/storage Quantity regexes |
+| `pkg/settings/schema.go` | `Pattern` on `defaultResources.{cpu,memory}` references canonical constants; magnitude `[1-9][0-9]*`; `SchemaVersion` 2→3 |
+| `pkg/settings/normalize.go` | New: `Normalize(def, value) any` (no error return per review) |
+| `pkg/settings/normalize_test.go` | New: 9 unit tests; `_AmbiguousFallsThrough` no longer swallows |
+| `pkg/settings/schema_test.go` | Replaced test-local `expected*Pattern` constants with `TestInstanceSettings_ResourcePatternsUseCanonicalConstants`; added `0Gi`/`0Mi`/`0Ki`/`00Gi` zero-magnitude probes |
+| `pkg/settings/instance_service.go` | `Set()` runs `Normalize()` before `Validate()`; signature follows new `any` return |
 | `pkg/settings/user_service.go` | Same |
 | `pkg/settings/instance_service_edge_test.go` | New: 3 integration tests covering normalization end-to-end |
+| `controller/internal/webhooks/workspace_webhook.go` | `memoryPattern` and `storageSizePattern` tightened to `[1-9][0-9]*` magnitude |
+| `controller/internal/webhooks/workspace_webhook_test.go` | **New (review feedback)**: `TestWebhookRegexAcceptsSameInputsAsSettingsPattern` imports `pkg/settings` and probes both layers' regexes |
+| `sdks/canary/go/scenarios/s-user-settings/main.go` | `expectedSchemaVersion` 2→3 |
 | `frontend/src/lib/settingsNormalize.ts` | New: TypeScript port of the Go normalizer |
 | `frontend/src/lib/settingsNormalize.test.ts` | New: 11 tests pinning the TS canonicalization rules |
 | `frontend/src/components/settings/SettingsForm.tsx` | `StringInput` consults `def.pattern`, normalizes on commit, shows aria-invalid + helpful error |
 | `frontend/src/components/settings/SettingsForm.test.tsx` | 14 new tests for pattern validation + normalization paths |
-| `worklogs/0379_2026-06-18_settings-validation-normalization.md` | This file |
+| `worklogs/0383_2026-06-18_settings-validation-normalization.md` | This file |

@@ -114,10 +114,7 @@ func (s *UserService) Set(ctx context.Context, userID, key string, value any) er
 	if !ok {
 		return fmt.Errorf("unknown user setting key: %q", key)
 	}
-	normalized, err := Normalize(def, value)
-	if err != nil {
-		return err
-	}
+	normalized := Normalize(def, value)
 	if err := Validate(def, normalized); err != nil {
 		return err
 	}
