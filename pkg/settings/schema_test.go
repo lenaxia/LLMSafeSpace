@@ -468,7 +468,6 @@ func TestValidate_CPU_RejectsBogusValues(t *testing.T) {
 		"500m", "1000m", "1.0", "0.5", "16.0",
 		// Edge cases that look zero-ish but aren't:
 		"0.001", // 1 millicore expressed as decimal
-		"0.5",   // 500 millicores
 		"1m",    // smallest millicore
 	}
 	for _, v := range accepted {

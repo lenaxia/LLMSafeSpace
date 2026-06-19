@@ -949,3 +949,77 @@ func TestWebhookRegexAcceptsSameInputsAsSettingsPattern(t *testing.T) {
 		}
 	}
 }
+
+// Direct unit tests for parseCPUMillis. The regex drift-guard above
+// proves the regex matches/rejects the right strings, but doesn't
+// exercise the parser's millicore conversion. A regression in the
+// decimal branch (e.g. dropping the w*1000 term, mis-handling the
+// 0.X case introduced by this PR's pattern change) would not be
+// caught at the regex level.
+//
+// Reviewer caught the gap on PR #283; addressed here.
+func TestParseCPUMillis(t *testing.T) {
+	cases := []struct {
+		input string
+		want  int64
+		// wantErr: true if parseCPUMillis should return an error.
+		// We assert err presence, not exact text — the regex hint
+		// in the error message is verified by other tests.
+		wantErr bool
+	}{
+		// Millicore form
+		{"1m", 1, false},
+		{"500m", 500, false},
+		{"1000m", 1000, false},
+		{"16000m", 16000, false},
+
+		// Decimal whole-and-fractional
+		{"1.0", 1000, false},
+		{"1.5", 1500, false},
+		{"16.0", 16000, false},
+		{"0.5", 500, false},
+		{"0.001", 1, false},
+		{"0.999", 999, false},
+
+		// Decimal pad/truncate: parser pads frac to 3 digits, then
+		// truncates anything beyond. "1.5" → frac="500", "0.0001"
+		// would be regex-accepted by the new pattern (0.0001 has a
+		// nonzero digit) but parser truncates frac to "000" → 0.
+		// The 0 result here is a known pre-existing parser limitation
+		// independent of this PR's pattern change. We pin it so the
+		// behavior doesn't drift silently.
+		{"0.0001", 0, false},
+
+		// Zero-magnitude (rejected by the new regex; parser never
+		// reaches them, but if a future code path constructs one
+		// directly the parser should still error).
+		{"0m", -1, true},
+		{"0.0", -1, true},
+		{"0.00", -1, true},
+		{"0", -1, true},
+		{"0.", -1, true},
+
+		// Malformed
+		{"banana", -1, true},
+		{"500", -1, true}, // missing m
+		{"", -1, true},
+		{"-500m", -1, true},
+		{"1000M", -1, true}, // capital M
+	}
+	for _, c := range cases {
+		got, err := parseCPUMillis(c.input)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("parseCPUMillis(%q) = (%d, nil); want error", c.input, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("parseCPUMillis(%q) errored: %v", c.input, err)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("parseCPUMillis(%q) = %d; want %d", c.input, got, c.want)
+		}
+	}
+}

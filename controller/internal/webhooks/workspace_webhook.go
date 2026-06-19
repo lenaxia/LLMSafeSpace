@@ -125,7 +125,7 @@ var memoryPattern = regexp.MustCompile(`^([1-9][0-9]*)(Ki|Mi|Gi)$`)
 func parseCPUMillis(s string) (int64, error) {
 	m := cpuPattern.FindStringSubmatch(s)
 	if m == nil {
-		return -1, fmt.Errorf("cpu %q does not match ^[1-9][0-9]*m$ or ^[1-9][0-9]*\\.[0-9]+|0\\.[0-9]*[1-9][0-9]*$ (positive only)", s)
+		return -1, fmt.Errorf("cpu %q does not match ^([1-9][0-9]*m|[1-9][0-9]*\\.[0-9]+|0\\.[0-9]*[1-9][0-9]*)$ (positive only)", s)
 	}
 	if m[1] != "" {
 		n, err := strconv.ParseInt(m[1], 10, 64)
