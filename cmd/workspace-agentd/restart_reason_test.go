@@ -537,27 +537,30 @@ func TestRestartReason_Crash_WriteReadLogDelete_RoundTrip(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Markers are independent: restart-reason marker does not collide with OOM
-// marker (different filenames on the same PVC).
+// logRestartReason deletes only the restart-reason marker and does not
+// touch sibling files in the same directory (e.g. unrelated PVC files).
+// Worklog 371 H5 removed the OOM-specific marker that previously motivated
+// this test; the invariant (logRestartReason cleans up only its own file)
+// is still worth pinning.
 // ---------------------------------------------------------------------------
 
-func TestRestartReasonMarker_IndependentOfOOMMarker(t *testing.T) {
+func TestRestartReasonMarker_LogDoesNotTouchSiblingFiles(t *testing.T) {
 	dir := t.TempDir()
 	restartPath := filepath.Join(dir, ".opencode-restart-reason")
-	oomPath := filepath.Join(dir, ".opencode-oom-marker")
+	siblingPath := filepath.Join(dir, ".some-other-pvc-file")
 
 	require.NoError(t, writeRestartReasonMarker(restartPath, "oom", nil))
-	require.NoError(t, writeOOMMarker(oomPath, "2Gi"))
+	require.NoError(t, os.WriteFile(siblingPath, []byte("unrelated"), 0o600))
 
 	require.FileExists(t, restartPath)
-	require.FileExists(t, oomPath)
+	require.FileExists(t, siblingPath)
 
 	_, lg := testObserver(t)
-	// logRestartReason on the restart marker must NOT touch the OOM marker.
+	// logRestartReason on the restart marker must NOT touch the sibling.
 	logRestartReason(restartPath, lg)
 
 	_, restartErr := os.Stat(restartPath)
-	assert.True(t, os.IsNotExist(restartErr), "restart marker must be deleted")
-	_, oomErr := os.Stat(oomPath)
-	assert.NoError(t, oomErr, "OOM marker must be untouched by restart-reason logging")
+	assert.True(t, os.IsNotExist(restartErr), "restart marker must be deleted (one-shot)")
+	_, siblingErr := os.Stat(siblingPath)
+	assert.NoError(t, siblingErr, "sibling file must be untouched by restart-reason logging")
 }

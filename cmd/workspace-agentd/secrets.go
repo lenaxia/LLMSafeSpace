@@ -67,61 +67,189 @@ type restartableProcess interface {
 // the US-44.2 design.
 const restartIdleCheckInterval = 5 * time.Second
 
-// makeSessionAwareRestartDecision decides whether to restart opencode
-// now or defer until all sessions are idle. Returns true if the restart
-// was initiated (immediately or via deferred goroutine that has since
-// fired), false if the restart was deferred to a background goroutine.
+// defaultMaxDefer bounds how long a deferred restart waits for busy sessions
+// to idle before force-restarting (worklog 371 H1). Without it, a stuck
+// session (infinite loop, hung MCP, deadlocked tool) defers the restart
+// forever and the credential change never applies — silent non-application.
+// 2h is long enough that legitimate agentic turns (which can run for tens
+// of minutes) are not interrupted, while bounded enough that stuck sessions
+// eventually get the credential applied. The force-restart at expiry logs
+// a warning so the operator can correlate the interruption.
+const defaultMaxDefer = 2 * time.Hour
+
+// sessionListerProbeTimeout bounds the cost of probing opencode's /session
+// endpoint from the restart decision path. If opencode is unreachable the
+// probe fails fast; if it is slow, we don't block the reload handler.
+const sessionListerProbeTimeout = 3 * time.Second
+
+// sessionLister returns the current live session IDs from opencode, or nil
+// if opencode is unreachable. Used for two purposes in the session-aware
+// restart logic:
 //
-// If tracker is nil or has no data (SSE disconnected), treats as "all
-// idle" and restarts immediately — without session state, deferring
-// would block forever. A log warning is emitted in this case.
+//   - Pruning stale busy entries from the tracker (C2a): when opencode dies
+//     mid-busy and the supervisor respawns it, the tracker retains a stale
+//     "busy" entry for a session that no longer exists. Calling prune() with
+//     the live session list removes it.
+//   - Cold-start probing (C2b): when the tracker is empty (agentd restarted,
+//     SSE not yet reconnected), the lister tells us whether opencode is
+//     alive. An alive opencode with an empty tracker means sessions might be
+//     busy but invisible — we defer. An unreachable opencode means nothing
+//     is running — we restart immediately.
 //
-// If proc is nil, returns true without doing anything (test/no-op path).
+// Returns a non-nil slice (possibly empty) when opencode is reachable, nil
+// when opencode is unreachable. "Empty non-nil" means "opencode is alive
+// with zero sessions".
+type sessionLister func(ctx context.Context) []string
+
+// pruneFromLister prunes the tracker using the live session list from
+// opencode. No-op if tracker is nil, lister is nil, the tracker is empty
+// (nothing to prune — and the caller trackerHasBusyOrUnknown will probe
+// opencode itself), or the probe fails (opencode unreachable — cannot
+// verify, leave tracker as-is).
+func pruneFromLister(ctx context.Context, tracker *sessionStatusTracker, lister sessionLister) {
+	if tracker == nil || lister == nil || !tracker.hasAnyData() {
+		return
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, sessionListerProbeTimeout)
+	defer cancel()
+	if ids := lister(probeCtx); ids != nil {
+		tracker.prune(ids)
+	}
+}
+
+// trackerHasBusyOrUnknown reports whether the restart should be deferred.
+// Returns true (defer) when:
+//   - the tracker has data AND any session is busy, OR
+//   - the tracker is empty BUT opencode is reachable with at least one
+//     session (cold-start: sessions might be busy but invisible — C2b).
 //
-// Per US-44.2 design: NO forced timeout. The restart is deferred
-// indefinitely until sessions are idle OR the user triggers a manual
-// restart via POST /agent/reload?drain=false.
-func makeSessionAwareRestartDecision(proc restartableProcess, tracker *sessionStatusTracker, pollInterval time.Duration) bool {
+// Returns false (proceed with restart) when:
+//   - the tracker has data AND no session is busy, OR
+//   - the tracker is empty AND opencode is unreachable (nothing to lose), OR
+//   - the tracker is empty AND opencode has zero sessions (nothing to lose).
+func trackerHasBusyOrUnknown(ctx context.Context, tracker *sessionStatusTracker, lister sessionLister) bool {
+	if tracker != nil && tracker.hasAnyData() {
+		return tracker.hasAnyBusy()
+	}
+	// Tracker is empty — probe opencode to decide (C2b).
+	if lister == nil {
+		return false
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, sessionListerProbeTimeout)
+	defer cancel()
+	ids := lister(probeCtx)
+	// nil = unreachable → restart (nothing to lose).
+	// non-nil + len>0 = opencode alive with sessions → defer (might be busy).
+	// non-nil + len==0 = opencode alive, no sessions → restart (nothing to lose).
+	return len(ids) > 0
+}
+
+// makeSessionAwareRestartDecision decides whether to restart opencode now or
+// defer until sessions are idle. Returns true if the restart was initiated
+// (immediately or via a deferred goroutine that has since fired), false if
+// the restart was deferred to a background goroutine.
+//
+// Behaviour:
+//
+//   - If proc is nil, returns true without doing anything (test/no-op path).
+//   - If the tracker shows all sessions idle (or opencode is unreachable with
+//     no tracker data), restarts immediately.
+//   - If sessions are busy (or the tracker is empty but opencode is alive
+//     with sessions — cold-start, C2b), defers the restart.
+//
+// The deferred goroutine:
+//
+//   - Polls every pollInterval, pruning stale entries via lister (C2a) and
+//     re-checking busy state.
+//   - Selects on ctx.Done() so it is cancelled at agentd shutdown (H1a).
+//   - Force-restarts after maxDefer (H1b) so credentials eventually apply
+//     even if sessions stay busy forever (stuck tool, infinite loop).
+//   - Is tracked by bgWg (H1c) so shutdown waits for it before proc.stop().
+//
+// maxDefer <= 0 falls back to defaultMaxDefer. pollInterval <= 0 falls back
+// to restartIdleCheckInterval.
+func makeSessionAwareRestartDecision(
+	ctx context.Context,
+	proc restartableProcess,
+	tracker *sessionStatusTracker,
+	pollInterval time.Duration,
+	maxDefer time.Duration,
+	lister sessionLister,
+	bgWg *sync.WaitGroup,
+) bool {
 	if proc == nil {
 		return true
 	}
+	if maxDefer <= 0 {
+		maxDefer = defaultMaxDefer
+	}
+	if pollInterval <= 0 {
+		pollInterval = restartIdleCheckInterval
+	}
 
-	// SSE-disconnect fallback: nil tracker or empty statuses map means
-	// we have no session state to check. Restart immediately rather than
-	// block forever.
-	if tracker == nil || !tracker.hasAnyData() {
-		if tracker == nil {
-			log.Warn("session-aware restart: tracker is nil, restarting immediately")
-		} else {
-			log.Warn("session-aware restart: tracker has no session data (SSE disconnected?), restarting immediately")
-		}
+	// Prune stale entries before deciding (C2a).
+	pruneFromLister(ctx, tracker, lister)
+
+	if !trackerHasBusyOrUnknown(ctx, tracker, lister) {
 		proc.restart()
 		return true
 	}
 
-	if !tracker.hasAnyBusy() {
-		proc.restart()
-		return true
+	// Sessions are busy or status is unknown (cold-start) — defer.
+	var busy []string
+	if tracker != nil {
+		busy = tracker.listBusy()
+	}
+	if len(busy) > 0 {
+		log.Info("session-aware restart: deferring restart, sessions are busy",
+			zap.Strings("busySessions", busy),
+			zap.Duration("maxDefer", maxDefer))
+	} else {
+		log.Warn("session-aware restart: deferring restart, session status unknown (tracker empty, opencode alive — SSE disconnected?)",
+			zap.Duration("maxDefer", maxDefer))
 	}
 
-	// Sessions are busy — defer the restart.
-	busySessions := tracker.listBusy()
-	log.Info("session-aware restart: deferring restart, sessions are busy",
-		zap.Strings("busySessions", busySessions))
-
-	go func() {
+	runDeferred := func() {
+		deadline := time.NewTimer(maxDefer)
+		defer deadline.Stop()
 		ticker := time.NewTicker(pollInterval)
 		defer ticker.Stop()
-		for range ticker.C {
-			if !tracker.hasAnyBusy() {
-				log.Info("session-aware restart: all sessions now idle, applying deferred restart")
+		for {
+			select {
+			case <-ctx.Done():
+				log.Info("session-aware restart: deferred restart cancelled by shutdown")
+				return
+			case <-deadline.C:
+				log.Warn("session-aware restart: max-defer elapsed, force-restarting to apply credential change",
+					zap.Duration("maxDefer", maxDefer),
+					zap.Strings("busySessions", func() []string {
+						if tracker != nil {
+							return tracker.listBusy()
+						}
+						return nil
+					}()))
 				proc.restart()
 				return
+			case <-ticker.C:
+				pruneFromLister(ctx, tracker, lister)
+				if !trackerHasBusyOrUnknown(ctx, tracker, lister) {
+					log.Info("session-aware restart: all sessions now idle, applying deferred restart")
+					proc.restart()
+					return
+				}
 			}
-			log.Debug("session-aware restart: still waiting for sessions to idle",
-				zap.Strings("busySessions", tracker.listBusy()))
 		}
-	}()
+	}
+
+	if bgWg != nil {
+		bgWg.Add(1)
+		go func() {
+			defer bgWg.Done()
+			runDeferred()
+		}()
+	} else {
+		go runDeferred()
+	}
 
 	return false
 }
@@ -364,18 +492,57 @@ func resolveModelWithProvider(cfg map[string]json.RawMessage, flatModelID string
 	return flatModelID
 }
 
+// reloadSecretsDeps bundles the runtime dependencies that
+// reloadSecretsHandler needs beyond the materialize config. Grouping them in
+// a struct keeps the handler signature stable as dependencies are added and
+// makes call sites self-documenting.
+type reloadSecretsDeps struct {
+	// Proc is the supervised opencode process. May be nil in tests; in
+	// production it is a *managedProcess so the handler can restart
+	// opencode after env/llm secret changes.
+	Proc restartableProcess
+
+	// OpencodePassword is the Basic-auth password every request to opencode
+	// (PUT /auth/:providerID, POST /instance/dispose) must carry. Production
+	// reads /sandbox-cfg/password at startup; tests pass "" since they
+	// either skip the credential push (no llm-provider in the batch) or
+	// stub the URL to a server that does not enforce auth. An empty
+	// password produces 401 against real opencode and was the proximate
+	// cause of Bug 1 (worklog 0125).
+	OpencodePassword string
+
+	// Tracker is the SSE session-status tracker. May be nil.
+	Tracker *sessionStatusTracker
+
+	// BgCtx is the agentd background-goroutine context. The deferred-restart
+	// goroutine selects on it so it is cancelled at shutdown (H1a). When
+	// nil, context.Background() is used (goroutine lives until restart fires
+	// or maxDefer elapses — tests only).
+	BgCtx context.Context
+
+	// BgWg tracks background goroutines for clean shutdown. The deferred-
+	// restart goroutine registers here so main's shutdown waits for it
+	// before proc.stop() (H1c). May be nil (tests only).
+	BgWg *sync.WaitGroup
+
+	// Lister probes opencode's /session endpoint for the live session list.
+	// Used to prune stale busy entries (C2a) and to decide cold-start
+	// behaviour when the tracker is empty (C2b). May be nil (the restart
+	// logic falls back to immediate-restart-on-empty-tracker).
+	Lister sessionLister
+}
+
 // reloadSecretsHandler returns the HTTP handler for /v1/reload-secrets.
-// proc may be nil (tests); in production it is a *managedProcess so the
-// handler can restart opencode after env/llm secret changes.
-//
-// opencodePassword is the Basic-auth password every request to opencode
-// (PUT /auth/:providerID, POST /instance/dispose) must carry. Production
-// reads /sandbox-cfg/password at startup; tests pass "" since they
-// either skip the credential push (no llm-provider in the batch) or
-// stub the URL to a server that does not enforce auth. An empty
-// password produces 401 against real opencode and was the proximate
-// cause of Bug 1 (worklog 0125).
-func reloadSecretsHandler(cfg materializeConfig, proc restartableProcess, opencodePassword string, tracker *sessionStatusTracker) http.HandlerFunc {
+func reloadSecretsHandler(cfg materializeConfig, deps reloadSecretsDeps) http.HandlerFunc {
+	proc := deps.Proc
+	opencodePassword := deps.OpencodePassword
+	tracker := deps.Tracker
+	bgCtx := deps.BgCtx
+	if bgCtx == nil {
+		bgCtx = context.Background()
+	}
+	lister := deps.Lister
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method != http.MethodPost {
@@ -488,9 +655,17 @@ func reloadSecretsHandler(cfg materializeConfig, proc restartableProcess, openco
 					log.Error("failed to write restart-reason marker", zap.Error(err))
 				} else {
 					logRestartReasonAtWrite(reason, names, log.Core())
+					// H2: record the restart in the Prometheus counter so ops
+					// dashboards surface credential-change restarts. Recorded at
+					// decision time (alongside the marker write), not at actual
+					// restart time — the marker and metric both record "a restart
+					// was requested", which is the operationally useful signal.
+					// The reason label is the short metric form (env_secrets /
+					// api_key) matching the help text and the crash/oom reasons.
+					pkgOpsMetrics.RecordRestart(workspaceIDFromEnv(), metricRestartReason(reason))
 				}
 			}
-			restarted = makeSessionAwareRestartDecision(proc, tracker, restartIdleCheckInterval)
+			restarted = makeSessionAwareRestartDecision(bgCtx, proc, tracker, restartIdleCheckInterval, defaultMaxDefer, lister, deps.BgWg)
 		}
 
 		status := http.StatusOK
@@ -505,6 +680,22 @@ func reloadSecretsHandler(cfg materializeConfig, proc restartableProcess, openco
 			"results":   result.Results,
 			"restarted": restarted,
 		})
+	}
+}
+
+// metricRestartReason maps a marker reason (from classifySecretRestartReason,
+// used in the on-disk restart-reason marker) to the short Prometheus label
+// used by opsMetrics.RecordRestart. The metric help text enumerates:
+// env_secrets, api_key, crash, oom, user_requested. Unknown reasons pass
+// through unchanged so the metric remains useful if new reasons are added.
+func metricRestartReason(markerReason string) string {
+	switch markerReason {
+	case "env_secrets_changed":
+		return "env_secrets"
+	case "api_key_changed":
+		return "api_key"
+	default:
+		return markerReason
 	}
 }
 

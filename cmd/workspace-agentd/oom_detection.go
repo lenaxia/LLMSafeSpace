@@ -4,26 +4,16 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"go.uber.org/zap"
 )
-
-// OOMMarkerPath is the PVC-backed path where agentd writes a marker
-// file when opencode is killed by the OOM killer. The file persists
-// across pod restarts so the next boot can detect the prior OOM and
-// surface it to the user. Written to /workspace (PVC subPath: workspace).
-const OOMMarkerPath = "/workspace/.opencode-oom-marker"
 
 // oomKillsCounter tracks OOM kills per workspace for ops dashboards.
 // Registered once at package level (Prometheus default registry rejects
@@ -44,8 +34,8 @@ const (
 )
 
 // classifyExit determines the kind of process exit from the wait error
-// and process state. Used by the supervisor to decide whether to write
-// an OOM marker.
+// and process state. Used by the supervisor to decide whether to treat
+// the exit as a potential OOM kill.
 func classifyExit(waitErr error) exitKind {
 	if waitErr == nil {
 		return exitNormal
@@ -75,56 +65,32 @@ func isOOMExit(kind exitKind) bool {
 	return kind == exitSigKill
 }
 
-// writeOOMMarker writes a JSON marker file recording the OOM event.
-// The marker is read on next boot to surface the OOM to the user.
-func writeOOMMarker(path, memoryLimit string) error {
-	marker := map[string]interface{}{
-		"reason":      "oom",
-		"exitCode":    137,
-		"timestamp":   time.Now().UTC().Format(time.RFC3339),
-		"memoryLimit": memoryLimit,
-	}
-	data, err := json.Marshal(marker)
-	if err != nil {
-		return fmt.Errorf("marshal OOM marker: %w", err)
-	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0750); err != nil {
-		return fmt.Errorf("create marker dir %s: %w", dir, err)
-	}
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		return fmt.Errorf("write OOM marker %s: %w", path, err)
-	}
-	return nil
-}
-
-// handleOOMExit is called from the supervisor's crash path when OOM is
-// detected. It writes the OOM marker file AND the generalized
-// restart-reason marker (US-44.7), logs the restart-reason in real time,
-// increments the Prometheus counters (OOM kills + restarts), and logs
-// the OOM event.
+// handleOOMExit is called from the supervisor's crash path when an OOM kill
+// is detected. It writes the unified restart-reason marker (US-44.7),
+// logs the restart-reason in real time, and increments the Prometheus
+// counters (OOM kills + restarts).
 //
-// oomMarkerPath is the path for the OOM-specific marker (carries
-// exitCode/memoryLimit); restartReasonMarkerPath is the path for the
-// unified restart-reason marker consumed on next boot. Both are passed in
-// (rather than reading the package constants) so tests can target a
-// tempdir.
-func handleOOMExit(workspaceID, oomMarkerPath, restartReasonMarkerPath string) {
+// restartReasonMarkerPath is the path for the unified restart-reason marker
+// consumed on next boot. It is passed in (rather than reading the package
+// constant) so tests can target a tempdir.
+//
+// Worklog 371 H5: the separate OOM-specific marker (OOMMarkerPath +
+// writeOOMMarker) was removed because it had zero read-side consumers
+// across the controller, API, and frontend. The restart-reason marker
+// (reason="oom") subsumes the useful information, and the OOM-specific
+// exitCode/memoryLimit fields were dead data. The OOM kill is still
+// recorded in workspace_oom_kills_total (below) and workspace_restarts_total
+// (via pkgOpsMetrics.RecordRestart).
+func handleOOMExit(workspaceID, restartReasonMarkerPath string) {
 	if workspaceID == "" {
 		workspaceID = "unknown"
 	}
 	log.Warn("opencode was killed by OOM killer (SIGKILL/exit 137)",
 		zap.String("workspace_id", workspaceID))
 
-	if err := writeOOMMarker(oomMarkerPath, getMemoryLimit()); err != nil {
-		log.Error("failed to write OOM marker file", zap.Error(err),
-			zap.String("path", oomMarkerPath))
-	}
-
-	// US-44.7: also write the generalized restart-reason marker and log it
-	// in real time. Both markers coexist: the OOM marker carries
-	// exitCode/memoryLimit detail; this one is the unified reason surface
-	// consumed by logRestartReason on the next boot.
+	// US-44.7: write the generalized restart-reason marker and log it in
+	// real time. This is the unified reason surface consumed by
+	// logRestartReason on the next boot.
 	if err := writeRestartReasonMarker(restartReasonMarkerPath, "oom", nil); err != nil {
 		log.Error("failed to write restart-reason marker", zap.Error(err))
 	} else {
@@ -141,39 +107,11 @@ func workspaceIDFromEnv() string {
 	return os.Getenv("WORKSPACE_ID")
 }
 
-// getMemoryLimit reads the cgroup v2 memory limit for logging in the
-// OOM marker. Returns "unknown" if the limit cannot be read.
-func getMemoryLimit() string {
-	data, err := os.ReadFile("/sys/fs/cgroup/memory.max")
-	if err != nil {
-		return "unknown"
-	}
-	limit := strings.TrimSpace(string(data))
-	if limit == "" || limit == "max" {
-		return "unlimited"
-	}
-	// Convert bytes to human-readable (e.g. "2Gi")
-	bytes, err := strconv.ParseInt(limit, 10, 64)
-	if err != nil {
-		return limit
-	}
-	return formatBytes(bytes)
-}
-
-func formatBytes(bytes int64) string {
-	const gi = 1024 * 1024 * 1024
-	const mi = 1024 * 1024
-	if bytes >= gi {
-		return fmt.Sprintf("%dGi", bytes/gi)
-	}
-	if bytes >= mi {
-		return fmt.Sprintf("%dMi", bytes/mi)
-	}
-	return fmt.Sprintf("%d", bytes)
-}
-
 // readCgroupMemoryCurrent reads the current memory usage from cgroup v2.
-// Returns an error if the file is not available (non-Linux, cgroup v1).
+// Returns an error if the file is not available (non-Linux, cgroup v1 —
+// see H4: cgroup v2 is a documented hard requirement; on v1 hosts the
+// memory pressure monitor and the workspace_memory_bytes gauge silently
+// produce nothing, surfaced by a warning log in the pressure monitor).
 func readCgroupMemoryCurrent() (int64, error) {
 	data, err := os.ReadFile("/sys/fs/cgroup/memory.current")
 	if err != nil {

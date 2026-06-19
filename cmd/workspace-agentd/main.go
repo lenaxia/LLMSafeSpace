@@ -1032,7 +1032,31 @@ func main() {
 	adminMux.Handle("/metrics", promhttp.Handler())
 
 	// User endpoints — user port.
-	userMux.HandleFunc("/v1/reload-secrets", reloadSecretsHandler(loadMaterializeConfig(), proc, password, sseTracker))
+	// The session lister probes opencode's /session endpoint to (a) prune
+	// stale busy entries from the tracker when opencode dies mid-busy and
+	// is respawned (C2a), and (b) decide cold-start behaviour when the
+	// tracker is empty after an agentd restart (C2b). It closes over the
+	// production OpenCodeClient; tests inject a stub.
+	liveSessions := func(ctx context.Context) []string {
+		sessions, err := client.ListSessions(ctx)
+		if err != nil {
+			return nil
+		}
+		ids := make([]string, len(sessions))
+		for i, s := range sessions {
+			ids[i] = s.ID
+		}
+		return ids
+	}
+
+	userMux.HandleFunc("/v1/reload-secrets", reloadSecretsHandler(loadMaterializeConfig(), reloadSecretsDeps{
+		Proc:             proc,
+		OpencodePassword: password,
+		Tracker:          sseTracker,
+		BgCtx:            bgCtx,
+		BgWg:             &bgWg,
+		Lister:           liveSessions,
+	}))
 	userMux.HandleFunc("/v1/agent/reload", agentReloadHandler(password, log))
 
 	// Start admin server (health probes) on dedicated port.
@@ -1315,7 +1339,7 @@ func (p *managedProcess) supervise() {
 		// Crash path: classify exit, handle OOM, record metric, log, backoff, loop.
 		exitKind := classifyExit(waitErr)
 		if isOOMExit(exitKind) {
-			handleOOMExit(workspaceIDFromEnv(), OOMMarkerPath, RestartReasonMarkerPath)
+			handleOOMExit(workspaceIDFromEnv(), RestartReasonMarkerPath)
 		} else {
 			if err := writeRestartReasonMarker(RestartReasonMarkerPath, "crash", nil); err != nil {
 				log.Error("failed to write restart-reason marker", zap.Error(err))

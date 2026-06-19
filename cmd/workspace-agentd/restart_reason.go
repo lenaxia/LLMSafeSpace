@@ -19,10 +19,10 @@ import (
 // RestartReasonMarkerPath is the PVC-backed path where agentd writes a
 // marker file recording WHY opencode was restarted. The file persists
 // across pod restarts so the next boot can surface the reason to the
-// operator. Written to /workspace (PVC subPath: workspace), sibling to
-// the OOM-specific marker (OOMMarkerPath); the two files coexist because
-// the OOM marker carries exitCode/memoryLimit detail that this marker
-// intentionally does not.
+// operator. Written to /workspace (PVC subPath: workspace). The OOM-
+// specific marker that previously lived alongside this file was removed
+// (worklog 371 H5) — it had zero read-side consumers and the reason="oom"
+// entry in this marker subsumes its useful information.
 const RestartReasonMarkerPath = "/workspace/.opencode-restart-reason"
 
 // restartReasonStaleThreshold is how old a marker may be before the
@@ -42,11 +42,29 @@ type restartReason struct {
 
 // writeRestartReasonMarker writes a JSON marker file recording the reason
 // opencode is about to be restarted. Creates the parent directory
-// (MkdirAll 0750) and writes the file (0600). Mirrors writeOOMMarker.
+// (MkdirAll 0750) and writes the file (0600).
 //
 // Callers that want real-time visibility should follow a successful write
 // with logRestartReasonAtWrite; the on-disk marker is the persistent
 // counterpart consumed by logRestartReason on the next pod boot.
+//
+// M3 (worklog 371) known limitation: the marker records "a restart was
+// REQUESTED", not "a restart COMPLETED". When the session-aware restart
+// defers (secrets.go makeSessionAwareRestartDecision) and the pod dies
+// before the deferred restart fires (e.g. node drain, OOM kill of agentd
+// itself), the next boot logs a restart-reason that did not actually
+// occur on the previous run. This is accepted because:
+//   - The marker is written at DECISION time, which is when the credential
+//     change became relevant — operationally the right attribution.
+//   - The 10-minute stale threshold (restartReasonStaleThreshold) partially
+//     mitigates: a marker older than 10min at boot is logged at Debug with
+//     an "may be unrelated to this boot" caveat.
+//   - The real-time log (logRestartReasonAtWrite) is the primary surface;
+//     the boot-time log is secondary.
+//
+// Moving the marker write to restart-completion time would lose it entirely
+// if the pod died mid-restart (the worst time to lose attribution), so
+// decision-time is the safer choice.
 func writeRestartReasonMarker(path, reason string, secretNames []string) error {
 	marker := restartReason{
 		Reason:      reason,
