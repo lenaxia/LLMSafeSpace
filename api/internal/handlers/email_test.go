@@ -6,6 +6,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -219,6 +220,29 @@ func TestEmailHandler_TestSend_RateLimiterNil_StillWorks(t *testing.T) {
 	router := setupEmailRouter(h)
 	w := doRequest(router, http.MethodPost, "/admin/email/test", `{"to":"ops@test.com"}`)
 	require.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestEmailHandler_TestSend_RateLimiterError_FailsOpen(t *testing.T) {
+	// When Increment returns an error (Redis down), the handler must fail
+	// open — i.e. allow the request through rather than blocking all
+	// test-sends during a Redis hiccup. The global RateLimitMiddleware
+	// remains the backstop. A fail-closed regression (e.g. flipping the
+	// `err == nil` guard) would turn this test red.
+	fp := &fakeEmailProvider{}
+	svc := emailsvc.NewService(fp, "https://app.test", "ses")
+	h := NewEmailHandler(svc, &erroringRateCounter{}, &captureLogger{})
+
+	router := setupEmailRouter(h)
+	w := doRequest(router, http.MethodPost, "/admin/email/test", `{"to":"ops@test.com"}`)
+	require.Equal(t, http.StatusOK, w.Code, "rate-limiter error must fail open, not block the request")
+}
+
+// erroringRateCounter always returns an error from Increment, simulating a
+// Redis outage. Used to verify the handler fails open.
+type erroringRateCounter struct{}
+
+func (erroringRateCounter) Increment(context.Context, string, int64, time.Duration) (int64, error) {
+	return 0, errors.New("redis unavailable")
 }
 
 func TestEmailHandler_TestSend_DisplayNameParsed(t *testing.T) {
