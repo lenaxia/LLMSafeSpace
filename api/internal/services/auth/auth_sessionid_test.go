@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lenaxia/llmsafespace/api/internal/config"
-	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/api/internal/config"
+	"github.com/lenaxia/llmsafespaces/api/internal/logger"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 func TestAuthMiddleware_SetsSessionID(t *testing.T) {

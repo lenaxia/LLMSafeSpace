@@ -11,9 +11,9 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 
-	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
+	"github.com/lenaxia/llmsafespaces/controller/internal/metrics"
 )
 
 // handleFailed handles workspaces that are in the legacy Failed phase.

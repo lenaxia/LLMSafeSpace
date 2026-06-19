@@ -11,11 +11,11 @@
 #       --max-p99-total S    Max total latency p99 in seconds (default: no limit)
 #       --max-p99-pod-to-readyz S
 #                            Max pod-running→readyz-200 p99 in seconds
-#       --namespace NS       Kubernetes namespace (default: llmsafespace)
+#       --namespace NS       Kubernetes namespace (default: llmsafespaces)
 #       --node NODE          Pin workspace pod to this node (by hostname label)
 #                            Use instead of --fresh-node when a dedicated
 #                            benchmark node is labelled
-#                            benchmark.llmsafespace.dev/role=benchmark
+#                            benchmark.llmsafespaces.dev/role=benchmark
 #       --fresh-node         Cordon all OTHER nodes and restore afterwards.
 #                            WARNING: disruptive on shared clusters; prefer
 #                            --node on production clusters.
@@ -40,13 +40,13 @@ ITERATIONS=5
 ASSERT=false
 MAX_P99_TOTAL=""
 MAX_P99_POD_TO_READYZ=""
-NS="${NS:-llmsafespace}"
+NS="${NS:-llmsafespaces}"
 NODE=""
 FRESH_NODE=false
 API_URL="${API_URL:-http://localhost:8080}"
 API_KEY="${API_KEY:-}"
 KUBE_CONTEXT=""
-BENCHMARK_LABEL="benchmark.llmsafespace.dev/role=benchmark"
+BENCHMARK_LABEL="benchmark.llmsafespaces.dev/role=benchmark"
 
 # ---- parse args ----
 while [[ $# -gt 0 ]]; do
@@ -152,7 +152,7 @@ _wait_phase() {
 }
 
 _pod_name() {
-  $KUBECTL -n "$NS" get pods -l "llmsafespace.dev/workspace=$1" \
+  $KUBECTL -n "$NS" get pods -l "llmsafespaces.dev/workspace=$1" \
     --no-headers -o custom-columns=":metadata.name" 2>/dev/null | head -1
 }
 

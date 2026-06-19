@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // S-LOGOUT canary — TypeScript SDK
 
-import { LLMSafeSpace } from '../../src/index.js';
+import { LLMSafeSpaces } from '../../src/index.js';
 import { Runner, Config, configFromEnv, nodeFetch, rawDo } from '../canary.js';
 
 async function run(r: Runner, cfg: Config): Promise<void> {
@@ -16,7 +16,7 @@ async function run(r: Runner, cfg: Config): Promise<void> {
   r.assert(token !== '', 'login: token non-empty');
 
   // P2: JWT works pre-logout
-  const jwtC = new LLMSafeSpace({ baseUrl: cfg.apiUrl, apiKey: token, timeout: 10000, fetch: nodeFetch as any });
+  const jwtC = new LLMSafeSpaces({ baseUrl: cfg.apiUrl, apiKey: token, timeout: 10000, fetch: nodeFetch as any });
   await r.assertNoError(() => jwtC.auth.me(), 'pre-logout: auth.me succeeds');
 
   // P3: Logout
@@ -31,7 +31,7 @@ async function run(r: Runner, cfg: Config): Promise<void> {
   r.assert(s3 === 204, 'logout-idempotent: 204');
 
   // N1+N2: API key still valid
-  const kc = new LLMSafeSpace({ baseUrl: cfg.apiUrl, apiKey: cfg.apiKey, timeout: 10000, fetch: nodeFetch as any });
+  const kc = new LLMSafeSpaces({ baseUrl: cfg.apiUrl, apiKey: cfg.apiKey, timeout: 10000, fetch: nodeFetch as any });
   await r.assertNoError(() => kc.auth.me(), 'api-key: still valid');
 }
 

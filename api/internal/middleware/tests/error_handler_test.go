@@ -12,9 +12,9 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	apiErrors "github.com/lenaxia/llmsafespace/api/internal/errors"
-	"github.com/lenaxia/llmsafespace/api/internal/middleware"
-	mocklogger "github.com/lenaxia/llmsafespace/mocks/logger"
+	apiErrors "github.com/lenaxia/llmsafespaces/api/internal/errors"
+	"github.com/lenaxia/llmsafespaces/api/internal/middleware"
+	mocklogger "github.com/lenaxia/llmsafespaces/mocks/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )

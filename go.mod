@@ -1,4 +1,4 @@
-module github.com/lenaxia/llmsafespace
+module github.com/lenaxia/llmsafespaces
 
 go 1.25.11
 
@@ -145,8 +145,8 @@ require (
 )
 
 replace (
-	github.com/lenaxia/llmsafespace/mocks => ./mocks
-	github.com/lenaxia/llmsafespace/mocks/kubernetes => ./mocks/kubernetes
-	github.com/lenaxia/llmsafespace/mocks/logger => ./mocks/logger
-	github.com/lenaxia/llmsafespace/pkg => ./pkg
+	github.com/lenaxia/llmsafespaces/mocks => ./mocks
+	github.com/lenaxia/llmsafespaces/mocks/kubernetes => ./mocks/kubernetes
+	github.com/lenaxia/llmsafespaces/mocks/logger => ./mocks/logger
+	github.com/lenaxia/llmsafespaces/pkg => ./pkg
 )

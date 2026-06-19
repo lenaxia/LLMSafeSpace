@@ -15,7 +15,7 @@ import (
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 
-	"github.com/lenaxia/llmsafespace/pkg/agentd/secrets"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd/secrets"
 )
 
 // US-44.7: Restart Reason Logging.

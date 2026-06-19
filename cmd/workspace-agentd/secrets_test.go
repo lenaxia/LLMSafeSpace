@@ -31,7 +31,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/lenaxia/llmsafespace/pkg/agentd/secrets"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd/secrets"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,11 +64,11 @@ func runMaterializeSubcommand(t *testing.T, bin, secretsPath, secretsBase, sshDi
 	// Override paths via env so we don't need root or to write into
 	// /home/sandbox during tests.
 	cmd.Env = append(os.Environ(),
-		"LLMSAFESPACE_SECRETS_BASE_DIR="+secretsBase,
-		"LLMSAFESPACE_SSH_DIR="+sshDir,
-		"LLMSAFESPACE_AGENT_CONFIG_PATH="+agentCfg,
-		"LLMSAFESPACE_SECRETS_ENV_PATH="+envPath,
-		"LLMSAFESPACE_GIT_CREDS_PATH="+gitCreds,
+		"LLMSAFESPACES_SECRETS_BASE_DIR="+secretsBase,
+		"LLMSAFESPACES_SSH_DIR="+sshDir,
+		"LLMSAFESPACES_AGENT_CONFIG_PATH="+agentCfg,
+		"LLMSAFESPACES_SECRETS_ENV_PATH="+envPath,
+		"LLMSAFESPACES_GIT_CREDS_PATH="+gitCreds,
 		"HOME="+filepath.Dir(sshDir),
 	)
 	var stdout, stderr bytes.Buffer

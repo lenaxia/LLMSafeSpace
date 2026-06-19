@@ -2,8 +2,8 @@
 
 **Date:** 2026-05-25  
 **Operator:** opencode  
-**Start state:** Helm release `llmsafespace` rev 1 on sha-9b8e9ff (Epic 6 complete)  
-**End state:** Helm release `llmsafespace` rev 15 on sha-4c2f4a9  
+**Start state:** Helm release `llmsafespaces` rev 1 on sha-9b8e9ff (Epic 6 complete)  
+**End state:** Helm release `llmsafespaces` rev 15 on sha-4c2f4a9  
 
 ---
 
@@ -102,7 +102,7 @@
 - **Commit:** 857ca60
 
 ### 24h idle auto-suspend
-- **Files:** `pkg/apis/llmsafespace/v1/workspace_types.go`, `controller/internal/workspace/controller.go`
+- **Files:** `pkg/apis/llmsafespaces/v1/workspace_types.go`, `controller/internal/workspace/controller.go`
 - **Changes:** CRD default 3600s→86400s, enabled by default, implemented idle check in `handleActive()`
 - **Commit:** 857ca60
 
@@ -141,7 +141,7 @@
 - `api/internal/services/database/database.go` — SyncWorkspacePhase, MarkWorkspaceDeleted, updated queries
 - `api/internal/services/workspace/workspace_service.go` — syncPhase helper, orphan cleanup, soft delete
 - `api/internal/interfaces/interfaces.go` — new interface methods
-- `pkg/apis/llmsafespace/v1/workspace_types.go` — PVCState constants
+- `pkg/apis/llmsafespaces/v1/workspace_types.go` — PVCState constants
 - `pkg/types/types.go` — Phase, PVCState on WorkspaceMetadata
 - Tests updated: `database_test.go`, `workspace_service_test.go`, `mocks/database.go`
 
@@ -170,7 +170,7 @@
 
 ## Current State
 
-- **Helm release:** llmsafespace rev 15 on sha-4c2f4a9
+- **Helm release:** llmsafespaces rev 15 on sha-4c2f4a9
 - **Namespace:** default
 - **Ingress:** https://safespace.thekao.cloud (TLS via letsencrypt-production)
 - **Components:** api (2 replicas), controller (1), frontend (1), MCP disabled

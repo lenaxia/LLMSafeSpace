@@ -6,7 +6,7 @@ import resource
 import importlib.util
 
 # Load restricted modules configuration
-with open('/etc/llmsafespace/python/restricted_modules.json', 'r') as f:
+with open('/etc/llmsafespaces/python/restricted_modules.json', 'r') as f:
     RESTRICTED_MODULES = json.load(f)
 
 # Disable dangerous os functions
@@ -83,4 +83,4 @@ if __name__ == "__main__":
     else:
         # Interactive mode
         import code
-        code.interact(banner="LLMSafeSpace Python Environment", exitmsg="")
+        code.interact(banner="LLMSafeSpaces Python Environment", exitmsg="")

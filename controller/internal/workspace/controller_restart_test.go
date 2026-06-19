@@ -20,10 +20,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 
-	ctrMetrics "github.com/lenaxia/llmsafespace/controller/internal/metrics"
+	ctrMetrics "github.com/lenaxia/llmsafespaces/controller/internal/metrics"
 )
 
 // readCounterValue reads a labelless counter's current value.

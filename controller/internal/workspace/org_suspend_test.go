@@ -12,7 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 // fakeOrgStatusClient is a test OrgStatusClient with a fixed (status, ok)

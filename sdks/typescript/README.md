@@ -1,20 +1,20 @@
-# @llmsafespace/sdk
+# @llmsafespaces/sdk
 
-TypeScript SDK for the LLMSafeSpace API. Zero runtime dependencies — uses native `fetch`.
+TypeScript SDK for the LLMSafeSpaces API. Zero runtime dependencies — uses native `fetch`.
 
 ## Installation
 
 ```bash
-npm install @llmsafespace/sdk
+npm install @llmsafespaces/sdk
 ```
 
 ## Quick Start
 
 ```typescript
-import { LLMSafeSpace } from '@llmsafespace/sdk';
+import { LLMSafeSpaces } from '@llmsafespaces/sdk';
 
-const client = new LLMSafeSpace({
-  baseUrl: 'https://llmsafespace.example.com',
+const client = new LLMSafeSpaces({
+  baseUrl: 'https://llmsafespaces.example.com',
   apiKey: 'lsp_your_api_key',
 });
 
@@ -29,10 +29,10 @@ console.log(response.content);
 
 ```typescript
 // API key (recommended for programmatic use)
-const client = new LLMSafeSpace({ baseUrl: '...', apiKey: 'lsp_...' });
+const client = new LLMSafeSpaces({ baseUrl: '...', apiKey: 'lsp_...' });
 
 // Email/password (auto-manages JWT, refreshes on 401)
-const client = new LLMSafeSpace({ baseUrl: '...', credentials: { email: '...', password: '...' } });
+const client = new LLMSafeSpaces({ baseUrl: '...', credentials: { email: '...', password: '...' } });
 ```
 
 ## Important: `sendMessage` Timeout
@@ -40,7 +40,7 @@ const client = new LLMSafeSpace({ baseUrl: '...', credentials: { email: '...', p
 `sendMessage` proxies to the LLM agent and blocks until it responds. This can take 30-120+ seconds. Default timeout is 120s. On timeout, a `TimeoutError` is thrown — the prompt may still be processing. Poll `getHistory` to check.
 
 ```typescript
-import { TimeoutError } from '@llmsafespace/sdk';
+import { TimeoutError } from '@llmsafespaces/sdk';
 
 try {
   const resp = await client.sessions.sendMessage(wsId, sessId, 'complex prompt...');
@@ -55,7 +55,7 @@ try {
 ## Error Handling
 
 ```typescript
-import { NotFoundError, AuthError, ConflictError, LLMSafeSpaceError } from '@llmsafespace/sdk';
+import { NotFoundError, AuthError, ConflictError, LLMSafeSpacesError } from '@llmsafespaces/sdk';
 
 try {
   await client.workspaces.get('nonexistent');
@@ -63,7 +63,7 @@ try {
   if (e instanceof NotFoundError) { /* 404 */ }
   if (e instanceof AuthError) { /* 401/403 */ }
   if (e instanceof ConflictError) { /* 409 - e.g. workspace not active */ }
-  if (e instanceof LLMSafeSpaceError) { /* any API error: e.status, e.message */ }
+  if (e instanceof LLMSafeSpacesError) { /* any API error: e.status, e.message */ }
 }
 ```
 

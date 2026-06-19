@@ -6,8 +6,8 @@ package mocks
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	lmocks "github.com/lenaxia/llmsafespace/mocks/logger"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	lmocks "github.com/lenaxia/llmsafespaces/mocks/logger"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 // MockFactory creates test fixtures.
@@ -21,10 +21,10 @@ func (f *MockFactory) NewLogger() *lmocks.MockLogger {
 
 func (f *MockFactory) NewRuntimeEnvironment(name, language, version string) *v1.RuntimeEnvironment {
 	return &v1.RuntimeEnvironment{
-		TypeMeta:   metav1.TypeMeta{Kind: "RuntimeEnvironment", APIVersion: "llmsafespace.dev/v1"},
+		TypeMeta:   metav1.TypeMeta{Kind: "RuntimeEnvironment", APIVersion: "llmsafespaces.dev/v1"},
 		ObjectMeta: metav1.ObjectMeta{Name: name, UID: "test-uid"},
 		Spec: v1.RuntimeEnvironmentSpec{
-			Image:    "llmsafespace/" + language + ":" + version,
+			Image:    "llmsafespaces/" + language + ":" + version,
 			Language: language,
 			Version:  version,
 		},

@@ -12,7 +12,7 @@ import (
 	"os"
 	"time"
 
-	canary "github.com/lenaxia/llmsafespace/sdks/canary/go"
+	canary "github.com/lenaxia/llmsafespaces/sdks/canary/go"
 )
 
 func Handler(w http.ResponseWriter, r *http.Request) {
@@ -38,7 +38,7 @@ func main() {
 
 func runSecretReveal(ctx context.Context, run *canary.Runner, cfg canary.Config) {
 	if cfg.Password == "" {
-		run.OK("reveal: skipped (LLMSAFESPACE_PASSWORD not set)")
+		run.OK("reveal: skipped (LLMSAFESPACES_PASSWORD not set)")
 		return
 	}
 

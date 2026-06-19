@@ -75,7 +75,7 @@ describe("ChatPage — workspace auto-rename", () => {
     });
     (workspacesApi.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: "sess-1",
-      title: "Clone lenaxia/llmsafespace",
+      title: "Clone lenaxia/llmsafespaces",
     });
 
     renderChat("/chat/ws-1/sess-1");
@@ -83,7 +83,7 @@ describe("ChatPage — workspace auto-rename", () => {
     await waitFor(() => {
       expect(workspacesApi.renameWorkspace).toHaveBeenCalledWith(
         "ws-1",
-        "Clone lenaxia/llmsafespace",
+        "Clone lenaxia/llmsafespaces",
       );
     });
   });
@@ -95,7 +95,7 @@ describe("ChatPage — workspace auto-rename", () => {
     });
     (workspacesApi.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: "sess-1",
-      title: "Clone lenaxia/llmsafespace",
+      title: "Clone lenaxia/llmsafespaces",
     });
 
     renderChat("/chat/ws-1/sess-1");
@@ -103,7 +103,7 @@ describe("ChatPage — workspace auto-rename", () => {
     await waitFor(() => {
       expect(workspacesApi.renameWorkspace).toHaveBeenCalledWith(
         "ws-1",
-        "Clone lenaxia/llmsafespace",
+        "Clone lenaxia/llmsafespaces",
       );
     });
   });
@@ -157,7 +157,7 @@ describe("ChatPage — workspace auto-rename", () => {
     });
     (workspacesApi.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({
       id: "sess-1",
-      title: "Clone lenaxia/llmsafespace",
+      title: "Clone lenaxia/llmsafespaces",
     });
 
     renderChat("/chat/ws-1/sess-1");
@@ -170,7 +170,7 @@ describe("ChatPage — workspace auto-rename", () => {
 
   it("does NOT rename workspace when name contains uppercase (user-set)", async () => {
     (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
-      items: [{ id: "ws-1", name: "Clone lenaxia/llmsafespace", phase: "Active" }],
+      items: [{ id: "ws-1", name: "Clone lenaxia/llmsafespaces", phase: "Active" }],
       pagination: { limit: 20, offset: 0, total: 1 },
     });
     (workspacesApi.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -234,7 +234,7 @@ describe("ChatPage — workspace auto-rename", () => {
 
   it("displays workspace name and session title in header", async () => {
     (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
-      items: [{ id: "ws-1", name: "Clone lenaxia/llmsafespace", phase: "Active" }],
+      items: [{ id: "ws-1", name: "Clone lenaxia/llmsafespaces", phase: "Active" }],
       pagination: { limit: 20, offset: 0, total: 1 },
     });
     (workspacesApi.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -245,7 +245,7 @@ describe("ChatPage — workspace auto-rename", () => {
     renderChat("/chat/ws-1/sess-1");
 
     await waitFor(() => {
-      expect(screen.getByText("Clone lenaxia/llmsafespace")).toBeInTheDocument();
+      expect(screen.getByText("Clone lenaxia/llmsafespaces")).toBeInTheDocument();
       expect(screen.getByText("Fix the bug")).toBeInTheDocument();
     });
   });

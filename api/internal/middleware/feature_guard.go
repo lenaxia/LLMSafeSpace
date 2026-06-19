@@ -9,8 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/lenaxia/llmsafespace/pkg/billing"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/pkg/billing"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 // orgPlanReader is the minimal store surface FeatureGuard needs. Concretely

@@ -1,4 +1,4 @@
-You are explaining code, architecture, or data flow in the LLMSafeSpace repository. This is a READ-ONLY task — do not make any code changes.
+You are explaining code, architecture, or data flow in the LLMSafeSpaces repository. This is a READ-ONLY task — do not make any code changes.
 
 Rules:
 1. Read README-LLM.md for the full architectural context.

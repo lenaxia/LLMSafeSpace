@@ -1,12 +1,12 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: llmsafespace-benchmark
+  name: llmsafespaces-benchmark
   namespace: default
   labels:
-    app: llmsafespace-benchmark
+    app: llmsafespaces-benchmark
 spec:
-  serviceAccountName: llmsafespace-controller  # reuse existing SA for kubectl access
+  serviceAccountName: llmsafespaces-controller  # reuse existing SA for kubectl access
   restartPolicy: Never
   securityContext:
     runAsNonRoot: true
@@ -22,7 +22,7 @@ spec:
     command: ["sleep", "3600"]
     env:
     - name: API_URL
-      value: "http://llmsafespace-api:8080"
+      value: "http://llmsafespaces-api:8080"
     - name: NS
       value: "default"
     resources:

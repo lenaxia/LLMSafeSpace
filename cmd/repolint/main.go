@@ -15,7 +15,7 @@
 //
 //	repolint                       # run all checks against the repo root
 //	repolint -repo /path           # run checks against an alternate root
-//	repolint -fix-drift            # also: copy api/migrations/ → charts/llmsafespace/migrations/
+//	repolint -fix-drift            # also: copy api/migrations/ → charts/llmsafespaces/migrations/
 //	repolint -fix-worklogs         # also: auto-renumber duplicate worklog files, then run all checks
 //	repolint -fix-worklogs-only    # ONLY auto-renumber; skip checks. For .githooks/post-rewrite
 //	                               # where the tree may be mid-rebase and checks would be noisy.
@@ -28,7 +28,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/lenaxia/llmsafespace/pkg/repolint"
+	"github.com/lenaxia/llmsafespaces/pkg/repolint"
 )
 
 const (
@@ -44,7 +44,7 @@ const (
 
 func main() {
 	repoFlag := flag.String("repo", "", "repository root to lint (default: auto-detect from CWD)")
-	fixDrift := flag.Bool("fix-drift", false, "copy api/migrations/*.sql into charts/llmsafespace/migrations/ to resolve drift")
+	fixDrift := flag.Bool("fix-drift", false, "copy api/migrations/*.sql into charts/llmsafespaces/migrations/ to resolve drift")
 	fixWorklogs := flag.Bool("fix-worklogs", false, "auto-renumber duplicate worklog files to the next available number, then run all checks")
 	fixWorklogsOnly := flag.Bool("fix-worklogs-only", false, "auto-renumber duplicate worklog files and exit (no checks). Used by .githooks/post-rewrite.")
 	flag.Parse()
@@ -60,7 +60,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "fix-drift failed: %v\n", err)
 			os.Exit(exitInternal)
 		}
-		fmt.Println("ok: synced charts/llmsafespace/migrations/ from api/migrations/")
+		fmt.Println("ok: synced charts/llmsafespaces/migrations/ from api/migrations/")
 	}
 
 	// -fix-worklogs-only is the hook mode: do the rename pass and exit
@@ -214,7 +214,7 @@ func runWorklogMainline(root string) int {
 
 func runChartDrift(root string) int {
 	canon := filepath.Join(root, "api", "migrations")
-	mirror := filepath.Join(root, "charts", "llmsafespace", "migrations")
+	mirror := filepath.Join(root, "charts", "llmsafespaces", "migrations")
 	rep, err := repolint.DriftCheck(repolint.DriftConfig{
 		CanonicalDir: canon,
 		MirrorDir:    mirror,
@@ -271,13 +271,13 @@ func runCRDDrift(root string) int {
 	return 0
 }
 
-// syncChartMigrations performs `cp -a api/migrations/*.sql charts/llmsafespace/migrations/`
+// syncChartMigrations performs `cp -a api/migrations/*.sql charts/llmsafespaces/migrations/`
 // in pure Go. Pre-existing .sql files in the mirror that are no longer
 // present in canonical are removed, so a rename in canonical surfaces
 // correctly in the mirror.
 func syncChartMigrations(root string) error {
 	canon := filepath.Join(root, "api", "migrations")
-	mirror := filepath.Join(root, "charts", "llmsafespace", "migrations")
+	mirror := filepath.Join(root, "charts", "llmsafespaces", "migrations")
 
 	// Remove obsolete .sql files from the mirror.
 	mirrorEntries, err := os.ReadDir(mirror)

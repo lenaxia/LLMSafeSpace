@@ -1,3 +1,3 @@
-module github.com/lenaxia/llmsafespace/sdk/go
+module github.com/lenaxia/llmsafespaces/sdk/go
 
 go 1.23

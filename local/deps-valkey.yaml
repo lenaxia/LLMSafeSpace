@@ -1,12 +1,12 @@
 ---
 # G26 (Epic 17 worklog 0089 RT-4.5): valkey REQUIRES password authentication.
-# The password is read from the same `llmsafespace-credentials` Secret
+# The password is read from the same `llmsafespaces-credentials` Secret
 # the chart generates (auto-randomised on first install). Pre-fix valkey
 # ran with `requirepass=""`, accepting unauthenticated connections from
 # anywhere in the cluster.
 #
 # Bootstrap order (same as deps-postgres.yaml):
-#   1. helm upgrade llmsafespace ./charts/llmsafespace -n default --reuse-values
+#   1. helm upgrade llmsafespaces ./charts/llmsafespaces -n default --reuse-values
 #   2. kubectl apply -f local/deps-valkey.yaml
 #   3. kubectl -n default rollout restart deploy/valkey
 #
@@ -44,7 +44,7 @@ spec:
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: llmsafespace-credentials
+                  name: llmsafespaces-credentials
                   key: redis-password
           ports:
             - containerPort: 6379

@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	mocklogger "github.com/lenaxia/llmsafespace/mocks/logger"
+	mocklogger "github.com/lenaxia/llmsafespaces/mocks/logger"
 	"github.com/stretchr/testify/assert"
 )
 

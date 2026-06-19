@@ -12,9 +12,9 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lenaxia/llmsafespace/api/internal/middleware"
-	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
-	"github.com/lenaxia/llmsafespace/pkg/settings"
+	"github.com/lenaxia/llmsafespaces/api/internal/middleware"
+	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
+	"github.com/lenaxia/llmsafespaces/pkg/settings"
 )
 
 // TestIntegration_FullSettingsLifecycle exercises the complete flow:

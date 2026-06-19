@@ -23,9 +23,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 
-	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	k8smocks "github.com/lenaxia/llmsafespaces/mocks/kubernetes"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 func metricValue(t *testing.T, name, workspaceID string) float64 {
@@ -327,10 +327,10 @@ func newBufferTestEnv(t *testing.T, httpClient *http.Client, workspaceID, podIP 
 	gin.SetMode(gin.TestMode)
 
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()

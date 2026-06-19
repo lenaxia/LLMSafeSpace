@@ -1,4 +1,4 @@
-FROM ghcr.io/lenaxia/llmsafespace/base:latest
+FROM ghcr.io/lenaxia/llmsafespaces/base:latest
 
 USER root
 
@@ -32,16 +32,16 @@ RUN npm install -g \
     @typescript-eslint/eslint-plugin@6.0.0
 
 # Set up TypeScript configuration
-COPY --chown=root:root config/tsconfig.json /etc/llmsafespace/nodejs/
-ENV TS_NODE_PROJECT=/etc/llmsafespace/nodejs/tsconfig.json
+COPY --chown=root:root config/tsconfig.json /etc/llmsafespaces/nodejs/
+ENV TS_NODE_PROJECT=/etc/llmsafespaces/nodejs/tsconfig.json
 
 # Copy Node.js-specific security configurations
-COPY --chown=root:root security/nodejs/restricted_modules.json /etc/llmsafespace/nodejs/
+COPY --chown=root:root security/nodejs/restricted_modules.json /etc/llmsafespaces/nodejs/
 
 # Copy Node.js security wrapper
-COPY --chown=root:root tools/nodejs-security-wrapper.js /opt/llmsafespace/bin/nodejs-security-wrapper.js
-RUN chmod 755 /opt/llmsafespace/bin/nodejs-security-wrapper.js && \
-    node -c /opt/llmsafespace/bin/nodejs-security-wrapper.js
+COPY --chown=root:root tools/nodejs-security-wrapper.js /opt/llmsafespaces/bin/nodejs-security-wrapper.js
+RUN chmod 755 /opt/llmsafespaces/bin/nodejs-security-wrapper.js && \
+    node -c /opt/llmsafespaces/bin/nodejs-security-wrapper.js
 
 USER sandbox
 CMD ["nodejs-security-wrapper.js"]

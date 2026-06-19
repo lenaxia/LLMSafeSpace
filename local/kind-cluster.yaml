@@ -1,9 +1,9 @@
-# Local kind cluster for LLMSafeSpace end-to-end testing.
+# Local kind cluster for LLMSafeSpaces end-to-end testing.
 # Single-node cluster; sandbox pods + control plane run on the same node.
 # This is a development tool, NOT a production layout.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
-name: llmsafespace
+name: llmsafespaces
 nodes:
   - role: control-plane
     extraPortMappings:

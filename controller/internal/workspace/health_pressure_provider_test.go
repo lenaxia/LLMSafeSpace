@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 // findCondition returns a pointer to the matching condition or nil.

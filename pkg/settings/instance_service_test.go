@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
 )
 
 // mockInstanceStore is a test double for InstanceStore.

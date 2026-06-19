@@ -13,12 +13,12 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/tools/cache"
 
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
-	"github.com/lenaxia/llmsafespace/pkg/interfaces"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+	"github.com/lenaxia/llmsafespaces/pkg/interfaces"
 )
 
 type InformerFactory struct {
-	client        interfaces.LLMSafespaceV1Interface
+	client        interfaces.LLMSafespacesV1Interface
 	defaultResync time.Duration
 	namespace     string
 	ctx           context.Context
@@ -29,7 +29,7 @@ type InformerFactory struct {
 	workspaceInf  cache.SharedIndexInformer
 }
 
-func NewInformerFactory(client interfaces.LLMSafespaceV1Interface, defaultResync time.Duration, namespace string) *InformerFactory {
+func NewInformerFactory(client interfaces.LLMSafespacesV1Interface, defaultResync time.Duration, namespace string) *InformerFactory {
 	return &InformerFactory{
 		client:        client,
 		defaultResync: defaultResync,

@@ -33,24 +33,24 @@ run_with_retry() {
 
 # Clean up any leftover containers
 log "Cleaning up existing containers..."
-docker ps -a | grep 'llmsafespace' | awk '{print $1}' | xargs -r docker rm -f
+docker ps -a | grep 'llmsafespaces' | awk '{print $1}' | xargs -r docker rm -f
 
 # Build test images if needed
 log "Building test images..."
-if ! docker images | grep -q 'ghcr.io/lenaxia/llmsafespace/base'; then
-    run_with_retry "docker build -t ghcr.io/lenaxia/llmsafespace/base:latest ../../runtimes/base"
+if ! docker images | grep -q 'ghcr.io/lenaxia/llmsafespaces/base'; then
+    run_with_retry "docker build -t ghcr.io/lenaxia/llmsafespaces/base:latest ../../runtimes/base"
 fi
 
-if ! docker images | grep -q 'ghcr.io/lenaxia/llmsafespace/python'; then
-    run_with_retry "docker build -t ghcr.io/lenaxia/llmsafespace/python:latest ../../runtimes/python"
+if ! docker images | grep -q 'ghcr.io/lenaxia/llmsafespaces/python'; then
+    run_with_retry "docker build -t ghcr.io/lenaxia/llmsafespaces/python:latest ../../runtimes/python"
 fi
 
-if ! docker images | grep -q 'ghcr.io/lenaxia/llmsafespace/nodejs'; then
-    run_with_retry "docker build -t ghcr.io/lenaxia/llmsafespace/nodejs:latest ../../runtimes/nodejs"
+if ! docker images | grep -q 'ghcr.io/lenaxia/llmsafespaces/nodejs'; then
+    run_with_retry "docker build -t ghcr.io/lenaxia/llmsafespaces/nodejs:latest ../../runtimes/nodejs"
 fi
 
-if ! docker images | grep -q 'ghcr.io/lenaxia/llmsafespace/go'; then
-    run_with_retry "docker build -t ghcr.io/lenaxia/llmsafespace/go:latest ../../runtimes/go"
+if ! docker images | grep -q 'ghcr.io/lenaxia/llmsafespaces/go'; then
+    run_with_retry "docker build -t ghcr.io/lenaxia/llmsafespaces/go:latest ../../runtimes/go"
 fi
 
 # Install test dependencies

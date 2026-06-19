@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 
-	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
 )
 
 type testLogger struct{}

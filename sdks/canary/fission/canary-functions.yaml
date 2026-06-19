@@ -6,7 +6,7 @@
 #   2. Go environment "go-env" created:
 #      fission env create --name go-env --image fission/go-env:latest --builder fission/go-builder:latest
 #   3. Canary binary container image built and pushed to registry (see Makefile)
-#   4. Secret "llmsafespace-canary-secrets" containing env vars
+#   4. Secret "llmsafespaces-canary-secrets" containing env vars
 #
 # Test user accounts (non-admin) must be provisioned before deploying.
 # See sdks/canary/README.md for bootstrap instructions.
@@ -47,7 +47,7 @@ spec:
     functionName: scenarios/s-health
   resources: {}
   secretmaps:
-    - name: llmsafespace-canary-secrets
+    - name: llmsafespaces-canary-secrets
 
 ---
 apiVersion: fission.io/v1
@@ -66,7 +66,7 @@ spec:
     functionName: scenarios/s-auth
   resources: {}
   secretmaps:
-    - name: llmsafespace-canary-secrets
+    - name: llmsafespaces-canary-secrets
 
 ---
 apiVersion: fission.io/v1
@@ -85,7 +85,7 @@ spec:
     functionName: scenarios/s-auth-config
   resources: {}
   secretmaps:
-    - name: llmsafespace-canary-secrets
+    - name: llmsafespaces-canary-secrets
 
 ---
 apiVersion: fission.io/v1
@@ -104,7 +104,7 @@ spec:
     functionName: scenarios/s-logout
   resources: {}
   secretmaps:
-    - name: llmsafespace-canary-secrets
+    - name: llmsafespaces-canary-secrets
 
 ---
 apiVersion: fission.io/v1
@@ -123,7 +123,7 @@ spec:
     functionName: scenarios/s-apikey
   resources: {}
   secretmaps:
-    - name: llmsafespace-canary-secrets
+    - name: llmsafespaces-canary-secrets
 
 ---
 apiVersion: fission.io/v1
@@ -142,7 +142,7 @@ spec:
     functionName: scenarios/s-ws-crud
   resources: {}
   secretmaps:
-    - name: llmsafespace-canary-secrets
+    - name: llmsafespaces-canary-secrets
 
 ---
 apiVersion: fission.io/v1
@@ -161,7 +161,7 @@ spec:
     functionName: scenarios/s-secret-crud
   resources: {}
   secretmaps:
-    - name: llmsafespace-canary-secrets
+    - name: llmsafespaces-canary-secrets
 
 ---
 apiVersion: fission.io/v1
@@ -180,7 +180,7 @@ spec:
     functionName: scenarios/s-error-format
   resources: {}
   secretmaps:
-    - name: llmsafespace-canary-secrets
+    - name: llmsafespaces-canary-secrets
 
 ---
 # ── TimeTriggers (1-minute schedule for shallow canaries) ──────────────────
@@ -299,7 +299,7 @@ spec:
     functionName: scenarios/d-ws-lifecycle
   resources: {}
   secretmaps:
-    - name: llmsafespace-canary-secrets
+    - name: llmsafespaces-canary-secrets
   timeout: 360
 
 ---
@@ -319,7 +319,7 @@ spec:
     functionName: scenarios/d-cred-model-flow
   resources: {}
   secretmaps:
-    - name: llmsafespace-canary-secrets
+    - name: llmsafespaces-canary-secrets
   timeout: 660
 
 ---
@@ -339,7 +339,7 @@ spec:
     functionName: scenarios/d-suspend-resume-session
   resources: {}
   secretmaps:
-    - name: llmsafespace-canary-secrets
+    - name: llmsafespaces-canary-secrets
   timeout: 660
 
 ---
@@ -382,13 +382,13 @@ spec:
 # ── Secret (template — fill in values) ───────────────────────────────────────
 
 # Create with:
-#   kubectl create secret generic llmsafespace-canary-secrets \
+#   kubectl create secret generic llmsafespaces-canary-secrets \
 #     --namespace fission \
-#     --from-literal=LLMSAFESPACE_URL=https://your.instance.example.com \
-#     --from-literal=LLMSAFESPACE_API_KEY=lsp_... \
-#     --from-literal=LLMSAFESPACE_EMAIL=canary1@llmsafespace.test \
-#     --from-literal=LLMSAFESPACE_PASSWORD=... \
-#     --from-literal=LLMSAFESPACE_API_KEY_USER2=lsp_... \
-#     --from-literal=LLMSAFESPACE_LLM_PROVIDER=anthropic \
-#     --from-literal=LLMSAFESPACE_LLM_API_KEY=sk-... \
-#     --from-literal=LLMSAFESPACE_LLM_MODEL=anthropic/claude-haiku-4-5
+#     --from-literal=LLMSAFESPACES_URL=https://your.instance.example.com \
+#     --from-literal=LLMSAFESPACES_API_KEY=lsp_... \
+#     --from-literal=LLMSAFESPACES_EMAIL=canary1@llmsafespaces.test \
+#     --from-literal=LLMSAFESPACES_PASSWORD=... \
+#     --from-literal=LLMSAFESPACES_API_KEY_USER2=lsp_... \
+#     --from-literal=LLMSAFESPACES_LLM_PROVIDER=anthropic \
+#     --from-literal=LLMSAFESPACES_LLM_API_KEY=sk-... \
+#     --from-literal=LLMSAFESPACES_LLM_MODEL=anthropic/claude-haiku-4-5

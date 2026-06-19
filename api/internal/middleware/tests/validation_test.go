@@ -13,8 +13,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
-	"github.com/lenaxia/llmsafespace/api/internal/middleware"
-	logmock "github.com/lenaxia/llmsafespace/mocks/logger"
+	"github.com/lenaxia/llmsafespaces/api/internal/middleware"
+	logmock "github.com/lenaxia/llmsafespaces/mocks/logger"
 	"github.com/stretchr/testify/assert"
 )
 

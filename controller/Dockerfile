@@ -2,7 +2,7 @@
 # Build the controller manager binary.
 # Build context MUST be the repository root (single Go module at root).
 #
-#   docker build -f controller/Dockerfile -t llmsafespace/controller:dev .
+#   docker build -f controller/Dockerfile -t llmsafespaces/controller:dev .
 
 ARG TARGETARCH=amd64
 

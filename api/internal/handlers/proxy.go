@@ -17,18 +17,18 @@ import (
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/api/internal/services/activity"
-	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
-	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
-	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
-	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
-	"github.com/lenaxia/llmsafespace/api/internal/services/wsstate"
-	"github.com/lenaxia/llmsafespace/pkg/agent"
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
-	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/activity"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/eventbroker"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/metrics"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/sse"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/workspace"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/wsstate"
+	"github.com/lenaxia/llmsafespaces/pkg/agent"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 const (
@@ -186,9 +186,9 @@ func (h *ProxyHandler) proxyToWorkspaceWithErrBody(
 		}
 	}
 	if workspace == nil {
-		v1Client, v1Err := h.k8sClient.LlmsafespaceV1()
+		v1Client, v1Err := h.k8sClient.LlmsafespacesV1()
 		if v1Err != nil {
-			h.logger.Error("Failed to get LLMSafespaceV1 client", v1Err, "workspaceID", workspaceID)
+			h.logger.Error("Failed to get LLMSafespacesV1 client", v1Err, "workspaceID", workspaceID)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 			return
 		}
@@ -275,7 +275,7 @@ func (h *ProxyHandler) proxyToWorkspaceWithErrBody(
 
 	if h.meteringSvc != nil && workspaceID != "" {
 		userID, _ := extractAuth(c)
-		if userID != "" && workspace.Labels["llmsafespace.dev/canary"] != "true" {
+		if userID != "" && workspace.Labels["llmsafespaces.dev/canary"] != "true" {
 			owner := types.BillingOwner{ID: userID, Type: types.OwnerTypeUser}
 			allowed, _, qerr := h.meteringSvc.CheckQuota(c.Request.Context(), owner, "llm_request")
 			if qerr != nil {
@@ -292,7 +292,7 @@ func (h *ProxyHandler) proxyToWorkspaceWithErrBody(
 
 	if proxyErr != nil && isConnectionError(proxyErr) && !c.Writer.Written() {
 		freshWS, getErr := func() (*v1.Workspace, error) {
-			v1Client, v1Err := h.k8sClient.LlmsafespaceV1()
+			v1Client, v1Err := h.k8sClient.LlmsafespacesV1()
 			if v1Err != nil {
 				return nil, v1Err
 			}
@@ -402,7 +402,7 @@ func (h *ProxyHandler) proxyToWorkspaceWithErrBody(
 
 	if h.meteringSvc != nil && workspaceID != "" {
 		userID, _ := extractAuth(c)
-		if userID != "" && workspace.Labels["llmsafespace.dev/canary"] != "true" {
+		if userID != "" && workspace.Labels["llmsafespaces.dev/canary"] != "true" {
 			h.meteringSvc.Record(types.UsageEvent{
 				IdempotencyKey: fmt.Sprintf("llmreq:%s:%d", workspaceID, time.Now().UnixNano()),
 				Owner:          types.BillingOwner{ID: userID, Type: types.OwnerTypeUser},

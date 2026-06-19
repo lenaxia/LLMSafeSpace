@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -144,26 +144,26 @@ func (s *Service) DecrementActiveConnections(connType, userID string) {
 var (
 	agentReloadTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "llmsafespace_agent_reload_total",
+			Name: "llmsafespaces_agent_reload_total",
 			Help: "Total agent reload operations",
 		},
 		[]string{"result", "drained"},
 	)
 	agentReloadDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "llmsafespace_agent_reload_duration_ms",
+			Name:    "llmsafespaces_agent_reload_duration_ms",
 			Help:    "Agent reload duration in milliseconds",
 			Buckets: prometheus.ExponentialBuckets(100, 2, 12),
 		},
 		[]string{"drained"},
 	)
 	agentReloadDrainTimeouts = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "llmsafespace_agent_reload_drain_timeouts_total",
+		Name: "llmsafespaces_agent_reload_drain_timeouts_total",
 		Help: "Total drain timeout occurrences",
 	})
 	agentReloadBulkTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "llmsafespace_agent_reload_bulk_total",
+			Name: "llmsafespaces_agent_reload_bulk_total",
 			Help: "Total bulk reload operations",
 		},
 		[]string{"outcome"},
@@ -200,32 +200,32 @@ func (s *Service) RecordAgentReloadBulk(total, succeeded, failed int) {
 
 var (
 	inferenceRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "llmsafespace_inference_requests_total",
+		Name: "llmsafespaces_inference_requests_total",
 		Help: "Total inference requests (session.updated with output tokens).",
 	}, []string{"model_id", "provider_id", "tier"})
 
 	inferenceInputTokensTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "llmsafespace_inference_input_tokens_total",
+		Name: "llmsafespaces_inference_input_tokens_total",
 		Help: "Total input tokens consumed.",
 	}, []string{"model_id", "provider_id", "tier"})
 
 	inferenceOutputTokensTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "llmsafespace_inference_output_tokens_total",
+		Name: "llmsafespaces_inference_output_tokens_total",
 		Help: "Total output tokens produced.",
 	}, []string{"model_id", "provider_id", "tier"})
 
 	inferenceCostDollarsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "llmsafespace_inference_cost_dollars_total",
+		Name: "llmsafespaces_inference_cost_dollars_total",
 		Help: "Estimated inference cost in USD from opencode session metadata.",
 	}, []string{"model_id", "provider_id", "tier"})
 
 	modelSelectionsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "llmsafespace_model_selections_total",
+		Name: "llmsafespaces_model_selections_total",
 		Help: "Model selection events (PUT /model calls that succeeded).",
 	}, []string{"model_id", "provider_id", "tier"})
 
 	workspacePhaseTotalTransitions = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "llmsafespace_workspace_phase_transitions_total",
+		Name: "llmsafespaces_workspace_phase_transitions_total",
 		Help: "Workspace phase transitions observed by the API server CRD watcher.",
 	}, []string{"from_phase", "to_phase"})
 )
@@ -275,14 +275,14 @@ var (
 	// authFailuresTotal counts authentication failures by reason.
 	// Security signal: detect brute-force, expired tokens, compromised keys.
 	authFailuresTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "llmsafespace_auth_failures_total",
+		Name: "llmsafespaces_auth_failures_total",
 		Help: "Authentication failures by reason (invalid_token, expired, wrong_password, revoked).",
 	}, []string{"reason"})
 
 	// sessionDurationSeconds tracks how long inference sessions run.
 	// Metering signal: distribution of session lengths for capacity planning.
 	sessionDurationSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "llmsafespace_session_duration_seconds",
+		Name:    "llmsafespaces_session_duration_seconds",
 		Help:    "Duration of opencode sessions from first message to idle (seconds).",
 		Buckets: []float64{1, 5, 15, 30, 60, 120, 300, 600, 1800},
 	}, []string{})
@@ -310,7 +310,7 @@ func (s *Service) RecordSessionCompleted(_ string, durationSeconds float64) {
 var (
 	dbQueryDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "llmsafespace_db_query_duration_seconds",
+			Name:    "llmsafespaces_db_query_duration_seconds",
 			Help:    "Database query latency by operation",
 			Buckets: prometheus.ExponentialBuckets(0.001, 2, 15),
 		},
@@ -318,32 +318,32 @@ var (
 	)
 	dbErrorsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "llmsafespace_db_errors_total",
+			Name: "llmsafespaces_db_errors_total",
 			Help: "Database errors by operation and error type",
 		},
 		[]string{"operation", "error_type"},
 	)
 	dbPoolActiveConns = promauto.NewGauge(
 		prometheus.GaugeOpts{
-			Name: "llmsafespace_db_pool_active_connections",
+			Name: "llmsafespaces_db_pool_active_connections",
 			Help: "In-use database pool connections",
 		},
 	)
 	dbPoolIdleConns = promauto.NewGauge(
 		prometheus.GaugeOpts{
-			Name: "llmsafespace_db_pool_idle_connections",
+			Name: "llmsafespaces_db_pool_idle_connections",
 			Help: "Idle database pool connections",
 		},
 	)
 	dbPoolMaxConns = promauto.NewGauge(
 		prometheus.GaugeOpts{
-			Name: "llmsafespace_db_pool_max_connections",
+			Name: "llmsafespaces_db_pool_max_connections",
 			Help: "Maximum database pool connections",
 		},
 	)
 	redisCommandDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "llmsafespace_redis_command_duration_seconds",
+			Name:    "llmsafespaces_redis_command_duration_seconds",
 			Help:    "Redis command latency",
 			Buckets: prometheus.ExponentialBuckets(0.0001, 2, 12),
 		},
@@ -351,34 +351,34 @@ var (
 	)
 	redisErrorsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "llmsafespace_redis_errors_total",
+			Name: "llmsafespaces_redis_errors_total",
 			Help: "Redis errors by command",
 		},
 		[]string{"command"},
 	)
 	authAttemptsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "llmsafespace_auth_attempts_total",
+			Name: "llmsafespaces_auth_attempts_total",
 			Help: "Authentication attempts by method and result",
 		},
 		[]string{"method", "result"},
 	)
 	authLockoutsTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
-			Name: "llmsafespace_auth_lockouts_total",
+			Name: "llmsafespaces_auth_lockouts_total",
 			Help: "Brute-force lockout triggers",
 		},
 	)
 	dependencyUp = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
-			Name: "llmsafespace_dependency_up",
+			Name: "llmsafespaces_dependency_up",
 			Help: "Dependency health (1=up, 0=down)",
 		},
 		[]string{"dependency"},
 	)
 	serviceStartupDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name:    "llmsafespace_service_startup_duration_seconds",
+			Name:    "llmsafespaces_service_startup_duration_seconds",
 			Help:    "Service startup duration",
 			Buckets: prometheus.ExponentialBuckets(0.01, 2, 10),
 		},
@@ -386,7 +386,7 @@ var (
 	)
 	suspendedWorkspaces = promauto.NewGauge(
 		prometheus.GaugeOpts{
-			Name: "llmsafespace_workspaces_suspended_total",
+			Name: "llmsafespaces_workspaces_suspended_total",
 			Help: "Currently suspended workspaces",
 		},
 	)
@@ -441,7 +441,7 @@ func RecordSuspendedWorkspaceCount(count int) {
 var (
 	quotaExceededTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "llmsafespace_metering_quota_exceeded_total",
+			Name: "llmsafespaces_metering_quota_exceeded_total",
 			Help: "Total quota enforcement triggers",
 		},
 		[]string{"event_type"},

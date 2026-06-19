@@ -14,8 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	k8smocks "github.com/lenaxia/llmsafespaces/mocks/kubernetes"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 // VersionSyncCallback is called with (workspaceID, imageTag, agentVersion)
@@ -201,9 +201,9 @@ func TestWorkspaceWatcher_VersionSync_NotFiredOnSuspend(t *testing.T) {
 
 func TestWorkspaceWatcher_VersionSync_FiredDuringSeedForActiveWorkspaces(t *testing.T) {
 	k8s := k8smocks.NewMockKubernetesClient()
-	llm := k8smocks.NewMockLLMSafespaceV1Interface()
+	llm := k8smocks.NewMockLLMSafespacesV1Interface()
 	ws := k8smocks.NewMockWorkspaceInterface()
-	k8s.On("LlmsafespaceV1").Return(llm, nil)
+	k8s.On("LlmsafespacesV1").Return(llm, nil)
 	llm.On("Workspaces", "default").Return(ws)
 
 	ws.On("List", mock.Anything, mock.Anything).Return(&v1.WorkspaceList{

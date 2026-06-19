@@ -13,8 +13,8 @@
 //
 // Env vars:
 //
-//	LLMSAFESPACE_URL          API base URL (passed to MCP server)
-//	LLMSAFESPACE_API_KEY      valid API key
+//	LLMSAFESPACES_URL          API base URL (passed to MCP server)
+//	LLMSAFESPACES_API_KEY      valid API key
 //	MCP_TRANSPORT             stdio | sse
 //	MCP_SSE_URL               SSE server URL (sse mode only)
 //	MCP_BINARY                path to mcp binary (stdio mode only)
@@ -42,8 +42,8 @@ import (
 	"sync"
 	"time"
 
-	llm "github.com/lenaxia/llmsafespace/sdk/go"
-	canary "github.com/lenaxia/llmsafespace/sdks/canary/go"
+	llm "github.com/lenaxia/llmsafespaces/sdk/go"
+	canary "github.com/lenaxia/llmsafespaces/sdks/canary/go"
 )
 
 // ── JSON-RPC types ─────────────────────────────────────────────────────────
@@ -154,8 +154,8 @@ type stdioClient struct {
 func newStdioClient(binary, apiURL, apiKey string) (*stdioClient, error) {
 	cmd := exec.Command(binary)
 	cmd.Env = append(os.Environ(),
-		"LLMSAFESPACE_URL="+apiURL,
-		"LLMSAFESPACE_API_KEY="+apiKey,
+		"LLMSAFESPACES_URL="+apiURL,
+		"LLMSAFESPACES_API_KEY="+apiKey,
 	)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -540,7 +540,7 @@ func runDeepWorkspace(ctx context.Context, r *Runner, client *stdioClient, apiUR
 }
 
 func runDeepSession(ctx context.Context, r *Runner, client *stdioClient, apiURL, apiKey string) {
-	if os.Getenv("LLMSAFESPACE_LLM_API_KEY") == "" {
+	if os.Getenv("LLMSAFESPACES_LLM_API_KEY") == "" {
 		r.ok("session: skipped (no LLM API key)")
 		return
 	}
@@ -615,7 +615,7 @@ func runDeepSession(ctx context.Context, r *Runner, client *stdioClient, apiURL,
 }
 
 func runDeepPromptAsync(ctx context.Context, r *Runner, client *stdioClient, apiURL, apiKey string) {
-	if os.Getenv("LLMSAFESPACE_LLM_API_KEY") == "" {
+	if os.Getenv("LLMSAFESPACES_LLM_API_KEY") == "" {
 		r.ok("prompt-async: skipped (no LLM API key)")
 		return
 	}
@@ -671,7 +671,7 @@ func runDeepPromptAsync(ctx context.Context, r *Runner, client *stdioClient, api
 }
 
 func runDeepModel(ctx context.Context, r *Runner, client *stdioClient, apiURL, apiKey string) {
-	if os.Getenv("LLMSAFESPACE_LLM_API_KEY") == "" {
+	if os.Getenv("LLMSAFESPACES_LLM_API_KEY") == "" {
 		r.ok("model: skipped (no LLM API key)")
 		return
 	}
@@ -708,9 +708,9 @@ func runDeepModel(ctx context.Context, r *Runner, client *stdioClient, apiURL, a
 		}
 	}
 
-	llmModel := os.Getenv("LLMSAFESPACE_LLM_MODEL")
+	llmModel := os.Getenv("LLMSAFESPACES_LLM_MODEL")
 	if llmModel == "" {
-		r.ok("model-set: skipped (no LLMSAFESPACE_LLM_MODEL)")
+		r.ok("model-set: skipped (no LLMSAFESPACES_LLM_MODEL)")
 	} else {
 		tr2, err2 := client.callTool("model_set", map[string]any{
 			"workspace_id": wsID,
@@ -742,11 +742,11 @@ func runDeepModel(ctx context.Context, r *Runner, client *stdioClient, apiURL, a
 // ── Main ───────────────────────────────────────────────────────────────────
 
 func main() {
-	apiURL := os.Getenv("LLMSAFESPACE_URL")
+	apiURL := os.Getenv("LLMSAFESPACES_URL")
 	if apiURL == "" {
 		apiURL = "http://localhost:8080"
 	}
-	apiKey := os.Getenv("LLMSAFESPACE_API_KEY")
+	apiKey := os.Getenv("LLMSAFESPACES_API_KEY")
 	binary := os.Getenv("MCP_BINARY")
 	if binary == "" {
 		// Find the mcp binary relative to repo root

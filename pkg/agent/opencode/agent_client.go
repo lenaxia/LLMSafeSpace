@@ -9,8 +9,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
-	"github.com/lenaxia/llmsafespace/pkg/secrets"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
+	"github.com/lenaxia/llmsafespaces/pkg/secrets"
 )
 
 // PasswordResolver resolves the opencode Basic-auth password for a workspace.

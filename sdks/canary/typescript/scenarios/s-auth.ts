@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // S-AUTH canary — TypeScript SDK
 
-import { LLMSafeSpace, AuthError } from '../../src/index.js';
+import { LLMSafeSpaces, AuthError } from '../../src/index.js';
 import { Runner, Config, configFromEnv, nodeFetch } from '../canary.js';
 
 async function run(run: Runner, cfg: Config): Promise<void> {
-  const c = new LLMSafeSpace({ baseUrl: cfg.apiUrl, apiKey: cfg.apiKey, timeout: 20000, fetch: nodeFetch as any });
+  const c = new LLMSafeSpaces({ baseUrl: cfg.apiUrl, apiKey: cfg.apiKey, timeout: 20000, fetch: nodeFetch as any });
 
   // P1: valid API key
   const [ok, me] = await run.assertNoError(() => c.auth.me(), 'valid-key: auth.me no error');
@@ -19,7 +19,7 @@ async function run(run: Runner, cfg: Config): Promise<void> {
 
   // P2+P3: JWT login
   if (cfg.email && cfg.password) {
-    const jwtC = new LLMSafeSpace({ baseUrl: cfg.apiUrl, credentials: { email: cfg.email, password: cfg.password }, timeout: 20000, fetch: nodeFetch as any });
+    const jwtC = new LLMSafeSpaces({ baseUrl: cfg.apiUrl, credentials: { email: cfg.email, password: cfg.password }, timeout: 20000, fetch: nodeFetch as any });
     const [ok2, me2] = await run.assertNoError(() => jwtC.auth.me(), 'jwt-login: auth.me no error');
     if (ok2 && me2) run.assert(me2.active === true, 'jwt-login: user.active=true');
   }
@@ -30,7 +30,7 @@ async function run(run: Runner, cfg: Config): Promise<void> {
     ['empty-key', ''],
     ['malformed-key', 'not-an-lsp-key'],
   ]) {
-    const bad = new LLMSafeSpace({ baseUrl: cfg.apiUrl, apiKey: key as string, timeout: 10000, fetch: nodeFetch as any });
+    const bad = new LLMSafeSpaces({ baseUrl: cfg.apiUrl, apiKey: key as string, timeout: 10000, fetch: nodeFetch as any });
     await run.assertError(() => bad.auth.me(), `${name}: AuthError`);
   }
 }

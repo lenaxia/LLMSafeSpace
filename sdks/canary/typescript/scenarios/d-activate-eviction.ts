@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // D-ACTIVATE-EVICTION canary — TypeScript SDK
 
-import { LLMSafeSpace } from '../../src/index.js';
+import { LLMSafeSpaces } from '../../src/index.js';
 import { Runner, Config, configFromEnv, nodeFetch, waitActive, waitPhase } from '../canary.js';
 
 async function run(r: Runner, cfg: Config): Promise<void> {
-  const maxActive = parseInt(process.env.LLMSAFESPACE_MAX_ACTIVE_WORKSPACES_PER_USER || '3', 10);
-  const c = new LLMSafeSpace({ baseUrl: cfg.apiUrl, apiKey: cfg.apiKey, timeout: 60000, fetch: nodeFetch as any });
+  const maxActive = parseInt(process.env.LLMSAFESPACES_MAX_ACTIVE_WORKSPACES_PER_USER || '3', 10);
+  const c = new LLMSafeSpaces({ baseUrl: cfg.apiUrl, apiKey: cfg.apiKey, timeout: 60000, fetch: nodeFetch as any });
   const wsIds: string[] = [];
 
   try {

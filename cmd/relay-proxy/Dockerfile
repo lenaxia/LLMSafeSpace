@@ -2,7 +2,7 @@
 # Build the relay-proxy binary (runs on relay VMs, NOT in-cluster).
 # This image is pushed to the registry so cloud-init can pull it.
 #
-#   docker build -f cmd/relay-proxy/Dockerfile -t llmsafespace/relay-proxy:dev .
+#   docker build -f cmd/relay-proxy/Dockerfile -t llmsafespaces/relay-proxy:dev .
 
 ARG TARGETARCH=amd64
 

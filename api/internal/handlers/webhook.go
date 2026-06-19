@@ -15,8 +15,8 @@ import (
 	stripe "github.com/stripe/stripe-go/v76"
 	"github.com/stripe/stripe-go/v76/webhook"
 
-	"github.com/lenaxia/llmsafespace/pkg/billing"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/pkg/billing"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 // stripeEventStore is the data-access surface the webhook handler needs:

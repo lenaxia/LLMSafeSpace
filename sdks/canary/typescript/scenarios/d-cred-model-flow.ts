@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // D-CRED-MODEL-FLOW canary — TypeScript SDK (flagship end-to-end scenario)
 
-import { LLMSafeSpace } from '../../src/index.js';
+import { LLMSafeSpaces } from '../../src/index.js';
 import { Runner, Config, configFromEnv, nodeFetch, waitActive, ensureSessionWithRetry } from '../canary.js';
 
 async function run(run: Runner, cfg: Config): Promise<void> {
@@ -22,7 +22,7 @@ async function run(run: Runner, cfg: Config): Promise<void> {
   } else {
     clientOpts.apiKey = cfg.apiKey;
   }
-  const c = new LLMSafeSpace(clientOpts);
+  const c = new LLMSafeSpaces(clientOpts);
   let wsId: string | null = null;
   let credId: string | null = null;
 

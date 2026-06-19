@@ -13,9 +13,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/lenaxia/llmsafespace/api/internal/handlers"
-	"github.com/lenaxia/llmsafespace/api/internal/middleware"
-	"github.com/lenaxia/llmsafespace/pkg/settings"
+	"github.com/lenaxia/llmsafespaces/api/internal/handlers"
+	"github.com/lenaxia/llmsafespaces/api/internal/middleware"
+	"github.com/lenaxia/llmsafespaces/pkg/settings"
 )
 
 // TestSettingsRoutes_AdminGuard_BlocksNonAdmin tests that admin settings

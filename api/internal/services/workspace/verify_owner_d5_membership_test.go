@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 // TestVerifyOwner_D5_CreatorLeftOrg_Denied verifies D5: a workspace creator who

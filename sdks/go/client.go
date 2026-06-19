@@ -1,8 +1,8 @@
 // Copyright (C) 2026 Michael Kao
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Package llmsafespace provides a typed Go client for the LLMSafeSpace API.
-package llmsafespace
+// Package llmsafespaces provides a typed Go client for the LLMSafeSpaces API.
+package llmsafespaces
 
 import (
 	"bytes"
@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// Client is the LLMSafeSpace API client.
+// Client is the LLMSafeSpaces API client.
 type Client struct {
 	baseURL    string
 	apiKey     string
@@ -54,7 +54,7 @@ func WithTimeout(d time.Duration) Option {
 	return func(c *Client) { c.httpClient.Timeout = d }
 }
 
-// New creates a new LLMSafeSpace client.
+// New creates a new LLMSafeSpaces client.
 func New(baseURL string, opts ...Option) *Client {
 	c := &Client{
 		baseURL:    strings.TrimRight(baseURL, "/"),

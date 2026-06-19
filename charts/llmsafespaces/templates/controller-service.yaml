@@ -1,0 +1,39 @@
+{{- if .Values.controller.enabled }}
+{{- $metricsAddr := .Values.controller.metricsAddr }}
+{{- if and .Values.monitoring.enabled .Values.monitoring.serviceMonitors.enabled }}
+{{- $metricsAddr = "0.0.0.0:8080" }}
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "llmsafespaces.fullname" . }}-controller-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmsafespaces.controller.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: {{ $metricsAddr | regexFind "[0-9]+$" | atoi }}
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    {{- include "llmsafespaces.controller.selectorLabels" . | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "llmsafespaces.fullname" . }}-controller-webhook
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmsafespaces.controller.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: webhook
+      port: 443
+      targetPort: webhook
+      protocol: TCP
+  selector:
+    {{- include "llmsafespaces.controller.selectorLabels" . | nindent 4 }}
+{{- end }}

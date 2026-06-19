@@ -21,7 +21,7 @@ func getTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
-		dsn = "postgres://postgres:testpass@localhost:5433/llmsafespace_test?sslmode=disable"
+		dsn = "postgres://postgres:testpass@localhost:5433/llmsafespaces_test?sslmode=disable"
 	}
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {

@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/lenaxia/llmsafespace/pkg/redact"
+	"github.com/lenaxia/llmsafespaces/pkg/redact"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

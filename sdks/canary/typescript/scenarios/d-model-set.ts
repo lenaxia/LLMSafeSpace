@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // D-MODEL-SET canary — TypeScript SDK
 
-import { LLMSafeSpace } from '../../src/index.js';
+import { LLMSafeSpaces } from '../../src/index.js';
 import { Runner, Config, configFromEnv, nodeFetch, waitActive, ensureSessionWithRetry } from '../canary.js';
 
 async function run(r: Runner, cfg: Config): Promise<void> {
@@ -10,7 +10,7 @@ async function run(r: Runner, cfg: Config): Promise<void> {
     r.ok('model-set: skipped (no LLM API key or model)');
     return;
   }
-  const c = new LLMSafeSpace({ baseUrl: cfg.apiUrl, apiKey: cfg.apiKey, timeout: 120000, fetch: nodeFetch as any });
+  const c = new LLMSafeSpaces({ baseUrl: cfg.apiUrl, apiKey: cfg.apiKey, timeout: 120000, fetch: nodeFetch as any });
   let wsId: string | null = null;
   try {
     const [ok, ws] = await r.assertNoError(

@@ -157,7 +157,7 @@ func (d *OCIDriver) Provision(ctx context.Context, req ProvisionRequest) (*Provi
 			"user_data": req.CloudInit,
 		},
 		FreeformTags: map[string]string{
-			"managed-by": "llmsafespace-relay",
+			"managed-by": "llmsafespaces-relay",
 		},
 	}
 

@@ -14,7 +14,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
 )
 
 func TestAgentdReloadHandler_DisposeSucceeds_Returns200(t *testing.T) {

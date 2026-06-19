@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	llm "github.com/lenaxia/llmsafespace/sdk/go"
+	llm "github.com/lenaxia/llmsafespaces/sdk/go"
 )
 
 // Config holds all environment-sourced canary configuration.
@@ -27,27 +27,27 @@ type Config struct {
 
 // ConfigFromEnv reads canary configuration from environment variables.
 func ConfigFromEnv() Config {
-	apiURL := os.Getenv("LLMSAFESPACE_URL")
+	apiURL := os.Getenv("LLMSAFESPACES_URL")
 	if apiURL == "" {
 		apiURL = "http://localhost:8080"
 	}
-	badModel := os.Getenv("LLMSAFESPACE_BAD_MODEL")
+	badModel := os.Getenv("LLMSAFESPACES_BAD_MODEL")
 	if badModel == "" {
 		badModel = "invalid-provider/no-such-model"
 	}
-	llmProvider := os.Getenv("LLMSAFESPACE_LLM_PROVIDER")
+	llmProvider := os.Getenv("LLMSAFESPACES_LLM_PROVIDER")
 	if llmProvider == "" {
 		llmProvider = "anthropic"
 	}
 	return Config{
 		APIURL:      apiURL,
-		APIKey:      os.Getenv("LLMSAFESPACE_API_KEY"),
-		APIKeyUser2: os.Getenv("LLMSAFESPACE_API_KEY_USER2"),
-		Email:       os.Getenv("LLMSAFESPACE_EMAIL"),
-		Password:    os.Getenv("LLMSAFESPACE_PASSWORD"),
+		APIKey:      os.Getenv("LLMSAFESPACES_API_KEY"),
+		APIKeyUser2: os.Getenv("LLMSAFESPACES_API_KEY_USER2"),
+		Email:       os.Getenv("LLMSAFESPACES_EMAIL"),
+		Password:    os.Getenv("LLMSAFESPACES_PASSWORD"),
 		LLMProvider: llmProvider,
-		LLMAPIKey:   os.Getenv("LLMSAFESPACE_LLM_API_KEY"),
-		LLMModel:    os.Getenv("LLMSAFESPACE_LLM_MODEL"),
+		LLMAPIKey:   os.Getenv("LLMSAFESPACES_LLM_API_KEY"),
+		LLMModel:    os.Getenv("LLMSAFESPACES_LLM_MODEL"),
 		BadModel:    badModel,
 	}
 }

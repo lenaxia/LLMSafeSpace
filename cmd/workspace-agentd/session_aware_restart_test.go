@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lenaxia/llmsafespace/pkg/agentd/secrets"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd/secrets"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

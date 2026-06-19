@@ -1,4 +1,4 @@
-You are fixing a bug in the LLMSafeSpace repository.
+You are fixing a bug in the LLMSafeSpaces repository.
 
 Rules:
 1. Read README-LLM.md before making any changes.

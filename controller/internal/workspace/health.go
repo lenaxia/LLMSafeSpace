@@ -14,9 +14,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespaces/controller/internal/metrics"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 func (r *WorkspaceReconciler) setCondition(ws *v1.Workspace, condType v1.WorkspaceConditionType, status, reason, message string) {

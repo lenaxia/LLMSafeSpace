@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 type MeteringMiddleware struct {

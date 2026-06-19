@@ -24,15 +24,15 @@ export interface Config {
 
 export function configFromEnv(): Config {
   return {
-    apiUrl: process.env.LLMSAFESPACE_URL || 'http://localhost:8080',
-    apiKey: process.env.LLMSAFESPACE_API_KEY || '',
-    apiKeyUser2: process.env.LLMSAFESPACE_API_KEY_USER2 || '',
-    email: process.env.LLMSAFESPACE_EMAIL || '',
-    password: process.env.LLMSAFESPACE_PASSWORD || '',
-    llmProvider: process.env.LLMSAFESPACE_LLM_PROVIDER || 'anthropic',
-    llmApiKey: process.env.LLMSAFESPACE_LLM_API_KEY || '',
-    llmModel: process.env.LLMSAFESPACE_LLM_MODEL || '',
-    badModel: process.env.LLMSAFESPACE_BAD_MODEL || 'invalid-provider/no-such-model',
+    apiUrl: process.env.LLMSAFESPACES_URL || 'http://localhost:8080',
+    apiKey: process.env.LLMSAFESPACES_API_KEY || '',
+    apiKeyUser2: process.env.LLMSAFESPACES_API_KEY_USER2 || '',
+    email: process.env.LLMSAFESPACES_EMAIL || '',
+    password: process.env.LLMSAFESPACES_PASSWORD || '',
+    llmProvider: process.env.LLMSAFESPACES_LLM_PROVIDER || 'anthropic',
+    llmApiKey: process.env.LLMSAFESPACES_LLM_API_KEY || '',
+    llmModel: process.env.LLMSAFESPACES_LLM_MODEL || '',
+    badModel: process.env.LLMSAFESPACES_BAD_MODEL || 'invalid-provider/no-such-model',
   };
 }
 

@@ -27,12 +27,12 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
 
-	"github.com/lenaxia/llmsafespace/api/internal/config"
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	"github.com/lenaxia/llmsafespace/api/internal/mocks"
-	"github.com/lenaxia/llmsafespace/pkg/types"
-	pkgutil "github.com/lenaxia/llmsafespace/pkg/utilities"
+	"github.com/lenaxia/llmsafespaces/api/internal/config"
+	"github.com/lenaxia/llmsafespaces/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespaces/api/internal/logger"
+	"github.com/lenaxia/llmsafespaces/api/internal/mocks"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
+	pkgutil "github.com/lenaxia/llmsafespaces/pkg/utilities"
 )
 
 // memCache is a minimal in-memory cache that satisfies interfaces.CacheService

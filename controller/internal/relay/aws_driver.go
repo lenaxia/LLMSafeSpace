@@ -108,7 +108,7 @@ func (d *AWSDriver) Provision(ctx context.Context, req ProvisionRequest) (*Provi
 				ResourceType: ec2types.ResourceTypeInstance,
 				Tags: []ec2types.Tag{
 					{Key: aws.String("Name"), Value: aws.String(req.Name)},
-					{Key: aws.String("managed-by"), Value: aws.String("llmsafespace-relay")},
+					{Key: aws.String("managed-by"), Value: aws.String("llmsafespaces-relay")},
 				},
 			},
 		},
@@ -216,7 +216,7 @@ func (d *AWSDriver) ListInstances(ctx context.Context, region string) ([]VMInsta
 		Filters: []ec2types.Filter{
 			{
 				Name:   aws.String("tag:managed-by"),
-				Values: []string{"llmsafespace-relay"},
+				Values: []string{"llmsafespaces-relay"},
 			},
 		},
 	})

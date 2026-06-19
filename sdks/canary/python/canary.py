@@ -36,18 +36,18 @@ class Config:
 
 
 def config_from_env() -> Config:
-    api_url = os.environ.get("LLMSAFESPACE_URL", "http://localhost:8080")
+    api_url = os.environ.get("LLMSAFESPACES_URL", "http://localhost:8080")
     return Config(
         api_url=api_url,
-        api_key=os.environ.get("LLMSAFESPACE_API_KEY", ""),
-        api_key_user2=os.environ.get("LLMSAFESPACE_API_KEY_USER2", ""),
-        email=os.environ.get("LLMSAFESPACE_EMAIL", ""),
-        password=os.environ.get("LLMSAFESPACE_PASSWORD", ""),
-        llm_provider=os.environ.get("LLMSAFESPACE_LLM_PROVIDER", "anthropic"),
-        llm_api_key=os.environ.get("LLMSAFESPACE_LLM_API_KEY", ""),
-        llm_model=os.environ.get("LLMSAFESPACE_LLM_MODEL", ""),
+        api_key=os.environ.get("LLMSAFESPACES_API_KEY", ""),
+        api_key_user2=os.environ.get("LLMSAFESPACES_API_KEY_USER2", ""),
+        email=os.environ.get("LLMSAFESPACES_EMAIL", ""),
+        password=os.environ.get("LLMSAFESPACES_PASSWORD", ""),
+        llm_provider=os.environ.get("LLMSAFESPACES_LLM_PROVIDER", "anthropic"),
+        llm_api_key=os.environ.get("LLMSAFESPACES_LLM_API_KEY", ""),
+        llm_model=os.environ.get("LLMSAFESPACES_LLM_MODEL", ""),
         bad_model=os.environ.get(
-            "LLMSAFESPACE_BAD_MODEL", "invalid-provider/no-such-model"
+            "LLMSAFESPACES_BAD_MODEL", "invalid-provider/no-such-model"
         ),
     )
 

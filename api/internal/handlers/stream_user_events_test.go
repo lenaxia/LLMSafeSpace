@@ -20,11 +20,11 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
-	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
-	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
-	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/eventbroker"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/workspace"
+	apitypes "github.com/lenaxia/llmsafespaces/api/internal/types"
+	k8smocks "github.com/lenaxia/llmsafespaces/mocks/kubernetes"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 func init() {
@@ -305,9 +305,9 @@ func TestStreamUserEvents_SnapshotEmitsBeforeLiveEvents(t *testing.T) {
 
 	// Set up a mock k8s client that returns workspaces for the user
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 	wsMock.On("List", mock.Anything, mock.MatchedBy(func(opts metav1.ListOptions) bool {
 		return opts.LabelSelector == labelUserID+"=user-snap"
@@ -396,9 +396,9 @@ func TestStreamUserEvents_SnapshotSkipsEmptyPhase(t *testing.T) {
 	broker := eventbroker.NewUserEventBroker()
 
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 	wsMock.On("List", mock.Anything, mock.Anything).Return(&v1.WorkspaceList{
 		Items: []v1.Workspace{
@@ -475,9 +475,9 @@ func TestStreamUserEvents_SnapshotListFailure_EmitsResync(t *testing.T) {
 	broker := eventbroker.NewUserEventBroker()
 
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 	wsMock.On("List", mock.Anything, mock.Anything).Return(
 		(*v1.WorkspaceList)(nil), fmt.Errorf("k8s api unavailable"),

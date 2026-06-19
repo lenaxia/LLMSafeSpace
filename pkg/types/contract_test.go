@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lenaxia/llmsafespace/pkg/agent"
+	"github.com/lenaxia/llmsafespaces/pkg/agent"
 )
 
 // TestGenerateContractFixtures outputs JSON fixtures that the frontend

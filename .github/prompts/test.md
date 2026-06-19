@@ -1,4 +1,4 @@
-You are writing or improving tests for the LLMSafeSpace repository.
+You are writing or improving tests for the LLMSafeSpaces repository.
 
 Rules:
 1. Read README-LLM.md — TDD is mandatory. Follow the project's testing requirements exactly (Rule 0):

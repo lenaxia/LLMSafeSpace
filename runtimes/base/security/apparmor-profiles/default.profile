@@ -1,6 +1,6 @@
 #include <tunables/global>
 
-profile llmsafespace-default flags=(attach_disconnected) {
+profile llmsafespaces-default flags=(attach_disconnected) {
   #include <abstractions/base>
   #include <abstractions/nameservice>
 

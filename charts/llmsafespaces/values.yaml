@@ -1,0 +1,845 @@
+# Default values for llmsafespaces.
+# This is a YAML-formatted file.
+
+# nameOverride / fullnameOverride follow standard Helm conventions.
+nameOverride: ""
+fullnameOverride: ""
+
+# Namespace where the platform's own components run.
+# Workspaces are created in the same namespace by default; controller can be
+# configured to watch additional namespaces via .controller.watchNamespaces.
+namespace:
+  # If create: true, the chart will create the release namespace.
+  # If you install with --namespace and --create-namespace, set this to false.
+  create: false
+  # G11 (Epic 17): if non-empty, the chart applies Pod Security
+  # Admission labels to the namespace at all three levels (enforce,
+  # audit, warn). All chart-shipped pods comply with the `restricted`
+  # profile. Operators can opt out by setting this to "" (empty).
+  podSecurityEnforce: "restricted"
+  podSecurityVersion: "latest"
+
+# ----------------------------------------------------------------------------
+# API service
+# ----------------------------------------------------------------------------
+api:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: ghcr.io/lenaxia/llmsafespaces/api
+    # Tag to deploy. Falls back to .Chart.AppVersion if empty.
+    # Recommended: pin to an immutable tag like `sha-<7-char-commit>` or
+    # `ts-<unix-timestamp>` published by CI. Avoid moving tags like `dev` or
+    # `latest` in production — kubelet image-pull caching does not always
+    # honor `imagePullPolicy: Always` for moving tags (Talos/containerd).
+    tag: ""
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+  service:
+    type: ClusterIP
+    port: 8080
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    capabilities:
+      drop:
+        - ALL
+
+  # See api/config/config.yaml for the full schema. The chart renders a
+  # ConfigMap from these values; sensitive fields (passwords, JWT) come from
+  # the secret block below or an existing secret.
+  config:
+    server:
+      host: "0.0.0.0"
+      port: 8080
+      shutdownTimeout: 30s
+    kubernetes:
+      configPath: ""
+      inCluster: true
+      # Defaults to the release namespace; override to deploy workspaces
+      # into a different namespace.
+      namespace: ""
+      leaderElection:
+        enabled: true
+        leaseDuration: 15s
+        renewDeadline: 10s
+        retryPeriod: 2s
+    logging:
+      level: info
+      development: false
+      encoding: json
+    auth:
+      tokenDuration: 24h
+      apiKeyPrefix: "lsp_"
+    rateLimiting:
+      enabled: true
+      limits:
+        default:
+          requests: 1000
+          window: 1h
+        create_workspace:
+          requests: 100
+          window: 1h
+        execute_code:
+          requests: 500
+          window: 1h
+
+    security:
+      allowedOrigins:
+        - "https://safespace.thekao.cloud"
+      allowCredentials: false
+
+  # Liveness / readiness probes hit /livez and /readyz.
+  # /livez always returns 200 if the process is responsive.
+  # /readyz pings Postgres and Redis; returns 503 if either is down.
+  # /health is preserved as a legacy alias for /livez.
+  livenessProbe:
+    httpGet:
+      path: /livez
+      port: 8080
+    initialDelaySeconds: 10
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /readyz
+      port: 8080
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: llmsafespaces.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+
+# ----------------------------------------------------------------------------
+# Controller
+# ----------------------------------------------------------------------------
+controller:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/lenaxia/llmsafespaces/controller
+    # Tag to deploy. Falls back to .Chart.AppVersion if empty. See api.image.tag
+    # for rationale on pinning to immutable `sha-` or `ts-` tags.
+    tag: ""
+    pullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+  # Comma-separated list of namespaces the controller should watch.
+  # Wired to the controller's --watch-namespaces flag.
+  #   ""       (default) — watch all namespaces (cluster-wide)
+  #   "*"                — explicit form, equivalent to empty
+  #   "ns1"              — watch only ns1
+  #   "ns1,ns2"          — watch ns1 and ns2
+  #
+  # Combine with namespace-scoped RoleBindings (see rbac.scope below) for
+  # defense-in-depth: even if the controller is given cluster-wide RBAC,
+  # cache.DefaultNamespaces narrows what it actually reconciles.
+  watchNamespaces: ""
+
+  leaderElection:
+    enabled: true
+
+  # F1.4.3 (Epic 17): pre-fix the controller bound /metrics on
+  # 0.0.0.0:8080, reachable from any pod with route to the controller
+  # IP. The default now binds to loopback so only same-pod sidecars
+  # can scrape. For Prometheus, operators should run a
+  # kube-rbac-proxy sidecar that authenticates incoming scrapes and
+  # forwards to 127.0.0.1:8080. Override this value to "0.0.0.0:8080"
+  # if you accept the unauthenticated-metrics trade-off (e.g. trusted
+  # cluster + NetworkPolicy already enforces ingress).
+  metricsAddr: "127.0.0.1:8080"
+  probeAddr: ":8081"
+  webhookPort: 9443
+
+  # InferenceRelay controller (Epic 42). When enabled, the controller
+  # reconciles InferenceRelay CRs and manages relay VMs across cloud
+  # providers. Requires the InferenceRelay CRD to be installed and
+  # provider credentials (Secrets) to be present in the release namespace.
+  #
+  # NOTE: InferenceRelay is a cluster-scoped CRD, so enabling this feature
+  # requires rbac.scope=cluster for the controller to watch/manage CRs.
+  # The RBAC rules for inferencerelays + configmaps are conditionally
+  # added to the cluster-scoped ClusterRole when this is enabled.
+  inferenceRelay:
+    enabled: false
+    # URL of the in-cluster relay-router for /metrics scraping.
+    routerURL: "http://relay-router:8080"
+
+    # Relay-router Deployment + Service. The relay-router is a
+    # lightweight Go proxy (cmd/relay-router/) that distributes
+    # inference traffic across healthy relay VMs. It is deployed
+    # in the release namespace and runs as a single replica.
+    # The controller syncs the relay-router-peers ConfigMap which
+    # the router mounts at /etc/relay-router/peers.json.
+    router:
+      image:
+        repository: ghcr.io/lenaxia/llmsafespaces/relay-router
+        tag: ""
+        pullPolicy: IfNotPresent
+      service:
+        type: ClusterIP
+        port: 8080
+      resources:
+        requests:
+          cpu: 50m
+          memory: 32Mi
+        limits:
+          cpu: 200m
+          memory: 128Mi
+      nodeSelector: {}
+      tolerations: []
+      affinity: {}
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    capabilities:
+      drop:
+        - ALL
+
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: 8081
+    initialDelaySeconds: 10
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /readyz
+      port: 8081
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+# ----------------------------------------------------------------------------
+# Platform requirements (workspace pods)
+# ----------------------------------------------------------------------------
+# Worklog 371 H4: workspace pods read memory usage and pressure from cgroup v2
+# (/sys/fs/cgroup/memory.current, /sys/fs/cgroup/memory.max). cgroup v2 is a
+# HARD REQUIREMENT for:
+#   - US-44.5 memory pressure warnings (>85% of limit)
+#   - US-44.8 workspace_memory_bytes ops gauge
+#   - US-44.4 OOM-limit detection / workspace_oom_kills_total attribution
+#
+# On cgroup v1 hosts these features silently produce nothing — agentd logs a
+# single Warn per pod boot ("cgroup v2 memory.current unreadable") so the
+# silent degradation is observable, but the features remain unavailable until
+# the pod is scheduled on a cgroup v2 node. cgroup v2 is the default on all
+# supported runtime images (Debian bookworm-slim) and all modern Kubernetes
+# node OSes (Debian 11+, Ubuntu 22.04+, RHEL 9, Flatcar, Bottlerocket). The
+# chart does NOT set a nodeSelector for cgroup v2 because scheduling-time
+# detection is unreliable across distros; the runtime-time warning is the
+# authoritative signal.
+workspace:
+  cgroupV2Required: true
+
+# ----------------------------------------------------------------------------
+# CRDs
+# ----------------------------------------------------------------------------
+# CRDs are installed from the chart's crds/ directory by default.
+# Set install: false to manage CRDs out-of-band (recommended for production
+# upgrade safety, since Helm 3 does not upgrade CRDs in crds/).
+crds:
+  install: true
+  # If install is false, you MUST apply the CRDs from charts/llmsafespaces/crds/
+  # before installing this chart.
+
+# ----------------------------------------------------------------------------
+# External dependencies
+# ----------------------------------------------------------------------------
+# Postgres and Redis must be provided externally. The chart does not bundle
+# either dependency. See charts/llmsafespaces/README.md for examples of how
+# to install them separately (CloudNativePG, Spotahome Redis Operator, raw
+# manifests for kind, etc.).
+#
+# Connection details are passed via .api.config (host/port/db) and the
+# externalSecret reference below for credentials.
+externalSecret:
+  # If create: true, the chart creates a Secret with the credentials below.
+  # If false, the chart expects a Secret named .existingSecret to already
+  # exist with keys: postgres-password, redis-password, jwt-secret.
+  create: true
+  existingSecret: ""
+
+  # Used only when externalSecret.create is true.
+  # SECURITY (G26): all three credentials are auto-generated as 32-char
+  # alphanumeric strings on first install when left empty here. Pin a
+  # specific value via --set or --values only when you need to match an
+  # external Postgres/Redis instance whose password is already known.
+  # Leaving them empty means "let the chart pick a strong default and
+  # keep it stable across upgrades" — the Secret is annotated
+  # `helm.sh/resource-policy: keep` so the random value is generated
+  # once and persisted.
+  #
+  # ROTATION-OUT-OF-VULNERABLE-STATE: if a previous chart version left
+  # postgres-password="changeme" or redis-password="" in the live Secret,
+  # the next `helm upgrade` will re-randomise both values and the
+  # operator MUST then run the ALTER USER procedure documented in
+  # NOTES.txt to bring the running Postgres role in sync.
+  postgresPassword: ""
+  redisPassword: ""
+  jwtSecret: ""
+  # Root KEK for admin provider credentials (LLMSAFESPACES_MASTER_SECRET).
+  # Auto-generated as a 64-char random on first install when left empty.
+  # Rotating this value invalidates all admin-encrypted credentials.
+  masterSecret: ""
+
+# ----------------------------------------------------------------------------
+# Datastore NetworkPolicies (G26)
+# ----------------------------------------------------------------------------
+# The chart ships NetworkPolicy resources blocking ingress to postgres and
+# valkey except from the API deployment and migration Job. Workspace pods
+# (selectable by `component=workspace`) cannot reach the datastores.
+#
+# Enabled by default but gated by the master `networkPolicy.enabled` toggle
+# AND `datastore.networkPolicy.enabled`. Disable per-class without
+# disabling the workspace policies if needed.
+datastore:
+  networkPolicy:
+    enabled: true
+    # Pod label selectors for the postgres / valkey pods. The defaults
+    # match local/postgres-redis.yaml and local/deps-{postgres,valkey}.yaml.
+    # If you deploy postgres via Bitnami helm chart, override with
+    # `{ app.kubernetes.io/name: postgresql }`.
+    postgresPodSelectorLabels:
+      app: postgres
+    valkeyPodSelectorLabels:
+      app: valkey
+
+# Postgres connection (consumed by the API config).
+postgresql:
+  host: postgres
+  port: 5432
+  user: llmsafespaces
+  database: llmsafespaces
+  sslMode: disable
+  maxOpenConns: 25
+  maxIdleConns: 10
+  connMaxLifetime: 5m
+
+# Redis connection (consumed by the API config).
+#
+# H3 (worklog 371) PRODUCTION REQUIREMENT: the API caches per-workspace
+# opencode passwords in Redis in PLAINTEXT (see wsstate.SetCachedPassword).
+# This is necessary because the proxy needs the plaintext for Basic-Auth on
+# every forwarded request — hashing would defeat the cache. Production Redis
+# deployments MUST therefore provide:
+#   - TLS in-transit (configure the API to use rediss://, or run a TLS sidecar)
+#   - At-rest encryption (Redis 7 ACL + encryption, or PVC-level encryption)
+#   - NetworkPolicy restricting Redis ingress to API pods only
+# Without these, workspace passwords are exposed in Redis RDB/AOF dumps,
+# memory, and backups. The passwords are per-workspace generated credentials
+# (not user passwords), bounded by a 1h TTL, and the source of truth is the
+# K8s Secret (encrypted at rest by the cluster).
+redis:
+  host: redis-master
+  port: 6379
+  db: 0
+  poolSize: 20
+
+# ----------------------------------------------------------------------------
+# Database migrations
+# ----------------------------------------------------------------------------
+# Migrations are run as a Helm pre-install / pre-upgrade Job using the API
+# image (which carries /etc/llmsafespaces/migrations).
+migrations:
+  enabled: true
+  image:
+    # Defaults to the API image. Override if you ship migrations in a separate
+    # image (e.g. a migrate-cli image).
+    repository: ""
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+
+# ----------------------------------------------------------------------------
+# Network policies (Epic 17 G16 remediation; EVOLUTION-V2 §9.7)
+# ----------------------------------------------------------------------------
+# When enabled (default), the chart ships:
+#
+#   1. workspace-default-deny-ingress
+#      Default-deny ingress for sandbox pods. Without this, any pod in the
+#      cluster (including other tenants' workspaces) can reach a sandbox.
+#      The API proxy explicitly allows itself via API-server pod selector.
+#
+#   2. workspace-egress
+#      Default-deny egress with explicit allowances for:
+#        - DNS (UDP/TCP 53 to kube-system kube-dns)
+#        - LLM provider domains via FQDN policy if your CNI supports it,
+#          otherwise CIDRs from .networkPolicy.allowedEgressCIDRs.
+#      Without DNS, sandbox pods can't resolve any external host on boot.
+#
+# Operators with their own network policy controller (Cilium CRDs, etc.)
+# can opt out by setting enabled: false. The threat model assumption A2
+# requires SOME default-deny is in place; operators turning this off MUST
+# document the equivalent control.
+networkPolicy:
+  enabled: true
+
+  # API server pod selector — used by workspace ingress allow rule so the
+  # API proxy can reach sandbox pods on agentd port 4097.
+  apiPodLabelSelector:
+    app.kubernetes.io/name: llmsafespaces
+    app.kubernetes.io/component: api
+
+  # Controller pod selector — used by workspace ingress allow rule so
+  # the controller's /v1/healthz + /v1/statusz polls (Epic 22 health-
+  # endpoint redesign) can reach sandbox pods on the agentd admin port
+  # 4098. Without this rule the controller's probes time out, the
+  # 3-strike threshold trips, the controller kills the pod, recreates
+  # it, and the cycle repeats indefinitely (worklog: live-fix after
+  # G16 enablement broke Epic 22's health polling).
+  controllerPodLabelSelector:
+    app.kubernetes.io/name: llmsafespaces
+    app.kubernetes.io/component: controller
+
+  # Prometheus pod selector — used by workspace ingress allow rule so the
+  # Prometheus scraper can reach workspace pods on the agentd admin port
+  # 4098 (/metrics). Only takes effect when monitoring.serviceMonitors.agentdPodMonitor.enabled
+  # is true. The default matches the kube-prometheus-stack chart's Prometheus
+  # pod labels; override to match a custom Prometheus deployment. The
+  # prometheusNamespace defaults to the release namespace but is typically
+  # overridden to the namespace where Prometheus runs (e.g. "monitoring").
+  prometheusPodLabelSelector:
+    app.kubernetes.io/name: prometheus
+  prometheusNamespace: ""
+
+  # DNS policy: where to send port-53 traffic. Default targets the
+  # kube-system/kube-dns service which works on most clusters
+  # (kube-dns, CoreDNS). Override on clusters with non-standard DNS.
+  dnsNamespace: kube-system
+  dnsPodLabelSelector:
+    k8s-app: kube-dns
+
+  # CIDR allowlist for sandbox egress. Defaults to RFC1918 (private)
+  # negation so all public internet traffic is allowed and only internal
+  # cluster traffic is blocked. This is the documented Epic 17 baseline;
+  # tighter operators can replace with a strict allowlist.
+  allowedEgressCIDRs:
+    - 0.0.0.0/0
+  # Block egress to RFC1918 + cloud metadata; sandbox pods should never
+  # reach in-cluster services or the cloud metadata endpoint.
+  blockedEgressCIDRs:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 169.254.0.0/16
+
+# ----------------------------------------------------------------------------
+# Kyverno admission policies (Section 9.6 of EVOLUTION-V2.md)
+# ----------------------------------------------------------------------------
+# DEFERRED to V2.1 in EVOLUTION-V2.md, but US-5.4 acceptance criteria require
+# the chart to support them. Disabled by default; opt in by setting
+# enabled: true. Requires Kyverno to be installed in the cluster.
+kyverno:
+  enabled: false
+  # If enabled is false, the chart prints a warning in NOTES.txt that
+  # Kyverno-enforced workspace pod security is not active.
+
+# ----------------------------------------------------------------------------
+# Service accounts
+# ----------------------------------------------------------------------------
+serviceAccount:
+  api:
+    create: true
+    annotations: {}
+    name: ""
+  controller:
+    create: true
+    annotations: {}
+    name: ""
+
+# ----------------------------------------------------------------------------
+# RBAC
+# ----------------------------------------------------------------------------
+rbac:
+  create: true
+  # scope controls how the controller's RBAC is granted:
+  #   "namespace" (default, G5)  Role + RoleBinding scoped to .Release.Namespace
+  #                              and the workspace namespace only. The
+  #                              controller can manage workspaces ONLY in the
+  #                              configured namespace(s). Use this with
+  #                              controller.watchNamespaces unset (or set to
+  #                              the workspace namespace) for tightest
+  #                              least-privilege.
+  #   "cluster"                  Adds a ClusterRole + ClusterRoleBinding for
+  #                              llmsafespaces.dev/* + storageclasses, letting
+  #                              the controller watch workspaces across all
+  #                              namespaces. Pods, secrets, PVCs, and
+  #                              NetworkPolicies remain namespace-scoped
+  #                              regardless — operators running multi-
+  #                              namespace deployments must per-namespace-bind
+  #                              the workspace Role themselves.
+  #
+  # SECURITY (G5, Epic 17): the default flipped from "cluster" to
+  # "namespace" in worklog 0107. Pre-flip the chart-default install
+  # gave the controller cluster-wide secrets+pods access; that was a
+  # blast-radius hazard for a single-namespace deployment. Operators
+  # who genuinely need cluster-wide CRD watch must explicitly opt in.
+  scope: "namespace"
+  # If false, you must create the (Cluster)Role + (Cluster)RoleBinding
+  # out-of-band.
+
+# ----------------------------------------------------------------------------
+# Admission webhooks
+# ----------------------------------------------------------------------------
+# The controller registers ValidatingAdmissionWebhooks for Workspace,
+# and RuntimeEnvironment resources. These provide
+# defense-in-depth: even if a user has direct kubectl access to create CRDs,
+# the webhook validates the object before persistence.
+#
+# REQUIREMENT: cert-manager must be installed in the cluster (the chart uses
+# cert-manager.io/v1 Certificate + Issuer to provision the webhook server's
+# TLS cert and inject the CA bundle into the ValidatingWebhookConfiguration).
+#
+#   kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.16.0/cert-manager.yaml
+#
+# If you do not have cert-manager and cannot install it, set webhooks.enabled
+# to false. The chart will not deploy the webhook configuration. Validation
+# still happens server-side in the API service (where users normally hit it),
+# but operators using kubectl directly will bypass validation.
+webhooks:
+  enabled: true
+  # cert-manager Issuer kind. "Issuer" is namespace-scoped (recommended);
+  # "ClusterIssuer" is cluster-scoped.
+  issuerKind: "Issuer"
+  # If empty, the chart creates a self-signed Issuer. If set, the chart uses
+  # an existing Issuer/ClusterIssuer and skips creating one.
+  existingIssuer: ""
+  # failurePolicy: "Fail" rejects requests if the webhook is unavailable
+  # (recommended for security); "Ignore" allows requests through.
+  failurePolicy: "Fail"
+  # timeoutSeconds for webhook calls. Max 30s.
+  timeoutSeconds: 10
+  #
+  # G2 (Epic 17) — Workspace admission allow-lists. The Workspace
+  # validating webhook gates Spec.Runtime image references and
+  # Spec.Storage parameters using these lists.
+  #
+  # allowedImageRegistries: list of registry-prefix strings. Any
+  # Workspace whose runtime contains '/' (i.e. is shaped like an
+  # explicit container image reference) must match at least one
+  # prefix here. Empty list means ONLY RuntimeEnvironment-name
+  # references are allowed (e.g. `runtime: python-3.11`).
+  allowedImageRegistries:
+    - "ghcr.io/lenaxia/"
+  #
+  # allowedStorageClassNames: optional. If non-empty, the
+  # Spec.Storage.StorageClassName must be one of these. Empty means
+  # any StorageClassName is allowed (operator-defined cluster default
+  # always passes; this list constrains user-supplied values).
+  allowedStorageClassNames: []
+  #
+  # maxWorkspaceStorageGi: maximum requested workspace storage in GiB.
+  # Storage requests above this are rejected at admission. 0 disables
+  # the upper bound. The CRD pattern `^[0-9]+(Gi|Mi)$` already
+  # enforces shape; this enforces magnitude.
+  maxWorkspaceStorageGi: 1024
+  #
+  # G4 (F1.2.3) — Spec.Resources caps. The CRD pattern lets through
+  # values like "999999999m" CPU; without these caps the workspace pod
+  # is admitted but stays Pending forever, wasting tenant quota and
+  # confusing operators. Defaults: 16 cores, 64 GiB memory.
+  # Set 0 to disable each cap individually.
+  maxWorkspaceCPUMillicores: 16000
+  maxWorkspaceMemoryMi: 65536
+
+
+
+# --- Runtime Environments (seeded CRDs) ---
+runtimeEnvironments:
+  base:
+    image:
+      repository: ghcr.io/lenaxia/llmsafespaces/base
+      tag: ""
+
+# --- Frontend (optional web UI) ---
+frontend:
+  enabled: false
+  replicaCount: 1
+  image:
+    repository: ghcr.io/lenaxia/llmsafespaces/frontend
+    tag: ""
+    pullPolicy: IfNotPresent
+  # API base URL injected at container start via docker-entrypoint.sh
+  apiBaseUrl: "/api/v1"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 64Mi
+  ingress:
+    enabled: false
+    className: ""
+    host: "safespace.example.com"
+    # RT-6.14 (Epic 17): TLS default flipped from `false` → `true`.
+    # Operators must explicitly set `tls: false` to disable HTTPS for
+    # the frontend ingress. Pre-fix the chart-default install
+    # exposed the frontend over plain HTTP, leaking JWT cookies on
+    # every request. Combined with the HSTS header in `annotations`
+    # below, this prevents downgrade attacks from session takeover.
+    tls: true
+    tlsSecret: ""
+    # G31 (Epic 17 worklog 0092 RT-7.13): pre-fix the frontend
+    # ingress carried no security headers. Default annotations
+    # below set CSP, X-Frame-Options, and HSTS for ingress-nginx.
+    # Operators using a different ingress (Traefik, HAProxy)
+    # should override `annotations` to use their controller's
+    # equivalent header-injection annotations. Override with:
+    #
+    #   --set 'frontend.ingress.annotations.<key>=<val>'
+    #
+    # CSP frame-ancestors 'none' + X-Frame-Options DENY together
+    # block clickjacking. CSP default-src 'self' constrains XSS
+    # blast radius if rehype-sanitize is bypassed (RT-7.9).
+    annotations:
+      nginx.ingress.kubernetes.io/configuration-snippet: |
+        more_set_headers "Content-Security-Policy: default-src 'self'; connect-src 'self' wss:; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
+        more_set_headers "X-Frame-Options: DENY";
+        more_set_headers "X-Content-Type-Options: nosniff";
+        more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+        more_set_headers "Strict-Transport-Security: max-age=31536000; includeSubDomains";
+    # additionalHosts: additional hostnames for the frontend. Each entry
+    # produces a separate Ingress rule with both /api → API service and
+    # / → frontend paths, identical in structure to the primary host rule.
+    # Use for serving the frontend on multiple domains (e.g. chat.safespaces.dev).
+    # Each entry: { host: "chat.example.com" [, tlsSecret: "override-secret"] }
+    additionalHosts: []
+
+mcp:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: llmsafespaces/mcp
+    tag: ""
+    pullPolicy: IfNotPresent
+  # Transport mode: "sse" for HTTP SSE server, "stdio" for sidecar/subprocess use
+  transport: "sse"
+  service:
+    type: ClusterIP
+    port: 3001
+  # API base URL the MCP server calls (typically the in-cluster API service)
+  apiBaseUrl: "http://{{ .Release.Name }}-api:8080"
+  # Timeout for session_message (waiting for agent response)
+  timeout: "300s"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    capabilities:
+      drop:
+        - ALL
+
+# Epic 26: Inference relay for free-tier models.
+# When set, workspace pods use this URL as the opencode provider baseURL
+# instead of opencode.ai/zen/v1 directly. Deploy the Cloudflare Worker
+# from workers/inference-relay/ and set the URL here.
+# Stable CNAME that rotates to fresh Worker deployments.
+inferenceRelayURL: "https://relay.safespaces.dev"
+
+# Epic 26: Relay auth secret.
+# Leave empty ("") to have the chart auto-generate a cryptographically
+# random 64-hex-char secret on first install and preserve it across upgrades.
+# The generated value is stored in the llmsafespaces-credentials K8s Secret
+# and pushed to the CF Worker automatically if cloudflare credentials are set.
+# Only set this manually if you need to force a specific value.
+inferenceRelaySecret: ""
+
+# Cloudflare credentials for automated relay secret management.
+# When set, a post-install/post-upgrade Job pushes inferenceRelaySecret to
+# the CF Worker automatically, keeping the cluster and CF Worker in sync.
+# Provide these via --set or a sealed-secrets/external-secrets override —
+# never commit the apiToken to source control.
+cloudflare:
+  # API token with Workers:Edit permission (Account scope).
+  # Obtain from https://dash.cloudflare.com/profile/api-tokens
+  apiToken: ""
+  # Cloudflare account ID (visible in Workers dashboard URL).
+  accountId: ""
+  # Name of the CF Worker script to push the secret to.
+  workerName: "llmsafespaces-inference-relay"
+
+# ----------------------------------------------------------------------------
+# Monitoring (Grafana dashboards, Prometheus alerts, ServiceMonitors)
+# ----------------------------------------------------------------------------
+# When enabled, the chart deploys Grafana dashboard ConfigMaps (picked up by
+# the Grafana sidecar via the grafana_dashboard label), PrometheusRule
+# resources (alerting rules for Alertmanager), and ServiceMonitor resources
+# for Prometheus scraping.
+#
+# Requires:
+#   - Grafana with the sidecar dashboard importer (grafana_dashboard: "1" label)
+#   - Prometheus Operator (for PrometheusRule and ServiceMonitor CRDs)
+#
+# All sub-sections can be enabled/disabled independently.
+monitoring:
+  enabled: false
+
+  # Grafana dashboard ConfigMaps.
+  dashboards:
+    enabled: true
+    # Namespace to deploy dashboard ConfigMaps into. Defaults to the release
+    # namespace. Override to deploy into Grafana's watching namespace.
+    namespace: ""
+    # Labels applied to the dashboard ConfigMap. The grafana_dashboard label
+    # is required for the Grafana sidecar to import the dashboard.
+    labels:
+      grafana_dashboard: "1"
+    annotations: {}
+
+  # Grafana datasource ConfigMaps. Deploys a Postgres datasource that
+  # the billing dashboard uses for per-user/per-workspace attribution
+  # queries against the usage_events table.
+  #
+  # Requires:
+  #   - Grafana with the sidecar datasource importer (grafana_datasource: "1" label)
+  #   - A Kubernetes Secret containing the Postgres password under the
+  #     key "PG_PASSWORD". By default this is the same Secret used by
+  #     the API service (see existingSecret / postgresPassword above).
+  #     The sidecar resolves ${PG_PASSWORD} from env vars injected into
+  #     the Grafana pod; configure the Grafana chart to set this env var
+  #     from the Secret.
+  datasources:
+    enabled: true
+    # Namespace to deploy datasource ConfigMaps into. Defaults to the
+    # release namespace. Override to deploy into Grafana's watching namespace.
+    namespace: ""
+    # Labels applied to the datasource ConfigMap. The grafana_datasource
+    # label is required for the Grafana sidecar to import the datasource.
+    labels:
+      grafana_datasource: "1"
+    annotations: {}
+    postgres:
+      # UID used by dashboard panels to reference this datasource.
+      # Must match the pg_datasource variable default in billing.json.
+      uid: "llmsafespaces-postgres"
+
+  # PrometheusRule resources (alerting rules).
+  prometheusRules:
+    enabled: true
+    # Namespace for PrometheusRule resources. Defaults to the release namespace.
+    # Override to match where the Prometheus Operator is watching.
+    namespace: ""
+    # Additional labels for PrometheusRule resources (e.g. to match a
+    # Prometheus Operator selector like `role: alert-rules`).
+    labels: {}
+    annotations: {}
+
+  # ServiceMonitor resources for Prometheus scraping of API and controller.
+  serviceMonitors:
+    enabled: true
+    # Namespace for ServiceMonitor resources. Defaults to the release namespace.
+    namespace: ""
+    interval: 30s
+    scrapeTimeout: 10s
+    # Additional labels for ServiceMonitor resources (e.g. to match a
+    # Prometheus Operator serviceMonitorSelector).
+    labels: {}
+    annotations: {}
+    api:
+      # Optional bearerTokenSecret for the API /metrics endpoint.
+      # The API requires `Authorization: Bearer <token>` when the env var
+      # LLMSAFESPACES_METRICS_TOKEN is set. If you use that env var, set
+      # this to a Secret reference containing the same token under the
+      # "token" key. If LLMSAFESPACES_METRICS_TOKEN is not set, leave this
+      # empty (scrapes are unauthenticated).
+      bearerTokenSecret: {}
+      # Example:
+      #   name: llmsafespaces-metrics-token
+      #   key: token
+    # PodMonitor for workspace pods' agentd admin port (:4098/metrics).
+    # Workspace pods are dynamic (one per Workspace CRD) and addressed by
+    # PodIP, so a PodMonitor (not ServiceMonitor) is the correct resource.
+    # When enabled, the chart also extends the workspace NetworkPolicy to
+    # permit Prometheus ingress on port 4098 — see networkPolicy.prometheusPodLabelSelector.
+    # Without this, US-44.8 metrics (workspace_restarts_total, workspace_memory_bytes,
+    # workspace_active_sessions, workspace_context_tokens, workspace_oom_kills_total)
+    # are never scraped and do not appear in production dashboards.
+    agentdPodMonitor:
+      enabled: true

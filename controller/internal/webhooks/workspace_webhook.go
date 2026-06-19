@@ -15,10 +15,10 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
-// +kubebuilder:webhook:path=/validate-llmsafespace-dev-v1-workspace,mutating=false,failurePolicy=fail,groups=llmsafespace.dev,resources=workspaces,verbs=create;update,versions=v1,name=vworkspace.kb.io,sideEffects=None,admissionReviewVersions=v1
+// +kubebuilder:webhook:path=/validate-llmsafespaces-dev-v1-workspace,mutating=false,failurePolicy=fail,groups=llmsafespaces.dev,resources=workspaces,verbs=create;update,versions=v1,name=vworkspace.kb.io,sideEffects=None,admissionReviewVersions=v1
 
 // WorkspaceValidator is a ValidatingAdmissionWebhook for Workspace resources.
 //

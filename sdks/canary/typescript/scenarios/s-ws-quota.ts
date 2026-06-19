@@ -2,17 +2,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // S-WS-QUOTA canary — TypeScript SDK
 
-import { LLMSafeSpace, RateLimitError } from '../../src/index.js';
+import { LLMSafeSpaces, RateLimitError } from '../../src/index.js';
 import { Runner, Config, configFromEnv, nodeFetch, hasField } from '../canary.js';
 
 async function run(r: Runner, cfg: Config): Promise<void> {
-  const maxWs = parseInt(process.env.LLMSAFESPACE_MAX_WORKSPACES_PER_USER || '0', 10);
+  const maxWs = parseInt(process.env.LLMSAFESPACES_MAX_WORKSPACES_PER_USER || '0', 10);
   if (!maxWs || maxWs <= 0) {
-    r.ok('ws-quota: skipped (LLMSAFESPACE_MAX_WORKSPACES_PER_USER not set or unlimited)');
+    r.ok('ws-quota: skipped (LLMSAFESPACES_MAX_WORKSPACES_PER_USER not set or unlimited)');
     return;
   }
 
-  const c = new LLMSafeSpace({ baseUrl: cfg.apiUrl, apiKey: cfg.apiKey, timeout: 30000, fetch: nodeFetch as any });
+  const c = new LLMSafeSpaces({ baseUrl: cfg.apiUrl, apiKey: cfg.apiKey, timeout: 30000, fetch: nodeFetch as any });
   const created: string[] = [];
 
   try {

@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"time"
 
-	llm "github.com/lenaxia/llmsafespace/sdk/go"
-	canary "github.com/lenaxia/llmsafespace/sdks/canary/go"
+	llm "github.com/lenaxia/llmsafespaces/sdk/go"
+	canary "github.com/lenaxia/llmsafespaces/sdks/canary/go"
 )
 
 func Handler(w http.ResponseWriter, r *http.Request) {
@@ -40,7 +40,7 @@ func runActivateEviction(ctx context.Context, run *canary.Runner, cfg canary.Con
 	c := cfg.Client()
 
 	maxActive := 3
-	if v := os.Getenv("LLMSAFESPACE_MAX_ACTIVE_WORKSPACES_PER_USER"); v != "" {
+	if v := os.Getenv("LLMSAFESPACES_MAX_ACTIVE_WORKSPACES_PER_USER"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			maxActive = n
 		}

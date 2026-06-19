@@ -10,8 +10,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
-	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	apitypes "github.com/lenaxia/llmsafespaces/api/internal/types"
+	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
 )
 
 // AdminSessionHandler serves admin-only session recovery endpoints.

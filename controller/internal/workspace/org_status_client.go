@@ -70,7 +70,7 @@ type orgStatusEntry struct {
 }
 
 // NewCachedOrgStatusClient constructs the client. baseURL is the API service
-// root (e.g. http://llmsafespace-api.llmsafespace.svc:8080); leave empty to
+// root (e.g. http://llmsafespaces-api.llmsafespaces.svc:8080); leave empty to
 // disable org-suspension (the reconciler then never org-suspends). token, when
 // non-empty, is sent as X-Internal-Token. ttl is the cache freshness window
 // (production: 30s). logger may be nil.

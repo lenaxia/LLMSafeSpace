@@ -16,10 +16,10 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	apilogger "github.com/lenaxia/llmsafespace/api/internal/logger"
-	"github.com/lenaxia/llmsafespace/api/internal/middleware"
-	"github.com/lenaxia/llmsafespace/api/internal/services/ratelimit"
-	logmock "github.com/lenaxia/llmsafespace/mocks/logger"
+	apilogger "github.com/lenaxia/llmsafespaces/api/internal/logger"
+	"github.com/lenaxia/llmsafespaces/api/internal/middleware"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/ratelimit"
+	logmock "github.com/lenaxia/llmsafespaces/mocks/logger"
 )
 
 // newRealRateLimitService builds a real ratelimit.Service backed by a miniredis

@@ -1,7 +1,7 @@
 import {
   AuthError,
   ConflictError,
-  LLMSafeSpaceError,
+  LLMSafeSpacesError,
   NotFoundError,
   RateLimitError,
   TimeoutError,
@@ -28,7 +28,7 @@ import type {
 
 const DEFAULT_TIMEOUT = 120_000;
 
-export class LLMSafeSpace {
+export class LLMSafeSpaces {
   private readonly baseUrl: string;
   private readonly timeout: number;
   private readonly fetchFn: FetchFn;
@@ -115,7 +115,7 @@ export class LLMSafeSpace {
         case 429:
           throw new RateLimitError(msg);
         default:
-          throw new LLMSafeSpaceError(msg, res.status);
+          throw new LLMSafeSpacesError(msg, res.status);
       }
     }
 
@@ -143,7 +143,7 @@ export class LLMSafeSpace {
 }
 
 class WorkspacesAPI {
-  constructor(private client: LLMSafeSpace) {}
+  constructor(private client: LLMSafeSpaces) {}
 
   list(limit = 20, offset = 0) {
     return this.client.request<WorkspaceListResult>("GET", `/workspaces?limit=${limit}&offset=${offset}`);
@@ -200,7 +200,7 @@ class WorkspacesAPI {
 }
 
 class SessionsAPI {
-  constructor(private client: LLMSafeSpace) {}
+  constructor(private client: LLMSafeSpaces) {}
 
   ensure(workspaceId: string) {
     return this.client.request<EnsureSessionResponse>("POST", `/workspaces/${workspaceId}/sessions/new`);
@@ -237,7 +237,7 @@ class SessionsAPI {
 }
 
 class AuthAPI {
-  constructor(private client: LLMSafeSpace) {}
+  constructor(private client: LLMSafeSpaces) {}
 
   me() {
     return this.client.request<User>("GET", "/auth/me");
@@ -254,7 +254,7 @@ class AuthAPI {
 }
 
 class SecretsAPI {
-  constructor(private client: LLMSafeSpace) {}
+  constructor(private client: LLMSafeSpaces) {}
 
   create(req: CreateSecretRequest) {
     return this.client.request<SecretResponse>("POST", "/secrets", req);
@@ -285,7 +285,7 @@ class SecretsAPI {
 }
 
 class TerminalAPI {
-  constructor(private client: LLMSafeSpace) {}
+  constructor(private client: LLMSafeSpaces) {}
 
   getTicket(workspaceId: string) {
     return this.client.request<TerminalTicket>("POST", `/workspaces/${workspaceId}/terminal/ticket`);
@@ -293,7 +293,7 @@ class TerminalAPI {
 }
 
 class UserSettingsAPI {
-  constructor(private client: LLMSafeSpace) {}
+  constructor(private client: LLMSafeSpaces) {}
 
   get() {
     return this.client.request<{ settings: Record<string, unknown>; schemaVersion: number }>("GET", "/users/me/settings");
@@ -307,7 +307,7 @@ class UserSettingsAPI {
 }
 
 class AccountAPI {
-  constructor(private client: LLMSafeSpace) {}
+  constructor(private client: LLMSafeSpaces) {}
 
   rotateKey(password: string) {
     return this.client.request<{ keyVersion: number; recoveryKey: string }>("POST", "/account/rotate-key", { password });

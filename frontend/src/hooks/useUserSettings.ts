@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { settingsApi } from "../api/settings";
 
-const STORAGE_KEY = "llmsafespace_user_settings";
+const STORAGE_KEY = "llmsafespaces_user_settings";
 
 // --- Shared in-memory store (singleton) ---
 

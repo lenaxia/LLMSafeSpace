@@ -14,9 +14,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/sse"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 // --- stripVerboseQuery tests ---

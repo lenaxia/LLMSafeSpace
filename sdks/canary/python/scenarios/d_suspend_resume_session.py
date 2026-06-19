@@ -18,7 +18,7 @@ from canary import (
     wait_phase,
     ensure_session_with_retry,
 )
-from llmsafespace import LLMSafeSpace
+from llmsafespaces import LLMSafeSpaces
 
 
 def run(run: Runner, cfg: Config) -> None:
@@ -26,7 +26,7 @@ def run(run: Runner, cfg: Config) -> None:
         run.ok("suspend-resume-session: skipped (no LLM API key)")
         return
 
-    c = LLMSafeSpace(cfg.api_url, api_key=cfg.api_key, timeout=120.0)
+    c = LLMSafeSpaces(cfg.api_url, api_key=cfg.api_key, timeout=120.0)
     ws_id = None
 
     try:

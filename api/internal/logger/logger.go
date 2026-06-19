@@ -9,7 +9,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
 )
 
 // Logger provides structured logging

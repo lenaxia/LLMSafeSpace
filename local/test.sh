@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# End-to-end smoke test for an LLMSafeSpace install on a kind cluster.
+# End-to-end smoke test for an LLMSafeSpaces install on a kind cluster.
 #
 # Assumes ./bootstrap.sh has been run (or equivalent: cluster up, namespace
-# llmsafespace exists, API + controller deployments are running).
+# llmsafespaces exists, API + controller deployments are running).
 #
 # What it tests:
 #   1. /livez and /readyz return expected codes
@@ -31,9 +31,9 @@ ok()   { printf '%s ✓%s %s\n' "${GREEN}" "${RESET}" "$*"; }
 warn() { printf '%s !%s %s\n' "${YELLOW}" "${RESET}" "$*" >&2; }
 die()  { printf '%s ✗%s %s\n' "${RED}${BOLD}" "${RESET}" "$*" >&2; exit 1; }
 
-CLUSTER_NAME="${CLUSTER_NAME:-llmsafespace}"
+CLUSTER_NAME="${CLUSTER_NAME:-llmsafespaces}"
 CTX="${CTX:-kind-${CLUSTER_NAME}}"
-NS="${NS:-llmsafespace}"
+NS="${NS:-llmsafespaces}"
 WORKSPACE_NAME="e2e-workspace"
 WORKSPACE_NAME="e2e-workspace"
 USER_ID="e2e-user"
@@ -65,7 +65,7 @@ kc() { kubectl --context "${CTX}" "$@"; }
 # -----------------------------------------------------------------------------
 log "Test 1/9 — API probes via port-forward"
 
-kc -n "${NS}" port-forward svc/llmsafespace-api "${PORTFWD_PORT}:8080" >/dev/null 2>&1 &
+kc -n "${NS}" port-forward svc/llmsafespaces-api "${PORTFWD_PORT}:8080" >/dev/null 2>&1 &
 PF_PID=$!
 
 # Wait up to 10s for port-forward to be live
@@ -88,8 +88,8 @@ ok "/readyz returns 200 (Postgres + Redis reachable)"
 # Test 2: CRDs installed
 # -----------------------------------------------------------------------------
 log "Test 2/9 — CRDs registered"
-for crd in workspaces.llmsafespace.dev \
-           runtimeenvironments.llmsafespace.dev; do
+for crd in workspaces.llmsafespaces.dev \
+           runtimeenvironments.llmsafespaces.dev; do
     kc get crd "${crd}" >/dev/null \
         || die "CRD ${crd} not installed"
 done
@@ -103,9 +103,9 @@ ok "all 4 CRDs installed"
 # RuntimeEnvironment named "python-3.11" maps to the runtime-base image we
 # loaded into kind. Idempotent: re-runs apply.
 log "Test 3/9 — RuntimeEnvironment for python:3.11"
-RUNTIME_IMAGE_REF="${RUNTIME_IMAGE_REF:-llmsafespace/runtime-base:dev}"
+RUNTIME_IMAGE_REF="${RUNTIME_IMAGE_REF:-llmsafespaces/runtime-base:dev}"
 cat <<EOF | kc apply -f -
-apiVersion: llmsafespace.dev/v1
+apiVersion: llmsafespaces.dev/v1
 kind: RuntimeEnvironment
 metadata:
   name: python-3.11
@@ -125,7 +125,7 @@ log "Test 4/9 — Workspace lifecycle (create → Active)"
 kc -n "${NS}" delete workspace "${WORKSPACE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
 
 cat <<EOF | kc -n "${NS}" apply -f -
-apiVersion: llmsafespace.dev/v1
+apiVersion: llmsafespaces.dev/v1
 kind: Workspace
 metadata:
   name: ${WORKSPACE_NAME}
@@ -172,7 +172,7 @@ log "Test 5/9 — Workspace lifecycle (create → Running → opencode responds)
 kc -n "${NS}" delete workspace "${WORKSPACE_NAME}" --ignore-not-found >/dev/null 2>&1 || true
 
 cat <<EOF | kc -n "${NS}" apply -f -
-apiVersion: llmsafespace.dev/v1
+apiVersion: llmsafespaces.dev/v1
 kind: Workspace
 metadata:
   name: ${WORKSPACE_NAME}
@@ -241,7 +241,7 @@ esac
 # -----------------------------------------------------------------------------
 # Test 6: API proxy → opencode session lifecycle
 # -----------------------------------------------------------------------------
-# Drive the LLMSafeSpace API service end-to-end: insert a user + API key
+# Drive the LLMSafeSpaces API service end-to-end: insert a user + API key
 # directly into Postgres (no signup endpoint exists in V1), authenticate
 # against /api/v1/workspaces/<id>/sessions, and verify the proxy correctly
 # forwards to the in-pod opencode server.
@@ -259,7 +259,7 @@ PGPOD=$(kc -n "${NS}" get pod -l app.kubernetes.io/name=postgres -o jsonpath='{.
 [[ -n "${PGPOD}" ]] || die "postgres pod not found"
 
 kc -n "${NS}" exec "${PGPOD}" -- env PGPASSWORD=changeme \
-    psql -U llmsafespace -d llmsafespace -v ON_ERROR_STOP=1 -c "
+    psql -U llmsafespaces -d llmsafespaces -v ON_ERROR_STOP=1 -c "
 INSERT INTO users (id, username, email, password_hash, role)
 VALUES ('${USER_ID}', '${USER_ID}', '${USER_ID}@example.test', 'unused-by-api-key-auth', 'user')
 ON CONFLICT (id) DO NOTHING;
@@ -270,27 +270,27 @@ ON CONFLICT (id) DO UPDATE SET key=EXCLUDED.key, active=true;
 " >/dev/null
 ok "user ${USER_ID} + API key seeded in postgres"
 
-# CreateSession via the LLMSafeSpace API. The API uses port_forward'd 18080.
+# CreateSession via the LLMSafeSpaces API. The API uses port_forward'd 18080.
 # (PF_PID was started in Test 1 and remains alive.)
 CREATE_RESP=$(curl -sfm 10 -X POST \
     -H "Authorization: Bearer ${API_KEY}" \
     -H "Content-Type: application/json" \
     -d '{}' \
     "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces/${WORKSPACE_NAME}/sessions" \
-    -o /tmp/llmsafespace-create-session.json -w "%{http_code}" || true)
+    -o /tmp/llmsafespaces-create-session.json -w "%{http_code}" || true)
 case "${CREATE_RESP}" in
     200|201)
-        SESSION_ID=$(python3 -c "import json,sys;d=json.load(open('/tmp/llmsafespace-create-session.json'));print(d.get('id') or d.get('info',{}).get('id') or '')" 2>/dev/null || true)
+        SESSION_ID=$(python3 -c "import json,sys;d=json.load(open('/tmp/llmsafespaces-create-session.json'));print(d.get('id') or d.get('info',{}).get('id') or '')" 2>/dev/null || true)
         if [[ -z "${SESSION_ID}" ]]; then
             warn "session create returned ${CREATE_RESP} but couldn't extract id from response:"
-            cat /tmp/llmsafespace-create-session.json | head -10
+            cat /tmp/llmsafespaces-create-session.json | head -10
             die "could not extract session id"
         fi
         ok "created session via API proxy: ${SESSION_ID}"
         ;;
     *)
         warn "session create returned HTTP ${CREATE_RESP}"
-        cat /tmp/llmsafespace-create-session.json | head -10
+        cat /tmp/llmsafespaces-create-session.json | head -10
         die "session create failed"
         ;;
 esac
@@ -299,20 +299,20 @@ esac
 LIST_RESP=$(curl -sfm 10 \
     -H "Authorization: Bearer ${API_KEY}" \
     "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces/${WORKSPACE_NAME}/sessions" \
-    -o /tmp/llmsafespace-list-sessions.json -w "%{http_code}" || true)
+    -o /tmp/llmsafespaces-list-sessions.json -w "%{http_code}" || true)
 case "${LIST_RESP}" in
     200)
-        if grep -q "${SESSION_ID}" /tmp/llmsafespace-list-sessions.json; then
+        if grep -q "${SESSION_ID}" /tmp/llmsafespaces-list-sessions.json; then
             ok "listed sessions via API proxy includes ${SESSION_ID}"
         else
             warn "session list returned 200 but didn't contain ${SESSION_ID}:"
-            cat /tmp/llmsafespace-list-sessions.json | head -10
+            cat /tmp/llmsafespaces-list-sessions.json | head -10
             die "session not in list"
         fi
         ;;
     *)
         warn "session list returned HTTP ${LIST_RESP}"
-        cat /tmp/llmsafespace-list-sessions.json | head -10
+        cat /tmp/llmsafespaces-list-sessions.json | head -10
         die "session list failed"
         ;;
 esac
@@ -327,19 +327,19 @@ esac
 log "  GET /api/v1/workspaces/${WORKSPACE_NAME} returns the sandbox"
 GETSB_CODE=$(curl -sm 10 -H "Authorization: Bearer ${API_KEY}" \
     "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces/${WORKSPACE_NAME}" \
-    -o /tmp/llmsafespace-getsb.json -w "%{http_code}" || true)
+    -o /tmp/llmsafespaces-getsb.json -w "%{http_code}" || true)
 [[ "${GETSB_CODE}" == "200" ]] || die "GET sandbox returned ${GETSB_CODE}"
 ok "GET sandbox returns 200"
 
 log "  GET /api/v1/workspaces/${WORKSPACE_NAME}/status returns Running"
 STATUS_CODE=$(curl -sm 10 -H "Authorization: Bearer ${API_KEY}" \
     "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces/${WORKSPACE_NAME}/status" \
-    -o /tmp/llmsafespace-status.json -w "%{http_code}" || true)
+    -o /tmp/llmsafespaces-status.json -w "%{http_code}" || true)
 [[ "${STATUS_CODE}" == "200" ]] || die "GET status returned ${STATUS_CODE}"
-if grep -q '"phase":"Running"' /tmp/llmsafespace-status.json; then
+if grep -q '"phase":"Running"' /tmp/llmsafespaces-status.json; then
     ok "GET status reports phase=Running"
 else
-    warn "status payload: $(cat /tmp/llmsafespace-status.json | head -c 200)"
+    warn "status payload: $(cat /tmp/llmsafespaces-status.json | head -c 200)"
     die "GET status did not return phase=Running"
 fi
 
@@ -348,10 +348,10 @@ fi
 # (no metadata row). We still exercise the route to confirm it's wired.
 LIST_SB_CODE=$(curl -sm 10 -H "Authorization: Bearer ${API_KEY}" \
     "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces?limit=10" \
-    -o /tmp/llmsafespace-listsb.json -w "%{http_code}" || true)
+    -o /tmp/llmsafespaces-listsb.json -w "%{http_code}" || true)
 case "${LIST_SB_CODE}" in
     200) ok "GET /api/v1/workspaces returns 200" ;;
-    *)   warn "GET /api/v1/workspaces returned ${LIST_SB_CODE}: $(cat /tmp/llmsafespace-listsb.json | head -c 200)" ;;
+    *)   warn "GET /api/v1/workspaces returned ${LIST_SB_CODE}: $(cat /tmp/llmsafespaces-listsb.json | head -c 200)" ;;
 esac
 
 # -----------------------------------------------------------------------------
@@ -425,10 +425,10 @@ print(json.dumps({'provider': 'litellm', 'config': json.loads(sys.argv[1])}))
         -H "Content-Type: application/json" \
         -d '{}' \
         "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces/${WORKSPACE_NAME}/sessions" \
-        -o /tmp/llmsafespace-prompt-sess.json -w "%{http_code}" || true)
+        -o /tmp/llmsafespaces-prompt-sess.json -w "%{http_code}" || true)
     [[ "${PROMPT_SESS_CODE}" == "200" || "${PROMPT_SESS_CODE}" == "201" ]] \
         || die "create-session-for-prompt failed: HTTP ${PROMPT_SESS_CODE}"
-    PROMPT_SID=$(python3 -c "import json;print(json.load(open('/tmp/llmsafespace-prompt-sess.json'))['id'])")
+    PROMPT_SID=$(python3 -c "import json;print(json.load(open('/tmp/llmsafespaces-prompt-sess.json'))['id'])")
     ok "session for prompt: ${PROMPT_SID}"
 
     # Send a prompt; expect a non-empty assistant reply.
@@ -445,15 +445,15 @@ print(json.dumps({
         -H "Content-Type: application/json" \
         -d "${PROMPT_BODY}" \
         "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces/${WORKSPACE_NAME}/sessions/${PROMPT_SID}/message" \
-        -o /tmp/llmsafespace-prompt-resp.json -w "%{http_code}" || true)
+        -o /tmp/llmsafespaces-prompt-resp.json -w "%{http_code}" || true)
     [[ "${PROMPT_CODE}" == "200" ]] \
-        || { warn "prompt body: $(cat /tmp/llmsafespace-prompt-resp.json | head -c 500)"; die "prompt failed: HTTP ${PROMPT_CODE}"; }
+        || { warn "prompt body: $(cat /tmp/llmsafespaces-prompt-resp.json | head -c 500)"; die "prompt failed: HTTP ${PROMPT_CODE}"; }
 
     # Assert: response has at least one text part with non-empty content,
     # AND no parts of type=="patch" (default strip).
     PROMPT_OK=$(python3 -c "
 import json
-d = json.load(open('/tmp/llmsafespace-prompt-resp.json'))
+d = json.load(open('/tmp/llmsafespaces-prompt-resp.json'))
 parts = d.get('parts') or []
 texts = [p.get('text','') for p in parts if p.get('type') == 'text']
 patches = [p for p in parts if p.get('type') == 'patch']
@@ -479,13 +479,13 @@ print(json.dumps({
         -H "Content-Type: application/json" \
         -d "${VERBOSE_BODY}" \
         "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces/${WORKSPACE_NAME}/sessions/${PROMPT_SID}/message?verbose=true" \
-        -o /tmp/llmsafespace-verbose-resp.json -w "%{http_code}" || true)
+        -o /tmp/llmsafespaces-verbose-resp.json -w "%{http_code}" || true)
     [[ "${VERBOSE_CODE}" == "200" ]] \
         || die "verbose prompt failed: HTTP ${VERBOSE_CODE}"
 
     VERBOSE_OK=$(python3 -c "
 import json
-d = json.load(open('/tmp/llmsafespace-verbose-resp.json'))
+d = json.load(open('/tmp/llmsafespaces-verbose-resp.json'))
 parts = d.get('parts') or []
 patches = [p for p in parts if p.get('type') == 'patch']
 print('OK' if patches else 'FAIL: no patch parts present in verbose response')
@@ -600,12 +600,12 @@ CREATE_SB_CODE=$(curl -sm 15 -X POST \
     -H "Content-Type: application/json" \
     -d "${DISPOSABLE_SB_BODY}" \
     "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces" \
-    -o /tmp/llmsafespace-create-sb.json -w "%{http_code}" || true)
+    -o /tmp/llmsafespaces-create-sb.json -w "%{http_code}" || true)
 case "${CREATE_SB_CODE}" in
     200|201)
         DISPOSABLE_SB=$(python3 -c "
 import json, sys
-d = json.load(open('/tmp/llmsafespace-create-sb.json'))
+d = json.load(open('/tmp/llmsafespaces-create-sb.json'))
 # Sandbox API returns ObjectMeta inline — name lives at .name (or .metadata.name).
 print(d.get('name') or d.get('metadata', {}).get('name', ''))
 ")
@@ -613,7 +613,7 @@ print(d.get('name') or d.get('metadata', {}).get('name', ''))
         ok "created disposable sandbox via API: ${DISPOSABLE_SB}"
         ;;
     *)
-        warn "POST /api/v1/workspaces returned ${CREATE_SB_CODE}: $(cat /tmp/llmsafespace-create-sb.json | head -c 300)"
+        warn "POST /api/v1/workspaces returned ${CREATE_SB_CODE}: $(cat /tmp/llmsafespaces-create-sb.json | head -c 300)"
         die "create-sandbox-via-API failed"
         ;;
 esac
@@ -639,7 +639,7 @@ if [[ -n "${PROMPT_SESSION_ID:-}" ]]; then
     kc -n "${NS}" delete workspace "${WORKSPACE_NAME}" --ignore-not-found --wait=true >/dev/null 2>&1 || true
 
     cat <<EOF | kc -n "${NS}" apply -f - >/dev/null
-apiVersion: llmsafespace.dev/v1
+apiVersion: llmsafespaces.dev/v1
 kind: Workspace
 metadata:
   name: ${WORKSPACE_NAME}
@@ -675,12 +675,12 @@ EOF
     HIST_CODE=$(curl -sm 15 \
         -H "Authorization: Bearer ${API_KEY}" \
         "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces/${WORKSPACE_NAME}/sessions/${PROMPT_SESSION_ID}/message" \
-        -o /tmp/llmsafespace-history.json -w "%{http_code}" || true)
+        -o /tmp/llmsafespaces-history.json -w "%{http_code}" || true)
     [[ "${HIST_CODE}" == "200" ]] || die "history fetch returned ${HIST_CODE}"
 
     HIST_OK=$(python3 -c "
 import json
-msgs = json.load(open('/tmp/llmsafespace-history.json'))
+msgs = json.load(open('/tmp/llmsafespaces-history.json'))
 texts = []
 for m in msgs:
     for p in m.get('parts', []):
@@ -779,7 +779,7 @@ fi
 log "Test 12 — Retry from Failed (fix #5)"
 
 # We'll test the API response shape even without forcing a real failure.
-RETRY_CODE=$(curl -s -o /tmp/llmsafespace-retry.json -w "%{http_code}" \
+RETRY_CODE=$(curl -s -o /tmp/llmsafespaces-retry.json -w "%{http_code}" \
     -X POST \
     -H "Authorization: Bearer ${TOKEN}" \
     "http://127.0.0.1:${PORTFWD_PORT}/api/v1/workspaces/${WORKSPACE_NAME}/retry")

@@ -6,7 +6,7 @@ import { Runner, Config, configFromEnv, rawDo, hasField } from '../canary.js';
 
 async function run(r: Runner, cfg: Config): Promise<void> {
   const loginUrl = `${cfg.apiUrl}/api/v1/auth/login`;
-  const body = Buffer.from(JSON.stringify({ email: 'rate-limit-test@llmsafespace.test', password: 'wrong-password' }));
+  const body = Buffer.from(JSON.stringify({ email: 'rate-limit-test@llmsafespaces.test', password: 'wrong-password' }));
 
   const [s0] = await rawDo('POST', loginUrl, '', body);
   r.assert(s0 === 401, 'first-login: 401 (not 429)', `got ${s0}`);

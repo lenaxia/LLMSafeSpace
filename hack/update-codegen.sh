@@ -23,8 +23,8 @@ if [ ! -d "${CODEGEN_PKG}" ]; then
 fi
 
 echo "=== Generating deepcopy functions using generate-groups.sh ==="
-echo "Target package: github.com/llmsafespace/pkg/client"
-echo "API Package: github.com/llmsafespace/pkg"
+echo "Target package: github.com/llmsafespaces/pkg/client"
+echo "API Package: github.com/llmsafespaces/pkg"
 echo "Groups/Versions: types:v1"
 
 # Get the module name from go.mod
@@ -54,7 +54,7 @@ else
 fi
 
 echo "=== Generating deepcopy functions using direct approach ==="
-echo "Input directories: github.com/llmsafespace/pkg/types"
+echo "Input directories: github.com/llmsafespaces/pkg/types"
 
 # No need for alternative approach anymore
 echo "Direct deepcopy-gen execution completed"

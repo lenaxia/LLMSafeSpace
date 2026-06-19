@@ -34,7 +34,7 @@ import (
 
 	"go.uber.org/zap"
 
-	sec "github.com/lenaxia/llmsafespace/pkg/secrets"
+	sec "github.com/lenaxia/llmsafespaces/pkg/secrets"
 )
 
 const providerModelCacheTTL = 24 * time.Hour

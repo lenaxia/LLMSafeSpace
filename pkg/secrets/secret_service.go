@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lenaxia/llmsafespace/pkg/validation"
+	"github.com/lenaxia/llmsafespaces/pkg/validation"
 )
 
 // SecretService provides encrypted secret CRUD operations.
@@ -544,7 +544,7 @@ func validateMountPath(mp string) error {
 	// because filepath.Clean strips leading "..". The concrete base in
 	// production is /home/sandbox/.secrets but only the depth matters
 	// for this check.
-	const base = "/llmsafespace/notional/secrets"
+	const base = "/llmsafespaces/notional/secrets"
 	candidate := filepath.Clean(filepath.Join(base, mp))
 	rel, err := filepath.Rel(base, candidate)
 	if err != nil {

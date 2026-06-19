@@ -6,7 +6,7 @@ package relay
 import (
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
+	"github.com/lenaxia/llmsafespaces/controller/internal/metrics"
 )
 
 // setRelayHealthyReplicas sets the gauge for the current count of healthy relays.

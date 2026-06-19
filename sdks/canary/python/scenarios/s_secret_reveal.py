@@ -8,16 +8,16 @@ import sys, os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 from canary import Runner, Config, config_from_env, raw_do, has_field
-from llmsafespace import LLMSafeSpace
+from llmsafespaces import LLMSafeSpaces
 
 SECRET_VALUE = "canary-py-reveal-test-val-xyz"
 
 
 def run(r: Runner, cfg: Config) -> None:
     if not cfg.password:
-        r.ok("reveal: skipped (no LLMSAFESPACE_PASSWORD)")
+        r.ok("reveal: skipped (no LLMSAFESPACES_PASSWORD)")
         return
-    c = LLMSafeSpace(cfg.api_url, api_key=cfg.api_key, timeout=20.0)
+    c = LLMSafeSpaces(cfg.api_url, api_key=cfg.api_key, timeout=20.0)
     sid = None
     try:
         ok, s = r.assert_no_error(

@@ -21,16 +21,16 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/lenaxia/llmsafespace/api/internal/config"
-	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
-	"github.com/lenaxia/llmsafespace/api/internal/utilities"
-	"github.com/lenaxia/llmsafespace/pkg/secrets"
-	"github.com/lenaxia/llmsafespace/pkg/settings"
-	"github.com/lenaxia/llmsafespace/pkg/types"
-	pkgutil "github.com/lenaxia/llmsafespace/pkg/utilities"
+	"github.com/lenaxia/llmsafespaces/api/internal/config"
+	apierrors "github.com/lenaxia/llmsafespaces/api/internal/errors"
+	"github.com/lenaxia/llmsafespaces/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespaces/api/internal/logger"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/metrics"
+	"github.com/lenaxia/llmsafespaces/api/internal/utilities"
+	"github.com/lenaxia/llmsafespaces/pkg/secrets"
+	"github.com/lenaxia/llmsafespaces/pkg/settings"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
+	pkgutil "github.com/lenaxia/llmsafespaces/pkg/utilities"
 )
 
 // KeyServiceInterface abstracts the key service for DEK lifecycle.
@@ -53,7 +53,7 @@ func (s *Service) SetInstanceSettings(svc *settings.InstanceService) {
 }
 
 // SetMasterKey sets the server master key used for encrypting API key ciphertext
-// (enabling DEK re-wrap on rotation). Derived from LLMSAFESPACE_MASTER_SECRET.
+// (enabling DEK re-wrap on rotation). Derived from LLMSAFESPACES_MASTER_SECRET.
 func (s *Service) SetMasterKey(key []byte) {
 	provider, err := secrets.NewStaticKeyProvider(key)
 	if err != nil {
@@ -507,7 +507,7 @@ func (s *Service) validateAPIKey(apiKey, clientIP string) (string, error) {
 				if !keyRec.DekSynced {
 					s.logger.Warn("API key DEK re-sync in progress", "key_id", keyRec.ID)
 				} else {
-					apiKEK, deriveErr := secrets.DeriveKEKFromKey([]byte(apiKey), keyRec.KekSalt, "llmsafespace-apikey-kek")
+					apiKEK, deriveErr := secrets.DeriveKEKFromKey([]byte(apiKey), keyRec.KekSalt, "llmsafespaces-apikey-kek")
 					if deriveErr != nil {
 						s.logger.Error("Failed to derive API KEK", deriveErr)
 					} else {
@@ -529,7 +529,7 @@ func (s *Service) validateAPIKey(apiKey, clientIP string) (string, error) {
 		if dbErr != nil {
 			s.logger.Error("Failed to get API key record for DEK check", dbErr, "key_hash", keyHash)
 		} else if keyRec != nil && keyRec.DecryptAccess && len(keyRec.WrappedDEK) > 0 && len(keyRec.KekSalt) > 0 {
-			apiKEK, deriveErr := secrets.DeriveKEKFromKey([]byte(apiKey), keyRec.KekSalt, "llmsafespace-apikey-kek")
+			apiKEK, deriveErr := secrets.DeriveKEKFromKey([]byte(apiKey), keyRec.KekSalt, "llmsafespaces-apikey-kek")
 			if deriveErr != nil {
 				s.logger.Error("Failed to derive API KEK", deriveErr)
 			} else {
@@ -841,7 +841,7 @@ func (s *Service) CreateAPIKey(ctx context.Context, userID string, req types.Cre
 			return nil, fmt.Errorf("failed to generate KEK salt: %w", err)
 		}
 
-		apiKEK, err := secrets.DeriveKEKFromKey([]byte(keyStr), kekSalt, "llmsafespace-apikey-kek")
+		apiKEK, err := secrets.DeriveKEKFromKey([]byte(keyStr), kekSalt, "llmsafespaces-apikey-kek")
 		if err != nil {
 			return nil, fmt.Errorf("failed to derive API KEK: %w", err)
 		}

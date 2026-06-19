@@ -1,15 +1,15 @@
 #!/bin/bash
 
-# Database initialization script for LLMSafeSpace
+# Database initialization script for LLMSafeSpaces
 
 set -e
 
 # Default values
-DB_HOST=${LLMSAFESPACE_DATABASE_HOST:-localhost}
-DB_PORT=${LLMSAFESPACE_DATABASE_PORT:-5432}
-DB_USER=${LLMSAFESPACE_DATABASE_USER:-llmsafespace}
-DB_PASSWORD=${LLMSAFESPACE_DATABASE_PASSWORD:-}
-DB_NAME=${LLMSAFESPACE_DATABASE_DATABASE:-llmsafespace}
+DB_HOST=${LLMSAFESPACES_DATABASE_HOST:-localhost}
+DB_PORT=${LLMSAFESPACES_DATABASE_PORT:-5432}
+DB_USER=${LLMSAFESPACES_DATABASE_USER:-llmsafespaces}
+DB_PASSWORD=${LLMSAFESPACES_DATABASE_PASSWORD:-}
+DB_NAME=${LLMSAFESPACES_DATABASE_DATABASE:-llmsafespaces}
 
 # Check if psql is installed
 if ! command -v psql &> /dev/null; then

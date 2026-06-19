@@ -44,7 +44,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
 )
 
 // doPost issues an authenticated POST with an empty body to the opencode

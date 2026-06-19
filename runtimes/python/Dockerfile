@@ -1,4 +1,4 @@
-FROM ghcr.io/lenaxia/llmsafespace/base:latest
+FROM ghcr.io/lenaxia/llmsafespaces/base:latest
 
 USER root
 
@@ -24,13 +24,13 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     numpy==1.24.3  # Required by many Python packages
 
 # Copy Python-specific security configurations
-COPY --chown=root:root security/python/restricted_modules.json /etc/llmsafespace/python/
+COPY --chown=root:root security/python/restricted_modules.json /etc/llmsafespaces/python/
 COPY --chown=root:root security/python/sitecustomize.py /opt/venv/lib/python3.9/site-packages/
 
 # Copy Python security wrapper
-COPY --chown=root:root tools/python-security-wrapper.py /opt/llmsafespace/bin/python-security-wrapper.py
-RUN chmod 755 /opt/llmsafespace/bin/python-security-wrapper.py && \
-    python3.9 -m py_compile /opt/llmsafespace/bin/python-security-wrapper.py
+COPY --chown=root:root tools/python-security-wrapper.py /opt/llmsafespaces/bin/python-security-wrapper.py
+RUN chmod 755 /opt/llmsafespaces/bin/python-security-wrapper.py && \
+    python3.9 -m py_compile /opt/llmsafespaces/bin/python-security-wrapper.py
 
 USER sandbox
 CMD ["python-security-wrapper.py"]

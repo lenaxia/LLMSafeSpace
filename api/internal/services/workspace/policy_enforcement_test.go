@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 // stubPolicyChecker implements PolicyChecker for enforcement tests.

@@ -13,7 +13,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 // newMockOrgStore builds a PgOrgStore backed by a sqlmock DB for unit testing

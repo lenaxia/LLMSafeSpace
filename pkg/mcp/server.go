@@ -13,13 +13,13 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// NewServer creates a configured MCP server with all LLMSafeSpace tools registered.
+// NewServer creates a configured MCP server with all LLMSafeSpaces tools registered.
 // Tools are workspace-centric — the sandbox layer is hidden from callers.
 func NewServer(client APIClient, defaultTimeout time.Duration) *server.MCPServer {
 	h := &handlers{client: client, timeout: defaultTimeout}
 
 	srv := server.NewMCPServer(
-		"LLMSafeSpace",
+		"LLMSafeSpaces",
 		"1.0.0",
 		server.WithToolCapabilities(true),
 	)

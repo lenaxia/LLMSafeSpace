@@ -1,4 +1,4 @@
-You are triaging a GitHub issue for the LLMSafeSpace repository. This is primarily a READ-ONLY task.
+You are triaging a GitHub issue for the LLMSafeSpaces repository. This is primarily a READ-ONLY task.
 
 Rules:
 1. Read README-LLM.md for architectural context.

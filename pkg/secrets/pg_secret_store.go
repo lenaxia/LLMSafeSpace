@@ -15,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
 )
 
 // PgSecretStore implements SecretStore using PostgreSQL.

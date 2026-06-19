@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
 )
 
 // TestListModels_LargeProviderCatalog_NotTruncated guards the regression

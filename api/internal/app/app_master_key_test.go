@@ -7,23 +7,23 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lenaxia/llmsafespace/api/internal/config"
-	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespaces/api/internal/config"
+	"github.com/lenaxia/llmsafespaces/api/internal/logger"
 )
 
 // ---- deriveServerKey tests ----
 
 func TestDeriveServerKey_AbsentEnv_ReturnsNil(t *testing.T) {
-	t.Setenv("LLMSAFESPACE_MASTER_SECRET", "")
-	t.Setenv("LLMSAFESPACE_DEK_MASTER_KEY", "")
+	t.Setenv("LLMSAFESPACES_MASTER_SECRET", "")
+	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "")
 	if deriveServerKey("test") != nil {
 		t.Error("expected nil when env var absent")
 	}
 }
 
 func TestDeriveServerKey_EmptyEnv_ReturnsNil(t *testing.T) {
-	t.Setenv("LLMSAFESPACE_MASTER_SECRET", "")
-	t.Setenv("LLMSAFESPACE_DEK_MASTER_KEY", "")
+	t.Setenv("LLMSAFESPACES_MASTER_SECRET", "")
+	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "")
 	if deriveServerKey("test") != nil {
 		t.Error("expected nil for empty string")
 	}
@@ -31,8 +31,8 @@ func TestDeriveServerKey_EmptyEnv_ReturnsNil(t *testing.T) {
 
 func TestDeriveServerKey_ShortRawBytes_ReturnsNil(t *testing.T) {
 	// 31 non-hex chars → 31 raw bytes → below 32-byte minimum
-	t.Setenv("LLMSAFESPACE_MASTER_SECRET", "abcdefghijklmnopqrstuvwxyz01234")
-	t.Setenv("LLMSAFESPACE_DEK_MASTER_KEY", "")
+	t.Setenv("LLMSAFESPACES_MASTER_SECRET", "abcdefghijklmnopqrstuvwxyz01234")
+	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "")
 	if deriveServerKey("test") != nil {
 		t.Error("expected nil for 31-char raw bytes")
 	}
@@ -40,8 +40,8 @@ func TestDeriveServerKey_ShortRawBytes_ReturnsNil(t *testing.T) {
 
 func TestDeriveServerKey_Exactly32RawBytes_Returns32ByteKey(t *testing.T) {
 	// 32 non-hex chars → 32 raw bytes → meets minimum
-	t.Setenv("LLMSAFESPACE_MASTER_SECRET", "abcdefghijklmnopqrstuvwxyz012345")
-	t.Setenv("LLMSAFESPACE_DEK_MASTER_KEY", "")
+	t.Setenv("LLMSAFESPACES_MASTER_SECRET", "abcdefghijklmnopqrstuvwxyz012345")
+	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "")
 	key := deriveServerKey("test")
 	if key == nil {
 		t.Fatal("expected non-nil key for 32-char raw bytes")
@@ -53,8 +53,8 @@ func TestDeriveServerKey_Exactly32RawBytes_Returns32ByteKey(t *testing.T) {
 
 func TestDeriveServerKey_AlphanumericHelmFormat_Returns32ByteKey(t *testing.T) {
 	// Helm randAlphaNum 64 — alphanumeric, not hex, 64 chars = 64 raw bytes
-	t.Setenv("LLMSAFESPACE_MASTER_SECRET", "Abc123DefGhi456JklMno789PqrStu0VwxYz1Abc123DefGhi456JklMno789Pq")
-	t.Setenv("LLMSAFESPACE_DEK_MASTER_KEY", "")
+	t.Setenv("LLMSAFESPACES_MASTER_SECRET", "Abc123DefGhi456JklMno789PqrStu0VwxYz1Abc123DefGhi456JklMno789Pq")
+	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "")
 	key := deriveServerKey("test")
 	if key == nil {
 		t.Fatal("expected non-nil key for 64-char alphanumeric (Helm format)")
@@ -66,8 +66,8 @@ func TestDeriveServerKey_AlphanumericHelmFormat_Returns32ByteKey(t *testing.T) {
 
 func TestDeriveServerKey_ValidHex64Chars_Returns32ByteKey(t *testing.T) {
 	// 64 lowercase hex chars → 32 decoded bytes
-	t.Setenv("LLMSAFESPACE_MASTER_SECRET", "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20")
-	t.Setenv("LLMSAFESPACE_DEK_MASTER_KEY", "")
+	t.Setenv("LLMSAFESPACES_MASTER_SECRET", "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20")
+	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "")
 	key := deriveServerKey("test")
 	if key == nil {
 		t.Fatal("expected non-nil key for 64-char hex")
@@ -79,8 +79,8 @@ func TestDeriveServerKey_ValidHex64Chars_Returns32ByteKey(t *testing.T) {
 
 func TestDeriveServerKey_ShortHex_ReturnsNil(t *testing.T) {
 	// 60 hex chars → 30 decoded bytes → below 32-byte minimum
-	t.Setenv("LLMSAFESPACE_MASTER_SECRET", "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e")
-	t.Setenv("LLMSAFESPACE_DEK_MASTER_KEY", "")
+	t.Setenv("LLMSAFESPACES_MASTER_SECRET", "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e")
+	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "")
 	if deriveServerKey("test") != nil {
 		t.Error("expected nil for 60-char hex (30 decoded bytes)")
 	}
@@ -88,8 +88,8 @@ func TestDeriveServerKey_ShortHex_ReturnsNil(t *testing.T) {
 
 func TestDeriveServerKey_InvalidHexLongEnough_FallsBackToRawBytes(t *testing.T) {
 	// Non-hex but 32+ chars → raw bytes path → should succeed
-	t.Setenv("LLMSAFESPACE_MASTER_SECRET", "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ") // 32 uppercase Z — not valid hex
-	t.Setenv("LLMSAFESPACE_DEK_MASTER_KEY", "")
+	t.Setenv("LLMSAFESPACES_MASTER_SECRET", "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ") // 32 uppercase Z — not valid hex
+	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "")
 	key := deriveServerKey("test")
 	if key == nil {
 		t.Fatal("expected non-nil key for 32-char non-hex string (raw bytes path)")
@@ -100,23 +100,23 @@ func TestDeriveServerKey_InvalidHexLongEnough_FallsBackToRawBytes(t *testing.T) 
 }
 
 func TestDeriveServerKey_LegacyEnvVar_Accepted(t *testing.T) {
-	t.Setenv("LLMSAFESPACE_MASTER_SECRET", "")
-	t.Setenv("LLMSAFESPACE_DEK_MASTER_KEY", "abcdefghijklmnopqrstuvwxyz012345")
+	t.Setenv("LLMSAFESPACES_MASTER_SECRET", "")
+	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "abcdefghijklmnopqrstuvwxyz012345")
 	key := deriveServerKey("test")
 	if key == nil {
-		t.Fatal("expected non-nil key via legacy env var LLMSAFESPACE_DEK_MASTER_KEY")
+		t.Fatal("expected non-nil key via legacy env var LLMSAFESPACES_DEK_MASTER_KEY")
 	}
 }
 
 func TestDeriveServerKey_PrimaryEnvTakesPrecedence(t *testing.T) {
 	primary := "abcdefghijklmnopqrstuvwxyz012345" // 32 chars
 	legacy := "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"  // different 32 chars
-	t.Setenv("LLMSAFESPACE_MASTER_SECRET", primary)
-	t.Setenv("LLMSAFESPACE_DEK_MASTER_KEY", legacy)
+	t.Setenv("LLMSAFESPACES_MASTER_SECRET", primary)
+	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", legacy)
 
 	primaryKey := deriveServerKey("test")
 
-	t.Setenv("LLMSAFESPACE_MASTER_SECRET", "")
+	t.Setenv("LLMSAFESPACES_MASTER_SECRET", "")
 	legacyKey := deriveServerKey("test")
 
 	if primaryKey == nil || legacyKey == nil {
@@ -131,8 +131,8 @@ func TestDeriveServerKey_PrimaryEnvTakesPrecedence(t *testing.T) {
 }
 
 func TestDeriveServerKey_NoSideEffects(t *testing.T) {
-	t.Setenv("LLMSAFESPACE_MASTER_SECRET", "abcdefghijklmnopqrstuvwxyz012345")
-	t.Setenv("LLMSAFESPACE_DEK_MASTER_KEY", "")
+	t.Setenv("LLMSAFESPACES_MASTER_SECRET", "abcdefghijklmnopqrstuvwxyz012345")
+	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "")
 	k1 := deriveServerKey("test")
 	k2 := deriveServerKey("test")
 	if len(k1) != len(k2) {
@@ -149,14 +149,14 @@ func TestDeriveServerKey_NoSideEffects(t *testing.T) {
 // ---- validateMasterSecret tests ----
 
 func TestValidateMasterSecret_AbsentEnv_ReturnsError(t *testing.T) {
-	t.Setenv("LLMSAFESPACE_MASTER_SECRET", "")
-	t.Setenv("LLMSAFESPACE_DEK_MASTER_KEY", "")
+	t.Setenv("LLMSAFESPACES_MASTER_SECRET", "")
+	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "")
 	log, logs := logger.NewObserved()
 	err := validateMasterSecret(log)
 	if err == nil {
 		t.Fatal("expected error when master secret absent")
 	}
-	if !strings.Contains(err.Error(), "LLMSAFESPACE_MASTER_SECRET") {
+	if !strings.Contains(err.Error(), "LLMSAFESPACES_MASTER_SECRET") {
 		t.Errorf("error should mention env var name, got: %v", err)
 	}
 	if logs.Len() != 0 {
@@ -165,8 +165,8 @@ func TestValidateMasterSecret_AbsentEnv_ReturnsError(t *testing.T) {
 }
 
 func TestValidateMasterSecret_TooShort_LogsWarnAndReturnsError(t *testing.T) {
-	t.Setenv("LLMSAFESPACE_MASTER_SECRET", "shortkey") // 8 chars = 8 bytes
-	t.Setenv("LLMSAFESPACE_DEK_MASTER_KEY", "")
+	t.Setenv("LLMSAFESPACES_MASTER_SECRET", "shortkey") // 8 chars = 8 bytes
+	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "")
 	log, logs := logger.NewObserved()
 	err := validateMasterSecret(log)
 	if err == nil {
@@ -190,8 +190,8 @@ func TestValidateMasterSecret_TooShort_LogsWarnAndReturnsError(t *testing.T) {
 
 func TestValidateMasterSecret_TooShort_DoesNotLogSecret(t *testing.T) {
 	secret := "shortkey"
-	t.Setenv("LLMSAFESPACE_MASTER_SECRET", secret)
-	t.Setenv("LLMSAFESPACE_DEK_MASTER_KEY", "")
+	t.Setenv("LLMSAFESPACES_MASTER_SECRET", secret)
+	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "")
 	log, logs := logger.NewObserved()
 	_ = validateMasterSecret(log)
 	for _, entry := range logs.All() {
@@ -207,8 +207,8 @@ func TestValidateMasterSecret_TooShort_DoesNotLogSecret(t *testing.T) {
 }
 
 func TestValidateMasterSecret_AlphanumericHelmFormat_Succeeds(t *testing.T) {
-	t.Setenv("LLMSAFESPACE_MASTER_SECRET", "Abc123DefGhi456JklMno789PqrStu0VwxYz1Abc123DefGhi456JklMno789Pq")
-	t.Setenv("LLMSAFESPACE_DEK_MASTER_KEY", "")
+	t.Setenv("LLMSAFESPACES_MASTER_SECRET", "Abc123DefGhi456JklMno789PqrStu0VwxYz1Abc123DefGhi456JklMno789Pq")
+	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "")
 	log, _ := logger.NewObserved()
 	if err := validateMasterSecret(log); err != nil {
 		t.Errorf("64-char alphanumeric should succeed, got: %v", err)
@@ -216,8 +216,8 @@ func TestValidateMasterSecret_AlphanumericHelmFormat_Succeeds(t *testing.T) {
 }
 
 func TestValidateMasterSecret_HexFormat_Succeeds(t *testing.T) {
-	t.Setenv("LLMSAFESPACE_MASTER_SECRET", "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20")
-	t.Setenv("LLMSAFESPACE_DEK_MASTER_KEY", "")
+	t.Setenv("LLMSAFESPACES_MASTER_SECRET", "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20")
+	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "")
 	log, _ := logger.NewObserved()
 	if err := validateMasterSecret(log); err != nil {
 		t.Errorf("64-char hex should succeed, got: %v", err)
@@ -225,11 +225,11 @@ func TestValidateMasterSecret_HexFormat_Succeeds(t *testing.T) {
 }
 
 func TestValidateMasterSecret_LegacyEnvVar_Accepted(t *testing.T) {
-	t.Setenv("LLMSAFESPACE_MASTER_SECRET", "")
-	t.Setenv("LLMSAFESPACE_DEK_MASTER_KEY", "abcdefghijklmnopqrstuvwxyz012345") // 32 chars
+	t.Setenv("LLMSAFESPACES_MASTER_SECRET", "")
+	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "abcdefghijklmnopqrstuvwxyz012345") // 32 chars
 	log, _ := logger.NewObserved()
 	if err := validateMasterSecret(log); err != nil {
-		t.Errorf("LLMSAFESPACE_DEK_MASTER_KEY should satisfy validation, got: %v", err)
+		t.Errorf("LLMSAFESPACES_DEK_MASTER_KEY should satisfy validation, got: %v", err)
 	}
 }
 
@@ -246,15 +246,15 @@ func minimalCfg() *config.Config {
 }
 
 func TestApp_New_FailsWithoutMasterSecret(t *testing.T) {
-	t.Setenv("LLMSAFESPACE_MASTER_SECRET", "")
-	t.Setenv("LLMSAFESPACE_DEK_MASTER_KEY", "")
+	t.Setenv("LLMSAFESPACES_MASTER_SECRET", "")
+	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "")
 	log, _ := logger.NewObserved()
 	_, err := New(minimalCfg(), log)
 	if err == nil {
 		t.Fatal("app.New should fail when master secret is absent")
 	}
-	if !strings.Contains(err.Error(), "LLMSAFESPACE_MASTER_SECRET") {
-		t.Errorf("error should mention LLMSAFESPACE_MASTER_SECRET, got: %v", err)
+	if !strings.Contains(err.Error(), "LLMSAFESPACES_MASTER_SECRET") {
+		t.Errorf("error should mention LLMSAFESPACES_MASTER_SECRET, got: %v", err)
 	}
 	// Must NOT contain kubernetes-related error — validateMasterSecret fires first
 	if strings.Contains(err.Error(), "kubernetes") || strings.Contains(err.Error(), "kubeconfig") {
@@ -263,8 +263,8 @@ func TestApp_New_FailsWithoutMasterSecret(t *testing.T) {
 }
 
 func TestApp_New_FailsWithTooShortMasterSecret(t *testing.T) {
-	t.Setenv("LLMSAFESPACE_MASTER_SECRET", "tooshort") // 8 chars
-	t.Setenv("LLMSAFESPACE_DEK_MASTER_KEY", "")
+	t.Setenv("LLMSAFESPACES_MASTER_SECRET", "tooshort") // 8 chars
+	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "")
 	log, _ := logger.NewObserved()
 	_, err := New(minimalCfg(), log)
 	if err == nil {
@@ -276,15 +276,15 @@ func TestApp_New_FailsWithTooShortMasterSecret(t *testing.T) {
 }
 
 func TestApp_New_WithValidMasterSecret_FailsAtInfra(t *testing.T) {
-	t.Setenv("LLMSAFESPACE_MASTER_SECRET", "abcdefghijklmnopqrstuvwxyz012345") // 32 raw bytes
-	t.Setenv("LLMSAFESPACE_DEK_MASTER_KEY", "")
+	t.Setenv("LLMSAFESPACES_MASTER_SECRET", "abcdefghijklmnopqrstuvwxyz012345") // 32 raw bytes
+	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "")
 	log, _ := logger.NewObserved()
 	_, err := New(minimalCfg(), log)
 	if err == nil {
 		t.Fatal("app.New should fail (no real infra available)")
 	}
 	// Must NOT be the master-secret error — validation passed and infra was attempted
-	if strings.Contains(err.Error(), "LLMSAFESPACE_MASTER_SECRET") {
+	if strings.Contains(err.Error(), "LLMSAFESPACES_MASTER_SECRET") {
 		t.Errorf("master secret validation should pass, but got master-secret error: %v", err)
 	}
 	// Must be a kubernetes/infra error — confirming validateMasterSecret passed

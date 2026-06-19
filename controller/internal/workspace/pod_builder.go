@@ -11,8 +11,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Workspace) (*corev1.Pod, error) {
@@ -48,10 +48,10 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 	}
 
 	annotations := map[string]string{
-		"llmsafespace.dev/created-by": "controller",
+		"llmsafespaces.dev/created-by": "controller",
 	}
 	if runtimeEnvName != "" {
-		annotations["llmsafespace.dev/runtime-env"] = runtimeEnvName
+		annotations["llmsafespaces.dev/runtime-env"] = runtimeEnvName
 	}
 
 	trueVal := true

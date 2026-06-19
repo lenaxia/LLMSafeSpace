@@ -8,11 +8,11 @@ import sys, os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 from canary import Runner, Config, config_from_env
-from llmsafespace import LLMSafeSpace
+from llmsafespaces import LLMSafeSpaces
 
 
 def run(r: Runner, cfg: Config) -> None:
-    c = LLMSafeSpace(cfg.api_url, api_key=cfg.api_key, timeout=20.0)
+    c = LLMSafeSpaces(cfg.api_url, api_key=cfg.api_key, timeout=20.0)
     key_id = None
     try:
         ok, key = r.assert_no_error(
@@ -36,7 +36,7 @@ def run(r: Runner, cfg: Config) -> None:
                 r.assert_(not found.key, "list-keys: full key absent in list")
 
         # New key authenticates
-        new_c = LLMSafeSpace(cfg.api_url, api_key=key.key, timeout=10.0)
+        new_c = LLMSafeSpaces(cfg.api_url, api_key=key.key, timeout=10.0)
         r.assert_no_error(lambda: new_c.auth.me(), "new-key: authenticates")
 
         # Delete

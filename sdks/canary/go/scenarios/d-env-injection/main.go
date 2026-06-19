@@ -3,7 +3,7 @@
 
 // Canary scenario: D-ENV-INJECTION
 // Tests env var reaches agent and clears on unbind.
-// Requires LLMSAFESPACE_LLM_API_KEY.
+// Requires LLMSAFESPACES_LLM_API_KEY.
 package main
 
 import (
@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	llm "github.com/lenaxia/llmsafespace/sdk/go"
-	canary "github.com/lenaxia/llmsafespace/sdks/canary/go"
+	llm "github.com/lenaxia/llmsafespaces/sdk/go"
+	canary "github.com/lenaxia/llmsafespaces/sdks/canary/go"
 )
 
 func Handler(w http.ResponseWriter, r *http.Request) {

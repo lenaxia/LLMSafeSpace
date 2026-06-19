@@ -11,7 +11,7 @@ func TestValidate_ValidSpec(t *testing.T) {
 	spec := []byte(`
 openapi: "3.0.3"
 info:
-  title: LLMSafeSpace API
+  title: LLMSafeSpaces API
   version: "1.0.0"
 paths:
   /health:

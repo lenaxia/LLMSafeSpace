@@ -6,7 +6,7 @@ package eventbroker
 import (
 	"hash/fnv"
 
-	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
+	apitypes "github.com/lenaxia/llmsafespaces/api/internal/types"
 )
 
 type UserEventBroker struct {

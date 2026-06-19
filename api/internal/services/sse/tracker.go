@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
-	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
+	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
 )
 
 const sseIdleTimeout = 5 * time.Minute

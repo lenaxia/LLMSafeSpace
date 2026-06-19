@@ -9,7 +9,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/lenaxia/llmsafespace/pkg/redact"
+	"github.com/lenaxia/llmsafespaces/pkg/redact"
 )
 
 func main() {

@@ -7,8 +7,8 @@ import (
 	"context"
 	"fmt"
 
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
-	"github.com/lenaxia/llmsafespace/pkg/interfaces"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+	"github.com/lenaxia/llmsafespaces/pkg/interfaces"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -23,7 +23,7 @@ func init() {
 	schemeBuilder := runtime.NewSchemeBuilder(
 		func(scheme *runtime.Scheme) error {
 			scheme.AddKnownTypes(
-				schema.GroupVersion{Group: "llmsafespace.dev", Version: "v1"},
+				schema.GroupVersion{Group: "llmsafespaces.dev", Version: "v1"},
 				&v1.RuntimeEnvironment{},
 				&v1.RuntimeEnvironmentList{},
 				&v1.Workspace{},
@@ -31,37 +31,37 @@ func init() {
 				&v1.InferenceRelay{},
 				&v1.InferenceRelayList{},
 			)
-			metav1.AddToGroupVersion(scheme, schema.GroupVersion{Group: "llmsafespace.dev", Version: "v1"})
+			metav1.AddToGroupVersion(scheme, schema.GroupVersion{Group: "llmsafespaces.dev", Version: "v1"})
 			return nil
 		},
 	)
 	if err := schemeBuilder.AddToScheme(scheme.Scheme); err != nil {
-		panic(fmt.Sprintf("failed to add LLMSafeSpace types to scheme: %v", err))
+		panic(fmt.Sprintf("failed to add LLMSafeSpaces types to scheme: %v", err))
 	}
 }
 
-type LLMSafespaceV1Client struct {
+type LLMSafespacesV1Client struct {
 	restClient rest.Interface
-	client     interfaces.LLMSafespaceV1Interface
+	client     interfaces.LLMSafespacesV1Interface
 }
 
-func NewLLMSafespaceV1Client(restClient rest.Interface) *LLMSafespaceV1Client {
-	return &LLMSafespaceV1Client{
+func NewLLMSafespacesV1Client(restClient rest.Interface) *LLMSafespacesV1Client {
+	return &LLMSafespacesV1Client{
 		restClient: restClient,
 	}
 }
 
-func (c *LLMSafespaceV1Client) WithMockClient(mock interfaces.LLMSafespaceV1Interface) *LLMSafespaceV1Client {
+func (c *LLMSafespacesV1Client) WithMockClient(mock interfaces.LLMSafespacesV1Interface) *LLMSafespacesV1Client {
 	c.client = mock
 	return c
 }
 
-var _ interfaces.LLMSafespaceV1Interface = &LLMSafespaceV1Client{}
+var _ interfaces.LLMSafespacesV1Interface = &LLMSafespacesV1Client{}
 
-func newLLMSafespaceV1Client(c *rest.Config) (*LLMSafespaceV1Client, error) {
+func newLLMSafespacesV1Client(c *rest.Config) (*LLMSafespacesV1Client, error) {
 	config := *c
 	config.Timeout = 0
-	config.GroupVersion = &schema.GroupVersion{Group: "llmsafespace.dev", Version: "v1"}
+	config.GroupVersion = &schema.GroupVersion{Group: "llmsafespaces.dev", Version: "v1"}
 	config.APIPath = "/apis"
 	config.NegotiatedSerializer = serializer.NewCodecFactory(scheme.Scheme).WithoutConversion()
 	config.UserAgent = rest.DefaultKubernetesUserAgent()
@@ -71,18 +71,18 @@ func newLLMSafespaceV1Client(c *rest.Config) (*LLMSafespaceV1Client, error) {
 		return nil, err
 	}
 
-	return &LLMSafespaceV1Client{restClient: client}, nil
+	return &LLMSafespacesV1Client{restClient: client}, nil
 }
 
-func (c *LLMSafespaceV1Client) RuntimeEnvironments() interfaces.RuntimeEnvironmentInterface {
+func (c *LLMSafespacesV1Client) RuntimeEnvironments() interfaces.RuntimeEnvironmentInterface {
 	return &runtimeEnvironments{client: c.restClient}
 }
 
-func (c *LLMSafespaceV1Client) Workspaces(namespace string) interfaces.WorkspaceInterface {
+func (c *LLMSafespacesV1Client) Workspaces(namespace string) interfaces.WorkspaceInterface {
 	return &workspaces{client: c.restClient, ns: namespace}
 }
 
-func (c *LLMSafespaceV1Client) InferenceRelays() interfaces.InferenceRelayInterface {
+func (c *LLMSafespacesV1Client) InferenceRelays() interfaces.InferenceRelayInterface {
 	return &inferenceRelays{client: c.restClient}
 }
 

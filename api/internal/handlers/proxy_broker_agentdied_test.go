@@ -15,10 +15,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
-	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
-	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
-	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/eventbroker"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/sse"
+	apitypes "github.com/lenaxia/llmsafespaces/api/internal/types"
+	k8smocks "github.com/lenaxia/llmsafespaces/mocks/kubernetes"
 )
 
 // TestProxy_OnAgentDied_PublishesAgentDiedToBroker verifies the broker-side

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lenaxia/llmsafespace/api/internal/handlers"
+	"github.com/lenaxia/llmsafespaces/api/internal/handlers"
 )
 
 type stubPodIPResolver struct {

@@ -9,12 +9,12 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  API_IMAGE: lenaxia/llmsafespace/api
-  CONTROLLER_IMAGE: lenaxia/llmsafespace/controller
-  RUNTIME_IMAGE: lenaxia/llmsafespace/base
-  FRONTEND_IMAGE: lenaxia/llmsafespace/frontend
-  RELAY_ROUTER_IMAGE: lenaxia/llmsafespace/relay-router
-  RELAY_PROXY_IMAGE: lenaxia/llmsafespace/relay-proxy
+  API_IMAGE: lenaxia/llmsafespaces/api
+  CONTROLLER_IMAGE: lenaxia/llmsafespaces/controller
+  RUNTIME_IMAGE: lenaxia/llmsafespaces/base
+  FRONTEND_IMAGE: lenaxia/llmsafespaces/frontend
+  RELAY_ROUTER_IMAGE: lenaxia/llmsafespaces/relay-router
+  RELAY_PROXY_IMAGE: lenaxia/llmsafespaces/relay-proxy
 
 jobs:
   lint:
@@ -30,7 +30,7 @@ jobs:
 
       # repolint catches the failure modes that have caused production
       # incidents: duplicate migration version numbers, drift between
-      # api/migrations/ and charts/llmsafespace/migrations/, and
+      # api/migrations/ and charts/llmsafespaces/migrations/, and
       # duplicate worklog numbers. See worklog 0098.
       - name: Repository layout lint
         run: make repolint
@@ -127,7 +127,7 @@ jobs:
           go-version: "1.25.11"
           cache: true
 
-      # helm is required by chart_test.go (charts/llmsafespace/...). Without
+      # helm is required by chart_test.go (charts/llmsafespaces/...). Without
       # it the chart tests silently skip via t.Skip("helm not on PATH").
       # Install before the test run so TestF1–TestF8 and the G16/G26/G2/G5
       # regression suite actually execute on every PR.
@@ -368,7 +368,7 @@ jobs:
           pytest tests/test_client.py tests/test_async_client.py -q
 
       - name: VS Code extension — install, typecheck, build
-        working-directory: sdks/vscode-llmsafespace
+        working-directory: sdks/vscode-llmsafespaces
         run: |
           npm ci
           npx tsc --noEmit
@@ -408,8 +408,8 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_DB: llmsafespace
-          POSTGRES_USER: llmsafespace
+          POSTGRES_DB: llmsafespaces
+          POSTGRES_USER: llmsafespaces
           POSTGRES_PASSWORD: changeme
         ports:
           - 5432:5432
@@ -446,14 +446,14 @@ jobs:
       # Build the API server binary and run migrations
       - name: Build API server
         working-directory: ${{ github.workspace }}
-        run: go build -o /tmp/llmsafespace-api ./api/cmd/api/
+        run: go build -o /tmp/llmsafespaces-api ./api/cmd/api/
 
       - name: Run DB migrations
         working-directory: ${{ github.workspace }}
         run: |
           # Install golang-migrate CLI and run migrations
           go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
-          migrate -path api/migrations -database "postgres://llmsafespace:changeme@localhost:5432/llmsafespace?sslmode=disable" up
+          migrate -path api/migrations -database "postgres://llmsafespaces:changeme@localhost:5432/llmsafespaces?sslmode=disable" up
 
       # Start the API server in the background.
       # We write a stub kubeconfig pointing at a non-existent server so the
@@ -464,24 +464,24 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           # Database: individual fields (the API does not accept a connection URL)
-          LLMSAFESPACE_DATABASE_HOST: "localhost"
-          LLMSAFESPACE_DATABASE_PORT: "5432"
-          LLMSAFESPACE_DATABASE_USER: "llmsafespace"
-          LLMSAFESPACE_DATABASE_PASSWORD: "changeme"
-          LLMSAFESPACE_DATABASE_DATABASE: "llmsafespace"
+          LLMSAFESPACES_DATABASE_HOST: "localhost"
+          LLMSAFESPACES_DATABASE_PORT: "5432"
+          LLMSAFESPACES_DATABASE_USER: "llmsafespaces"
+          LLMSAFESPACES_DATABASE_PASSWORD: "changeme"
+          LLMSAFESPACES_DATABASE_DATABASE: "llmsafespaces"
           # Redis
-          LLMSAFESPACE_REDIS_HOST: "localhost"
-          LLMSAFESPACE_REDIS_PORT: "6379"
-          # Auth: the API reads LLMSAFESPACE_AUTH_JWTSECRET (not JWT_SECRET)
-          LLMSAFESPACE_AUTH_JWTSECRET: canary-ci-jwt-secret-not-for-production
+          LLMSAFESPACES_REDIS_HOST: "localhost"
+          LLMSAFESPACES_REDIS_PORT: "6379"
+          # Auth: the API reads LLMSAFESPACES_AUTH_JWTSECRET (not JWT_SECRET)
+          LLMSAFESPACES_AUTH_JWTSECRET: canary-ci-jwt-secret-not-for-production
           # DEK master key for secrets encryption (optional — uses no-op if absent)
-          LLMSAFESPACE_DEK_MASTER_KEY: "63616e6172792d63692d6d61737465722d6b65792d33326279746573303030"
-          LLMSAFESPACE_PORT: "8080"
-          LLMSAFESPACE_KUBERNETES_INCLUSTER: "false"
-          LLMSAFESPACE_KUBERNETES_CONFIGPATH: "/tmp/ci-kubeconfig.yaml"
+          LLMSAFESPACES_DEK_MASTER_KEY: "63616e6172792d63692d6d61737465722d6b65792d33326279746573303030"
+          LLMSAFESPACES_PORT: "8080"
+          LLMSAFESPACES_KUBERNETES_INCLUSTER: "false"
+          LLMSAFESPACES_KUBERNETES_CONFIGPATH: "/tmp/ci-kubeconfig.yaml"
           CONFIG_PATH: "api/config/config.yaml"
           # Development mode: disables RequireHTTPS so canary can use plain HTTP.
-          LLMSAFESPACE_LOGGING_DEVELOPMENT: "true"
+          LLMSAFESPACES_LOGGING_DEVELOPMENT: "true"
         run: |
           # Stub kubeconfig — API client initialises but no real cluster exists.
           printf '%s\n' \
@@ -501,7 +501,7 @@ jobs:
             '- name: ci-user' \
             '  user: {}' \
             > /tmp/ci-kubeconfig.yaml
-          /tmp/llmsafespace-api &
+          /tmp/llmsafespaces-api &
           echo "API_PID=$!" >> "$GITHUB_ENV"
           # Wait up to 30s for the API to become ready
           for i in $(seq 1 30); do
@@ -524,92 +524,92 @@ jobs:
         run: |
           if [ -f /tmp/canary-keys.env ]; then
             source /tmp/canary-keys.env
-            echo "LLMSAFESPACE_API_KEY=${CANARY_API_KEY_1}" >> "$GITHUB_ENV"
-            echo "LLMSAFESPACE_API_KEY_USER2=${CANARY_API_KEY_2}" >> "$GITHUB_ENV"
-            echo "LLMSAFESPACE_EMAIL=canary1@llmsafespace.test" >> "$GITHUB_ENV"
-            echo "LLMSAFESPACE_PASSWORD=${CANARY_PASSWORD_1}" >> "$GITHUB_ENV"
+            echo "LLMSAFESPACES_API_KEY=${CANARY_API_KEY_1}" >> "$GITHUB_ENV"
+            echo "LLMSAFESPACES_API_KEY_USER2=${CANARY_API_KEY_2}" >> "$GITHUB_ENV"
+            echo "LLMSAFESPACES_EMAIL=canary1@llmsafespaces.test" >> "$GITHUB_ENV"
+            echo "LLMSAFESPACES_PASSWORD=${CANARY_PASSWORD_1}" >> "$GITHUB_ENV"
           fi
 
       # ── Go SDK canaries ────────────────────────────────────────────────────
       - name: Go canary — S-HEALTH
         env:
-          LLMSAFESPACE_URL: http://localhost:8080
+          LLMSAFESPACES_URL: http://localhost:8080
         run: go run ./scenarios/s-health/
         continue-on-error: false
 
       - name: Go canary — S-AUTH
         env:
-          LLMSAFESPACE_URL: http://localhost:8080
+          LLMSAFESPACES_URL: http://localhost:8080
         run: go run ./scenarios/s-auth/
 
       - name: Go canary — S-AUTH-CONFIG
         env:
-          LLMSAFESPACE_URL: http://localhost:8080
+          LLMSAFESPACES_URL: http://localhost:8080
         run: go run ./scenarios/s-auth-config/
 
       - name: Go canary — S-LOGOUT
         env:
-          LLMSAFESPACE_URL: http://localhost:8080
+          LLMSAFESPACES_URL: http://localhost:8080
         run: go run ./scenarios/s-logout/
 
       - name: Go canary — S-APIKEY
         env:
-          LLMSAFESPACE_URL: http://localhost:8080
+          LLMSAFESPACES_URL: http://localhost:8080
         run: go run ./scenarios/s-apikey/
 
       - name: Go canary — S-WS-CRUD
         env:
-          LLMSAFESPACE_URL: http://localhost:8080
+          LLMSAFESPACES_URL: http://localhost:8080
         run: go run ./scenarios/s-ws-crud/
 
       - name: Go canary — S-WS-STATUS
         env:
-          LLMSAFESPACE_URL: http://localhost:8080
+          LLMSAFESPACES_URL: http://localhost:8080
         run: go run ./scenarios/s-ws-status/
 
       - name: Go canary — S-SECRET-CRUD
         env:
-          LLMSAFESPACE_URL: http://localhost:8080
+          LLMSAFESPACES_URL: http://localhost:8080
         run: go run ./scenarios/s-secret-crud/
 
       - name: Go canary — S-SECRET-REVEAL
         env:
-          LLMSAFESPACE_URL: http://localhost:8080
+          LLMSAFESPACES_URL: http://localhost:8080
         run: go run ./scenarios/s-secret-reveal/
 
       - name: Go canary — S-SECRET-AUDIT
         env:
-          LLMSAFESPACE_URL: http://localhost:8080
+          LLMSAFESPACES_URL: http://localhost:8080
         run: go run ./scenarios/s-secret-audit/
 
       - name: Go canary — S-SECRET-BINDINGS
         env:
-          LLMSAFESPACE_URL: http://localhost:8080
+          LLMSAFESPACES_URL: http://localhost:8080
         run: go run ./scenarios/s-secret-bindings/
 
       - name: Go canary — S-ENV-VARS
         env:
-          LLMSAFESPACE_URL: http://localhost:8080
+          LLMSAFESPACES_URL: http://localhost:8080
         run: go run ./scenarios/s-env-vars/
 
       - name: Go canary — S-CRED-CRUD
         env:
-          LLMSAFESPACE_URL: http://localhost:8080
+          LLMSAFESPACES_URL: http://localhost:8080
         run: go run ./scenarios/s-cred-crud/
 
       - name: Go canary — S-OWNERSHIP
         env:
-          LLMSAFESPACE_URL: http://localhost:8080
+          LLMSAFESPACES_URL: http://localhost:8080
         run: go run ./scenarios/s-ownership/
 
       - name: Go canary — S-USER-SETTINGS
         env:
-          LLMSAFESPACE_URL: http://localhost:8080
+          LLMSAFESPACES_URL: http://localhost:8080
         run: go run ./scenarios/s-user-settings/
 
       - name: Go canary — S-ERROR-FORMAT
         env:
-          LLMSAFESPACE_URL: http://localhost:8080
+          LLMSAFESPACES_URL: http://localhost:8080
         run: go run ./scenarios/s-error-format/
 
       # ── Python SDK canaries (all ci:fast scenarios) ────────────────────────
@@ -620,7 +620,7 @@ jobs:
       - name: Python canaries — all ci:fast scenarios
         working-directory: ${{ github.workspace }}
         env:
-          LLMSAFESPACE_URL: http://localhost:8080
+          LLMSAFESPACES_URL: http://localhost:8080
         run: |
           set -e
           for scenario in \
@@ -641,7 +641,7 @@ jobs:
       - name: TypeScript canaries — all ci:fast scenarios
         working-directory: ${{ github.workspace }}
         env:
-          LLMSAFESPACE_URL: http://localhost:8080
+          LLMSAFESPACES_URL: http://localhost:8080
         run: |
           set -e
           for scenario in \
@@ -660,7 +660,7 @@ jobs:
       - name: MCP canary — S-MCP-TOOLS + S-MCP-AUTH-NEG + S-MCP-CRED + S-MCP-INPUT-NEG
         working-directory: ${{ github.workspace }}
         env:
-          LLMSAFESPACE_URL: http://localhost:8080
+          LLMSAFESPACES_URL: http://localhost:8080
           MCP_BINARY: /tmp/mcp-binary
         run: go run ./sdks/canary/mcp/
 
@@ -850,17 +850,17 @@ jobs:
             .
           MATCHES=$(docker run --rm --entrypoint sh controller-smoke -c \
             'if [ ! -s /out/manager ]; then echo "FATAL: /out/manager is empty"; exit 1; fi; \
-             grep -ac "llmsafespace_workspaces_running" /out/manager || true') || {
+             grep -ac "llmsafespaces_workspaces_running" /out/manager || true') || {
             echo "::error::docker run failed with exit code $?"
             exit 1
           }
           if [ "$MATCHES" -eq 0 ] 2>/dev/null; then
-            echo "::error::Controller binary missing llmsafespace_workspaces_running metric string."
+            echo "::error::Controller binary missing llmsafespaces_workspaces_running metric string."
             echo "This usually means Docker BuildKit served a stale cache layer."
             echo "Binary size: $(docker run --rm --entrypoint stat controller-smoke -c '%s' /out/manager) bytes"
             exit 1
           fi
-          echo "Controller binary smoke test passed: llmsafespace_* metric strings present"
+          echo "Controller binary smoke test passed: llmsafespaces_* metric strings present"
 
       - name: Upload digest
         if: github.event_name != 'pull_request'

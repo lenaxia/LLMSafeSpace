@@ -319,7 +319,7 @@ async function generateSSHKeypair(): Promise<{ privateKey: string; publicKey: st
 
     // Build OpenSSH private key format
     const checkInt = crypto.getRandomValues(new Uint32Array(1))[0]!;
-    const comment = new TextEncoder().encode("generated@llmsafespace");
+    const comment = new TextEncoder().encode("generated@llmsafespaces");
     // Extract raw 32-byte private key from PKCS#8 (last 32 bytes of the DER)
     const privBytes = new Uint8Array(privPkcs8).slice(-32);
     // OpenSSH ed25519 private key "keypair" is privkey(32) || pubkey(32)
@@ -352,13 +352,13 @@ async function generateSSHKeypair(): Promise<{ privateKey: string; publicKey: st
 
     return {
       privateKey: `-----BEGIN OPENSSH PRIVATE KEY-----\n${privLines}\n-----END OPENSSH PRIVATE KEY-----\n`,
-      publicKey: `ssh-ed25519 ${pubB64} generated@llmsafespace`,
+      publicKey: `ssh-ed25519 ${pubB64} generated@llmsafespaces`,
     };
   }
 
   // Fallback: generate random bytes as placeholder
   const priv = generateRandomSecret(64);
-  const pub = `ssh-ed25519 ${btoa(generateRandomSecret(32))} generated@llmsafespace`;
+  const pub = `ssh-ed25519 ${btoa(generateRandomSecret(32))} generated@llmsafespaces`;
   return { privateKey: priv, publicKey: pub };
 }
 

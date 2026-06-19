@@ -69,7 +69,10 @@ $PSQL -f api/migrations/000014_workspace_agent_state_and_bug11_fix.up.sql
 echo "== verifying cleanup =="
 
 # Non-UUID binding should be deleted.
-BINDINGS_AFTER=$($PSQL -tAc "SELECT count(*) FROM user_secret_bindings WHERE workspace_id = 'ws-validation';")
+# Cast workspace_id::text because migration 000014 changes the column type
+# to UUID, after which the literal 'ws-validation' cannot be implicitly
+# cast on the right side of the comparison.
+BINDINGS_AFTER=$($PSQL -tAc "SELECT count(*) FROM user_secret_bindings WHERE workspace_id::text = 'ws-validation';")
 if [ "$BINDINGS_AFTER" != "0" ]; then
     echo "FAIL: non-UUID binding still exists after migration"
     exit 1

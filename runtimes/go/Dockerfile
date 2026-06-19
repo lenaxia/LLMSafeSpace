@@ -1,6 +1,6 @@
 ARG TARGETARCH=amd64
 
-FROM ghcr.io/lenaxia/llmsafespace/base:latest
+FROM ghcr.io/lenaxia/llmsafespaces/base:latest
 
 USER root
 
@@ -31,12 +31,12 @@ RUN for i in {1..3}; do \
     done
 
 # Copy Go-specific security configurations
-COPY --chown=root:root security/go/restricted_packages.json /etc/llmsafespace/go/
+COPY --chown=root:root security/go/restricted_packages.json /etc/llmsafespaces/go/
 
 # Copy Go security wrapper
-COPY --chown=root:root tools/go-security-wrapper.go /opt/llmsafespace/bin/go-security-wrapper.go
-RUN go build -o /opt/llmsafespace/bin/go-security-wrapper /opt/llmsafespace/bin/go-security-wrapper.go && \
-    chmod +x /opt/llmsafespace/bin/go-security-wrapper
+COPY --chown=root:root tools/go-security-wrapper.go /opt/llmsafespaces/bin/go-security-wrapper.go
+RUN go build -o /opt/llmsafespaces/bin/go-security-wrapper /opt/llmsafespaces/bin/go-security-wrapper.go && \
+    chmod +x /opt/llmsafespaces/bin/go-security-wrapper
 
 USER sandbox
-CMD ["/opt/llmsafespace/bin/go-security-wrapper"]
+CMD ["/opt/llmsafespaces/bin/go-security-wrapper"]

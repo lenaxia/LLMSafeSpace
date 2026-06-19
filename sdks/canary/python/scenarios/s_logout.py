@@ -8,7 +8,7 @@ import json, sys, os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 from canary import Runner, Config, config_from_env, raw_do
-from llmsafespace import LLMSafeSpace
+from llmsafespaces import LLMSafeSpaces
 
 
 def run(r: Runner, cfg: Config) -> None:
@@ -29,7 +29,7 @@ def run(r: Runner, cfg: Config) -> None:
     r.assert_(token != "", "login: token non-empty")
 
     # P2: JWT works pre-logout
-    c = LLMSafeSpace(cfg.api_url, api_key=token, timeout=10.0)
+    c = LLMSafeSpaces(cfg.api_url, api_key=token, timeout=10.0)
     ok, _ = r.assert_no_error(lambda: c.auth.me(), "pre-logout: auth.me succeeds")
 
     # P3: Logout
@@ -44,7 +44,7 @@ def run(r: Runner, cfg: Config) -> None:
     r.assert_(s3 == 204, "logout-idempotent: 204")
 
     # N1+N2: API key still valid
-    c_key = LLMSafeSpace(cfg.api_url, api_key=cfg.api_key, timeout=10.0)
+    c_key = LLMSafeSpaces(cfg.api_url, api_key=cfg.api_key, timeout=10.0)
     r.assert_no_error(lambda: c_key.auth.me(), "api-key: still valid after JWT logout")
 
 

@@ -12,8 +12,8 @@ import (
 
 	"go.uber.org/zap"
 
-	opencode "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
+	opencode "github.com/lenaxia/llmsafespaces/pkg/agent/opencode"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
 )
 
 // agentReloadHandler triggers an opencode instance dispose. This is the

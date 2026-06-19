@@ -18,9 +18,9 @@ import (
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 
-	"github.com/lenaxia/llmsafespace/pkg/config"
-	"github.com/lenaxia/llmsafespace/pkg/interfaces"
-	pkglogger "github.com/lenaxia/llmsafespace/pkg/logger"
+	"github.com/lenaxia/llmsafespaces/pkg/config"
+	"github.com/lenaxia/llmsafespaces/pkg/interfaces"
+	pkglogger "github.com/lenaxia/llmsafespaces/pkg/logger"
 )
 
 // Client manages Kubernetes API interactions
@@ -34,7 +34,7 @@ type Client struct {
 	stopCh          chan struct{}
 
 	v1Once   sync.Once
-	v1Client *LLMSafespaceV1Client
+	v1Client *LLMSafespacesV1Client
 	v1Err    error
 }
 
@@ -148,7 +148,7 @@ func (c *Client) Stop() {
 func (c *Client) runLeaderElection(ctx context.Context) error {
 	lock := &resourcelock.LeaseLock{
 		LeaseMeta: metav1.ObjectMeta{
-			Name:      "llmsafespace-api-leader",
+			Name:      "llmsafespaces-api-leader",
 			Namespace: c.config.Namespace,
 		},
 		Client: c.clientset.CoordinationV1(),
@@ -203,20 +203,20 @@ func (c *Client) InformerFactory() informers.SharedInformerFactory {
 	return c.informerFactory
 }
 
-// LlmsafespaceV1 returns a client for the llmsafespace.dev/v1 API group.
+// LlmsafespacesV1 returns a client for the llmsafespaces.dev/v1 API group.
 //
 // Constructs a typed REST client by deriving a copy of the base rest.Config
-// with the LLMSafeSpace GroupVersion, /apis path, and a serializer from the
+// with the LLMSafeSpaces GroupVersion, /apis path, and a serializer from the
 // scheme that has our types registered (via the init() in client_crds.go).
 //
 // Without these ContentConfig fields rest.RESTClientFor returns an error
 // (or returns a partially-initialized client that nil-panics on Watch),
 // which silently breaks the WorkspaceWatcher and the proxy ownership middleware.
-func (c *Client) LlmsafespaceV1() (interfaces.LLMSafespaceV1Interface, error) {
+func (c *Client) LlmsafespacesV1() (interfaces.LLMSafespacesV1Interface, error) {
 	c.v1Once.Do(func() {
-		client, err := newLLMSafespaceV1Client(c.restConfig)
+		client, err := newLLMSafespacesV1Client(c.restConfig)
 		if err != nil {
-			c.logger.Error("failed to construct LlmsafespaceV1 REST client", err)
+			c.logger.Error("failed to construct LlmsafespacesV1 REST client", err)
 			c.v1Err = err
 			return
 		}

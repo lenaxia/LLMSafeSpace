@@ -1,8 +1,8 @@
 openapi: "3.0.3"
 info:
-  title: LLMSafeSpace API
+  title: LLMSafeSpaces API
   description: |
-    LLMSafeSpace is a Kubernetes-first platform for running AI agents securely in isolated sandboxes.
+    LLMSafeSpaces is a Kubernetes-first platform for running AI agents securely in isolated sandboxes.
     Every sandbox runs `opencode serve` as a persistent HTTP server with a PVC-backed persistent workspace.
   version: "1.0.0"
   license:

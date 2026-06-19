@@ -16,7 +16,7 @@ pipeline, and updated the restart trigger in workspace-agentd.
 ## Decisions
 
 - **Model catalog stays at opencode layer** — validated against design doc and
-  existing code. LLMSafeSpace does NOT maintain a model registry; only provides
+  existing code. LLMSafeSpaces does NOT maintain a model registry; only provides
   optional allowlisting via `Models []LLMModelConfig`.
 - **Staging architecture** — `applyLLMProvider` validates and collects providers;
   `FlushProviders(formatter)` calls an agent-specific formatter callback and

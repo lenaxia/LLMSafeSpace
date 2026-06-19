@@ -50,7 +50,7 @@ DIR_RENAMES=(
 )
 
 # ---------- Phase 2: content rewrite rule ------------------------------------
-# A single alternation of the three case-variants. The three sources are
+# A single alternation of all five case-variants. The five sources are
 # disjoint (verified: zero existing 'llmsafespaces' / 'LLMSafeSpaces' in
 # tree), so one pass suffices. Lookbehind/lookahead (?<![sS])...(?![sS])
 # prevent the pattern from matching inside its own pluralised output, making
@@ -58,7 +58,13 @@ DIR_RENAMES=(
 #
 # The replacement appends a case-matched 's': uppercase 'S' if the matched
 # token ends in 'E' (i.e. the ALL_CAPS variant), lowercase 's' otherwise.
-PAT='(?<![sS])(llmsafespace|LLMSAFESPACE|LLMSafeSpace)(?![sS])'
+#
+# NOTE: There are FIVE case variants, not three. The initial rename run
+# only handled three and missed the K8s client-gen naming conventions:
+#   Llmsafespace  (initial-cap: LlmsafespaceV1() accessor methods)
+#   LLMSafespace  (LLM+lower:   LLMSafespaceV1Client type names)
+# These were added after PR #248 review caught the gap.
+PAT='(?<![sS])(llmsafespace|LLMSAFESPACE|LLMSafeSpace|Llmsafespace|LLMSafespace)(?![sS])'
 
 # ---------- Files to skip entirely -------------------------------------------
 SKIP_PATH_RE='(^|/)(\.git|worklogs|design|bin|node_modules)/'
@@ -79,16 +85,16 @@ is_skipped() {
   return 1
 }
 
-# F6 — count *occurrences* (not lines) of the three case-variants in a file,
-# using the same boundary-aware regex as the rewriter so dry-run counts match
-# the actual number of substitutions on DRY_RUN=0.
+# F6 — count *occurrences* (not lines) of all five case-variants in a file,
+# using the same boundary-aware regex ($PAT) as the rewriter so dry-run
+# counts match the actual number of substitutions on DRY_RUN=0.
 count_hits() {
   perl -e '
     my $n = 0;
     open(my $fh, "<", $ARGV[0]) or die "open $ARGV[0]: $!";
     binmode($fh);
     while (<$fh>) {
-      while (/(?<![sS])(llmsafespace|LLMSAFESPACE|LLMSafeSpace)(?![sS])/g) { $n++; }
+      while (/(?<![sS])(llmsafespace|LLMSAFESPACE|LLMSafeSpace|Llmsafespace|LLMSafespace)(?![sS])/g) { $n++; }
     }
     print $n;
   ' "$1"
@@ -206,7 +212,7 @@ if [ "$DRY_RUN" = "1" ]; then
 
   # Per-pattern totals (occurrence counts via git grep -o, not lines).
   echo "Per-pattern occurrence counts (non-excluded tree):"
-  for pat in llmsafespace LLMSAFESPACE LLMSafeSpace; do
+  for pat in llmsafespace LLMSAFESPACE LLMSafeSpace Llmsafespace LLMSafespace; do
     # git grep -o prints each match on its own line; wc -l counts them.
     # Pathspec excludes keep worklogs/ and design/ out of the count.
     c=$(git grep -Ioh -- "$pat" -- . \
@@ -222,11 +228,11 @@ else
   replaced=0
   for entry in "${EDIT_FILES[@]}"; do
     f="${entry%%|*}"
-    # Single perl pass over the alternation; appends case-matched 's'.
+    # Single perl pass over the 5-alternation; appends case-matched 's'.
     # -i: in-place edit; -pe: print+exec per line; /g: all matches; /e: eval
     #   the replacement as perl code (string concat).
     before=$(count_hits "$f")
-    perl -i -pe 's/(?<![sS])(llmsafespace|LLMSAFESPACE|LLMSafeSpace)(?![sS])/$1 . (substr($1,-1) eq "E" ? "S" : "s")/ge' "$f"
+    perl -i -pe 's/(?<![sS])(llmsafespace|LLMSAFESPACE|LLMSafeSpace|Llmsafespace|LLMSafespace)(?![sS])/$1 . (substr($1,-1) eq "E" ? "S" : "s")/ge' "$f"
     replaced=$((replaced + before))
   done
   printf "  [OK] rewrote %d files (%d occurrences replaced)\n" \

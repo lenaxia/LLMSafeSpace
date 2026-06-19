@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lenaxia/llmsafespace/api/internal/services/msgqueue"
-	k8sinterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/msgqueue"
+	k8sinterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 type SessionManager interface {
@@ -224,6 +224,6 @@ type Services interface {
 }
 
 type KubernetesClient = k8sinterfaces.KubernetesClient
-type LLMSafespaceV1Interface = k8sinterfaces.LLMSafespaceV1Interface
+type LLMSafespacesV1Interface = k8sinterfaces.LLMSafespacesV1Interface
 type RuntimeEnvironmentInterface = k8sinterfaces.RuntimeEnvironmentInterface
 type WorkspaceInterface = k8sinterfaces.WorkspaceInterface

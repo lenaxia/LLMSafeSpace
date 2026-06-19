@@ -62,9 +62,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
-	sec "github.com/lenaxia/llmsafespace/pkg/secrets"
-	"github.com/lenaxia/llmsafespace/pkg/validation"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
+	sec "github.com/lenaxia/llmsafespaces/pkg/secrets"
+	"github.com/lenaxia/llmsafespaces/pkg/validation"
 )
 
 // Secret is the materialization-time representation of a credential.
