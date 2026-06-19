@@ -196,7 +196,7 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 		)
 	}
 	if req.StorageSize == "" && s.instanceSettings != nil {
-		if size, err := s.instanceSettings.GetString(ctx, "workspace.defaultStorageSize"); err == nil && size != "" {
+		if size, err := s.instanceSettings.DefaultStorageSize(ctx); err == nil && size != "" {
 			req.StorageSize = size
 		}
 	}
@@ -907,7 +907,7 @@ func (s *Service) applyWorkspaceDefaults(ctx context.Context, crd *v1.Workspace)
 
 	// Storage class
 	if crd.Spec.Storage.StorageClassName == "" {
-		if sc, err := s.instanceSettings.GetString(ctx, "workspace.defaultStorageClass"); err == nil && sc != "" {
+		if sc, err := s.instanceSettings.DefaultStorageClass(ctx); err == nil && sc != "" {
 			crd.Spec.Storage.StorageClassName = sc
 		}
 	}

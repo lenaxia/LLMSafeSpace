@@ -243,3 +243,24 @@ func (s *InstanceService) loadFromDB(ctx context.Context) (map[string]any, error
 
 	return data, nil
 }
+
+// --- Typed getters (US-46.8) ---
+// These wrap the untyped GetString/GetInt methods with typed Key constants
+// so callers get compile-time key checking. Long-tail consumers adopt
+// organically; the untyped methods remain for backwards compatibility.
+
+func (s *InstanceService) DefaultStorageSize(ctx context.Context) (string, error) {
+	return s.GetString(ctx, KeyWorkspaceDefaultStorageSize.Name())
+}
+
+func (s *InstanceService) DefaultStorageClass(ctx context.Context) (string, error) {
+	return s.GetString(ctx, KeyWorkspaceDefaultStorageClass.Name())
+}
+
+func (s *InstanceService) RateLimitingDefaultLimit(ctx context.Context) (int, error) {
+	return s.GetInt(ctx, KeyRateLimitingDefaultLimit.Name())
+}
+
+func (s *InstanceService) RateLimitingBurstSize(ctx context.Context) (int, error) {
+	return s.GetInt(ctx, KeyRateLimitingBurstSize.Name())
+}
