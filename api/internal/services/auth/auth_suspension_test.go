@@ -39,6 +39,7 @@ type suspensionCache struct {
 	setMarkers  []string
 	delMarkers  []string
 	setErr      error
+	delErr      error
 	getMarkerOK bool // when false, Get reports a marker miss even if set
 }
 
@@ -74,6 +75,9 @@ func (c *suspensionCache) Set(ctx context.Context, key, value string, _ time.Dur
 
 func (c *suspensionCache) Delete(ctx context.Context, key string) error {
 	if strings.HasPrefix(key, "user_suspended:") {
+		if c.delErr != nil {
+			return c.delErr
+		}
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		delete(c.suspended, strings.TrimPrefix(key, "user_suspended:"))
@@ -206,6 +210,33 @@ func TestAuthMiddleware_ActiveUserStillAllowed(t *testing.T) {
 
 // --- F4: revocation marker ---
 
+// TestSuspensionMarkerTTL_CoversRememberMe locks the F4 TTL fix: the marker
+// must outlive the longest-lived token (remember-me, 720h default), not just
+// the standard token duration (24h). A regression that used tokenDuration
+// alone would let a suspended user's remember-me session resume 24h after
+// suspension if the DB were also down — the marker would be gone while the
+// token was still valid.
+func TestSuspensionMarkerTTL_CoversRememberMe(t *testing.T) {
+	cases := []struct {
+		name            string
+		token, remember time.Duration
+		want            time.Duration
+	}{
+		{"remember_me_longer", 24 * time.Hour, 720 * time.Hour, 720 * time.Hour},
+		{"token_longer", 48 * time.Hour, 24 * time.Hour, 48 * time.Hour},
+		{"remember_me_unset", 24 * time.Hour, 0, 24 * time.Hour},
+		{"equal", 24 * time.Hour, 24 * time.Hour, 24 * time.Hour},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := suspensionMarkerTTL(tc.token, tc.remember)
+			if got != tc.want {
+				t.Errorf("suspensionMarkerTTL(%v, %v) = %v, want %v", tc.token, tc.remember, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestMarkUserSuspended_WritesMarker proves the revocation primitive writes the
 // per-user marker the middleware fast-path checks.
 func TestMarkUserSuspended_WritesMarker(t *testing.T) {
@@ -221,6 +252,46 @@ func TestMarkUserSuspended_WritesMarker(t *testing.T) {
 	// The marker must be visible to the same cache so the middleware rejects.
 	if !svc.isUserSuspendedCached(context.Background(), "user-9") {
 		t.Fatal("marker must be readable via isUserSuspendedCached after MarkUserSuspended")
+	}
+}
+
+// TestMarkUserSuspended_CacheError_ReturnsError exercises the error path: a
+// Redis failure during marker write must surface (not be swallowed), so the
+// caller (SuspendUser) can log it. Best-effort at the handler layer, but the
+// primitive itself must report the failure. Locks the previously-scaffolded
+// setErr field into a real test (Rule 5: no dead scaffolding).
+func TestMarkUserSuspended_CacheError_ReturnsError(t *testing.T) {
+	cache := newSuspensionCache()
+	cache.setErr = errors.New("redis connection refused")
+	svc := newAuthSvc(t, &errDB{mockDB: &mockDB{}}, cache)
+
+	err := svc.MarkUserSuspended(context.Background(), "user-9")
+	if err == nil {
+		t.Fatal("MarkUserSuspended must return the cache error, not swallow it")
+	}
+	if !strings.Contains(err.Error(), "mark user suspended") {
+		t.Errorf("expected wrapped 'mark user suspended' error, got %v", err)
+	}
+}
+
+// TestClearUserSuspended_CacheError_ReturnsError mirrors the above for the
+// clear path: a Redis failure during unsuspend must surface so the handler can
+// log it (the user is already active in the DB; the marker self-heals on next
+// request via the middleware, but the operator should see the warning).
+func TestClearUserSuspended_CacheError_ReturnsError(t *testing.T) {
+	cache := newSuspensionCache()
+	// suspensionCache only injects setErr; for the Delete error path, wrap a
+	// failing cache. Reuse a minimal inline type via the same suspensionCache
+	// shape by giving Delete an error path.
+	cache.delErr = errors.New("redis connection refused")
+	svc := newAuthSvc(t, &errDB{mockDB: &mockDB{}}, cache)
+
+	err := svc.ClearUserSuspended(context.Background(), "user-9")
+	if err == nil {
+		t.Fatal("ClearUserSuspended must return the cache error, not swallow it")
+	}
+	if !strings.Contains(err.Error(), "clear user suspended") {
+		t.Errorf("expected wrapped 'clear user suspended' error, got %v", err)
 	}
 }
 

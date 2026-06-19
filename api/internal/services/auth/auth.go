@@ -115,9 +115,14 @@ type Service struct {
 	// new tokens. F1.7.5 (Epic 17): operator-driven key rotation.
 	jwtPreviousSecrets [][]byte
 	tokenDuration      time.Duration
-	keyService         KeyServiceInterface
-	instanceSettings   *settings.InstanceService
-	rootKeyProvider    secrets.RootKeyProvider
+	// maxTokenTTL is the maximum lifetime of any token the service issues
+	// (max(tokenDuration, rememberMeDuration)). Used as the TTL for the F4
+	// user-suspension marker so it outlives EVERY outstanding token — including
+	// remember-me tokens (720h default), which outlast standard tokens (24h).
+	maxTokenTTL      time.Duration
+	keyService       KeyServiceInterface
+	instanceSettings *settings.InstanceService
+	rootKeyProvider  secrets.RootKeyProvider
 }
 
 // Start initializes the auth service
@@ -213,7 +218,23 @@ func New(cfg *config.Config, log *logger.Logger, dbService interfaces.DatabaseSe
 		jwtSecret:          []byte(cfg.Auth.JWTSecret),
 		jwtPreviousSecrets: prev,
 		tokenDuration:      cfg.Auth.TokenDuration,
+		// F4: the suspension marker must outlive the longest-lived token so it
+		// stays enforceable for remember-me sessions too. rememberMeDuration
+		// defaults to 720h vs tokenDuration's 24h; take the max so the marker
+		// never expires before a still-valid token would.
+		maxTokenTTL: suspensionMarkerTTL(cfg.Auth.TokenDuration, cfg.Auth.RememberMeDuration),
 	}, nil
+}
+
+// suspensionMarkerTTL returns the TTL the F4 revocation marker must use so it
+// covers every outstanding token. It is max(tokenDuration, rememberMeDuration)
+// so remember-me sessions (which outlast standard tokens) stay gated until the
+// marker is explicitly cleared by UnsuspendUser or natural token expiry.
+func suspensionMarkerTTL(tokenDuration, rememberMeDuration time.Duration) time.Duration {
+	if rememberMeDuration > tokenDuration {
+		return rememberMeDuration
+	}
+	return tokenDuration
 }
 
 // GetUserID gets the user ID from the context
@@ -233,12 +254,12 @@ func userSuspendedKey(userID string) string { return "user_suspended:" + userID 
 // MarkUserSuspended writes a per-user revocation marker so the auth middleware
 // rejects the user's existing JWTs/API keys the instant the admin suspends them,
 // without waiting for the next per-request GetUser or depending on the DB (which
-// may be briefly unavailable). The TTL equals the maximum token lifetime: once
-// it expires every previously-issued token is naturally invalid, so the marker
-// no longer needs to gate access. Unsuspends call ClearUserSuspended for an
-// immediate recovery (no TTL wait).
+// may be briefly unavailable). The TTL is max(tokenDuration, rememberMeDuration)
+// so the marker outlives every outstanding token — including remember-me
+// sessions (720h default), which outlast standard tokens (24h). Unsuspends call
+// ClearUserSuspended for an immediate recovery (no TTL wait).
 func (s *Service) MarkUserSuspended(ctx context.Context, userID string) error {
-	if err := s.cacheService.Set(ctx, userSuspendedKey(userID), "1", s.tokenDuration); err != nil {
+	if err := s.cacheService.Set(ctx, userSuspendedKey(userID), "1", s.maxTokenTTL); err != nil {
 		return fmt.Errorf("failed to mark user suspended: %w", err)
 	}
 	return nil
