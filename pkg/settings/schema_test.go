@@ -446,6 +446,17 @@ func TestValidate_CPU_RejectsBogusValues(t *testing.T) {
 		"",
 		"-500m",
 		"100%",
+		// Zero-magnitude values: closes the parallel gap that the
+		// memory/storage tightening missed. Webhook's parseCPUMillis
+		// has no n<1 check (unlike parseMemoryMi/storageSizeGi), so
+		// "0m" and "0.0" would parse to 0 millicores and reach
+		// Kubernetes apiserver, which rejects requests.cpu == 0 with
+		// a less-helpful error than our admission webhook.
+		"0m",
+		"0.0",
+		"0.00",
+		"0",  // bare 0
+		"0.", // dot but no fractional digits
 	}
 	for _, v := range rejected {
 		if err := Validate(def, v); err == nil {
@@ -453,7 +464,12 @@ func TestValidate_CPU_RejectsBogusValues(t *testing.T) {
 		}
 	}
 
-	accepted := []string{"500m", "1000m", "1.0", "0.5", "16.0"}
+	accepted := []string{
+		"500m", "1000m", "1.0", "0.5", "16.0",
+		// Edge cases that look zero-ish but aren't:
+		"0.001", // 1 millicore expressed as decimal
+		"1m",    // smallest millicore
+	}
 	for _, v := range accepted {
 		if err := Validate(def, v); err != nil {
 			t.Errorf("Validate rejected valid CPU value %q: %v", v, err)
