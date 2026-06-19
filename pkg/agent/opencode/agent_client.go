@@ -12,8 +12,17 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/lenaxia/llmsafespaces/pkg/agentd"
+	pkgerrors "github.com/lenaxia/llmsafespaces/pkg/errors"
 	"github.com/lenaxia/llmsafespaces/pkg/secrets"
 )
+
+// ErrNoRunningPod is returned when the workspace has no running pod
+// (empty podIP). The handler maps this to 404.
+var ErrNoRunningPod = &pkgerrors.StatusError{
+	Status:  http.StatusNotFound,
+	Code:    "no_running_pod",
+	Message: "workspace pod not running",
+}
 
 // PasswordResolver resolves the opencode Basic-auth password for a workspace.
 // The API-side implementation reads from the K8s Secret cache (pwCache);
@@ -119,7 +128,7 @@ func (w *WorkspaceClient) resolve(ctx context.Context, userID, workspaceID strin
 		return nil, fmt.Errorf("resolve pod IP for workspace %s: %w", workspaceID, err)
 	}
 	if podIP == "" {
-		return nil, fmt.Errorf("no running pod for workspace %s", workspaceID)
+		return nil, fmt.Errorf("workspace %s: %w", workspaceID, ErrNoRunningPod)
 	}
 	password, err := w.passwordResolver(ctx, workspaceID)
 	if err != nil {
