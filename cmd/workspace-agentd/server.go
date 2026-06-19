@@ -23,15 +23,16 @@ import (
 // and threads it through the handlers and goroutines that need it,
 // mirroring the reloadSecretsDeps pattern.
 type serverDeps struct {
-	client          *OpenCodeClient
-	cache           *providerCache
-	sseTracker      *sessionStatusTracker
-	pressureMonitor *memoryPressureMonitor
-	healthCache     *healthzCache
-	gr              *gateRecorder
-	proc            *managedProcess
-	password        string
-	startedAt       time.Time
+	client            *OpenCodeClient
+	cache             *providerCache
+	sseTracker        *sessionStatusTracker
+	pressureMonitor   *memoryPressureMonitor
+	healthCache       *healthzCache
+	gr                *gateRecorder
+	proc              *managedProcess
+	password          string
+	startedAt         time.Time
+	agentConfigWriter *AgentConfigWriter
 }
 
 // buildStatuszHandler returns the /v1/statusz HTTP handler, parameterised on
@@ -135,7 +136,7 @@ func buildReadyzHandler(deps serverDeps) http.Handler {
 			// RelayInjected: true once the relay injector successfully completed.
 			// Included in readyz (not statusz) because readyz is cache-based and
 			// lightweight, making it safe to call on every ListModels cache miss.
-			RelayInjected: getActiveRelayModels() != nil,
+			RelayInjected: deps.agentConfigWriter != nil && deps.agentConfigWriter.hasRelay(),
 		})
 
 		// S18.10: Record readyz_first_200 gate on first 200 response.
@@ -228,12 +229,13 @@ func wireHTTPServers(bgCtx context.Context, bgWg *sync.WaitGroup, deps serverDep
 	}
 
 	userMux.HandleFunc("/v1/reload-secrets", reloadSecretsHandler(loadMaterializeConfig(), reloadSecretsDeps{
-		Proc:             deps.proc,
-		OpencodePassword: deps.password,
-		Tracker:          deps.sseTracker,
-		BgCtx:            bgCtx,
-		BgWg:             bgWg,
-		Lister:           liveSessions,
+		Proc:              deps.proc,
+		OpencodePassword:  deps.password,
+		Tracker:           deps.sseTracker,
+		BgCtx:             bgCtx,
+		BgWg:              bgWg,
+		Lister:            liveSessions,
+		AgentConfigWriter: deps.agentConfigWriter,
 	}))
 	userMux.HandleFunc("/v1/agent/reload", agentReloadHandler(deps.password, log))
 

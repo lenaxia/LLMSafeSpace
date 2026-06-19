@@ -133,11 +133,11 @@ type opencodeModel struct {
 
 // opencodeModelLimit mirrors the opencode config schema's model.limit object.
 // Only the context field is written here. The output field exists in opencode's
-// schema (see relay_injector.go buildRelayConfig which writes both) but is not
+// schema (see agent_config_writer.go buildRelayProviderEntry which writes both) but is not
 // set by FormatOpenCodeConfig because LLMModelConfig does not carry an output
 // limit — that data is also unavailable from the /v1/models API endpoint.
 // The input field is intentionally absent: opencode returns ConfigInvalidError
-// when limit.input is present (confirmed in relay_injector.go buildRelayConfig comment).
+// when limit.input is present (confirmed in agent_config_writer.go buildRelayProviderEntry).
 type opencodeModelLimit struct {
 	Context int `json:"context,omitempty"`
 }

@@ -39,7 +39,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -58,35 +57,6 @@ func relayURLHost(rawURL string) string {
 	return u.Scheme + "://" + u.Host
 }
 
-// activeRelayModels holds the free model list discovered by the relay injector
-// after it successfully completes. It is set once by the injector goroutine and
-// read by reloadSecretsHandler to re-merge relay config after FlushProviders
-// overwrites agent-config.json on credential bind.
-//
-// nil means the injector has not yet run OR was skipped (personal key / no free
-// models). reloadSecretsHandler treats nil as "do not inject relay" — which is
-// correct in all three cases:
-//   - Not yet run: relay injector fires at ~T+7s (opencode health check passes
-//     at T+5s; model fetch + config write adds ~2s). Writes its own config.
-//   - Skipped (personal key): user routes directly, relay must not be injected.
-//   - Failed (no free models): relay has nothing to offer.
-var activeRelayModels atomic.Pointer[[]relayModel]
-
-// setActiveRelayModels stores the relay model list after successful injection.
-// Called exactly once by startRelayInjector on success.
-func setActiveRelayModels(models []relayModel) {
-	activeRelayModels.Store(&models)
-}
-
-// getActiveRelayModels returns the injected relay model list, or nil if the
-// relay injector has not successfully completed.
-func getActiveRelayModels() []relayModel {
-	if p := activeRelayModels.Load(); p != nil {
-		return *p
-	}
-	return nil
-}
-
 var relayInjectorOutcomes = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "llmsafespaces_relay_injector_total",
 	Help: "Phase-2 relay injector outcomes per agentd pod boot.",
@@ -98,101 +68,6 @@ type relayModel struct {
 	Name         string
 	ContextLimit int
 	OutputLimit  int
-}
-
-// buildRelayConfig merges the opencode-relay provider block into the existing
-// agent-config.json at agentConfigPath and writes the result back to disk.
-//
-// Merge semantics:
-//   - Existing top-level keys (e.g. "provider" block from FlushProviders writing
-//     the openai credential, "model" from applyWorkspaceConfig) are preserved.
-//   - The "provider" map is deep-merged: existing providers survive, opencode-relay
-//     is added. No existing provider key is removed.
-//   - "disabled_providers" is set to ["opencode"] (always, regardless of what was
-//     there before — we own this field).
-//
-// relayURL is the full CF Worker URL (https://relay.safespaces.dev/<secret>).
-// models is the free model list from fetchFreeModels.
-func buildRelayConfig(agentConfigPath, relayURL string, models []relayModel) ([]byte, error) {
-	// Build model map — only context and output limits are valid in the
-	// opencode config schema. The limit.input field returned by /api/model
-	// is not accepted and causes ConfigInvalidError.
-	type modelLimit struct {
-		Context int `json:"context,omitempty"`
-		Output  int `json:"output,omitempty"`
-	}
-	type modelEntry struct {
-		Name  string     `json:"name"`
-		Limit modelLimit `json:"limit,omitempty"`
-	}
-	modelMap := make(map[string]modelEntry, len(models))
-	for _, m := range models {
-		modelMap[m.ID] = modelEntry{
-			Name:  m.Name,
-			Limit: modelLimit{Context: m.ContextLimit, Output: m.OutputLimit},
-		}
-	}
-
-	type options struct {
-		BaseURL string `json:"baseURL"`
-		APIKey  string `json:"apiKey"`
-	}
-	type provider struct {
-		Name    string                `json:"name"`
-		NPM     string                `json:"npm"`
-		Options options               `json:"options"`
-		Models  map[string]modelEntry `json:"models"`
-	}
-
-	// Read and parse the existing agent-config.json so we can merge into it.
-	// If absent (first boot before FlushProviders), start from an empty map.
-	// If present but unparseable (corrupt write), return an error rather than
-	// silently clobbering the existing file — the caller will log Warn and
-	// skip relay injection, leaving the existing config intact.
-	cfg := make(map[string]json.RawMessage)
-	if existing, err := os.ReadFile(agentConfigPath); err == nil && len(existing) > 0 {
-		if jsonErr := json.Unmarshal(existing, &cfg); jsonErr != nil {
-			return nil, fmt.Errorf("existing agent-config.json is not valid JSON — refusing to overwrite: %w", jsonErr)
-		}
-	}
-
-	// Ensure $schema key.
-	if _, ok := cfg["$schema"]; !ok {
-		schema, _ := json.Marshal("https://opencode.ai/config.json")
-		cfg["$schema"] = schema
-	}
-
-	// Merge opencode-relay into the existing provider map.
-	// Existing providers (e.g. "openai" from FlushProviders) are preserved.
-	existingProviders := make(map[string]json.RawMessage)
-	if raw, ok := cfg["provider"]; ok {
-		_ = json.Unmarshal(raw, &existingProviders)
-	}
-	relayEntry, err := json.Marshal(provider{
-		Name: "OpenCode Zen (Free)",
-		NPM:  "@ai-sdk/openai-compatible",
-		Options: options{
-			BaseURL: relayURL,
-			APIKey:  "public",
-		},
-		Models: modelMap,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("marshal opencode-relay provider: %w", err)
-	}
-	existingProviders["opencode-relay"] = relayEntry
-	mergedProviders, err := json.Marshal(existingProviders)
-	if err != nil {
-		return nil, fmt.Errorf("marshal provider map: %w", err)
-	}
-	cfg["provider"] = mergedProviders
-
-	// Always disable the built-in opencode provider so routing goes through
-	// opencode-relay instead.
-	disabled, _ := json.Marshal([]string{"opencode"})
-	cfg["disabled_providers"] = disabled
-
-	return json.MarshalIndent(cfg, "", "  ")
 }
 
 // shouldSkipRelay reads auth.json at authPath and returns (true, reason) if
@@ -359,6 +234,10 @@ type relayInjectorConfig struct {
 	AgentConfigPath string
 	// AuthJSONPath is the path to opencode's auth.json.
 	AuthJSONPath string
+	// AgentConfigWriter is the single writer of agent-config.json. The
+	// injector calls SetRelay + Rebuild to merge the relay provider block
+	// into the existing config. Required when RelayURL is set.
+	AgentConfigWriter *AgentConfigWriter
 	// KillOpenCode is called to trigger opencode process restart after config
 	// is written. The supervisor restarts opencode, which reads the new config.
 	KillOpenCode func()
@@ -409,6 +288,10 @@ func startRelayInjector(ctx context.Context, cfg relayInjectorConfig) {
 			relayInjectorOutcomes.WithLabelValues("skipped_personal_key").Inc()
 			return
 		}
+		if cfg.AgentConfigWriter == nil {
+			lg.Warn("relay injector: AgentConfigWriter is nil, skipping relay injection")
+			return
+		}
 
 		// Fetch the live free model list from the running opencode.
 		// Retry for up to 30s if the catalog returns no free models — this
@@ -442,13 +325,11 @@ func startRelayInjector(ctx context.Context, cfg relayInjectorConfig) {
 		}
 		lg.Info("relay injector: fetched free models", zap.Int("count", len(models)))
 
-		// Build and write the relay config.
-		cfgBytes, err := buildRelayConfig(cfg.AgentConfigPath, cfg.RelayURL, models)
-		if err != nil {
-			lg.Warn("relay injector: failed to build relay config", zap.Error(err))
-			return
-		}
-		if err := os.WriteFile(cfg.AgentConfigPath, cfgBytes, 0o600); err != nil {
+		// Build and write the relay config via the single AgentConfigWriter.
+		// The writer merges the relay provider block into the existing
+		// config (providers + model) and writes atomically (temp + rename).
+		cfg.AgentConfigWriter.setRelay(cfg.RelayURL, models)
+		if err := cfg.AgentConfigWriter.rebuild(); err != nil {
 			lg.Warn("relay injector: failed to write agent config", zap.Error(err))
 			relayInjectorOutcomes.WithLabelValues("config_write_failed").Inc()
 			return
@@ -466,13 +347,9 @@ func startRelayInjector(ctx context.Context, cfg relayInjectorConfig) {
 		}
 		lg.Info("relay injector: updated auth.json with opencode-relay entry")
 
-		// Store the model list so reloadSecretsHandler can re-merge relay config
-		// after any subsequent FlushProviders call (credential bind) overwrites
-		// agent-config.json. Must be set before KillOpenCode so it is visible to
-		// any reload that races with the restart.
-		setActiveRelayModels(models)
-
 		// Kill opencode — the supervisor restarts it and reads the new config.
+		// The relay state is already stored in the AgentConfigWriter (set above
+		// via SetRelay), so reloadSecretsHandler's Rebuild() will preserve it.
 		cfg.KillOpenCode()
 		relayInjectorOutcomes.WithLabelValues("success").Inc()
 		lg.Info("relay injector: triggered opencode restart to apply relay config")
