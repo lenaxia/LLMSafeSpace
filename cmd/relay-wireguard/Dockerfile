@@ -20,12 +20,19 @@
 
 FROM alpine:3.20 AS base
 # wireguard-tools provides wg + wg-quick; iproute2 provides ip; jq parses the
-# peers ConfigMap; wireguard-go is the userspace fallback; openresolv is a
-# wg-quick runtime dep for DNS handling. ca-certificates for TLS if a future
-# config fetches peers over HTTPS.
+# peers ConfigMap; openresolv is a wg-quick runtime dep for DNS handling.
+# ca-certificates for TLS if a future config fetches peers over HTTPS.
+#
+# Talos target note: this image ships the kernel wireguard-tools. Talos (and
+# modern Linux ≥5.6) provides the WireGuard kernel module, which is the path
+# detect_wg_impl in render-wg.sh takes. The userspace wireguard-go fallback is
+# NOT bundled because Alpine 3.20 does not package it (it's only in edge
+# community as of 2026-06); detect_wg_impl degrades gracefully (logs the
+# absence) on kernels without the module. Operators on locked-down kernels
+# that lack the module must build their own image with wireguard-go (e.g. via
+# `go install golang.zx2k4x.net/wireguard/cmd/wireguard-go@latest`).
 RUN apk add --no-cache \
       wireguard-tools \
-      wireguard-go \
       iproute2 \
       jq \
       openresolv \
