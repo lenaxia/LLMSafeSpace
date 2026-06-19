@@ -1102,8 +1102,8 @@ Evaluated by vmagent. Alertmanager routing is operator-configured — out of sco
 | `ObservabilityBlind` | `rate(vm_rows_inserted_total[5m]) == 0` | critical |
 | `GatewayDropping` | `rate(llmsafespace_gateway_events_dropped_total[5m]) > 0` | warning |
 | `GatewayBufferPressure` | `llmsafespace_gateway_buffer_occupancy > 0.8` | warning |
-| `WALSizeHigh` | `llmsafespace_agentd_wal_pending_entries > 100` | warning |
-| `ComputePeriodStale` | `time() - llmsafespace_agentd_last_heartbeat_push > 10` | warning |
+| `WALSizeHigh` | `llmsafespaces_agentd_wal_pending_entries > 100` | warning |
+| `ComputePeriodStale` | `time() - llmsafespaces_agentd_last_heartbeat_push > 10` | warning |
 
 All THRESHOLD values configurable via `values.yaml`.
 
@@ -1423,7 +1423,7 @@ The clean coexistence model:
 
 | Concern | Epic 12 (current) | Epic 33 (after) | Migration |
 |---------|-------------------|-----------------|-----------|
-| **Compute billing source** | `reconcileComputeTime` (CRD-watch, 5-min, 15s buckets) → `usage_events` | `compute_periods` (agentd push, exact boundaries) | **Deprecate `reconcileComputeTime`.** The gateway translates `pod_ready`/`pod_terminated` events into `compute_seconds` events in `usage_events` (same table, same schema, `source='agentd'`). The `/api/v1/usage` endpoint and Stripe exporter read `usage_events` unchanged. |
+| **Compute billing source** | `reconcileComputeTime` (CRD-watch, 5-min, 15s buckets) → `usage_events` | `compute_periods` (agentd push, exact boundaries) | **Deprecate `reconcileComputeTime`.** The gateway translates `pod_ready`/`pod_terminated` events into `compute_seconds` events in `usage_events` (same table, same schema, `source='controller'`). Requires a migration to add `'agentd'` to the `source` CHECK constraint (currently only `('api','controller','cron','reconciliation')`). The `/api/v1/usage` endpoint and Stripe exporter read `usage_events` unchanged. |
 | **Inference billing source** | SSE `onInference` callback → `usage_events` (`llm_tokens`) | agentd `session.updated` → gateway → `usage_events` (`llm_tokens`) | **Move inference emission from API server to agentd.** The gateway writes to the same `usage_events` table. The API server's SSE callback is removed (agentd sees the same stream at the source). |
 | **Billing tables** | `usage_events` (single table) | `usage_events` (unchanged) + `workspace_events` (operational log) | `compute_periods` and `inference_events` **are NOT created.** The gateway writes directly to `usage_events`. `workspace_events` is the new operational event log (not billing-critical). |
 | **Stripe export** | `BillingExporter` reads `usage_events` | Unchanged — same table, same exporter | No change. |
@@ -1511,7 +1511,7 @@ Full design review against the as-built codebase. 8 assumptions traced to root:
 | A5 | agentd HTTP client connection reuse → single gateway replica | **Confirmed** — Go default Transport + K8s per-connection LB + Postgres row-lock serialization |
 | A6 | Resource samples (CPU/mem/disk) are NOT billing inputs | **Confirmed** — billing uses phase transitions (compute) + SSE token counts (inference) + PVC allocation size (storage) |
 | A7 | Design predates Epic 12 implementation | **Confirmed** — Epic 33: Jun 6; Epic 12: Jun 13. Original "Relationship to Epic 12" section spoke in future tense about shipped code |
-| A8 | `compute_periods`/`inference_events` duplicate `usage_events` | **Confirmed** — gateway now writes to `usage_events` directly; `compute_periods`/`inference_events` tables dropped from the design |
+| A8 | `compute_periods`/`inference_events` duplicate `usage_events` | **Confirmed** — gateway now writes to `usage_events` directly; `compute_periods`/`inference_events` tables dropped from the design. Requires a migration to add `'agentd'` to the `usage_events.source` CHECK constraint. |
 
 **Two changes to the original design:**
 
