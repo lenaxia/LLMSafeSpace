@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"runtime"
 	"strings"
 	"time"
@@ -222,6 +223,43 @@ func (s *Service) GetUserID(c *gin.Context) string {
 		return ""
 	}
 	return userID.(string)
+}
+
+// userSuspendedKey is the Redis key holding the per-user revocation marker
+// written by MarkUserSuspended. A live value means "deny this user's currently
+// issued tokens immediately, without a DB lookup" (F4, US-43.19).
+func userSuspendedKey(userID string) string { return "user_suspended:" + userID }
+
+// MarkUserSuspended writes a per-user revocation marker so the auth middleware
+// rejects the user's existing JWTs/API keys the instant the admin suspends them,
+// without waiting for the next per-request GetUser or depending on the DB (which
+// may be briefly unavailable). The TTL equals the maximum token lifetime: once
+// it expires every previously-issued token is naturally invalid, so the marker
+// no longer needs to gate access. Unsuspends call ClearUserSuspended for an
+// immediate recovery (no TTL wait).
+func (s *Service) MarkUserSuspended(ctx context.Context, userID string) error {
+	if err := s.cacheService.Set(ctx, userSuspendedKey(userID), "1", s.tokenDuration); err != nil {
+		return fmt.Errorf("failed to mark user suspended: %w", err)
+	}
+	return nil
+}
+
+// ClearUserSuspended removes the revocation marker so an unsuspended user's
+// existing tokens work again immediately (no TTL wait).
+func (s *Service) ClearUserSuspended(ctx context.Context, userID string) error {
+	if err := s.cacheService.Delete(ctx, userSuspendedKey(userID)); err != nil {
+		return fmt.Errorf("failed to clear user suspended marker: %w", err)
+	}
+	return nil
+}
+
+// isUserSuspendedCached reports whether a live revocation marker exists for the
+// user. A miss (or Redis error) returns false — the authoritative GetUser check
+// in the middleware still runs and fail-closes on DB error. This is purely a
+// fast-path + DB-outage-resilience layer, never the sole enforcement.
+func (s *Service) isUserSuspendedCached(ctx context.Context, userID string) bool {
+	v, err := s.cacheService.Get(ctx, userSuspendedKey(userID))
+	return err == nil && v != ""
 }
 
 // RevokeToken revokes a JWT token
@@ -944,15 +982,48 @@ func (s *Service) AuthMiddleware() gin.HandlerFunc {
 		// authenticated endpoint (all orgs + personal). A suspended user's
 		// token/API key is still cryptographically valid; the status check is
 		// what denies access.
+		//
+		// F3 (US-43.19): FAIL CLOSED on any GetUser error — the previous code
+		// silently fell through to c.Next(), letting a suspended user regain
+		// access during a DB blip. Denying legitimate users during a DB outage
+		// is the correct security posture for an authz gate.
+		//
+		// F4 (US-43.19): the revocation marker set by SuspendUser lets us
+		// report a precise 401 (not 503) for a suspended user EVEN when the DB
+		// is unreachable, and lets us HEAL a stale marker left by an unsuspend
+		// whose ClearUserSuspended failed (Redis blip) — otherwise an active
+		// user would be falsely blocked until the marker TTL expired. GetUser
+		// remains authoritative; the marker is only consulted on the DB-error
+		// branch (resilience) and the active-user branch (healing).
 		if s.dbService != nil {
-			user, err := s.dbService.GetUser(c.Request.Context(), userID)
-			if err == nil && user != nil {
-				if user.Status == types.UserStatusSuspended {
-					c.AbortWithStatusJSON(401, gin.H{"error": "account suspended"})
+			user, gerr := s.dbService.GetUser(c.Request.Context(), userID)
+			if gerr != nil {
+				if s.isUserSuspendedCached(c.Request.Context(), userID) {
+					c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "account suspended"})
 					return
 				}
-				c.Set("userRole", user.Role)
+				c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "unable to verify account status"})
+				return
 			}
+			if user == nil {
+				// Token validated but no user row — the account was deleted
+				// while the token was still cryptographically valid. Fail
+				// closed rather than honoring a stale credential.
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "account not found"})
+				return
+			}
+			if user.Status == types.UserStatusSuspended {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "account suspended"})
+				return
+			}
+			// Active user. Clear any stale revocation marker (an unsuspend
+			// whose ClearUserSuspended failed) so the next request is not
+			// falsely flagged. Best-effort: a Redis failure here only leaves
+			// the marker to expire on its own TTL.
+			if s.isUserSuspendedCached(c.Request.Context(), userID) {
+				_ = s.ClearUserSuspended(c.Request.Context(), userID)
+			}
+			c.Set("userRole", user.Role)
 		}
 
 		c.Next()
@@ -976,6 +1047,14 @@ func (s *Service) OptionalAuthMiddleware() gin.HandlerFunc {
 			userID, err := s.ValidateTokenWithClientIP(tokenString, c.ClientIP())
 			if err == nil && userID != "" {
 				suspended := false
+				// OptionalAuthMiddleware never aborts; it excludes a suspended
+				// user by withholding userID (they get the anonymous surface).
+				// On GetUser error it stays anonymous (optional endpoints must
+				// keep working for unauthenticated callers during a DB blip);
+				// the mandatory AuthMiddleware fail-closes, this one does not.
+				// The F4 marker is intentionally NOT consulted here: it would
+				// add a stale-marker false-positive risk for no benefit, since
+				// GetUser already authoritatively resolves suspension.
 				if s.dbService != nil {
 					if user, gerr := s.dbService.GetUser(c.Request.Context(), userID); gerr == nil && user != nil {
 						if user.Status == types.UserStatusSuspended {

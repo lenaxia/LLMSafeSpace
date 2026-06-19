@@ -47,6 +47,20 @@ func (m *MockAuthService) RevokeToken(token string) error {
 	return args.Error(0)
 }
 
+// MarkUserSuspended / ClearUserSuspended mocks — added for the F4 (US-43.19)
+// per-user revocation-marker methods on AuthService. Middleware tests do not
+// exercise the suspend path, so the mock satisfies the interface and returns
+// whatever the test configures.
+func (m *MockAuthService) MarkUserSuspended(ctx context.Context, userID string) error {
+	args := m.Called(ctx, userID)
+	return args.Error(0)
+}
+
+func (m *MockAuthService) ClearUserSuspended(ctx context.Context, userID string) error {
+	args := m.Called(ctx, userID)
+	return args.Error(0)
+}
+
 func (m *MockAuthService) GetUserID(c *gin.Context) string {
 	args := m.Called(c)
 	return args.String(0)
