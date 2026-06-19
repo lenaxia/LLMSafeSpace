@@ -233,7 +233,7 @@ controller:
       affinity: {}
 
       # WireGuard sidecar + network-agnostic ingress (US-42.8, Epic 42 Layer 2
-      # redesign, worklog 0386). The sidecar brings up wg0 (10.42.42.1/24) in
+      # redesign, worklog 0388). The sidecar brings up wg0 (10.42.42.1/24) in
       # the router pod's network namespace so the router main container can
       # dial relay VMs at 10.42.42.x:8080. The chart NEVER installs MetalLB or
       # any other LB controller — that is an operator responsibility, like
