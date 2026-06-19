@@ -50,6 +50,22 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # context.TODO() in production code is forbidden (US-46.5). It means
+      # "I don't know what context belongs here" and silently drops deadline
+      # propagation. context.Background() is allowed in main/init/background
+      # goroutines; context.TODO() is never correct in shipped code.
+      - name: context.TODO check
+        run: |
+          if hits=$(grep -rn 'context.TODO()' --include='*.go' . \
+              | grep -v '_test.go' \
+              | grep -v 'zz_generated' \
+              | grep -v 'sdks/'); then
+            echo "$hits"
+            echo "FAIL: context.TODO() found in production code. Use the request context or context.Background()."
+            exit 1
+          fi
+          echo "OK: zero context.TODO() in production code"
+
       # golangci-lint with the curated ruleset in .golangci.yml. Catches
       # the audit-cycle bugs that pre-merge automation could have caught
       # mechanically (errcheck, bodyclose, sqlclosecheck, contextcheck,
