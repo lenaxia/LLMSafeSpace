@@ -35,9 +35,6 @@ type mockPlatformOrgStore struct {
 	}
 	auditErr error
 
-	lastAdminOrgs []types.LastAdminOrg
-	lastAdminErr  error
-
 	// US-43.18 ListOrgs surface.
 	listOrgsCalls []struct {
 		Limit  int
@@ -47,6 +44,15 @@ type mockPlatformOrgStore struct {
 	listOrgs     []types.OrgSummary
 	listOrgsPage *types.PaginationMetadata
 	listOrgsErr  error
+
+	// F7: atomic guarded-suspend surface (replaces the separate last-admin read
+	// + SetUserStatus write). suspendGuardedConflict != nil ⇒ refuse with 409.
+	suspendGuardedCalls []struct {
+		UserID string
+		Force  bool
+	}
+	suspendGuardedConflict *types.LastAdminOrg
+	suspendGuardedErr      error
 }
 
 func (m *mockPlatformOrgStore) UpdateOrgStatus(_ context.Context, orgID string, status *types.OrgStatus, sub *types.OrgSubscriptionStatus, plan *types.OrgPlan) error {
@@ -71,8 +77,19 @@ func (m *mockPlatformOrgStore) LogAuditEvent(_ context.Context, domain, actorID,
 	return m.auditErr
 }
 
-func (m *mockPlatformOrgStore) OrgsWhereUserIsLastActiveAdmin(_ context.Context, _ string) ([]types.LastAdminOrg, error) {
-	return m.lastAdminOrgs, m.lastAdminErr
+// SuspendUserGuardedByLastAdmin records the call and returns the configured
+// conflict (F7). The real PgOrgStore performs the status update inside the same
+// transaction; the mock intentionally does not, so tests can assert the
+// handler's response shape independently of DB plumbing.
+func (m *mockPlatformOrgStore) SuspendUserGuardedByLastAdmin(_ context.Context, userID string, force bool) (*types.LastAdminOrg, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.suspendGuardedCalls = append(m.suspendGuardedCalls, struct {
+		UserID string
+		Force  bool
+	}{userID, force})
+	cp := m.suspendGuardedConflict
+	return cp, m.suspendGuardedErr
 }
 
 type mockPlatformUserStore struct {
@@ -108,10 +125,38 @@ type stubLogger struct{ msgs []string }
 
 func (s *stubLogger) Warn(msg string, args ...any) { s.msgs = append(s.msgs, msg) }
 
+// mockRevoker records F4 token-revocation calls. markErr lets a test simulate a
+// Redis blip (best-effort path must not fail the admin action).
+type mockRevoker struct {
+	mu       sync.Mutex
+	marked   []string
+	cleared  []string
+	markErr  error
+	clearErr error
+}
+
+func (m *mockRevoker) MarkUserSuspended(_ context.Context, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.marked = append(m.marked, userID)
+	return m.markErr
+}
+
+func (m *mockRevoker) ClearUserSuspended(_ context.Context, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cleared = append(m.cleared, userID)
+	return m.clearErr
+}
+
 func setupPlatformAdminRouter(t *testing.T, orgs *mockPlatformOrgStore, users *mockPlatformUserStore) *gin.Engine {
+	return setupPlatformAdminRouterWithRevoker(t, orgs, users, &mockRevoker{})
+}
+
+func setupPlatformAdminRouterWithRevoker(t *testing.T, orgs *mockPlatformOrgStore, users *mockPlatformUserStore, revoker *mockRevoker) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	h := NewPlatformAdminHandler(orgs, users, &mockOrgAuthService{userID: "admin-1"}, &stubLogger{})
+	h := NewPlatformAdminHandler(orgs, users, &mockOrgAuthService{userID: "admin-1"}, revoker, &stubLogger{})
 	r := gin.New()
 	r.POST("/api/v1/admin/orgs/:id/suspend", h.SuspendOrg)
 	r.POST("/api/v1/admin/orgs/:id/unsuspend", h.UnsuspendOrg)
@@ -195,19 +240,33 @@ func TestUnsuspendOrg_Happy(t *testing.T) {
 // --- User suspend / unsuspend ---
 
 func TestSuspendUser_Happy(t *testing.T) {
-	orgs := &mockPlatformOrgStore{lastAdminOrgs: []types.LastAdminOrg{}}
+	orgs := &mockPlatformOrgStore{}
 	users := &mockPlatformUserStore{}
-	r := setupPlatformAdminRouter(t, orgs, users)
+	revoker := &mockRevoker{}
+	r := setupPlatformAdminRouterWithRevoker(t, orgs, users, revoker)
 
 	w := doRequest(r, "POST", "/api/v1/admin/users/user-1/suspend", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if len(users.setStatusCalls) != 1 {
-		t.Fatalf("expected 1 SetUserStatus call, got %d", len(users.setStatusCalls))
+	// F7: the suspend is now atomic via SuspendUserGuardedByLastAdmin (which in
+	// production performs the status UPDATE inside the same tx as the check).
+	// SetUserStatus is no longer called by the suspend path.
+	if len(orgs.suspendGuardedCalls) != 1 {
+		t.Fatalf("expected 1 SuspendUserGuardedByLastAdmin call, got %d", len(orgs.suspendGuardedCalls))
 	}
-	if users.setStatusCalls[0].UserID != "user-1" || users.setStatusCalls[0].Status != types.UserStatusSuspended {
-		t.Errorf("unexpected SetUserStatus: %+v", users.setStatusCalls[0])
+	if orgs.suspendGuardedCalls[0].UserID != "user-1" || orgs.suspendGuardedCalls[0].Force {
+		t.Errorf("unexpected guarded-suspend call: %+v", orgs.suspendGuardedCalls[0])
+	}
+	if len(users.setStatusCalls) != 0 {
+		t.Errorf("SetUserStatus must NOT be called separately on suspend (atomic path owns the update), got %d", len(users.setStatusCalls))
+	}
+	// F4: the user's tokens are revoked immediately.
+	if len(revoker.marked) != 1 || revoker.marked[0] != "user-1" {
+		t.Errorf("expected MarkUserSuspended(user-1), got %v", revoker.marked)
+	}
+	if len(revoker.cleared) != 0 {
+		t.Errorf("suspend must not clear the revocation marker, got %v", revoker.cleared)
 	}
 	if len(orgs.auditCalls) != 1 {
 		t.Fatalf("expected 1 audit call, got %d", len(orgs.auditCalls))
@@ -219,21 +278,25 @@ func TestSuspendUser_Happy(t *testing.T) {
 }
 
 // TestSuspendUser_LastAdminBlocked verifies the D19 deadlock-prevention: the
-// suspend is refused with 409 when the user is the sole active admin of an
-// org, and SetUserStatus is NOT called.
+// atomic guarded suspend refuses with 409 when the user is the sole active
+// admin of an org, and NO token revocation occurs (the user is not suspended).
 func TestSuspendUser_LastAdminBlocked(t *testing.T) {
 	orgs := &mockPlatformOrgStore{
-		lastAdminOrgs: []types.LastAdminOrg{{OrgID: "org-9", OrgName: "Acme"}},
+		suspendGuardedConflict: &types.LastAdminOrg{OrgID: "org-9", OrgName: "Acme"},
 	}
 	users := &mockPlatformUserStore{}
-	r := setupPlatformAdminRouter(t, orgs, users)
+	revoker := &mockRevoker{}
+	r := setupPlatformAdminRouterWithRevoker(t, orgs, users, revoker)
 
 	w := doRequest(r, "POST", "/api/v1/admin/users/user-1/suspend", "")
 	if w.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
 	}
-	if len(users.setStatusCalls) != 0 {
-		t.Errorf("SetUserStatus must NOT be called when last-admin check fails, got %d calls", len(users.setStatusCalls))
+	if len(orgs.suspendGuardedCalls) != 1 {
+		t.Fatalf("expected the guarded-suspend check to run, got %d calls", len(orgs.suspendGuardedCalls))
+	}
+	if len(revoker.marked) != 0 {
+		t.Errorf("must NOT revoke tokens when the suspend is refused, got %v", revoker.marked)
 	}
 	if !strings.Contains(w.Body.String(), "Acme") {
 		t.Errorf("expected error to name the org 'Acme', got: %s", w.Body.String())
@@ -244,56 +307,48 @@ func TestSuspendUser_LastAdminBlocked(t *testing.T) {
 }
 
 // TestSuspendUser_LastAdminForceOverride verifies the ?force=true escape hatch
-// (D19): a platform admin can force-suspend even the last admin in a security
-// emergency, leaving the org unmanageable until manually remediated.
+// (D19): the guarded suspend proceeds even for the last admin.
 func TestSuspendUser_LastAdminForceOverride(t *testing.T) {
-	orgs := &mockPlatformOrgStore{
-		lastAdminOrgs: []types.LastAdminOrg{{OrgID: "org-9", OrgName: "Acme"}},
-	}
+	orgs := &mockPlatformOrgStore{}
 	users := &mockPlatformUserStore{}
-	r := setupPlatformAdminRouter(t, orgs, users)
+	revoker := &mockRevoker{}
+	r := setupPlatformAdminRouterWithRevoker(t, orgs, users, revoker)
 
 	w := doRequest(r, "POST", "/api/v1/admin/users/user-1/suspend?force=true", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 with force=true, got %d: %s", w.Code, w.Body.String())
 	}
-	if len(users.setStatusCalls) != 1 {
-		t.Errorf("expected SetUserStatus called under force, got %d", len(users.setStatusCalls))
+	if len(orgs.suspendGuardedCalls) != 1 || !orgs.suspendGuardedCalls[0].Force {
+		t.Errorf("expected guarded-suspend with force=true, got %+v", orgs.suspendGuardedCalls)
+	}
+	if len(revoker.marked) != 1 {
+		t.Errorf("force-suspend must still revoke tokens, got %v", revoker.marked)
 	}
 	if len(orgs.auditCalls) != 1 {
 		t.Fatalf("expected 1 audit call, got %d", len(orgs.auditCalls))
 	}
 }
 
-func TestSuspendUser_LastAdminCheckError_500(t *testing.T) {
-	orgs := &mockPlatformOrgStore{lastAdminErr: errors.New("db down")}
+func TestSuspendUser_GuardedStoreError_500(t *testing.T) {
+	orgs := &mockPlatformOrgStore{suspendGuardedErr: errors.New("db down")}
 	users := &mockPlatformUserStore{}
-	r := setupPlatformAdminRouter(t, orgs, users)
+	revoker := &mockRevoker{}
+	r := setupPlatformAdminRouterWithRevoker(t, orgs, users, revoker)
 
 	w := doRequest(r, "POST", "/api/v1/admin/users/user-1/suspend", "")
 	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500 on last-admin check error, got %d", w.Code)
+		t.Fatalf("expected 500 on guarded-suspend store error, got %d", w.Code)
 	}
-	if len(users.setStatusCalls) != 0 {
-		t.Errorf("SetUserStatus must not run when the precheck fails")
-	}
-}
-
-func TestSuspendUser_SetStatusError_500(t *testing.T) {
-	orgs := &mockPlatformOrgStore{lastAdminOrgs: []types.LastAdminOrg{}}
-	users := &mockPlatformUserStore{setStatusErr: errors.New("db down")}
-	r := setupPlatformAdminRouter(t, orgs, users)
-
-	w := doRequest(r, "POST", "/api/v1/admin/users/user-1/suspend", "")
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500, got %d", w.Code)
+	if len(revoker.marked) != 0 {
+		t.Errorf("must not revoke tokens when the suspend store call fails")
 	}
 }
 
 func TestUnsuspendUser_Happy(t *testing.T) {
 	orgs := &mockPlatformOrgStore{}
 	users := &mockPlatformUserStore{}
-	r := setupPlatformAdminRouter(t, orgs, users)
+	revoker := &mockRevoker{}
+	r := setupPlatformAdminRouterWithRevoker(t, orgs, users, revoker)
 
 	w := doRequest(r, "POST", "/api/v1/admin/users/user-1/unsuspend", "")
 	if w.Code != http.StatusOK {
@@ -302,8 +357,49 @@ func TestUnsuspendUser_Happy(t *testing.T) {
 	if len(users.setStatusCalls) != 1 || users.setStatusCalls[0].Status != types.UserStatusActive {
 		t.Errorf("expected SetUserStatus active, got %+v", users.setStatusCalls)
 	}
+	// F4: unsuspend clears the revocation marker so existing tokens work again.
+	if len(revoker.cleared) != 1 || revoker.cleared[0] != "user-1" {
+		t.Errorf("expected ClearUserSuspended(user-1), got %v", revoker.cleared)
+	}
 	if len(orgs.auditCalls) != 1 || orgs.auditCalls[0].Action != "user.unsuspend" {
 		t.Errorf("expected user.unsuspend audit, got %+v", orgs.auditCalls)
+	}
+}
+
+// TestSuspendUser_RevokerBestEffort verifies the F4 marker write is best-effort:
+// a Redis blip surfaces a warning but does NOT fail the admin action (the user
+// is already suspended in the DB; the per-request GetUser gate still enforces).
+func TestSuspendUser_RevokerBestEffort(t *testing.T) {
+	orgs := &mockPlatformOrgStore{}
+	users := &mockPlatformUserStore{}
+	logger := &stubLogger{}
+	gin.SetMode(gin.TestMode)
+	h := NewPlatformAdminHandler(orgs, users, &mockOrgAuthService{userID: "admin-1"}, &mockRevoker{markErr: errors.New("redis down")}, logger)
+	r := gin.New()
+	r.POST("/api/v1/admin/users/:id/suspend", h.SuspendUser)
+
+	w := doRequest(r, "POST", "/api/v1/admin/users/user-1/suspend", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("suspend must succeed (best-effort revocation) even when Redis is down, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(logger.msgs) == 0 {
+		t.Errorf("expected a warning log when the revocation marker write fails")
+	}
+}
+
+// TestSuspendUser_NilRevoker verifies the handler tolerates a nil revoker (used
+// by minimal test setups): no panic, status flips via the atomic path.
+func TestSuspendUser_NilRevoker(t *testing.T) {
+	orgs := &mockPlatformOrgStore{}
+	users := &mockPlatformUserStore{}
+	gin.SetMode(gin.TestMode)
+	h := NewPlatformAdminHandler(orgs, users, &mockOrgAuthService{userID: "admin-1"}, nil, &stubLogger{})
+	r := gin.New()
+	r.POST("/api/v1/admin/users/:id/suspend", h.SuspendUser)
+
+	w := doRequest(r, "POST", "/api/v1/admin/users/user-1/suspend", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 with nil revoker, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
