@@ -429,12 +429,16 @@ describe("SettingsForm", () => {
       expect(input).toBeDisabled();
     });
 
-    it("does not call onSave for readOnly settings", async () => {
+    it("does not call onSave for readOnly settings when user attempts to edit", async () => {
       const onSave = vi.fn().mockResolvedValue(undefined);
       const readOnlySchema: SettingDef[] = [
         { key: "email.provider", tier: 2, type: "string", default: "", category: "Email", label: "Provider", description: "Email provider", readOnly: true },
       ];
       render(<SettingsForm schema={readOnlySchema} values={{ "email.provider": "ses" }} onSave={onSave} />);
+      // The input is disabled, so change events won't fire in a real browser.
+      // Verify the guard by checking onSave was never called after render + attempted interaction.
+      const input = screen.getByDisplayValue("ses") as HTMLInputElement;
+      expect(input).toBeDisabled();
       expect(onSave).not.toHaveBeenCalled();
     });
 

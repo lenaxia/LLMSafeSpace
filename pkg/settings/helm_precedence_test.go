@@ -126,3 +126,23 @@ func TestSetHelmOverrides_IgnoresUnknownKeys(t *testing.T) {
 		assert.False(t, def.ReadOnly, "no key should be ReadOnly after setting only an unknown key")
 	}
 }
+
+// TestGetString_ReturnsHelmValueForOverriddenKey verifies that the typed
+// getter path (GetString → get → helmOverrides) returns the helm value, not
+// the DB or default value. This guards the helm-override block inside get()
+// which is otherwise only tested indirectly via GetAll.
+func TestGetString_ReturnsHelmValueForOverriddenKey(t *testing.T) {
+	store := &stubStore{data: map[string]json.RawMessage{
+		"email.fromAddress": json.RawMessage(`"db@example.com"`),
+	}}
+	svc := NewInstanceService(store, nil)
+	svc.SetHelmOverrides(map[string]any{
+		"email.fromAddress": "helm@example.com",
+	})
+	require.NoError(t, svc.Start())
+
+	got, err := svc.GetString(context.Background(), "email.fromAddress")
+	require.NoError(t, err)
+	assert.Equal(t, "helm@example.com", got,
+		"GetString must return the helm value, not the DB value")
+}

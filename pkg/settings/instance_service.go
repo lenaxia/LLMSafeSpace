@@ -56,8 +56,9 @@ func NewInstanceService(store InstanceStore, logger pkginterfaces.LoggerInterfac
 // SetHelmOverrides marks the given keys as helm-managed (Tier 1) and pins
 // their values. Called once at boot from app.go when email.enabled=true.
 // Keys not in the instance schema are silently ignored (defensive). Must be
-// called before Start() / before serving requests; after that the map is
-// read-only and read without a lock (matching the index pattern).
+// called before Start() / before serving requests. After that, the map is
+// not written again; all reads take s.mu.RLock() (the same lock that guards
+// the data cache), so concurrent access is race-free.
 func (s *InstanceService) SetHelmOverrides(overrides map[string]any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
