@@ -8,13 +8,14 @@
 #   - jq               (parse relay-router-peers ConfigMap JSON)
 #   - /dev/net/tun     (mounted via hostPath by the Deployment)
 #
-# Talos compatibility (#3): the image bundles BOTH the kernel wireguard-tools
-# AND the userspace wireguard-go. wg-quick auto-detects: if the kernel WG
-# module is available (Talos ships it — verified via Tailscale/NetBird/Nebula
-# extensions that all depend on it), it uses the in-kernel implementation; if
-# not, wg-quick falls back to wireguard-go via the WG_QUICK_USERSPACE_IMPLEMENTATION
-# env (set by render-wg.sh when the kernel module probe fails). This makes the
-# image work on Talos, generic Linux, and locked-down kernels alike.
+# Talos compatibility (#3): the image ships the kernel wireguard-tools. Talos
+# (and modern Linux >=5.6) provides the in-kernel WireGuard module, which is
+# the path render-wg.sh's detect_wg_impl takes. The userspace wireguard-go
+# fallback is NOT bundled here — Alpine 3.20 does not package it (only edge
+# community as of 2026-06); detect_wg_impl degrades gracefully (logs the
+# absence) on kernels without the module. Operators on locked-down kernels
+# that lack the module must build their own image with wireguard-go (e.g. via
+# `go install golang.zx2k4x.net/wireguard/cmd/wireguard-go@latest`).
 #
 #   docker build -f cmd/relay-wireguard/Dockerfile -t llmsafespaces/relay-wireguard:dev .
 
