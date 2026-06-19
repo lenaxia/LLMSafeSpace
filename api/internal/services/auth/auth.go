@@ -49,7 +49,7 @@ func (s *Service) SetKeyService(ks KeyServiceInterface) {
 }
 
 // SetInstanceSettings injects the instance settings service for runtime config reads.
-func (s *Service) SetInstanceSettings(svc *settings.InstanceService) {
+func (s *Service) SetInstanceSettings(svc interfaces.SettingsReader) {
 	s.instanceSettings = svc
 }
 
@@ -87,13 +87,13 @@ func (s *Service) lockoutConfig(ctx context.Context) (enabled bool, attempts int
 	if s.instanceSettings == nil {
 		return
 	}
-	if v, err := s.instanceSettings.GetBool(ctx, "auth.lockoutEnabled"); err == nil {
+	if v, err := s.instanceSettings.GetBool(ctx, settings.KeyAuthLockoutEnabled.Name()); err == nil {
 		enabled = v
 	}
-	if v, err := s.instanceSettings.GetInt(ctx, "auth.lockoutAttempts"); err == nil && v > 0 {
+	if v, err := s.instanceSettings.GetInt(ctx, settings.KeyAuthLockoutAttempts.Name()); err == nil && v > 0 {
 		attempts = v
 	}
-	if v, err := s.instanceSettings.GetInt(ctx, "auth.lockoutDurationMinutes"); err == nil && v > 0 {
+	if v, err := s.instanceSettings.GetInt(ctx, settings.KeyAuthLockoutDurationMinutes.Name()); err == nil && v > 0 {
 		duration = time.Duration(v) * time.Minute
 	}
 	return
@@ -121,7 +121,7 @@ type Service struct {
 	// remember-me tokens (720h default), which outlast standard tokens (24h).
 	maxTokenTTL      time.Duration
 	keyService       KeyServiceInterface
-	instanceSettings *settings.InstanceService
+	instanceSettings interfaces.SettingsReader
 	rootKeyProvider  secrets.RootKeyProvider
 }
 

@@ -12,10 +12,10 @@ import (
 )
 
 type MeteringMiddleware struct {
-	meteringSvc interfaces.MeteringService
+	meteringSvc interfaces.MeteringRecorder
 }
 
-func NewMeteringMiddleware(svc interfaces.MeteringService) *MeteringMiddleware {
+func NewMeteringMiddleware(svc interfaces.MeteringRecorder) *MeteringMiddleware {
 	return &MeteringMiddleware{meteringSvc: svc}
 }
 

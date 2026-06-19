@@ -53,6 +53,13 @@ var (
 	KeyAuthLockoutEnabled         = register(Key{"auth.lockoutEnabled", "auth", false})
 	KeyAuthLockoutAttempts        = register(Key{"auth.lockoutAttempts", "auth", 0})
 	KeyAuthLockoutDurationMinutes = register(Key{"auth.lockoutDurationMinutes", "auth", 0})
+	KeyAuthRegistrationEnabled    = register(Key{"auth.registrationEnabled", "auth", true})
+)
+
+// Instance settings
+var (
+	KeyInstanceName = register(Key{"instance.name", "instance", ""})
+	KeyInstanceMOTD = register(Key{"instance.motd", "instance", ""})
 )
 
 // Rate limiting settings
@@ -61,6 +68,8 @@ var (
 	KeyRateLimitingDefaultLimit  = register(Key{"rateLimiting.defaultLimit", "rateLimiting", 100})
 	KeyRateLimitingDefaultWindow = register(Key{"rateLimiting.defaultWindow", "rateLimiting", "1m"})
 	KeyRateLimitingBurstSize     = register(Key{"rateLimiting.burstSize", "rateLimiting", 20})
+	KeyRateLimitingStrategy      = register(Key{"rateLimiting.strategy", "rateLimiting", "token_bucket"})
+	KeyRateLimitingWindowMinutes = register(Key{"rateLimiting.windowMinutes", "rateLimiting", 0})
 )
 
 // IsKnown reports whether keyName is a registered setting.

@@ -28,7 +28,7 @@ func (s *Service) enforceMaxActiveWorkspaces(ctx context.Context, userID, target
 		return "", nil
 	}
 
-	maxActive, err := s.instanceSettings.GetInt(ctx, "workspace.maxActiveWorkspacesPerUser")
+	maxActive, err := s.instanceSettings.GetInt(ctx, settings.KeyWorkspaceMaxActivePerUser.Name())
 	if err != nil {
 		// If settings unavailable, don't block activation
 		s.logger.Warn("failed to read maxActiveWorkspacesPerUser, skipping enforcement",

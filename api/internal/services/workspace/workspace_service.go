@@ -277,7 +277,7 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 
 	// Apply default runtime from settings if not specified
 	if req.Runtime == "" && s.instanceSettings != nil {
-		if img, err := s.instanceSettings.GetString(ctx, "workspace.defaultImage"); err == nil && img != "" {
+		if img, err := s.instanceSettings.GetString(ctx, settings.KeyWorkspaceDefaultImage.Name()); err == nil && img != "" {
 			req.Runtime = img
 		}
 	}
@@ -900,7 +900,7 @@ func (s *Service) applyWorkspaceDefaults(ctx context.Context, crd *v1.Workspace)
 
 	// Security level
 	if crd.Spec.SecurityLevel == "" {
-		if level, err := s.instanceSettings.GetString(ctx, "workspace.defaultSecurityLevel"); err == nil && level != "" {
+		if level, err := s.instanceSettings.GetString(ctx, settings.KeyWorkspaceDefaultSecurityLevel.Name()); err == nil && level != "" {
 			crd.Spec.SecurityLevel = level
 		}
 	}
@@ -914,8 +914,8 @@ func (s *Service) applyWorkspaceDefaults(ctx context.Context, crd *v1.Workspace)
 
 	// Resources
 	if crd.Spec.Resources == nil {
-		cpu, _ := s.instanceSettings.GetString(ctx, "workspace.defaultResources.cpu")
-		mem, _ := s.instanceSettings.GetString(ctx, "workspace.defaultResources.memory")
+		cpu, _ := s.instanceSettings.GetString(ctx, settings.KeyWorkspaceDefaultResourcesCPU.Name())
+		mem, _ := s.instanceSettings.GetString(ctx, settings.KeyWorkspaceDefaultResourcesMemory.Name())
 		if cpu != "" || mem != "" {
 			crd.Spec.Resources = &v1.ResourceRequirements{
 				CPU: cpu, Memory: mem,
@@ -927,10 +927,10 @@ func (s *Service) applyWorkspaceDefaults(ctx context.Context, crd *v1.Workspace)
 	if crd.Spec.AutoSuspend == nil {
 		autoSuspendEnabled := true
 		idleTimeout := int64(86400)
-		if v, err := s.instanceSettings.GetBool(ctx, "workspace.autoSuspend.enabled"); err == nil {
+		if v, err := s.instanceSettings.GetBool(ctx, settings.KeyWorkspaceAutoSuspendEnabled.Name()); err == nil {
 			autoSuspendEnabled = v
 		}
-		if v, err := s.instanceSettings.GetInt(ctx, "workspace.autoSuspend.idleTimeoutMinutes"); err == nil && v > 0 {
+		if v, err := s.instanceSettings.GetInt(ctx, settings.KeyWorkspaceAutoSuspendIdleTimeout.Name()); err == nil && v > 0 {
 			idleTimeout = int64(v) * 60
 		}
 		crd.Spec.AutoSuspend = &v1.WorkspaceAutoSuspend{
@@ -940,14 +940,14 @@ func (s *Service) applyWorkspaceDefaults(ctx context.Context, crd *v1.Workspace)
 	}
 
 	// TTL after suspended
-	if days, err := s.instanceSettings.GetInt(ctx, "workspace.ttlDaysAfterSuspended"); err == nil && days > 0 {
+	if days, err := s.instanceSettings.GetInt(ctx, settings.KeyWorkspaceTTLDaysAfterSuspended.Name()); err == nil && days > 0 {
 		crd.Spec.TTLSecondsAfterSuspended = int64(days) * 86400
 	}
 
 	// Network access
 	if crd.Spec.NetworkAccess == nil {
-		ingress, _ := s.instanceSettings.GetBool(ctx, "workspace.defaultNetworkAccess.ingress")
-		domains, _ := s.instanceSettings.GetStrings(ctx, "workspace.defaultNetworkAccess.egressDomains")
+		ingress, _ := s.instanceSettings.GetBool(ctx, settings.KeyWorkspaceDefaultNetworkIngress.Name())
+		domains, _ := s.instanceSettings.GetStrings(ctx, settings.KeyWorkspaceDefaultNetworkEgress.Name())
 		if ingress || len(domains) > 0 {
 			egress := make([]v1.WorkspaceEgressRule, len(domains))
 			for i, d := range domains {
@@ -963,7 +963,7 @@ func (s *Service) applyWorkspaceDefaults(ctx context.Context, crd *v1.Workspace)
 	// Without this, the proxy falls back to a hardcoded constant of 5
 	// regardless of what the admin configured. (Epic 13 US-13.3)
 	if crd.Spec.MaxActiveSessions == 0 {
-		if v, err := s.instanceSettings.GetInt(ctx, "workspace.defaultMaxActiveSessions"); err == nil && v > 0 {
+		if v, err := s.instanceSettings.GetInt(ctx, settings.KeyWorkspaceDefaultMaxActiveSessions.Name()); err == nil && v > 0 {
 			crd.Spec.MaxActiveSessions = int32(v) //nolint:gosec // v is bounded by settings schema (1-100); overflow impossible
 		}
 	}
