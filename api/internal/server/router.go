@@ -1060,20 +1060,18 @@ func registerProxyRoutes(idGroup *gin.RouterGroup, proxyHandler *handlers.ProxyH
 }
 
 // respondWithError maps API errors to HTTP responses. It uses errors.As to
-// find an *apierrors.APIError anywhere in the error chain (handles both direct
-// returns and fmt.Errorf-wrapped errors), falling back to a duck-typed
-// StatusCode() check for other typed errors, then 500 for plain errors.
+// find an *apierrors.APIError or a *pkgerrors.StatusError anywhere in the
+// error chain (handles both direct returns and fmt.Errorf-wrapped errors),
+// falling back to a duck-typed StatusCode() check, then 500 for plain errors.
 func respondWithError(c *gin.Context, err error) {
 	var apiErr *apierrors.APIError
 	if errors.As(err, &apiErr) {
 		c.JSON(apiErr.StatusCode(), gin.H{"error": apiErr.Error()})
 		return
 	}
-	if ae, ok := err.(interface {
-		StatusCode() int
-		Error() string
-	}); ok {
-		c.JSON(ae.StatusCode(), gin.H{"error": ae.Error()})
+	var statusErr interface{ StatusCode() int }
+	if errors.As(err, &statusErr) {
+		c.JSON(statusErr.StatusCode(), gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

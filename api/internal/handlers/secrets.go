@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	pkgerrors "github.com/lenaxia/llmsafespaces/pkg/errors"
 	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
 	"github.com/lenaxia/llmsafespaces/pkg/secrets"
 	"github.com/lenaxia/llmsafespaces/pkg/types"
@@ -736,47 +737,26 @@ func extractAuth(c *gin.Context) (userID, sessionID string) {
 	return userID, sessionID
 }
 
-// handleSecretError maps domain errors to HTTP responses using
-// errors.Is rather than substring matching. The string-matching
-// predecessor was fragile to upstream wrap text and silently
-// mis-routed any future error containing the words "requires" /
-// "not found" / "duplicate". Sentinels live in pkg/secrets/errors.go.
+// handleSecretError maps domain errors to HTTP responses. US-46.4: the
+// secrets-package sentinels are now *pkgerrors.StatusError values that
+// carry their own HTTP status code and user-facing message.
 //
-// Unmapped (default-branch) errors are returned as a generic 500 to the
-// client to avoid leaking internal detail, but the handler caller is
-// responsible for logging them with full context — see RevealSecret etc.
-// for the structured log calls that emit before this function returns.
+// For security-sensitive errors (404/403/409/412), the StatusError.Message
+// is the exact user-facing text — wrapping detail from fmt.Errorf must not
+// leak internal paths or secret names to the client.
+//
+// For validation errors (400), the wrapped err.Error() is returned instead
+// because it includes per-call detail the caller needs to fix the input
+// (e.g. "ssh-key requires metadata with key_type field").
 func handleSecretError(c *gin.Context, err error) {
-	switch {
-	case errors.Is(err, secrets.ErrSecretNotFound):
-		c.JSON(http.StatusNotFound, gin.H{"error": "secret not found"})
-	case errors.Is(err, secrets.ErrWorkspaceNotOwned):
-		// Same status as secret-not-found so the response shape does
-		// not differentiate between "the workspace doesn't exist"
-		// and "you don't own it" — leaking that distinction would
-		// re-enable cross-user workspace existence enumeration via
-		// the bindings API (validator pass-3 finding SO-1).
-		c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
-	case errors.Is(err, secrets.ErrDuplicateSecret):
-		c.JSON(http.StatusConflict, gin.H{"error": "secret with this name already exists"})
-	case errors.Is(err, secrets.ErrDEKUnavailable):
-		c.JSON(http.StatusForbidden, gin.H{"error": "encryption key not available; re-authenticate"})
-	case errors.Is(err, secrets.ErrUserKeysMissing):
-		c.JSON(http.StatusPreconditionFailed, gin.H{"error": "user key material not initialized; please re-login"})
-	case errors.Is(err, secrets.ErrCiphertextDecryptFailed):
-		// The DEK is fine; the stored ciphertext does not match it. This is a
-		// data-state problem (DEK rotated without re-encrypting, ciphertext
-		// corruption) — re-authenticating will not help. 409 Conflict signals
-		// "the resource exists but is in an inconsistent state with the
-		// current key material". The user-facing message points the user at
-		// recovery actions; the underlying detail (secret name, key version)
-		// is in the secret_audit_log entry written by the service layer.
-		c.JSON(http.StatusConflict, gin.H{
-			"error": "this secret cannot be decrypted with your current encryption key — the ciphertext was likely encrypted with a previous key. Re-create the secret to recover; if you have not changed your password, contact an administrator and reference your audit log.",
-		})
-	case errors.Is(err, secrets.ErrInvalidSecretType), errors.Is(err, secrets.ErrInvalidMetadata):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+	var se *pkgerrors.StatusError
+	if errors.As(err, &se) {
+		msg := se.Message
+		if se.Status == http.StatusBadRequest {
+			msg = err.Error()
+		}
+		c.JSON(se.StatusCode(), gin.H{"error": msg})
+		return
 	}
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 }
