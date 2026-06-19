@@ -28,13 +28,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-
 	"sync"
 	"testing"
 
-	"github.com/prometheus/client_golang/prometheus/testutil"
-
 	"github.com/lenaxia/llmsafespace/pkg/agentd/secrets"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
