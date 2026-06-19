@@ -35,7 +35,7 @@ assert_not_contains() {
   fi
 }
 
-echo "=== LLMSafeSpace Auth E2E Tests ==="
+echo "=== LLMSafeSpaces Auth E2E Tests ==="
 echo "Target: $BASE_URL"
 echo ""
 

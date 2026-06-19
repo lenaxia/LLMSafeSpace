@@ -4,7 +4,7 @@
 package logger
 
 import (
-	"github.com/lenaxia/llmsafespace/pkg/interfaces"
+	"github.com/lenaxia/llmsafespaces/pkg/interfaces"
 	"github.com/stretchr/testify/mock"
 )
 

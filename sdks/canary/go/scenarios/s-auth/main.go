@@ -11,8 +11,8 @@ import (
 	"os"
 	"time"
 
-	llm "github.com/lenaxia/llmsafespace/sdk/go"
-	canary "github.com/lenaxia/llmsafespace/sdks/canary/go"
+	llm "github.com/lenaxia/llmsafespaces/sdk/go"
+	canary "github.com/lenaxia/llmsafespaces/sdks/canary/go"
 )
 
 func Handler(w http.ResponseWriter, r *http.Request) {
@@ -88,7 +88,7 @@ func runAuth(ctx context.Context, run *canary.Runner, cfg canary.Config) {
 	} {
 		if test.email == "" {
 			// Email not configured — record explicit skip so check count is consistent
-			run.OK(test.name + ": skipped (LLMSAFESPACE_EMAIL not set)")
+			run.OK(test.name + ": skipped (LLMSAFESPACES_EMAIL not set)")
 			continue
 		}
 		badLogin := llm.New(cfg.APIURL, llm.WithCredentials(test.email, test.pw), llm.WithTimeout(10*time.Second))

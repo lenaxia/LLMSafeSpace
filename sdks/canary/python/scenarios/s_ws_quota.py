@@ -11,16 +11,16 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 from canary import Runner, Config, config_from_env
-from llmsafespace import LLMSafeSpace, RateLimitError
+from llmsafespaces import LLMSafeSpaces, RateLimitError
 
 
 def run(r: Runner, cfg: Config) -> None:
-    limit = int(os.environ.get("LLMSAFESPACE_MAX_WORKSPACES_PER_USER", "10"))
+    limit = int(os.environ.get("LLMSAFESPACES_MAX_WORKSPACES_PER_USER", "10"))
     if limit <= 0:
         r.ok("ws-quota: skipped (unlimited)")
         return
 
-    c = LLMSafeSpace(cfg.api_url, api_key=cfg.api_key, timeout=30.0)
+    c = LLMSafeSpaces(cfg.api_url, api_key=cfg.api_key, timeout=30.0)
     created: list[str] = []
     try:
         existing = c.workspaces.list(limit=100)

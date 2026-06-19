@@ -1,4 +1,4 @@
-# LLMSafeSpace Core Packages
+# LLMSafeSpaces Core Packages
 
 Shared Go packages used by both the API service and the controller. All packages target Go 1.25+ and follow Kubernetes operator patterns where applicable.
 
@@ -6,7 +6,7 @@ Shared Go packages used by both the API service and the controller. All packages
 
 | Package | Purpose |
 |---------|---------|
-| `apis/llmsafespace/v1` | CRD Go types (kubebuilder-annotated) for Workspace, RuntimeEnvironment |
+| `apis/llmsafespaces/v1` | CRD Go types (kubebuilder-annotated) for Workspace, RuntimeEnvironment |
 | `agentd` | Types for the workspace-agentd sidecar HTTP API (healthz, readyz, statusz) |
 | `config` | Kubernetes client configuration structs |
 | `credentials` | Credential set entity types + encryption service (AES-256-GCM, key rotation) |
@@ -33,17 +33,17 @@ client, err := kubernetes.New(cfg, logger)
 client.Start()
 defer client.Stop()
 
-wsClient := client.LlmsafespaceV1().Workspaces("namespace")
+wsClient := client.LlmsafespacesV1().Workspaces("namespace")
 ws, err := wsClient.Get("my-workspace", metav1.GetOptions{})
 ```
 
-Key features: in-cluster or kubeconfig auth, connection pooling (QPS 100, Burst 200), leader election via Lease locks, SharedInformerFactory (30m resync), typed REST client for `llmsafespace.dev/v1`.
+Key features: in-cluster or kubeconfig auth, connection pooling (QPS 100, Burst 200), leader election via Lease locks, SharedInformerFactory (30m resync), typed REST client for `llmsafespaces.dev/v1`.
 
 ---
 
-## CRD Types (`apis/llmsafespace/v1`)
+## CRD Types (`apis/llmsafespaces/v1`)
 
-Two CRDs in the `llmsafespace.dev/v1` API group:
+Two CRDs in the `llmsafespaces.dev/v1` API group:
 
 | Kind | Scope | Purpose |
 |------|-------|---------|
@@ -91,7 +91,7 @@ type KubernetesClient interface {
     DynamicClient() dynamic.Interface
     RESTConfig() *rest.Config
     InformerFactory() informers.SharedInformerFactory
-    LlmsafespaceV1() LLMSafespaceV1Interface
+    LlmsafespacesV1() LLMSafespacesV1Interface
 }
 
 type LoggerInterface interface {

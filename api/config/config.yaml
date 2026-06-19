@@ -6,7 +6,7 @@ server:
 kubernetes:
   configPath: ""  # Empty for in-cluster config
   inCluster: true
-  namespace: "llmsafespace"
+  namespace: "llmsafespaces"
   podName: ""  # Set via environment variable
   leaderElection:
     enabled: true
@@ -17,9 +17,9 @@ kubernetes:
 database:
   host: "postgres"
   port: 5432
-  user: "llmsafespace"
+  user: "llmsafespaces"
   password: ""  # Set via environment variable
-  database: "llmsafespace"
+  database: "llmsafespaces"
   sslMode: "disable"
   maxOpenConns: 25
   maxIdleConns: 10

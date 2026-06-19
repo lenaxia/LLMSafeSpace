@@ -1,18 +1,18 @@
 // Copyright (C) 2026 Michael Kao
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-package llmsafespace
+package llmsafespaces
 
 import "fmt"
 
-// APIError represents an error response from the LLMSafeSpace API.
+// APIError represents an error response from the LLMSafeSpaces API.
 type APIError struct {
 	Status  int
 	Message string
 }
 
 func (e *APIError) Error() string {
-	return fmt.Sprintf("llmsafespace: %d %s", e.Status, e.Message)
+	return fmt.Sprintf("llmsafespaces: %d %s", e.Status, e.Message)
 }
 
 // IsNotFound returns true if the error is a 404.

@@ -21,16 +21,16 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/lenaxia/llmsafespace/api/internal/config"
-	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
-	"github.com/lenaxia/llmsafespace/api/internal/utilities"
-	"github.com/lenaxia/llmsafespace/pkg/secrets"
-	"github.com/lenaxia/llmsafespace/pkg/settings"
-	"github.com/lenaxia/llmsafespace/pkg/types"
-	pkgutil "github.com/lenaxia/llmsafespace/pkg/utilities"
+	"github.com/lenaxia/llmsafespaces/api/internal/config"
+	apierrors "github.com/lenaxia/llmsafespaces/api/internal/errors"
+	"github.com/lenaxia/llmsafespaces/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespaces/api/internal/logger"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/metrics"
+	"github.com/lenaxia/llmsafespaces/api/internal/utilities"
+	"github.com/lenaxia/llmsafespaces/pkg/secrets"
+	"github.com/lenaxia/llmsafespaces/pkg/settings"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
+	pkgutil "github.com/lenaxia/llmsafespaces/pkg/utilities"
 )
 
 // KeyServiceInterface abstracts the key service for DEK lifecycle.
@@ -53,7 +53,7 @@ func (s *Service) SetInstanceSettings(svc *settings.InstanceService) {
 }
 
 // SetMasterKey sets the server master key used for encrypting API key ciphertext
-// (enabling DEK re-wrap on rotation). Derived from LLMSAFESPACE_MASTER_SECRET.
+// (enabling DEK re-wrap on rotation). Derived from LLMSAFESPACES_MASTER_SECRET.
 func (s *Service) SetMasterKey(key []byte) {
 	provider, err := secrets.NewStaticKeyProvider(key)
 	if err != nil {
@@ -507,7 +507,7 @@ func (s *Service) validateAPIKey(apiKey, clientIP string) (string, error) {
 				if !keyRec.DekSynced {
 					s.logger.Warn("API key DEK re-sync in progress", "key_id", keyRec.ID)
 				} else {
-					apiKEK, deriveErr := secrets.DeriveKEKFromKey([]byte(apiKey), keyRec.KekSalt, "llmsafespace-apikey-kek")
+					apiKEK, deriveErr := secrets.DeriveKEKFromKey([]byte(apiKey), keyRec.KekSalt, "llmsafespaces-apikey-kek")
 					if deriveErr != nil {
 						s.logger.Error("Failed to derive API KEK", deriveErr)
 					} else {
@@ -529,7 +529,7 @@ func (s *Service) validateAPIKey(apiKey, clientIP string) (string, error) {
 		if dbErr != nil {
 			s.logger.Error("Failed to get API key record for DEK check", dbErr, "key_hash", keyHash)
 		} else if keyRec != nil && keyRec.DecryptAccess && len(keyRec.WrappedDEK) > 0 && len(keyRec.KekSalt) > 0 {
-			apiKEK, deriveErr := secrets.DeriveKEKFromKey([]byte(apiKey), keyRec.KekSalt, "llmsafespace-apikey-kek")
+			apiKEK, deriveErr := secrets.DeriveKEKFromKey([]byte(apiKey), keyRec.KekSalt, "llmsafespaces-apikey-kek")
 			if deriveErr != nil {
 				s.logger.Error("Failed to derive API KEK", deriveErr)
 			} else {
@@ -716,6 +716,12 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 		return nil, errors.New("invalid email or password")
 	}
 
+	if user.Status == types.UserStatusSuspended {
+		s.recordFailedAttempt(ctx, email)
+		metrics.RecordAuthFailure("account_suspended")
+		return nil, errors.New("account suspended")
+	}
+
 	if !user.Active {
 		s.recordFailedAttempt(ctx, email)
 		metrics.RecordAuthFailure("account_inactive")
@@ -835,7 +841,7 @@ func (s *Service) CreateAPIKey(ctx context.Context, userID string, req types.Cre
 			return nil, fmt.Errorf("failed to generate KEK salt: %w", err)
 		}
 
-		apiKEK, err := secrets.DeriveKEKFromKey([]byte(keyStr), kekSalt, "llmsafespace-apikey-kek")
+		apiKEK, err := secrets.DeriveKEKFromKey([]byte(keyStr), kekSalt, "llmsafespaces-apikey-kek")
 		if err != nil {
 			return nil, fmt.Errorf("failed to derive API KEK: %w", err)
 		}
@@ -933,8 +939,18 @@ func (s *Service) AuthMiddleware() gin.HandlerFunc {
 		}
 
 		// Load user role into context for AdminGuard and authorization checks.
+		// D19: also enforce user-level suspension here — this is the single
+		// load-bearing gate that blocks a suspended user from EVERY
+		// authenticated endpoint (all orgs + personal). A suspended user's
+		// token/API key is still cryptographically valid; the status check is
+		// what denies access.
 		if s.dbService != nil {
-			if user, err := s.dbService.GetUser(c.Request.Context(), userID); err == nil && user != nil {
+			user, err := s.dbService.GetUser(c.Request.Context(), userID)
+			if err == nil && user != nil {
+				if user.Status == types.UserStatusSuspended {
+					c.AbortWithStatusJSON(401, gin.H{"error": "account suspended"})
+					return
+				}
 				c.Set("userRole", user.Role)
 			}
 		}
@@ -947,21 +963,34 @@ func (s *Service) AuthMiddleware() gin.HandlerFunc {
 // "userID" in the context when a valid JWT/API key is present, and calls
 // c.Next() unconditionally. Handlers that use this middleware must check
 // the userID themselves and handle the unauthenticated case.
+//
+// D19: a suspended user is treated as unauthenticated here — no userID,
+// sessionID, or role is set — so they cannot exercise any authenticated
+// capability. They retain access only to the anonymous surface (the same
+// surface any unauthenticated caller sees). The middleware still does not
+// abort, preserving its contract for public+optional-auth endpoints.
 func (s *Service) OptionalAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tokenString := s.extractToken(c)
 		if tokenString != "" {
 			userID, err := s.ValidateTokenWithClientIP(tokenString, c.ClientIP())
 			if err == nil && userID != "" {
-				c.Set("userID", userID)
-				if jti := utilities.ExtractJTI(tokenString); jti != "" {
-					c.Set("sessionID", jti)
-				} else if utilities.IsAPIKey(tokenString, s.config.Auth.APIKeyPrefix) {
-					c.Set("sessionID", "apikey:"+pkgutil.HashString(tokenString))
-				}
+				suspended := false
 				if s.dbService != nil {
-					if user, err := s.dbService.GetUser(c.Request.Context(), userID); err == nil && user != nil {
-						c.Set("userRole", user.Role)
+					if user, gerr := s.dbService.GetUser(c.Request.Context(), userID); gerr == nil && user != nil {
+						if user.Status == types.UserStatusSuspended {
+							suspended = true
+						} else {
+							c.Set("userRole", user.Role)
+						}
+					}
+				}
+				if !suspended {
+					c.Set("userID", userID)
+					if jti := utilities.ExtractJTI(tokenString); jti != "" {
+						c.Set("sessionID", jti)
+					} else if utilities.IsAPIKey(tokenString, s.config.Auth.APIKeyPrefix) {
+						c.Set("sessionID", "apikey:"+pkgutil.HashString(tokenString))
 					}
 				}
 			}

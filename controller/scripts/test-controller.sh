@@ -30,7 +30,7 @@ sleep 10
 kubectl get sandbox test-sandbox -o yaml
 
 # Check if the sandbox is using a warm pod
-WARM_POD_ID=$(kubectl get sandbox test-sandbox -o jsonpath='{.metadata.annotations.llmsafespace\.dev/warm-pod-id}')
+WARM_POD_ID=$(kubectl get sandbox test-sandbox -o jsonpath='{.metadata.annotations.llmsafespaces\.dev/warm-pod-id}')
 if [ -n "$WARM_POD_ID" ]; then
   echo "Sandbox is using warm pod: $WARM_POD_ID"
   kubectl get warmpod $WARM_POD_ID -o yaml

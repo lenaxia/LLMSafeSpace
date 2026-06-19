@@ -10,7 +10,7 @@ import (
 const (
 	sealedSaltSize   = 32
 	sealedNonceSize  = 12
-	sealedKeyInfoStr = "llmsafespace-sealed-root"
+	sealedKeyInfoStr = "llmsafespaces-sealed-root"
 )
 
 type RootKeyProvider interface {

@@ -16,7 +16,7 @@
 #                            Max pod-running→readyz-200 p99 in seconds
 #       --max-p99-init S     Max init container p99 in seconds (requires packages
 #                            or init-script; skipped otherwise)
-#       --namespace NS       Kubernetes namespace (default: llmsafespace)
+#       --namespace NS       Kubernetes namespace (default: llmsafespaces)
 #       --node NODE          Pin workspace to this node (by hostname label)
 #       --fresh-node         Cordon all OTHER nodes (destructive; prefer --node).
 #                            Only safe on a dedicated benchmark cluster.
@@ -41,13 +41,13 @@ ASSERT=false
 MAX_P99_TOTAL=""
 MAX_P99_POD_TO_READYZ=""
 MAX_P99_INIT=""
-NS="${NS:-llmsafespace}"
+NS="${NS:-llmsafespaces}"
 NODE=""
 FRESH_NODE=false
 API_URL="${API_URL:-http://localhost:8080}"
 API_KEY="${API_KEY:-}"
 KUBE_CONTEXT=""
-BENCHMARK_LABEL="benchmark.llmsafespace.dev/role=benchmark"
+BENCHMARK_LABEL="benchmark.llmsafespaces.dev/role=benchmark"
 
 # ---- parse args ----
 while [[ $# -gt 0 ]]; do
@@ -141,7 +141,7 @@ _wait_phase() {
 }
 
 _pod_name() {
-  $KUBECTL -n "$NS" get pods -l "llmsafespace.dev/workspace=$1" \
+  $KUBECTL -n "$NS" get pods -l "llmsafespaces.dev/workspace=$1" \
     --no-headers -o custom-columns=":metadata.name" 2>/dev/null | head -1
 }
 

@@ -20,9 +20,9 @@ func TestParseWatchNamespaces_StarMeansAll(t *testing.T) {
 }
 
 func TestParseWatchNamespaces_SingleNamespace(t *testing.T) {
-	got := parseWatchNamespaces("llmsafespace")
+	got := parseWatchNamespaces("llmsafespaces")
 	assert.Len(t, got, 1)
-	_, ok := got["llmsafespace"]
+	_, ok := got["llmsafespaces"]
 	assert.True(t, ok)
 }
 

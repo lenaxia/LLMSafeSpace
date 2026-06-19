@@ -63,10 +63,10 @@ sdks/canary/
 
 ```bash
 # Prerequisites
-export LLMSAFESPACE_URL=http://localhost:8080
-export LLMSAFESPACE_API_KEY=lsp_...
-export LLMSAFESPACE_EMAIL=canary1@llmsafespace.test
-export LLMSAFESPACE_PASSWORD=...
+export LLMSAFESPACES_URL=http://localhost:8080
+export LLMSAFESPACES_API_KEY=lsp_...
+export LLMSAFESPACES_EMAIL=canary1@llmsafespaces.test
+export LLMSAFESPACES_PASSWORD=...
 
 # All ci:fast scenarios (all SDKs, no LLM key needed)
 make -f sdks/canary/Makefile canary-ci
@@ -75,8 +75,8 @@ make -f sdks/canary/Makefile canary-ci
 go run ./sdks/canary/go/scenarios/s-auth/
 
 # Full suite (requires live cluster + LLM credentials)
-export LLMSAFESPACE_LLM_API_KEY=sk-...
-export LLMSAFESPACE_LLM_MODEL=anthropic/claude-haiku-4-5
+export LLMSAFESPACES_LLM_API_KEY=sk-...
+export LLMSAFESPACES_LLM_MODEL=anthropic/claude-haiku-4-5
 make -f sdks/canary/Makefile canary-all
 
 # MCP canaries
@@ -99,9 +99,9 @@ Three accounts must be provisioned before deploying:
 
 | Account | Env var | Purpose |
 |---|---|---|
-| `canary1@llmsafespace.test` | `LLMSAFESPACE_API_KEY` | Primary canary account |
-| `canary2@llmsafespace.test` | `LLMSAFESPACE_API_KEY_USER2` | Cross-user isolation (S-OWNERSHIP) |
-| `canary-rotate@llmsafespace.test` | — | Key rotation / password change scenarios |
+| `canary1@llmsafespaces.test` | `LLMSAFESPACES_API_KEY` | Primary canary account |
+| `canary2@llmsafespaces.test` | `LLMSAFESPACES_API_KEY_USER2` | Cross-user isolation (S-OWNERSHIP) |
+| `canary-rotate@llmsafespaces.test` | — | Key rotation / password change scenarios |
 
 Bootstrap:
 ```bash
@@ -116,10 +116,10 @@ source /tmp/canary-keys.env
 
 ```bash
 # Create the canary secrets
-kubectl create secret generic llmsafespace-canary-secrets \
+kubectl create secret generic llmsafespaces-canary-secrets \
   --namespace fission \
-  --from-literal=LLMSAFESPACE_URL=https://your.instance.com \
-  --from-literal=LLMSAFESPACE_API_KEY=lsp_... \
+  --from-literal=LLMSAFESPACES_URL=https://your.instance.com \
+  --from-literal=LLMSAFESPACES_API_KEY=lsp_... \
   ...
 
 # Deploy all function manifests

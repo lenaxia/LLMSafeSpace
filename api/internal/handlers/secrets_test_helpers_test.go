@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lenaxia/llmsafespace/pkg/secrets"
+	"github.com/lenaxia/llmsafespaces/pkg/secrets"
 )
 
 // --- Test mock implementations for handler tests ---

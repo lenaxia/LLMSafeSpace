@@ -13,7 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -40,6 +40,14 @@ type WorkspaceReconciler struct {
 	// The Worker strips and validates this segment before forwarding upstream.
 	// Set via --inference-relay-secret controller flag, sourced from a k8s Secret.
 	InferenceRelaySecret string
+
+	// OrgStatusClient, when non-nil AND the workspace belongs to an org
+	// (Spec.Owner.OrgID != ""), is consulted on every Active reconcile to drive
+	// D20 org-level suspension: if the org is suspended, the workspace
+	// transitions Active → Suspending (pod killed, PVC retained). The client is
+	// nil when --api-service-url is unset, disabling the feature. Lookups are
+	// cached (30s TTL); a lookup failure fails open (workspace keeps running).
+	OrgStatusClient OrgStatusClient
 
 	// lastDeepStatus tracks the last time enrichAgentStatus was called per
 	// workspace. In-memory only — lost on controller restart (acceptable;
@@ -228,6 +236,6 @@ func tagFromSpecImage(image string) string {
 // --- Operations Metrics ---
 
 var workspacePhaseTransitions = promauto.NewCounterVec(prometheus.CounterOpts{
-	Name: "llmsafespace_workspace_phase_transitions_total",
+	Name: "llmsafespaces_workspace_phase_transitions_total",
 	Help: "Workspace phase transitions observed by the controller.",
 }, []string{"from_phase", "to_phase"})

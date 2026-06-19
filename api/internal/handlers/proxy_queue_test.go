@@ -19,11 +19,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 
-	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
-	"github.com/lenaxia/llmsafespace/api/internal/services/msgqueue"
-	ssetracker "github.com/lenaxia/llmsafespace/api/internal/services/sse"
-	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/eventbroker"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/msgqueue"
+	ssetracker "github.com/lenaxia/llmsafespaces/api/internal/services/sse"
+	k8smocks "github.com/lenaxia/llmsafespaces/mocks/kubernetes"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 func setupQueueTestEnv(t *testing.T) (*ProxyHandler, *msgqueue.Service, func()) {
@@ -640,9 +640,9 @@ func TestClearQueueOnDispose_PublishesDismissedAndClears(t *testing.T) {
 func newMockK8sWithWorkspace(t *testing.T, workspaceID, podIP string) *k8smocks.MockKubernetesClient {
 	t.Helper()
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil).Maybe()
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil).Maybe()
 	llmMock.On("Workspaces", "default").Return(wsMock).Maybe()
 	ws := makeWorkspaceCRDWithStatus(workspaceID, podIP, string(v1.WorkspacePhaseActive), workspaceID)
 	wsMock.On("Get", mock.Anything, mock.Anything, mock.Anything).Return(ws, nil).Maybe()

@@ -18,7 +18,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 
-	"github.com/lenaxia/llmsafespace/pkg/secrets"
+	"github.com/lenaxia/llmsafespaces/pkg/secrets"
 )
 
 // TestHandler_E2E_LLMProvider_BindTriggersReloadWithFormattedConfig exercises

@@ -63,9 +63,9 @@ for cmd in psql pg_isready; do
 done
 
 PGIMAGE="${LSS_PGIMAGE:-postgres:16}"
-PGUSER_VAL="llmsafespace"
+PGUSER_VAL="llmsafespaces"
 PGPASSWORD_VAL="migration-test"
-PGDATABASE_VAL="llmsafespace"
+PGDATABASE_VAL="llmsafespaces"
 
 # Unique container name per invocation (PID + timestamp) so two concurrent
 # runs (e.g. two terminals) don't collide.

@@ -12,7 +12,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	ctrMetrics "github.com/lenaxia/llmsafespaces/controller/internal/metrics"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 func TestMaybeResetConsecutiveFailures_After2Min(t *testing.T) {
@@ -124,12 +125,17 @@ func TestSuspend_ClearsRecoveryState(t *testing.T) {
 	ws := makeWorkspace("ws-suspend", "default", v1.WorkspacePhaseSuspending)
 	ws.UID = "ws-suspend-uid"
 	ws.Status.ConsecutiveFailures = 10
+	ws.Status.ControllerRestartCount = 7
 	ws.Status.LastFailureClass = string(FailureClassConfiguration)
 	now := metav1.Now()
 	ws.Status.LastFailureAt = &now
 	ws.Status.NextRetryAt = &now
 	ws.Status.LastStableAt = &now
 	ws.Status.PodIP = "10.0.0.1"
+
+	// ConsecutiveFailures>0 implies a prior WorkspacesInRecovery.Inc via
+	// enterRecovery in production; seed the gauge to mirror that invariant.
+	ctrMetrics.WorkspacesInRecovery.Inc()
 
 	pod := makeRunningPod(podName("ws-suspend", string(ws.UID)), "default", "10.0.0.1")
 	pwSecret := makePasswordSecret("ws-suspend", "default")
@@ -142,6 +148,7 @@ func TestSuspend_ClearsRecoveryState(t *testing.T) {
 	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "ws-suspend", Namespace: "default"}, updated))
 	assert.Equal(t, v1.WorkspacePhaseSuspended, updated.Status.Phase)
 	assert.Equal(t, int32(0), updated.Status.ConsecutiveFailures)
+	assert.Equal(t, int32(0), updated.Status.ControllerRestartCount, "suspend must clear ControllerRestartCount (US-24.8 F22)")
 	assert.Nil(t, updated.Status.NextRetryAt)
 	assert.Nil(t, updated.Status.LastFailureAt)
 	assert.Nil(t, updated.Status.LastStableAt)

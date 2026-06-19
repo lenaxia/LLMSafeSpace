@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
-	"github.com/lenaxia/llmsafespace/pkg/secrets"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
+	"github.com/lenaxia/llmsafespaces/pkg/secrets"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 // SecretsHandler handles HTTP requests for the secrets API.
@@ -25,22 +25,13 @@ type SecretsHandler struct {
 	manifestWriter   SecretsManifestWriter
 	logger           pkginterfaces.LoggerInterface
 	passwordVerifier PasswordVerifier
-	wsUpdater        ModelStore
 	credStateWriter  CredentialStateWriter
-	passwordGetter   func(ctx context.Context, workspaceID string) (string, error)
-	relayActive      bool
-	metricsRecorder  ModelSelectionRecorder
-	policyChecker    OrgPolicyChecker
 }
 
-// OrgPolicyChecker is the minimal interface ListModels needs to filter models
+// OrgPolicyChecker is the minimal interface needed to filter models
 // by org policy. The policy.Service implements it.
 type OrgPolicyChecker interface {
 	GetEffectivePolicy(ctx context.Context, orgID string) (*types.OrgPolicyValues, error)
-}
-
-func (h *SecretsHandler) SetPolicyChecker(pc OrgPolicyChecker) {
-	h.policyChecker = pc
 }
 
 // ModelSelectionRecorder records model selection events for billing/metering.
@@ -93,17 +84,6 @@ func NewSecretsHandler(svc *secrets.SecretService) *SecretsHandler {
 	return &SecretsHandler{svc: svc}
 }
 
-// SetMetricsRecorder installs the recorder for billing/metering events.
-func (h *SecretsHandler) SetMetricsRecorder(r ModelSelectionRecorder) {
-	h.metricsRecorder = r
-}
-
-// SetRelayActive configures whether the inference relay is active.
-// When true, ListModels remaps free-tier opencode models to providerID=opencode-relay.
-func (h *SecretsHandler) SetRelayActive(active bool) {
-	h.relayActive = active
-}
-
 // SetPasswordVerifier installs the verifier used to confirm the
 // caller's password on RevealSecret. If left nil the reveal handler
 // rejects every request with 503; this is intentional because shipping
@@ -138,13 +118,6 @@ func (h *SecretsHandler) SetSecretsManifestWriter(w SecretsManifestWriter) {
 // is exactly Bug 2 in worklog 0085 — do not leave nil in production).
 func (h *SecretsHandler) SetLogger(l pkginterfaces.LoggerInterface) {
 	h.logger = l
-}
-
-// SetPasswordGetter injects the workspace password getter for authenticated
-// opencode calls (ListModels, SetModel). Without this, model operations
-// that require direct opencode communication will fail with 503.
-func (h *SecretsHandler) SetPasswordGetter(getter func(ctx context.Context, workspaceID string) (string, error)) {
-	h.passwordGetter = getter
 }
 
 // CreateSecret handles POST /api/v1/secrets

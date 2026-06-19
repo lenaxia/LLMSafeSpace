@@ -18,15 +18,15 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/lenaxia/llmsafespace/api/internal/handlers"
-	imocks "github.com/lenaxia/llmsafespace/api/internal/mocks"
-	"github.com/lenaxia/llmsafespace/api/internal/server"
-	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
-	kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
-	lmocks "github.com/lenaxia/llmsafespace/mocks/logger"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
-	"github.com/lenaxia/llmsafespace/pkg/secrets"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/api/internal/handlers"
+	imocks "github.com/lenaxia/llmsafespaces/api/internal/mocks"
+	"github.com/lenaxia/llmsafespaces/api/internal/server"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/workspace"
+	kmocks "github.com/lenaxia/llmsafespaces/mocks/kubernetes"
+	lmocks "github.com/lenaxia/llmsafespaces/mocks/logger"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+	"github.com/lenaxia/llmsafespaces/pkg/secrets"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 // TestSecretsWiring_E2E tests that the secrets handler is properly wired

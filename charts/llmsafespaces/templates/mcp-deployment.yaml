@@ -1,0 +1,68 @@
+{{- if .Values.mcp.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "llmsafespaces.fullname" . }}-mcp
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmsafespaces.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mcp
+spec:
+  replicas: {{ .Values.mcp.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "llmsafespaces.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: mcp
+  template:
+    metadata:
+      labels:
+        {{- include "llmsafespaces.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: mcp
+    spec:
+      serviceAccountName: {{ include "llmsafespaces.api.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.mcp.podSecurityContext | nindent 8 }}
+      containers:
+        - name: mcp
+          image: "{{ .Values.mcp.image.repository }}:{{ .Values.mcp.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.mcp.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.mcp.containerSecurityContext | nindent 12 }}
+          args:
+            - "--sse"
+            - "--addr=:{{ .Values.mcp.service.port }}"
+            - "--base-url={{ tpl .Values.mcp.apiBaseUrl . }}"
+            - "--timeout={{ .Values.mcp.timeout }}"
+          env:
+            - name: LLMSAFESPACES_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "llmsafespaces.fullname" . }}-secret
+                  key: api-key
+                  optional: true
+          ports:
+            - name: mcp
+              containerPort: {{ .Values.mcp.service.port }}
+              protocol: TCP
+          # mcp-go SSEServer only exposes /sse and /message — no dedicated
+          # health endpoint exists. tcpSocket probes confirm the port is
+          # accepting connections without triggering a hanging SSE stream.
+          livenessProbe:
+            tcpSocket:
+              port: mcp
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            tcpSocket:
+              port: mcp
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.mcp.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}

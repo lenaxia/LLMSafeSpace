@@ -1,4 +1,4 @@
-You are performing a deep analysis of the LLMSafeSpace codebase. This is a READ-ONLY task — do not make any code changes.
+You are performing a deep analysis of the LLMSafeSpaces codebase. This is a READ-ONLY task — do not make any code changes.
 
 Rules:
 1. Read README-LLM.md for full architectural context.

@@ -5,7 +5,7 @@ package workspace
 
 import "time"
 
-const WorkspaceFinalizer = "workspace.llmsafespace.dev/finalizer"
+const WorkspaceFinalizer = "workspace.llmsafespaces.dev/finalizer"
 
 // Pod naming: {workspaceName}-{uid[:8]}
 const podNameSuffix = 8
@@ -24,10 +24,10 @@ const pendingPhaseTimeout = 5 * time.Minute
 const (
 	LabelApp       = "app"
 	LabelComponent = "component"
-	LabelWorkspace = "llmsafespace.dev/workspace"
+	LabelWorkspace = "llmsafespaces.dev/workspace"
 	LabelRuntime   = "runtime"
 
-	AppName            = "llmsafespace"
+	AppName            = "llmsafespaces"
 	ComponentWorkspace = "workspace"
 )
 

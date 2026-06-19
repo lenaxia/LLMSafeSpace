@@ -1,5 +1,5 @@
 /**
- * LLMSafeSpace Inference Relay Worker
+ * LLMSafeSpaces Inference Relay Worker
  *
  * Thin authenticated proxy to the LLM provider for IP distribution (Epic 26).
  * Workspace pods point their opencode provider baseURL here, with the relay

@@ -1,6 +1,6 @@
-# LLMSafeSpace SDKs
+# LLMSafeSpaces SDKs
 
-This directory contains the canonical OpenAPI specification and generated SDK clients for the LLMSafeSpace API.
+This directory contains the canonical OpenAPI specification and generated SDK clients for the LLMSafeSpaces API.
 
 ## Structure
 
@@ -19,7 +19,7 @@ sdks/
 
 ## OpenAPI Specification
 
-The spec at `openapi.yaml` is the **single source of truth** for the LLMSafeSpace REST API contract. It is hand-written from:
+The spec at `openapi.yaml` is the **single source of truth** for the LLMSafeSpaces REST API contract. It is hand-written from:
 
 - `api/internal/server/router.go` — route definitions
 - `pkg/types/types.go` — request/response types

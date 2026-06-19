@@ -1,4 +1,4 @@
-Repository: LLMSafeSpace — a Kubernetes-first platform (Go) for running AI agents securely in isolated sandboxes. Every sandbox runs `opencode serve` as a persistent HTTP server with a PVC-backed persistent workspace. Single maintainer: @lenaxia.
+Repository: LLMSafeSpaces — a Kubernetes-first platform (Go) for running AI agents securely in isolated sandboxes. Every sandbox runs `opencode serve` as a persistent HTTP server with a PVC-backed persistent workspace. Single maintainer: @lenaxia.
 
 Key directories:
 - api/               — Go API service (Gin) + MCP server; reverse proxy to sandbox agents, workspace/credential management

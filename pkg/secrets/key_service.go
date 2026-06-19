@@ -11,7 +11,7 @@ import (
 	"runtime"
 	"time"
 
-	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
 )
 
 // UserKeyRecord represents a row in the user_keys table.
@@ -567,7 +567,7 @@ func (s *KeyService) rewrapAPIKeyDEKs(ctx context.Context, userID string, newDEK
 			continue
 		}
 
-		apiKEK, deriveErr := DeriveKEKFromKey(rawKey, key.KekSalt, "llmsafespace-apikey-kek")
+		apiKEK, deriveErr := DeriveKEKFromKey(rawKey, key.KekSalt, "llmsafespaces-apikey-kek")
 		zeroBytes(rawKey)
 		if deriveErr != nil {
 			if s.logger != nil {

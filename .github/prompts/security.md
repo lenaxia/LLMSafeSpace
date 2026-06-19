@@ -1,4 +1,4 @@
-You are performing a security-focused review of the LLMSafeSpace codebase.
+You are performing a security-focused review of the LLMSafeSpaces codebase.
 
 Rules:
 1. Read design/SECURITY.md for the defense-in-depth security model.

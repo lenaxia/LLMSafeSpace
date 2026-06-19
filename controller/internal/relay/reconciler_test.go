@@ -20,8 +20,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	"github.com/lenaxia/llmsafespace/controller/internal/common"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespaces/controller/internal/common"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 // ─── Test helpers ───────────────────────────────────────────────────────────
@@ -74,7 +74,7 @@ func (d *stubDriver) ListInstances(_ context.Context, _ string) ([]VMInstance, e
 
 func makeRelayCR() *v1.InferenceRelay {
 	return &v1.InferenceRelay{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "llmsafespace.dev/v1", Kind: "InferenceRelay"},
+		TypeMeta:   metav1.TypeMeta{APIVersion: "llmsafespaces.dev/v1", Kind: "InferenceRelay"},
 		ObjectMeta: metav1.ObjectMeta{Name: "relay-fleet"},
 		Spec: v1.InferenceRelaySpec{
 			UpstreamURL: "https://opencode.ai/zen/v1",

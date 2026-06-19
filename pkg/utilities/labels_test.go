@@ -24,7 +24,7 @@ func TestSanitizeLabelValue_AllProducedValuesPassK8sValidation(t *testing.T) {
 	}{
 		{"image-with-colon", "python:3.11"},
 		{"image-with-tag-and-digest", "python:3.11@sha256:abcd1234"},
-		{"slash-in-image", "ghcr.io/lenaxia/llmsafespace/base:dev"},
+		{"slash-in-image", "ghcr.io/lenaxia/llmsafespaces/base:dev"},
 		{"plus-in-version", "node:18+experimental"},
 		{"spaces", "Python 3.11 LTS"},
 		{"unicode", "rust\u00e9"},

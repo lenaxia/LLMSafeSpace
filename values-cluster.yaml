@@ -35,7 +35,7 @@ redis:
   host: valkey
   port: 6379
 
-# Disable MCP — image llmsafespace/mcp:0.1.0 doesn't exist on the
+# Disable MCP — image llmsafespaces/mcp:0.1.0 doesn't exist on the
 # registry and we're not using MCP yet.
 mcp:
   enabled: false

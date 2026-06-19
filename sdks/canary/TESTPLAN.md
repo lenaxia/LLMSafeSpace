@@ -84,15 +84,15 @@ Running only shallow canaries would miss the most impactful class of failure: a 
 
 | Variable | Required for | Default | Description |
 |---|---|---|---|
-| `LLMSAFESPACE_URL` | All | `http://localhost:8080` | API base URL |
-| `LLMSAFESPACE_API_KEY` | All | — | Primary test user API key (`lsp_` prefix) |
-| `LLMSAFESPACE_API_KEY_USER2` | S-OWNERSHIP | — | Second test user API key |
-| `LLMSAFESPACE_EMAIL` | S-AUTH (JWT), S-LOGOUT, D-REVEAL-REAUTH | — | Primary test user email |
-| `LLMSAFESPACE_PASSWORD` | S-AUTH, S-LOGOUT, S-SECRET-REVEAL, D-KEY-ROTATE, D-CHANGE-PASSWORD | — | Primary test user password |
-| `LLMSAFESPACE_LLM_PROVIDER` | Deep agent scenarios | `anthropic` | LLM provider name |
-| `LLMSAFESPACE_LLM_API_KEY` | Deep agent scenarios | — | Real LLM API key; deep message tests skip if absent |
-| `LLMSAFESPACE_LLM_MODEL` | Deep agent scenarios | — | Model ID (e.g. `anthropic/claude-haiku-4-5`) |
-| `LLMSAFESPACE_BAD_MODEL` | D-MODEL-SET | `invalid-provider/no-such-model` | Model expected to fail |
+| `LLMSAFESPACES_URL` | All | `http://localhost:8080` | API base URL |
+| `LLMSAFESPACES_API_KEY` | All | — | Primary test user API key (`lsp_` prefix) |
+| `LLMSAFESPACES_API_KEY_USER2` | S-OWNERSHIP | — | Second test user API key |
+| `LLMSAFESPACES_EMAIL` | S-AUTH (JWT), S-LOGOUT, D-REVEAL-REAUTH | — | Primary test user email |
+| `LLMSAFESPACES_PASSWORD` | S-AUTH, S-LOGOUT, S-SECRET-REVEAL, D-KEY-ROTATE, D-CHANGE-PASSWORD | — | Primary test user password |
+| `LLMSAFESPACES_LLM_PROVIDER` | Deep agent scenarios | `anthropic` | LLM provider name |
+| `LLMSAFESPACES_LLM_API_KEY` | Deep agent scenarios | — | Real LLM API key; deep message tests skip if absent |
+| `LLMSAFESPACES_LLM_MODEL` | Deep agent scenarios | — | Model ID (e.g. `anthropic/claude-haiku-4-5`) |
+| `LLMSAFESPACES_BAD_MODEL` | D-MODEL-SET | `invalid-provider/no-such-model` | Model expected to fail |
 
 ---
 
@@ -217,7 +217,7 @@ Running only shallow canaries would miss the most impactful class of failure: a 
 ### S-LOGOUT — Logout and JWT revocation
 
 **Schedule:** 1 min | **Max duration:** 30s  
-**Requires:** `LLMSAFESPACE_EMAIL`, `LLMSAFESPACE_PASSWORD`
+**Requires:** `LLMSAFESPACES_EMAIL`, `LLMSAFESPACES_PASSWORD`
 
 Tests that logout actually invalidates the JWT in the revocation cache — not just clears the cookie.
 
@@ -315,7 +315,7 @@ Tests that logout actually invalidates the JWT in the revocation cache — not j
 ### S-WS-QUOTA — Workspace quota enforcement
 
 **Schedule:** 5 min | **Max duration:** 60s  
-**Note:** Auto-detects quota from `LLMSAFESPACE_MAX_WORKSPACES_PER_USER`. Skips gracefully if unlimited.
+**Note:** Auto-detects quota from `LLMSAFESPACES_MAX_WORKSPACES_PER_USER`. Skips gracefully if unlimited.
 
 | # | Check |
 |---|---|
@@ -348,7 +348,7 @@ Tests that logout actually invalidates the JWT in the revocation cache — not j
 ### S-SECRET-REVEAL — Reveal with password reauth gate
 
 **Schedule:** 1 min | **Max duration:** 30s  
-**Requires:** `LLMSAFESPACE_PASSWORD`
+**Requires:** `LLMSAFESPACES_PASSWORD`
 
 | # | Check |
 |---|---|
@@ -428,7 +428,7 @@ LLM provider credentials are stored as secrets of type `llm-provider`.
 ### S-OWNERSHIP — Cross-user isolation
 
 **Schedule:** 5 min | **Max duration:** 60s  
-**Requires:** `LLMSAFESPACE_API_KEY_USER2`
+**Requires:** `LLMSAFESPACES_API_KEY_USER2`
 
 **Implementation note (validated against source):** Workspace service routes (`GET`, `DELETE`, status) return **HTTP 403** (ForbiddenError) for cross-user access — not 404. The server intentionally does not hide workspace existence on these routes. The bindings route uses the secrets handler which maps `ErrWorkspaceNotOwned` to **HTTP 404** to prevent cross-user workspace enumeration via the bindings API.
 
@@ -547,7 +547,7 @@ LLM provider credentials are stored as secrets of type `llm-provider`.
 ### D-SESSION-MSG — Session message, verbose flag, and `lastActivityAt`
 
 **Schedule:** 5 min | **Max duration:** 300s  
-**Requires:** `LLMSAFESPACE_LLM_API_KEY`
+**Requires:** `LLMSAFESPACES_LLM_API_KEY`
 
 | # | Check |
 |---|---|
@@ -565,7 +565,7 @@ LLM provider credentials are stored as secrets of type `llm-provider`.
 ### D-SESSION-HISTORY — Session history
 
 **Schedule:** 5 min | **Max duration:** 300s  
-**Requires:** `LLMSAFESPACE_LLM_API_KEY`
+**Requires:** `LLMSAFESPACES_LLM_API_KEY`
 
 | # | Check |
 |---|---|
@@ -579,7 +579,7 @@ LLM provider credentials are stored as secrets of type `llm-provider`.
 ### D-SESSION-TITLE — Auto-generated session title backfill
 
 **Schedule:** 10 min | **Max duration:** 300s  
-**Requires:** `LLMSAFESPACE_LLM_API_KEY`
+**Requires:** `LLMSAFESPACES_LLM_API_KEY`
 
 | # | Check |
 |---|---|
@@ -631,7 +631,7 @@ Tests `GET /workspaces/:id/sessions/:sessionId` which proxies to opencode's `GET
 ### D-PROMPT-ASYNC — `prompt_async` + SSE `session.idle` flow
 
 **Schedule:** 5 min | **Max duration:** 300s  
-**Requires:** `LLMSAFESPACE_LLM_API_KEY`  
+**Requires:** `LLMSAFESPACES_LLM_API_KEY`  
 **Critical:** This is the code path the MCP server uses internally. If it breaks, the MCP `session_message` tool breaks while all SDK tests pass.
 
 | # | Check |
@@ -649,7 +649,7 @@ Tests `GET /workspaces/:id/sessions/:sessionId` which proxies to opencode's `GET
 ### D-AGENT-INPUT — Question and permission input flows
 
 **Schedule:** 10 min | **Max duration:** 480s  
-**Requires:** `LLMSAFESPACE_LLM_API_KEY`  
+**Requires:** `LLMSAFESPACES_LLM_API_KEY`  
 **Note:** Requires a prompt that triggers a tool-use permission. Skip gracefully if model doesn't trigger permissions for test prompt.
 
 | # | Check |
@@ -669,7 +669,7 @@ Tests `GET /workspaces/:id/sessions/:sessionId` which proxies to opencode's `GET
 ### D-SESSION-SUBTASK — Subagent `parentId` backfill
 
 **Schedule:** 15 min | **Max duration:** 600s  
-**Requires:** `LLMSAFESPACE_LLM_API_KEY`  
+**Requires:** `LLMSAFESPACES_LLM_API_KEY`  
 **Note:** Requires a prompt that causes opencode to spawn a subtask agent (e.g. complex coding task with `task` tool). Skip gracefully if model doesn't use the task tool.
 
 | # | Check |
@@ -717,7 +717,7 @@ Tests `GET /workspaces/:id/sessions/:sessionId` which proxies to opencode's `GET
 ### D-MODEL-LIST-ANNOTATED — Model list with `currentModel`, `selected`, tier fields
 
 **Schedule:** 5 min | **Max duration:** 300s  
-**Requires:** `LLMSAFESPACE_LLM_API_KEY`
+**Requires:** `LLMSAFESPACES_LLM_API_KEY`
 
 | # | Check |
 |---|---|
@@ -732,7 +732,7 @@ Tests `GET /workspaces/:id/sessions/:sessionId` which proxies to opencode's `GET
 ### D-MODEL-SET — Set model and verify agent uses it
 
 **Schedule:** 5 min | **Max duration:** 300s  
-**Requires:** `LLMSAFESPACE_LLM_API_KEY`
+**Requires:** `LLMSAFESPACES_LLM_API_KEY`
 
 | # | Check |
 |---|---|
@@ -741,14 +741,14 @@ Tests `GET /workspaces/:id/sessions/:sessionId` which proxies to opencode's `GET
 | P3 | Send message → agent responds (non-empty, no auth error) |
 | N1 | `PUT /model` with empty `model` → 400 |
 | N2 | `PUT /model` on nonexistent workspace → error |
-| N3 | `PUT /model` with `LLMSAFESPACE_BAD_MODEL` → API accepts (validation deferred to agent) OR returns 400; either way, agent must not crash the workspace (verify phase still `Active` after) |
+| N3 | `PUT /model` with `LLMSAFESPACES_BAD_MODEL` → API accepts (validation deferred to agent) OR returns 400; either way, agent must not crash the workspace (verify phase still `Active` after) |
 
 ---
 
 ### D-CRED-MODEL-FLOW — Full: add credential → set model → call agent → reload session
 
 **Schedule:** 10 min | **Max duration:** 600s  
-**Requires:** `LLMSAFESPACE_LLM_API_KEY`, `LLMSAFESPACE_LLM_MODEL`  
+**Requires:** `LLMSAFESPACES_LLM_API_KEY`, `LLMSAFESPACES_LLM_MODEL`  
 **This is the flagship end-to-end scenario.**
 
 | Step | Check |
@@ -770,7 +770,7 @@ Tests `GET /workspaces/:id/sessions/:sessionId` which proxies to opencode's `GET
 ### D-SUSPEND-RESUME-SESSION — Session history survives suspend/resume
 
 **Schedule:** 10 min | **Max duration:** 600s  
-**Requires:** `LLMSAFESPACE_LLM_API_KEY`
+**Requires:** `LLMSAFESPACES_LLM_API_KEY`
 
 | # | Check |
 |---|---|
@@ -788,7 +788,7 @@ Tests `GET /workspaces/:id/sessions/:sessionId` which proxies to opencode's `GET
 ### D-ENV-INJECTION — Env var reaches agent and clears on unbind
 
 **Schedule:** 10 min | **Max duration:** 480s  
-**Requires:** `LLMSAFESPACE_LLM_API_KEY`
+**Requires:** `LLMSAFESPACES_LLM_API_KEY`
 
 | # | Check |
 |---|---|
@@ -820,7 +820,7 @@ Tests `GET /workspaces/:id/sessions/:sessionId` which proxies to opencode's `GET
 ### D-KEY-ROTATE — Encryption key rotation
 
 **Schedule:** 15 min | **Max duration:** 300s  
-**Requires:** `LLMSAFESPACE_PASSWORD` | **Uses:** `canary-rotate@llmsafespace.test` account
+**Requires:** `LLMSAFESPACES_PASSWORD` | **Uses:** `canary-rotate@llmsafespaces.test` account
 
 | # | Check |
 |---|---|
@@ -836,7 +836,7 @@ Tests `GET /workspaces/:id/sessions/:sessionId` which proxies to opencode's `GET
 ### D-CHANGE-PASSWORD — Password change
 
 **Schedule:** 15 min | **Max duration:** 120s  
-**Requires:** `LLMSAFESPACE_PASSWORD` | **Uses:** `canary-rotate@llmsafespace.test`
+**Requires:** `LLMSAFESPACES_PASSWORD` | **Uses:** `canary-rotate@llmsafespaces.test`
 
 | # | Check |
 |---|---|
@@ -853,7 +853,7 @@ Tests `GET /workspaces/:id/sessions/:sessionId` which proxies to opencode's `GET
 ### D-ACCOUNT-RECOVER — Account recovery with recovery key
 
 **Schedule:** 15 min | **Max duration:** 120s  
-**Uses:** `canary-rotate@llmsafespace.test`
+**Uses:** `canary-rotate@llmsafespaces.test`
 
 | # | Check |
 |---|---|
@@ -946,7 +946,7 @@ Tests `GET /workspaces/:id/sessions/:sessionId` which proxies to opencode's `GET
 ### D-MCP-SESSION — Session + message via MCP tools
 
 **Schedule:** 5 min | **Max duration:** 480s  
-**Requires:** `LLMSAFESPACE_LLM_API_KEY`
+**Requires:** `LLMSAFESPACES_LLM_API_KEY`
 
 | # | Check |
 |---|---|
@@ -959,7 +959,7 @@ Tests `GET /workspaces/:id/sessions/:sessionId` which proxies to opencode's `GET
 ### D-MCP-PROMPT-ASYNC — MCP `session_message` uses prompt_async + SSE internally
 
 **Schedule:** 5 min | **Max duration:** 480s  
-**Requires:** `LLMSAFESPACE_LLM_API_KEY`  
+**Requires:** `LLMSAFESPACES_LLM_API_KEY`  
 **Critical:** This verifies the MCP server's internal code path (not just the SDK's synchronous `sendMessage`).
 
 | # | Check |
@@ -973,7 +973,7 @@ Tests `GET /workspaces/:id/sessions/:sessionId` which proxies to opencode's `GET
 ### D-MCP-MODEL — Model list and set via MCP tools
 
 **Schedule:** 5 min | **Max duration:** 300s  
-**Requires:** `LLMSAFESPACE_LLM_API_KEY`
+**Requires:** `LLMSAFESPACES_LLM_API_KEY`
 
 | # | Check |
 |---|---|
@@ -1017,7 +1017,7 @@ Every 15 min  →  D-SESSION-SUBTASK, D-KEY-ROTATE, D-CHANGE-PASSWORD, D-ACCOUNT
 
 **Job name:** `sdk-canary` in `.github/workflows/ci.yml`
 
-All `ci:fast` (Tier 1 shallow) scenarios run in CI. They do not wait for pod scheduling and do not require `LLMSAFESPACE_LLM_API_KEY`. They run against the kind cluster or a local mock server.
+All `ci:fast` (Tier 1 shallow) scenarios run in CI. They do not wait for pod scheduling and do not require `LLMSAFESPACES_LLM_API_KEY`. They run against the kind cluster or a local mock server.
 
 **ci:fast scenario list:** S-HEALTH, S-AUTH, S-AUTH-CONFIG, S-LOGOUT, S-APIKEY, S-USER-SETTINGS, S-WS-CRUD, S-WS-STATUS, S-WS-QUOTA, S-SECRET-CRUD, S-SECRET-REVEAL, S-SECRET-AUDIT, S-CRED-CRUD, S-OWNERSHIP, S-ERROR-FORMAT, S-MCP-TOOLS, S-MCP-AUTH-NEG, S-MCP-CRED, S-MCP-INPUT-NEG
 
@@ -1027,7 +1027,7 @@ All `ci:fast` (Tier 1 shallow) scenarios run in CI. They do not wait for pod sch
 make canary-ci
 
 # Single scenario, Go SDK
-LLMSAFESPACE_URL=http://localhost:8080 LLMSAFESPACE_API_KEY=lsp_... \
+LLMSAFESPACES_URL=http://localhost:8080 LLMSAFESPACES_API_KEY=lsp_... \
   go run ./sdks/canary/go/auth/
 
 # Full canary suite (requires live cluster with LLM credentials)
@@ -1042,9 +1042,9 @@ Three pre-provisioned accounts required in every deployment:
 
 | Account | Purpose |
 |---|---|
-| `canary1@llmsafespace.test` | Primary account for all single-user scenarios |
-| `canary2@llmsafespace.test` | Secondary account for S-OWNERSHIP |
-| `canary-rotate@llmsafespace.test` | Dedicated account for D-KEY-ROTATE, D-CHANGE-PASSWORD, D-ACCOUNT-RECOVER (these mutate credentials; isolated to prevent interference with canary1) |
+| `canary1@llmsafespaces.test` | Primary account for all single-user scenarios |
+| `canary2@llmsafespaces.test` | Secondary account for S-OWNERSHIP |
+| `canary-rotate@llmsafespaces.test` | Dedicated account for D-KEY-ROTATE, D-CHANGE-PASSWORD, D-ACCOUNT-RECOVER (these mutate credentials; isolated to prevent interference with canary1) |
 
 All accounts are non-admin. The rotate account has a known fixed password stored in a Kubernetes Secret and is reset to the original value at the end of each mutation scenario.
 

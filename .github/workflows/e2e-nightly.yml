@@ -7,9 +7,9 @@ on:
   workflow_dispatch: # Allow manual trigger
 
 env:
-  CLUSTER_NAME: llmsafespace-ci
+  CLUSTER_NAME: llmsafespaces-ci
   IMAGE_TAG: ci
-  NS: llmsafespace
+  NS: llmsafespaces
 
 jobs:
   e2e-kind:
@@ -39,13 +39,13 @@ jobs:
 
       - name: Build and load images
         run: |
-          docker build --network host -f api/Dockerfile -t llmsafespace/api:$IMAGE_TAG .
-          docker build --network host -f controller/Dockerfile -t llmsafespace/controller:$IMAGE_TAG .
-          docker build --network host -f runtimes/base/Dockerfile -t llmsafespace/runtime-base:$IMAGE_TAG .
+          docker build --network host -f api/Dockerfile -t llmsafespaces/api:$IMAGE_TAG .
+          docker build --network host -f controller/Dockerfile -t llmsafespaces/controller:$IMAGE_TAG .
+          docker build --network host -f runtimes/base/Dockerfile -t llmsafespaces/runtime-base:$IMAGE_TAG .
 
-          kind load docker-image llmsafespace/api:$IMAGE_TAG --name $CLUSTER_NAME
-          kind load docker-image llmsafespace/controller:$IMAGE_TAG --name $CLUSTER_NAME
-          kind load docker-image llmsafespace/runtime-base:$IMAGE_TAG --name $CLUSTER_NAME
+          kind load docker-image llmsafespaces/api:$IMAGE_TAG --name $CLUSTER_NAME
+          kind load docker-image llmsafespaces/controller:$IMAGE_TAG --name $CLUSTER_NAME
+          kind load docker-image llmsafespaces/runtime-base:$IMAGE_TAG --name $CLUSTER_NAME
 
       - name: Install cert-manager
         run: |
@@ -59,25 +59,25 @@ jobs:
           kubectl -n $NS rollout status deployment/postgres --timeout=180s
           kubectl -n $NS rollout status deployment/valkey --timeout=180s
 
-      - name: Helm install LLMSafeSpace
+      - name: Helm install LLMSafeSpaces
         run: |
           # MCP is disabled in the nightly e2e: the cmd/mcp binary has no
           # Dockerfile yet so there is no image to pull. The MCP pod readiness
           # and connectivity steps below are skipped when mcp.enabled=false.
           # Re-enable once a Dockerfile is added (tracked in issue #28).
-          helm upgrade --install llmsafespace charts/llmsafespace \
+          helm upgrade --install llmsafespaces charts/llmsafespaces \
             -n $NS --create-namespace \
-            --set api.image.repository=llmsafespace/api \
+            --set api.image.repository=llmsafespaces/api \
             --set api.image.tag=$IMAGE_TAG \
             --set api.image.pullPolicy=IfNotPresent \
-            --set controller.image.repository=llmsafespace/controller \
+            --set controller.image.repository=llmsafespaces/controller \
             --set controller.image.tag=$IMAGE_TAG \
             --set controller.image.pullPolicy=IfNotPresent \
             --set mcp.enabled=false \
             --set postgresql.host=postgres \
             --set postgresql.port=5432 \
-            --set postgresql.user=llmsafespace \
-            --set postgresql.database=llmsafespace \
+            --set postgresql.user=llmsafespaces \
+            --set postgresql.database=llmsafespaces \
             --set redis.host=redis-master \
             --set redis.port=6379 \
             --set externalSecret.create=true \
@@ -87,8 +87,8 @@ jobs:
 
       - name: Wait for rollout
         run: |
-          kubectl -n $NS rollout status deployment/llmsafespace-api --timeout=180s
-          kubectl -n $NS rollout status deployment/llmsafespace-controller --timeout=180s
+          kubectl -n $NS rollout status deployment/llmsafespaces-api --timeout=180s
+          kubectl -n $NS rollout status deployment/llmsafespaces-controller --timeout=180s
 
       # F1/F2/F3 runtime verification — skipped until MCP image exists (issue #28).
       # The helm render unit tests (TestF1/TestF2/TestF3) cover the template
@@ -122,7 +122,7 @@ jobs:
 
           # Port-forward to the MCP Service and verify the /sse endpoint accepts
           # a TCP connection (matching the tcpSocket probe semantics from F2).
-          kubectl -n "$NS" port-forward svc/llmsafespace-mcp 13001:3001 >/dev/null 2>&1 &
+          kubectl -n "$NS" port-forward svc/llmsafespaces-mcp 13001:3001 >/dev/null 2>&1 &
           PF_PID=$!
           trap "kill $PF_PID 2>/dev/null || true" EXIT
 
@@ -163,7 +163,7 @@ jobs:
           kubectl -n "$NS" run valkey-migrate-probe \
             --image=busybox:1.36 \
             --restart=Never \
-            --labels="app.kubernetes.io/component=migrate,app.kubernetes.io/instance=llmsafespace" \
+            --labels="app.kubernetes.io/component=migrate,app.kubernetes.io/instance=llmsafespaces" \
             --command -- sh -c "nc -z -w5 $VALKEY_IP 6379 && echo REACHABLE || echo BLOCKED"
 
           # Wait for completion.
@@ -189,7 +189,7 @@ jobs:
           CLUSTER_NAME: ${{ env.CLUSTER_NAME }}
           CTX: kind-${{ env.CLUSTER_NAME }}
           NS: ${{ env.NS }}
-          RUNTIME_IMAGE_REF: llmsafespace/runtime-base:ci
+          RUNTIME_IMAGE_REF: llmsafespaces/runtime-base:ci
           LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           LLM_MODEL: ${{ secrets.LLM_MODEL }}
@@ -244,9 +244,9 @@ jobs:
           echo "=== Pod status ==="
           kubectl -n $NS get pods -o wide
           echo "=== API logs ==="
-          kubectl -n $NS logs deployment/llmsafespace-api --tail=50 || true
+          kubectl -n $NS logs deployment/llmsafespaces-api --tail=50 || true
           echo "=== Controller logs ==="
-          kubectl -n $NS logs deployment/llmsafespace-controller --tail=50 || true
+          kubectl -n $NS logs deployment/llmsafespaces-controller --tail=50 || true
           echo "=== Events ==="
           kubectl -n $NS get events --sort-by='.lastTimestamp' | tail -30
 

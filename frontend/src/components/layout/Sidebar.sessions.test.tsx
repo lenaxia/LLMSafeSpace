@@ -63,14 +63,14 @@ describe("Sidebar — session title display", () => {
       pagination: { limit: 20, offset: 0, total: 1 },
     });
     (workspacesApi.getSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: "sess-1", title: "Clone lenaxia/llmsafespace", messageCount: 3, status: "idle", hasUnread: false },
+      { id: "sess-1", title: "Clone lenaxia/llmsafespaces", messageCount: 3, status: "idle", hasUnread: false },
       { id: "sess-2", title: "Fix the bug", messageCount: 1, status: "active", hasUnread: false },
     ]);
 
     renderSidebar();
 
     await waitFor(() => {
-      expect(screen.getByText("Clone lenaxia/llmsafespace")).toBeInTheDocument();
+      expect(screen.getByText("Clone lenaxia/llmsafespaces")).toBeInTheDocument();
       expect(screen.getByText("Fix the bug")).toBeInTheDocument();
     });
   });
@@ -111,13 +111,13 @@ describe("Sidebar — session title display", () => {
     qc.setQueryData<SessionListItem[]>(["sessions", "ws-1"], (old) => {
       if (!old) return old;
       return old.map((s) =>
-        s.id === "sess-1" ? { ...s, title: "Clone lenaxia/llmsafespace" } : s,
+        s.id === "sess-1" ? { ...s, title: "Clone lenaxia/llmsafespaces" } : s,
       );
     });
 
     // Sidebar should now show the updated title
     await waitFor(() => {
-      expect(screen.getByText("Clone lenaxia/llmsafespace")).toBeInTheDocument();
+      expect(screen.getByText("Clone lenaxia/llmsafespaces")).toBeInTheDocument();
       expect(screen.queryByText("New chat")).not.toBeInTheDocument();
     });
   });

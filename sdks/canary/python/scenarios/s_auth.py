@@ -11,11 +11,11 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 from canary import Runner, Config, config_from_env
-from llmsafespace import LLMSafeSpace, AuthError
+from llmsafespaces import LLMSafeSpaces, AuthError
 
 
 def run(run: Runner, cfg: Config) -> None:
-    c = LLMSafeSpace(cfg.api_url, api_key=cfg.api_key, timeout=20.0)
+    c = LLMSafeSpaces(cfg.api_url, api_key=cfg.api_key, timeout=20.0)
 
     # P1: valid API key
     ok, me = run.assert_no_error(lambda: c.auth.me(), "valid-key: auth.me no error")
@@ -27,7 +27,7 @@ def run(run: Runner, cfg: Config) -> None:
 
     # P2+P3: JWT login
     if cfg.email and cfg.password:
-        jwt_c = LLMSafeSpace(
+        jwt_c = LLMSafeSpaces(
             cfg.api_url, email=cfg.email, password=cfg.password, timeout=20.0
         )
         ok2, me2 = run.assert_no_error(
@@ -37,13 +37,13 @@ def run(run: Runner, cfg: Config) -> None:
             run.assert_(me2.get("active") is True, "jwt-login: user.active=true")
 
     # N1: invalid key
-    bad = LLMSafeSpace(
+    bad = LLMSafeSpaces(
         cfg.api_url, api_key="lsp_invalid_canary_key_000000000000", timeout=10.0
     )
     run.assert_error(lambda: bad.auth.me(), "invalid-key: raises AuthError")
 
     # N2: empty key
-    noauth = LLMSafeSpace(cfg.api_url, api_key="", timeout=10.0)
+    noauth = LLMSafeSpaces(cfg.api_url, api_key="", timeout=10.0)
     run.assert_error(lambda: noauth.auth.me(), "empty-key: raises error")
 
     # N4+N5: wrong password / nonexistent email
@@ -51,7 +51,7 @@ def run(run: Runner, cfg: Config) -> None:
         ("wrong-password", cfg.email or "canary@example.com", "definitely-wrong-xyz"),
         ("nonexistent-email", "ghost-99@nonexistent.invalid", "wrongpass123"),
     ]:
-        bad_login = LLMSafeSpace(cfg.api_url, email=email, password=pw, timeout=10.0)
+        bad_login = LLMSafeSpaces(cfg.api_url, email=email, password=pw, timeout=10.0)
         run.assert_error(lambda c=bad_login: c.auth.me(), f"{name}: raises error")
 
 

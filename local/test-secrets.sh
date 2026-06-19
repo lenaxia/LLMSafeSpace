@@ -95,7 +95,7 @@ login_user() {
     "{\"email\":\"$email\",\"password\":\"$password\"}"
 }
 
-echo "=== LLMSafeSpace Secrets E2E Tests ==="
+echo "=== LLMSafeSpaces Secrets E2E Tests ==="
 echo "Target: $BASE_URL"
 echo ""
 

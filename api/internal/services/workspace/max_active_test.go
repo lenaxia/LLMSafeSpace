@@ -15,11 +15,11 @@ import (
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 
-	apiinterfaces "github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
-	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
-	"github.com/lenaxia/llmsafespace/pkg/settings"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	apiinterfaces "github.com/lenaxia/llmsafespaces/api/internal/interfaces"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
+	"github.com/lenaxia/llmsafespaces/pkg/settings"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 type mockSettingsStore struct {
@@ -480,12 +480,12 @@ type mockK8sForMaxActive struct {
 	workspaces map[string]*v1.Workspace
 }
 
-func (m *mockK8sForMaxActive) LlmsafespaceV1() (pkginterfaces.LLMSafespaceV1Interface, error) {
+func (m *mockK8sForMaxActive) LlmsafespacesV1() (pkginterfaces.LLMSafespacesV1Interface, error) {
 	return &mockLLMV1ForMaxActive{workspaces: m.workspaces}, nil
 }
 
 type mockLLMV1ForMaxActive struct {
-	pkginterfaces.LLMSafespaceV1Interface
+	pkginterfaces.LLMSafespacesV1Interface
 	workspaces map[string]*v1.Workspace
 }
 

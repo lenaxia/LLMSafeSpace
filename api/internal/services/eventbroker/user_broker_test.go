@@ -4,6 +4,8 @@
 package eventbroker
 
 import (
+	"errors"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -11,7 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
+	apierrors "github.com/lenaxia/llmsafespaces/api/internal/errors"
+	apitypes "github.com/lenaxia/llmsafespaces/api/internal/types"
 )
 
 func TestNewUserEventBroker(t *testing.T) {
@@ -505,4 +508,18 @@ func TestUserBroker_UnsubscribeReleasesSlot(t *testing.T) {
 	for i := 1; i < MaxSubscribersPerUser; i++ {
 		b.UnsubscribeUser("user-1", subs[i])
 	}
+}
+
+// ---------------------------------------------------------------------------
+// US-46.4: ErrTooManySubscribers is now a *apierrors.APIError (RateLimited/429)
+// ---------------------------------------------------------------------------
+
+func TestErrTooManySubscribers_IsAPIError(t *testing.T) {
+	var apiErr *apierrors.APIError
+	assert.True(t, errors.As(ErrTooManySubscribers, &apiErr),
+		"ErrTooManySubscribers must satisfy errors.As(*apierrors.APIError)")
+}
+
+func TestErrTooManySubscribers_StatusCode(t *testing.T) {
+	assert.Equal(t, http.StatusTooManyRequests, ErrTooManySubscribers.StatusCode())
 }

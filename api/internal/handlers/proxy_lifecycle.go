@@ -8,12 +8,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/api/internal/services/activity"
-	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
-	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
-	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
-	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
+	"github.com/lenaxia/llmsafespaces/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/activity"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/eventbroker"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/sse"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/workspace"
+	apitypes "github.com/lenaxia/llmsafespaces/api/internal/types"
 )
 
 func (h *ProxyHandler) EnableSessionParentResolution() {

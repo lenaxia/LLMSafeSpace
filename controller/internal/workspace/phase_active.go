@@ -10,9 +10,9 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 
-	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
+	"github.com/lenaxia/llmsafespaces/controller/internal/metrics"
 )
 
 func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Workspace) (ctrl.Result, error) {
@@ -40,16 +40,25 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 	// would be permanently lost on re-reconcile (Spec.Suspend already nil).
 	if workspace.Spec.Suspend != nil && *workspace.Spec.Suspend {
 		logger.Info("Spec.Suspend=true; transitioning to Suspending")
-		workspacePhaseTransitions.WithLabelValues(string(v1.WorkspacePhaseActive), string(v1.WorkspacePhaseSuspending)).Inc()
-		workspace.Status.Phase = v1.WorkspacePhaseSuspending
-		if err := r.Status().Update(ctx, workspace); err != nil {
-			recordStatusUpdateConflictOnError("handleActive_suspend", err)
+		if err := r.transitionActiveToSuspending(ctx, workspace); err != nil {
 			return ctrl.Result{}, err
 		}
 		if err := r.clearSuspendRequest(ctx, workspace); err != nil {
 			logger.Error(err, "Failed to clear Spec.Suspend after suspend transition; will retry on next reconcile")
 			return ctrl.Result{Requeue: true}, nil
 		}
+		return ctrl.Result{}, nil
+	}
+
+	// D20 (US-43.19): org-level suspension. If the workspace belongs to a
+	// suspended org, transition to Suspending so the pod is killed (PVC
+	// retained). The controller never auto-resumes. A status-lookup failure
+	// fails open (workspace keeps running); the cached client absorbs
+	// transient API outages. This check runs AFTER the Spec.Suspend path so
+	// an explicit API suspend is always honored and cleared first.
+	if transitioned, err := r.applyOrgSuspension(ctx, workspace); err != nil {
+		return ctrl.Result{}, err
+	} else if transitioned {
 		return ctrl.Result{}, nil
 	}
 
@@ -86,6 +95,10 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 			workspace.Status.Phase = v1.WorkspacePhaseCreating
 			workspace.Status.PodIP = ""
 			workspace.Status.Endpoint = ""
+			// US-24.7 counter semantics: ControllerRestartCount is incremented
+			// by the health-check loop only. This password-secret self-heal is
+			// a different recovery path, so it bumps RestartCount (total pod
+			// restarts) but deliberately NOT ControllerRestartCount.
 			workspace.Status.RestartCount++
 			if err := r.Status().Update(ctx, workspace); err != nil {
 				recordStatusUpdateConflictOnError("handleActive_pw_missing", err)

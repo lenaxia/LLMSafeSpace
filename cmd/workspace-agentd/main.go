@@ -23,7 +23,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
 )
 
 var (
@@ -730,6 +730,7 @@ func buildStatuszHandler(
 	client *OpenCodeClient,
 	cache *providerCache,
 	tracker *sessionStatusTracker,
+	pressureMon *memoryPressureMonitor,
 	startedAt time.Time,
 ) http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -764,6 +765,21 @@ func buildStatuszHandler(
 			}
 		}
 
+		// US-44.6: enrich sessions with estimated memory from context tokens.
+		for i := range sessions {
+			tokens := int64(0)
+			if sessions[i].Tokens != nil {
+				tokens = sessions[i].Tokens.Input + sessions[i].Tokens.CacheRead + sessions[i].Tokens.CacheWrite
+			}
+			if tokens == 0 {
+				tokens = sessions[i].ContextUsed
+			}
+			sessions[i].EstimatedMemoryMB = estimateSessionMemoryMB(tokens)
+		}
+
+		// US-44.5: surface memory pressure state.
+		pressure, _, _ := pressureMon.snapshot()
+
 		_ = json.NewEncoder(w).Encode(agentd.StatuszResponse{
 			Healthy:             healthy,
 			Ready:               ready,
@@ -780,6 +796,7 @@ func buildStatuszHandler(
 			Memory:              getMemoryUsage(),
 			CPU:                 getCPUUsage(),
 			Context:             contextUsage,
+			MemoryPressure:      pressure,
 		})
 	})
 }
@@ -827,6 +844,11 @@ func main() {
 		client:   &http.Client{Timeout: 5 * time.Second},
 	}
 
+	// US-44.7: surface the reason for the previous opencode restart
+	// (if any) and consume the one-shot marker before starting the
+	// supervisor. No-op when no marker is present (clean boot).
+	logRestartReason(RestartReasonMarkerPath, log.Core())
+
 	var proc *managedProcess
 	if supervise {
 		proc = &managedProcess{
@@ -853,6 +875,15 @@ func main() {
 
 	// US-44.8: periodic metrics collection for ops dashboards. Updates
 	// memory usage, active sessions, and context token gauges every 60s.
+	// US-44.5: memory pressure monitor checks cgroup usage against the
+	// 85% threshold and surfaces the state via statusz.
+	pressureMonitor := newMemoryPressureMonitor()
+	bgWg.Add(1)
+	go func() {
+		defer bgWg.Done()
+		pressureMonitor.run(bgCtx, log)
+	}()
+
 	bgWg.Add(1)
 	go func() {
 		defer bgWg.Done()
@@ -913,7 +944,7 @@ func main() {
 			RelayURL:         relayURL,
 			OpenCodeBaseURL:  getAgentAddr(),
 			OpenCodePassword: password,
-			AgentConfigPath:  envOrDefault("LLMSAFESPACE_AGENT_CONFIG_PATH", agentd.AgentConfigPath),
+			AgentConfigPath:  envOrDefault("LLMSAFESPACES_AGENT_CONFIG_PATH", agentd.AgentConfigPath),
 			AuthJSONPath:     authJSONPath,
 			HealthCheck:      func() bool { snap := healthCache.Snapshot(); return snap.Initialized && snap.Healthy },
 			KillOpenCode:     func() { proc.restart() },
@@ -993,7 +1024,7 @@ func main() {
 	// Performance contract: NO upper bound. Callers must use a generous
 	// timeout (controller uses 30s). Do NOT use this endpoint for liveness
 	// or readiness probes — use /v1/healthz and /v1/readyz respectively.
-	statuszHandler := buildStatuszHandler(client, cache, sseTracker, startedAt)
+	statuszHandler := buildStatuszHandler(client, cache, sseTracker, pressureMonitor, startedAt)
 	adminMux.Handle("/v1/statusz", requireBearerToken(adminToken, statuszHandler))
 
 	// S18.10: Expose Prometheus metrics on admin port so the cluster-level
@@ -1001,7 +1032,31 @@ func main() {
 	adminMux.Handle("/metrics", promhttp.Handler())
 
 	// User endpoints — user port.
-	userMux.HandleFunc("/v1/reload-secrets", reloadSecretsHandler(loadMaterializeConfig(), proc, password, sseTracker))
+	// The session lister probes opencode's /session endpoint to (a) prune
+	// stale busy entries from the tracker when opencode dies mid-busy and
+	// is respawned (C2a), and (b) decide cold-start behavior when the
+	// tracker is empty after an agentd restart (C2b). It closes over the
+	// production OpenCodeClient; tests inject a stub.
+	liveSessions := func(ctx context.Context) []string {
+		sessions, err := client.ListSessions(ctx)
+		if err != nil {
+			return nil
+		}
+		ids := make([]string, len(sessions))
+		for i, s := range sessions {
+			ids[i] = s.ID
+		}
+		return ids
+	}
+
+	userMux.HandleFunc("/v1/reload-secrets", reloadSecretsHandler(loadMaterializeConfig(), reloadSecretsDeps{
+		Proc:             proc,
+		OpencodePassword: password,
+		Tracker:          sseTracker,
+		BgCtx:            bgCtx,
+		BgWg:             &bgWg,
+		Lister:           liveSessions,
+	}))
 	userMux.HandleFunc("/v1/agent/reload", agentReloadHandler(password, log))
 
 	// Start admin server (health probes) on dedicated port.
@@ -1284,8 +1339,13 @@ func (p *managedProcess) supervise() {
 		// Crash path: classify exit, handle OOM, record metric, log, backoff, loop.
 		exitKind := classifyExit(waitErr)
 		if isOOMExit(exitKind) {
-			handleOOMExit(workspaceIDFromEnv(), OOMMarkerPath)
+			handleOOMExit(workspaceIDFromEnv(), RestartReasonMarkerPath)
 		} else {
+			if err := writeRestartReasonMarker(RestartReasonMarkerPath, "crash", nil); err != nil {
+				log.Error("failed to write restart-reason marker", zap.Error(err))
+			} else {
+				logRestartReasonAtWrite("crash", nil, log.Core())
+			}
 			pkgOpsMetrics.RecordRestart(workspaceIDFromEnv(), "crash")
 		}
 		log.Warn("opencode exited unexpectedly",

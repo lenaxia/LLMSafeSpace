@@ -8,7 +8,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lenaxia/llmsafespace/pkg/settings"
+	"github.com/lenaxia/llmsafespaces/pkg/settings"
 )
 
 // SettingsHandler handles admin and user settings API requests.

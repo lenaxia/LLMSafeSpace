@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lenaxia/llmsafespace/api/internal/handlers"
-	"github.com/lenaxia/llmsafespace/pkg/secrets"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/api/internal/handlers"
+	"github.com/lenaxia/llmsafespaces/pkg/secrets"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 // TestE2E_RealAuth_SecretCRUD proves the full flow works with the REAL auth
@@ -211,12 +211,13 @@ func (m *fullMockDB) CreateUser(_ context.Context, u *types.User) error {
 	m.users[u.ID] = &cp
 	return nil
 }
-func (m *fullMockDB) CountUsers(_ context.Context) (int, error)                    { return len(m.users), nil }
-func (m *fullMockDB) UpdateUser(context.Context, string, types.UserUpdates) error  { return nil }
-func (m *fullMockDB) DeleteUser(context.Context, string) error                     { return nil }
-func (m *fullMockDB) GetUserByAPIKey(context.Context, string) (*types.User, error) { return nil, nil }
-func (m *fullMockDB) CreateAPIKey(context.Context, *types.APIKey) error            { return nil }
-func (m *fullMockDB) ListAPIKeys(context.Context, string) ([]*types.APIKey, error) { return nil, nil }
+func (m *fullMockDB) CountUsers(_ context.Context) (int, error)                     { return len(m.users), nil }
+func (m *fullMockDB) UpdateUser(context.Context, string, types.UserUpdates) error   { return nil }
+func (m *fullMockDB) DeleteUser(context.Context, string) error                      { return nil }
+func (m *fullMockDB) SetUserStatus(context.Context, string, types.UserStatus) error { return nil }
+func (m *fullMockDB) GetUserByAPIKey(context.Context, string) (*types.User, error)  { return nil, nil }
+func (m *fullMockDB) CreateAPIKey(context.Context, *types.APIKey) error             { return nil }
+func (m *fullMockDB) ListAPIKeys(context.Context, string) ([]*types.APIKey, error)  { return nil, nil }
 func (m *fullMockDB) GetAPIKey(context.Context, string, string) (*types.APIKey, error) {
 	return nil, nil
 }

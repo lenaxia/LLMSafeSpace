@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // D-KEY-ROTATE canary — TypeScript SDK
 
-import { LLMSafeSpace, AuthError } from '../../src/index.js';
+import { LLMSafeSpaces, AuthError } from '../../src/index.js';
 import { Runner, Config, configFromEnv, nodeFetch } from '../canary.js';
 
 async function run(r: Runner, cfg: Config): Promise<void> {
-  const rotateEmail = process.env.LLMSAFESPACE_ROTATE_EMAIL || 'canary-rotate@llmsafespace.test';
-  const rotatePassword = process.env.LLMSAFESPACE_ROTATE_PASSWORD || 'canary-rotate-password!';
+  const rotateEmail = process.env.LLMSAFESPACES_ROTATE_EMAIL || 'canary-rotate@llmsafespaces.test';
+  const rotatePassword = process.env.LLMSAFESPACES_ROTATE_PASSWORD || 'canary-rotate-password!';
 
-  const c = new LLMSafeSpace({
+  const c = new LLMSafeSpaces({
     baseUrl: cfg.apiUrl,
     credentials: { email: rotateEmail, password: rotatePassword },
     timeout: 60000,

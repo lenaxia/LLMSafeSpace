@@ -6,13 +6,14 @@ package auth
 import (
 	"context"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lenaxia/llmsafespace/api/internal/config"
-	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/api/internal/config"
+	"github.com/lenaxia/llmsafespaces/api/internal/logger"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 func TestAuthMiddleware_SetsSessionID(t *testing.T) {
@@ -83,6 +84,7 @@ func testLogger() *logger.Logger {
 type mockUser struct {
 	ID, Role string
 	Active   bool
+	Status   types.UserStatus
 }
 
 type mockDB struct {
@@ -94,15 +96,21 @@ func (m *mockDB) GetUser(_ context.Context, userID string) (*types.User, error) 
 	if !ok {
 		return nil, nil
 	}
-	return &types.User{ID: u.ID, Role: u.Role, Active: u.Active}, nil
+	return &types.User{ID: u.ID, Role: u.Role, Active: u.Active, Status: u.Status}, nil
 }
 
 // Satisfy interface — only GetUser needed for this test
-func (m *mockDB) GetUserByEmail(context.Context, string) (*types.User, error)      { return nil, nil }
-func (m *mockDB) CreateUser(context.Context, *types.User) error                    { return nil }
-func (m *mockDB) UpdateUser(context.Context, string, types.UserUpdates) error      { return nil }
-func (m *mockDB) DeleteUser(context.Context, string) error                         { return nil }
-func (m *mockDB) CountUsers(context.Context) (int, error)                          { return 1, nil }
+func (m *mockDB) GetUserByEmail(context.Context, string) (*types.User, error) { return nil, nil }
+func (m *mockDB) CreateUser(context.Context, *types.User) error               { return nil }
+func (m *mockDB) UpdateUser(context.Context, string, types.UserUpdates) error { return nil }
+func (m *mockDB) DeleteUser(context.Context, string) error                    { return nil }
+func (m *mockDB) CountUsers(context.Context) (int, error)                     { return 1, nil }
+func (m *mockDB) SetUserStatus(_ context.Context, userID string, status types.UserStatus) error {
+	if u, ok := m.users[userID]; ok {
+		u.Status = status
+	}
+	return nil
+}
 func (m *mockDB) GetUserByAPIKey(context.Context, string) (*types.User, error)     { return nil, nil }
 func (m *mockDB) CreateAPIKey(context.Context, *types.APIKey) error                { return nil }
 func (m *mockDB) ListAPIKeys(context.Context, string) ([]*types.APIKey, error)     { return nil, nil }
@@ -361,5 +369,151 @@ func TestOptionalAuthMiddleware_NoToken(t *testing.T) {
 	}
 	if w.Code != 200 {
 		t.Errorf("expected 200 (not aborted), got %d", w.Code)
+	}
+}
+
+// --- D19: user-level suspension ---
+
+// TestAuthMiddleware_SuspendedUser_Blocked verifies that a valid token belonging
+// to a suspended user is rejected with 401 "account suspended" and the
+// downstream handler never runs.
+func TestAuthMiddleware_SuspendedUser_Blocked(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := testConfig()
+	log := testLogger()
+	db := &mockDB{}
+	cache := &mockCache{}
+	svc, err := New(cfg, log, db, cache)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	token, err := svc.GenerateToken("user-susp")
+	if err != nil {
+		t.Fatalf("GenerateToken: %v", err)
+	}
+
+	db.users = map[string]*mockUser{
+		"user-susp": {ID: "user-susp", Role: "user", Active: true, Status: types.UserStatusSuspended},
+	}
+
+	router := gin.New()
+	router.Use(svc.AuthMiddleware())
+	handlerRan := false
+	router.GET("/test", func(c *gin.Context) {
+		handlerRan = true
+		c.Status(200)
+	})
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != 401 {
+		t.Fatalf("expected 401 for suspended user, got %d", w.Code)
+	}
+	if handlerRan {
+		t.Error("downstream handler must NOT run for a suspended user")
+	}
+	if !strings.Contains(w.Body.String(), "account suspended") {
+		t.Errorf("expected 'account suspended' in body, got %s", w.Body.String())
+	}
+}
+
+// TestAuthMiddleware_ActiveUser_Passes verifies an active user with a valid
+// token reaches the handler.
+func TestAuthMiddleware_ActiveUser_Passes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := testConfig()
+	log := testLogger()
+	db := &mockDB{}
+	cache := &mockCache{}
+	svc, err := New(cfg, log, db, cache)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	token, err := svc.GenerateToken("user-active")
+	if err != nil {
+		t.Fatalf("GenerateToken: %v", err)
+	}
+
+	db.users = map[string]*mockUser{
+		"user-active": {ID: "user-active", Role: "user", Active: true, Status: types.UserStatusActive},
+	}
+
+	router := gin.New()
+	router.Use(svc.AuthMiddleware())
+	var gotRole string
+	router.GET("/test", func(c *gin.Context) {
+		r, _ := c.Get("userRole")
+		gotRole, _ = r.(string)
+		c.Status(200)
+	})
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200 for active user, got %d", w.Code)
+	}
+	if gotRole != "user" {
+		t.Errorf("expected role=user, got %q", gotRole)
+	}
+}
+
+// TestOptionalAuthMiddleware_SuspendedUser_TreatedAsAnon verifies that a
+// suspended user presenting a valid token via OptionalAuthMiddleware is treated
+// as unauthenticated (no userID set) but NOT aborted.
+func TestOptionalAuthMiddleware_SuspendedUser_TreatedAsAnon(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cfg := testConfig()
+	log := testLogger()
+	db := &mockDB{}
+	cache := &mockCache{}
+	svc, err := New(cfg, log, db, cache)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	token, err := svc.GenerateToken("user-susp-opt")
+	if err != nil {
+		t.Fatalf("GenerateToken: %v", err)
+	}
+
+	db.users = map[string]*mockUser{
+		"user-susp-opt": {ID: "user-susp-opt", Role: "user", Active: true, Status: types.UserStatusSuspended},
+	}
+
+	router := gin.New()
+	router.Use(svc.OptionalAuthMiddleware())
+	var gotUID string
+	handlerRan := false
+	router.GET("/test", func(c *gin.Context) {
+		handlerRan = true
+		uid, _ := c.Get("userID")
+		gotUID, _ = uid.(string)
+		c.Status(200)
+	})
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if !handlerRan {
+		t.Error("handler must still run (optional middleware never aborts)")
+	}
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+	if gotUID != "" {
+		t.Errorf("suspended user must not get userID set, got %q", gotUID)
 	}
 }

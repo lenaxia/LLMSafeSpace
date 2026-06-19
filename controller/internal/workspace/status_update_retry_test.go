@@ -17,7 +17,7 @@ import (
 // fakeConflictErr returns an error recognized by apierrors.IsConflict.
 func fakeConflictErr() error {
 	return apierrors.NewConflict(
-		schema.GroupResource{Group: "llmsafespace.dev", Resource: "workspaces"},
+		schema.GroupResource{Group: "llmsafespaces.dev", Resource: "workspaces"},
 		"ws-x",
 		errors.New("the object has been modified"),
 	)
@@ -26,7 +26,7 @@ func fakeConflictErr() error {
 // fakeNotFoundErr returns an error recognized by apierrors.IsNotFound.
 func fakeNotFoundErr() error {
 	return apierrors.NewNotFound(
-		schema.GroupResource{Group: "llmsafespace.dev", Resource: "workspaces"},
+		schema.GroupResource{Group: "llmsafespaces.dev", Resource: "workspaces"},
 		"ws-x",
 	)
 }

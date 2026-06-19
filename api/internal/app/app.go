@@ -6,8 +6,10 @@ package app
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -17,28 +19,30 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/lenaxia/llmsafespace/api/internal/config"
-	"github.com/lenaxia/llmsafespace/api/internal/handlers"
-	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	"github.com/lenaxia/llmsafespace/api/internal/server"
-	"github.com/lenaxia/llmsafespace/api/internal/services"
-	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
-	"github.com/lenaxia/llmsafespace/api/internal/services/cache"
-	"github.com/lenaxia/llmsafespace/api/internal/services/database"
-	"github.com/lenaxia/llmsafespace/api/internal/services/metering"
-	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
-	"github.com/lenaxia/llmsafespace/api/internal/services/msgqueue"
-	"github.com/lenaxia/llmsafespace/api/internal/services/policy"
-	"github.com/lenaxia/llmsafespace/api/internal/services/sessionindex"
-	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
-	"github.com/lenaxia/llmsafespace/api/internal/services/wsstate"
-	agentoc "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
-	"github.com/lenaxia/llmsafespace/pkg/billing"
-	emailpkg "github.com/lenaxia/llmsafespace/pkg/email"
-	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
-	"github.com/lenaxia/llmsafespace/pkg/secrets"
-	"github.com/lenaxia/llmsafespace/pkg/settings"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/api/internal/config"
+	"github.com/lenaxia/llmsafespaces/api/internal/handlers"
+	"github.com/lenaxia/llmsafespaces/api/internal/logger"
+	"github.com/lenaxia/llmsafespaces/api/internal/server"
+	"github.com/lenaxia/llmsafespaces/api/internal/services"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/auth"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/cache"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/database"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/metering"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/metrics"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/msgqueue"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/policy"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/sessionindex"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/sso"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/workspace"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/wsstate"
+	agentoc "github.com/lenaxia/llmsafespaces/pkg/agent/opencode"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
+	"github.com/lenaxia/llmsafespaces/pkg/billing"
+	emailpkg "github.com/lenaxia/llmsafespaces/pkg/email"
+	"github.com/lenaxia/llmsafespaces/pkg/kubernetes"
+	"github.com/lenaxia/llmsafespaces/pkg/secrets"
+	"github.com/lenaxia/llmsafespaces/pkg/settings"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 type App struct {
@@ -121,6 +125,15 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			log.With("component", "wsstate"),
 		)
 		proxyHandler.SetStateStore(redisStateStore)
+	} else {
+		// M4 (worklog 371): surface the silent fallback to InMemoryStore.
+		// Without this warning, a future refactor that wraps the cache
+		// service (so the *cache.Service type assertion fails) silently
+		// reintroduces multi-replica drift: each replica keeps its own
+		// activeSess / deletedSessions / pwCache, and the 2026-06-16
+		// stuck-session incident class returns. Single-replica dev/test
+		// deployments intentionally hit this path and can ignore the warning.
+		log.Warn("Redis cache service unavailable — ProxyHandler is using InMemoryStore. Multi-replica deployments will NOT share per-workspace state (active sessions, tombstones, password cache). This is expected for single-replica dev/test; investigate in production.")
 	}
 
 	if svc.Metering != nil {
@@ -154,6 +167,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 
 	// Wire secret management (Epic 10).
 	var secretsHandler *handlers.SecretsHandler
+	var modelsHandler *handlers.ModelsHandler
 	var workspaceEnvHandler *handlers.WorkspaceEnvHandler
 	var rotateKeyHandler *handlers.RotateKeyHandler
 	var adminProvCredHandler *handlers.AdminProviderCredentialsHandler
@@ -167,6 +181,9 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var policySvc *policy.Service
 	var policyHandler *handlers.PolicyHandler
 	var auditHandler *handlers.AuditHandler
+	var platformAdminHandler *handlers.PlatformAdminHandler
+	var internalOrgStatusHandler *handlers.InternalOrgStatusHandler
+	var ssoHandler *handlers.SSOHandler
 	var asyncAudit *secrets.AsyncAuditLogger // populated when secrets are enabled; drained on Shutdown
 	var secretsPool *pgxpool.Pool            // closed on Shutdown
 	var dekCacheClient *redis.Client         // closed on Shutdown
@@ -223,21 +240,26 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		auditStore = asyncAudit
 
 		secretsHandler = handlers.NewSecretsHandler(secretService)
-		// US-29.4: WorkspaceEnvHandler owns the env-var endpoints,
-		// extracted from SecretsHandler. Shares the same SecretService.
-		workspaceEnvHandler = handlers.NewWorkspaceEnvHandler(secretService)
-		workspaceEnvHandler.SetLogger(log)
+		// US-29.5: ModelsHandler extracted from SecretsHandler. AgentClient
+		// is set later after proxyHandler is constructed.
+		modelsHandler = handlers.NewModelsHandler(nil) // agentClient wired below
+
 		// Wire billing/metering metrics recorder.
 		if metricsSvc, ok := svc.GetMetrics().(*metrics.Service); ok {
-			secretsHandler.SetMetricsRecorder(metricsSvc)
+			modelsHandler.SetMetricsRecorder(metricsSvc)
 		}
-		// Epic 26: mark relay active when LLMSAFESPACE_INFERENCE_RELAY_URL is
-		// configured. This causes ListModels to remap free-tier opencode model
-		// providerIDs to "opencode-relay" so clients route inference through
-		// the CF Worker (which the phase-2 relay injector configures in agentd).
+		// Epic 26: mark relay active when configured.
 		if inferenceRelayURL := cfg.Server.InferenceRelayURL; inferenceRelayURL != "" {
-			secretsHandler.SetRelayActive(true)
+			modelsHandler.SetRelayActive(true)
 		}
+		modelsHandler.SetLogger(log)
+		modelsHandler.SetModelStore(dbSvc)
+		if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
+			modelsHandler.SetManifestWriter(wsSvc)
+		}
+		// US-29.4: WorkspaceEnvHandler owns the env-var endpoints.
+		workspaceEnvHandler = handlers.NewWorkspaceEnvHandler(secretService)
+		workspaceEnvHandler.SetLogger(log)
 		adminProvCredHandler = handlers.NewAdminProviderCredentialsHandler(pgStore, deriveServerKey)
 		adminProvCredHandler.SetAutoApplyStore(pgStore)
 		userProvCredHandler = handlers.NewUserProviderCredentialsHandler(pgStore, pgStore, keyService, secrets.NewPgKeyStore(secretsPool))
@@ -258,7 +280,6 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		))
 		secretsHandler.SetLogger(log)
 		secretsHandler.SetCredentialStateWriter(dbSvc)
-		secretsHandler.SetWorkspaceMetadataUpdater(dbSvc)
 		// Wire password getter so ListModels/SetModel can authenticate
 		// to opencode. Uses the same K8s-secret-backed getter as ProxyHandler.
 		// Wired after proxyHandler construction (see below).
@@ -308,6 +329,37 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		pgOrgStore = database.NewPgOrgStore(dbSvc.DB)
 		orgsHandler = handlers.NewOrgsHandler(pgOrgStore, svc.GetAuth())
 		orgCredsHandler = handlers.NewOrgCredentialsHandler(pgStore, pgStore, deriveServerKey, svc.GetAuth())
+
+		// US-43.10: OIDC SSO. The service reuses the auth service as the JWT
+		// issuer (GenerateToken) and the server KEK (RootKeyProvider) to encrypt
+		// the IdP client secret (D17-S4). A dedicated state-signing key is
+		// derived from the master secret so PKCE cookies are unforgeable.
+		if authSvc, ok := svc.Auth.(*auth.Service); ok {
+			stateKey := deriveServerKey("oidc-state-cookie")
+			if stateKey != nil {
+				ssoSvc, ssoErr := sso.New(pgOrgStore, dbSvc, sso.ServiceConfig{
+					TokenIssuer:         authSvc,
+					KeyProvider:         rkp,
+					StateKey:            stateKey,
+					TokenTTL:            cfg.Auth.TokenDuration,
+					RedirectBaseURL:     cfg.OIDC.RedirectBaseURL,
+					FrontendRedirectURL: cfg.OIDC.FrontendRedirectURL,
+					StateCookieName:     cfg.OIDC.StateCookieName,
+					Logger:              log,
+				})
+				if ssoErr != nil {
+					log.Error("failed to construct sso service", ssoErr)
+				} else {
+					ssoHandler = handlers.NewSSOHandler(ssoSvc, pgOrgStore, svc.GetAuth(), cfg.Auth.CookieName, cfg.OIDC.FrontendRedirectURL, log)
+				}
+			}
+		}
+
+		// US-43.19: platform-admin suspension handlers. orgStore provides
+		// UpdateOrgStatus + audit + last-admin check; dbSvc provides
+		// SetUserStatus. log surfaces best-effort audit-write failures.
+		platformAdminHandler = handlers.NewPlatformAdminHandler(pgOrgStore, dbSvc, svc.GetAuth(), log)
+		internalOrgStatusHandler = handlers.NewInternalOrgStatusHandler(pgOrgStore)
 
 		if rkp != nil {
 			keyService.SetAPIKeyStore(&apiKeyStoreAdapter{db: dbSvc}, rkp)
@@ -424,8 +476,18 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		if pwGetter := proxyHandler.GetPasswordGetter(); pwGetter != nil {
 			agentReloadHandler.SetPasswordGetter(pwGetter)
 			bulkReloadHandler.SetPasswordGetter(pwGetter)
-			if secretsHandler != nil {
-				secretsHandler.SetPasswordGetter(pwGetter)
+			// US-29.5: construct ModelsHandler with AgentClient now that
+			// the password getter is available.
+			if modelsHandler != nil {
+				ipResolver := newSecretsPodIPResolver(
+					&k8sWorkspaceGetterAdapter{client: k8sClient, namespace: cfg.Kubernetes.Namespace},
+					dbSvc, log,
+				)
+				agentClient := agentoc.NewWorkspaceClient(pwGetter, ipResolver, log.ZapLogger())
+				modelsHandler.SetAgentClient(agentClient)
+				if relayURL := cfg.Server.InferenceRelayURL; relayURL != "" {
+					modelsHandler.SetRelayChecker(buildRelayChecker(ipResolver, pwGetter))
+				}
 			}
 		}
 	}
@@ -441,6 +503,16 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	usageHandler := handlers.NewUsageHandler(svc.Metering, svc.Database)
 	if dbSvc, ok := svc.Database.(*database.Service); ok {
 		usageHandler.SetDB(dbSvc.DB)
+	}
+
+	// US-44.11: admin-only session recovery (force-abort stuck sessions).
+	// Wired with the same *sql.DB handle as the usage handler so the audit
+	// log INSERT shares the connection pool; nil DB is handled gracefully.
+	var adminSessionHandler *handlers.AdminSessionHandler
+	if dbSvc, ok := svc.Database.(*database.Service); ok {
+		adminSessionHandler = handlers.NewAdminSessionHandler(proxyHandler, dbSvc.DB, log)
+	} else {
+		adminSessionHandler = handlers.NewAdminSessionHandler(proxyHandler, nil, log)
 	}
 
 	var checkoutProvider billing.CheckoutProvider
@@ -520,20 +592,20 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	}
 
 	// US-43.8: Wire policy checker into secrets handler for model filtering.
-	if policySvc != nil && secretsHandler != nil {
-		secretsHandler.SetPolicyChecker(policySvc)
+	if policySvc != nil && modelsHandler != nil {
+		modelsHandler.SetPolicyChecker(policySvc)
 	}
 
 	relayRouterSvcURL := os.Getenv("RELAY_ROUTER_SVC_URL")
 	if relayRouterSvcURL == "" {
 		relayRouterSvcURL = "http://relay-router." + cfg.Kubernetes.Namespace + ".svc.cluster.local:8080"
 	}
-	routerNamespace := os.Getenv("LLMSAFESPACE_KUBERNETES_PODNAMESPACE")
+	routerNamespace := os.Getenv("LLMSAFESPACES_KUBERNETES_PODNAMESPACE")
 	if routerNamespace == "" {
 		routerNamespace = cfg.Kubernetes.Namespace
 	}
 	var relayAdminHandler *handlers.RelayAdminHandler
-	if llmClient, err := k8sClient.LlmsafespaceV1(); err == nil {
+	if llmClient, err := k8sClient.LlmsafespacesV1(); err == nil {
 		relayAdminHandler = handlers.NewRelayAdminHandler(
 			k8sClient.Clientset(),
 			llmClient,
@@ -542,7 +614,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			relayRouterSvcURL,
 		)
 	} else {
-		log.Warn("failed to construct LlmsafespaceV1 client, relay admin routes will not be available", "error", err.Error())
+		log.Warn("failed to construct LlmsafespacesV1 client, relay admin routes will not be available", "error", err.Error())
 	}
 
 	router := server.NewRouter(svc, log, proxyHandler, server.RouterConfig{
@@ -557,6 +629,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		AdminProviderCredentialsHandler: adminProvCredHandler,
 		UserProviderCredentialsHandler:  userProvCredHandler,
 		SecretsHandler:                  secretsHandler,
+		ModelsHandler:                   modelsHandler,
 		WorkspaceEnvHandler:             workspaceEnvHandler,
 		RotateKeyHandler:                rotateKeyHandler,
 		OrgsHandler:                     orgsHandler,
@@ -570,6 +643,10 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		PolicyHandler:                   policyHandler,
 		AuditHandler:                    auditHandler,
 		RelayAdminHandler:               relayAdminHandler,
+		AdminSessionHandler:             adminSessionHandler,
+		PlatformAdminHandler:            platformAdminHandler,
+		InternalOrgStatusHandler:        internalOrgStatusHandler,
+		SSOHandler:                      ssoHandler,
 		CookieName:                      cfg.Auth.CookieName,
 	})
 
@@ -789,7 +866,7 @@ func (a *App) Shutdown() error {
 	return nil
 }
 
-// validateMasterSecret verifies LLMSAFESPACE_MASTER_SECRET is present and
+// validateMasterSecret verifies LLMSAFESPACES_MASTER_SECRET is present and
 // decodes to at least 32 bytes (the AES-256-GCM key size minimum).
 //
 // Returns nil on success. Logs a structured Warn when the secret is present
@@ -800,13 +877,13 @@ func (a *App) Shutdown() error {
 // deriveServerKey a pure, side-effect-free function compatible with the
 // secrets.AdminKeyDeriver type (func(string) []byte).
 func validateMasterSecret(log *logger.Logger) error {
-	masterRaw := os.Getenv("LLMSAFESPACE_MASTER_SECRET")
+	masterRaw := os.Getenv("LLMSAFESPACES_MASTER_SECRET")
 	if masterRaw == "" {
-		masterRaw = os.Getenv("LLMSAFESPACE_DEK_MASTER_KEY")
+		masterRaw = os.Getenv("LLMSAFESPACES_DEK_MASTER_KEY")
 	}
 	if masterRaw == "" {
 		return errors.New(
-			"LLMSAFESPACE_MASTER_SECRET is required but not set; " +
+			"LLMSAFESPACES_MASTER_SECRET is required but not set; " +
 				"refusing to start without DEK encryption at rest in Redis. " +
 				"Generate one with: openssl rand -hex 32")
 	}
@@ -819,13 +896,73 @@ func validateMasterSecret(log *logger.Logger) error {
 	}
 
 	if len(master) < 32 {
-		log.Warn("LLMSAFESPACE_MASTER_SECRET is set but too short for AES-256-GCM",
+		log.Warn("LLMSAFESPACES_MASTER_SECRET is set but too short for AES-256-GCM",
 			"decoded_bytes", len(master), "required_bytes", 32)
 		// masterRaw is intentionally NOT included in the error message or log.
 		return fmt.Errorf(
-			"LLMSAFESPACE_MASTER_SECRET decodes to %d bytes; minimum is 32 (AES-256-GCM key size). "+
+			"LLMSAFESPACES_MASTER_SECRET decodes to %d bytes; minimum is 32 (AES-256-GCM key size). "+
 				"Use at least 32 bytes (e.g. 64 hex chars, or 32+ alphanumeric chars)",
 			len(master))
 	}
 	return nil
+}
+
+// buildRelayChecker creates a RelayStateChecker that reads the relay
+// injection state from the agentd admin port (/v1/readyz). The checker
+// resolves podIP + password internally, keeping the ModelsHandler free
+// of pod/auth concerns (US-29.5 design).
+func buildRelayChecker(
+	ipResolver handlers.PodIPResolver,
+	pwGetter func(context.Context, string) (string, error),
+) handlers.RelayStateChecker {
+	return newRelayChecker(&http.Client{Timeout: 5 * time.Second}, agentd.AgentdAdminPort, ipResolver, pwGetter)
+}
+
+// readyzReadLimit bounds the /v1/readyz response read. readyz is a tiny
+// envelope (a bool plus small fields); 16 KiB is ample and matches the
+// precedent set by the statusz decoder in proxy_events.go. Worklog 0372
+// (H4): the limit was dropped during the US-29.5 extraction, leaving the
+// decoder exposed to an unbounded body.
+const readyzReadLimit = 16 * 1024
+
+// newRelayChecker is the testable core of buildRelayChecker. The port and
+// http.Client are injected so tests can target an httptest server and
+// verify the read limit without binding the real agentd admin port.
+func newRelayChecker(
+	client *http.Client,
+	port int,
+	ipResolver handlers.PodIPResolver,
+	pwGetter func(context.Context, string) (string, error),
+) handlers.RelayStateChecker {
+	return func(ctx context.Context, userID, workspaceID string) bool {
+		podIP, err := ipResolver.GetWorkspacePodIP(ctx, userID, workspaceID)
+		if err != nil || podIP == "" {
+			return false
+		}
+		password, err := pwGetter(ctx, workspaceID)
+		if err != nil || password == "" {
+			return false
+		}
+		url := fmt.Sprintf("http://%s:%d/v1/readyz", podIP, port)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return false
+		}
+		req.Header.Set("Authorization", "Bearer "+password)
+		resp, err := client.Do(req)
+		if err != nil {
+			return false
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusOK {
+			return false
+		}
+		var readyz struct {
+			RelayInjected bool `json:"relay_injected"`
+		}
+		if json.NewDecoder(io.LimitReader(resp.Body, readyzReadLimit)).Decode(&readyz) != nil {
+			return false
+		}
+		return readyz.RelayInjected
+	}
 }

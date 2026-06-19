@@ -71,7 +71,7 @@ func (g *gateRecorder) MaybeRecord(gate string) bool {
 // production. Tests inject their own instances via newGateRecorder.
 var agentdGateDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
-		Name:    "llmsafespace_agentd_gate_duration_seconds",
+		Name:    "llmsafespaces_agentd_gate_duration_seconds",
 		Help:    "Time from agentd boot to each startup gate (opencode_up, providers_connected, readyz_first_200)",
 		Buckets: []float64{1, 2, 5, 10, 15, 20, 30, 45, 60, 90, 120},
 	},

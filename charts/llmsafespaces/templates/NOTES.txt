@@ -1,0 +1,239 @@
+Thanks for installing {{ .Chart.Name }}, version {{ .Chart.Version }}.
+
+The release is named: {{ .Release.Name }}
+Installed in namespace: {{ .Release.Namespace }}
+
+NEXT STEPS
+==========
+
+1. Verify the controller and API are running:
+
+     kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+2. Check that the database migration Job completed successfully:
+
+     kubectl -n {{ .Release.Namespace }} get jobs {{ include "llmsafespaces.fullname" . }}-migrate
+     kubectl -n {{ .Release.Namespace }} logs job/{{ include "llmsafespaces.fullname" . }}-migrate
+
+   If the Job failed, the API pod will not become Ready. Common causes:
+     - Postgres host {{ .Values.postgresql.host }}:{{ .Values.postgresql.port }} unreachable
+     - postgres-password secret value incorrect
+     - Database '{{ .Values.postgresql.database }}' does not exist (the migrate
+       tool does not CREATE DATABASE; you must do that out of band)
+
+3. Confirm the API is healthy:
+
+     kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "llmsafespaces.fullname" . }}-api {{ .Values.api.service.port }}:{{ .Values.api.service.port }} &
+     curl http://localhost:{{ .Values.api.service.port }}/livez
+     curl http://localhost:{{ .Values.api.service.port }}/readyz
+
+   /readyz returns 200 only when both Postgres and Redis are reachable.
+
+4. The CRDs registered:
+
+     kubectl get crd workspaces.llmsafespaces.dev sandboxes.llmsafespaces.dev sandboxprofiles.llmsafespaces.dev runtimeenvironments.llmsafespaces.dev
+
+5. CRD UPGRADE — IMPORTANT FOR EVERY `helm upgrade`
+
+   Helm 3 installs CRDs from `crds/` on first install but does NOT
+   upgrade them. If you bumped the chart version, the CRD schema in
+   etcd may be older than what the controller binary expects, and you
+   will see warnings like:
+
+       KubeAPIWarningLogger  unknown field "status.<fieldname>"
+
+   in the controller logs. The controller still works (k8s drops
+   unknown fields) but anything depending on those fields (status
+   reporting, agentd disk metrics, recovery state) silently breaks.
+
+   Fix on every upgrade:
+
+       kubectl apply -f charts/llmsafespaces/crds/
+
+   To verify drift after upgrade:
+
+       kubectl get crd workspaces.llmsafespaces.dev -o jsonpath='{.spec.versions[0].schema.openAPIV3Schema.properties.status.properties}' | jq 'keys | length'
+
+   The number printed should match the count of fields in
+   `pkg/apis/llmsafespaces/v1/workspace_types.go::WorkspaceStatus`.
+   If it doesn't, run the kubectl apply above.
+
+{{- if .Values.webhooks.enabled }}
+
+ADMISSION WEBHOOKS
+==================
+
+The chart deploys a ValidatingWebhookConfiguration that requires cert-manager
+to be installed in the cluster (the cert-manager.io/inject-ca-from annotation
+populates the webhook's caBundle).
+
+If kubectl create on a Sandbox / SandboxProfile / RuntimeEnvironment fails
+with a TLS or "no endpoints available" error, check:
+
+     kubectl -n {{ .Release.Namespace }} get certificate {{ include "llmsafespaces.fullname" . }}-webhook
+     kubectl -n {{ .Release.Namespace }} describe certificate {{ include "llmsafespaces.fullname" . }}-webhook
+
+The Certificate must be Ready=True before the webhook will function.
+{{- else }}
+
+WARNING: WEBHOOKS DISABLED
+==========================
+
+You installed with webhooks.enabled=false. Admission validation for Sandbox,
+SandboxProfile, and RuntimeEnvironment resources is NOT enforced server-side.
+Users with kubectl access can create invalid CRDs that will fail later in the
+controller. The API service still validates client-side requests, but kubectl
+bypasses that path.
+
+Re-enable with:
+     helm upgrade {{ .Release.Name }} llmsafespaces/llmsafespaces -n {{ .Release.Namespace }} --set webhooks.enabled=true
+{{- end }}
+
+{{- if eq .Values.rbac.scope "cluster" }}
+
+RBAC SCOPE: cluster
+===================
+
+The controller has cluster-wide permissions on llmsafespaces.dev resources.
+{{- if .Values.controller.watchNamespaces }}
+However, watchNamespaces is set to: {{ .Values.controller.watchNamespaces }}
+The controller will only reconcile resources in those namespaces.
+{{- else }}
+The controller watches all namespaces. To narrow the scope, set
+controller.watchNamespaces and/or rbac.scope=namespace.
+{{- end }}
+{{- else }}
+
+RBAC SCOPE: namespace
+=====================
+
+The controller has Role-scoped permissions in {{ .Release.Namespace }} only.
+Resources in other namespaces will not be reconciled.
+{{- end }}
+
+{{- if .Values.externalSecret.create }}
+
+DATASTORE CREDENTIALS (G26)
+===========================
+
+The chart manages `{{ include "llmsafespaces.secretName" . }}` containing
+postgres-password, redis-password, and jwt-secret. On first install the
+chart auto-generates random 32-char passwords for postgres+redis and a
+64-char jwt secret. The Secret is annotated `helm.sh/resource-policy: keep`
+so it survives `helm uninstall` (re-installing on top reuses the same
+values, preserving JWT validity for active sessions).
+
+ROTATION SAFETY: subsequent `helm upgrade` calls preserve the existing
+random values from the live cluster Secret (via `lookup`). EXCEPT: if
+the live Secret contains the historical insecure defaults
+("changeme" for postgres-password, empty for redis-password — see
+RT-4.5), the chart will re-randomise on upgrade to bring you out of
+the vulnerable state.
+
+POSTGRES ROLE PASSWORD ROTATION (manual step required for upgrades only):
+
+  Helm rotates the value in the K8s Secret. For an existing Postgres
+  whose data dir was bootstrapped with a different password (e.g. the
+  documented "changeme" baseline), the role password inside Postgres
+  itself must also be rotated:
+
+    NEW_PWD=$(kubectl -n {{ .Release.Namespace }} get secret {{ include "llmsafespaces.secretName" . }} -o jsonpath='{.data.postgres-password}' | base64 -d)
+    kubectl -n {{ .Release.Namespace }} exec deploy/postgres -- \
+      psql -U {{ .Values.postgresql.user }} -d {{ .Values.postgresql.database }} \
+      -c "ALTER USER {{ .Values.postgresql.user }} WITH PASSWORD '$NEW_PWD';"
+    kubectl -n {{ .Release.Namespace }} rollout restart deploy/postgres
+    kubectl -n {{ .Release.Namespace }} rollout restart deploy/{{ include "llmsafespaces.fullname" . }}-api
+
+  After the postgres pod restarts, both the env-var (from the rotated
+  Secret) and the role row in pg_authid (rotated by ALTER USER) match.
+  Skipping this step leaves Postgres accepting the old password.
+
+VALKEY/REDIS PASSWORD ROTATION:
+
+  Valkey reads --requirepass from the env at startup; restart the
+  valkey pod after the chart rotates the Secret:
+
+    kubectl -n {{ .Release.Namespace }} rollout restart deploy/valkey
+
+DATASTORE NETWORK POLICY:
+
+  The chart ships NetworkPolicy resources blocking ingress to postgres
+  and valkey except from the API deployment and migration Job. If the
+  postgres/valkey pods carry non-default labels (i.e. you didn't deploy
+  via local/postgres-redis.yaml or local/deps-*.yaml), override the
+  selectors:
+
+    --set datastore.networkPolicy.postgresPodSelectorLabels.app.kubernetes.io/name=postgres
+    --set datastore.networkPolicy.valkeyPodSelectorLabels.app.kubernetes.io/name=valkey
+
+  Disable the datastore policies entirely with
+  --set datastore.networkPolicy.enabled=false (e.g. when using a
+  managed Postgres/Redis outside the cluster).
+{{- end }}
+
+WORKSPACE PVC HARDENING (G23)
+=============================
+
+The chart does not ship a StorageClass — workspaces use whatever the
+operator's cluster default provides. For tightest defense-in-depth
+the operator should configure the StorageClass with mount options
+that disable suid/dev:
+
+    apiVersion: storage.k8s.io/v1
+    kind: StorageClass
+    metadata:
+      name: llmsafespaces-workspace
+    mountOptions:
+      - nosuid
+      - nodev
+    # ...rest of StorageClass
+
+Then set Spec.Storage.StorageClassName=llmsafespaces-workspace on
+workspaces (or set the cluster default).
+
+Defense-in-depth justification: workspaces already run with
+runAsNonRoot=true + AllowPrivilegeEscalation=false + cap-drop ALL +
+RuntimeDefault seccomp. nosuid/nodev are belt-and-braces against
+kernel CVEs that bypass capability checks via setuid binaries on
+the PVC.
+
+EGRESS FQDN HARDENING (G30)
+============================
+
+The chart-shipped NetworkPolicy uses CIDR-based egress rules
+(operator-configurable via `networkPolicy.allowedEgressCIDRs`).
+Standard k8s NetworkPolicy cannot match by FQDN, so this default
+allows broad public-internet egress with only RFC1918 + 169.254/16
+denied.
+
+For tighter egress control to a specific list of LLM provider
+FQDNs (`api.openai.com`, `api.anthropic.com`, etc.), deploy a
+CiliumNetworkPolicy alongside the chart:
+
+    apiVersion: cilium.io/v2
+    kind: CiliumNetworkPolicy
+    metadata:
+      name: workspace-fqdn-egress
+      namespace: <release-ns>
+    spec:
+      endpointSelector:
+        matchLabels:
+          app: llmsafespaces
+          component: workspace
+      egress:
+        - toEndpoints:
+            - matchLabels:
+                k8s-app: kube-dns
+                io.kubernetes.pod.namespace: kube-system
+          toPorts:
+            - ports:
+                - { port: "53", protocol: ANY }
+        - toFQDNs:
+            - matchName: "api.openai.com"
+            - matchName: "api.anthropic.com"
+          toPorts:
+            - ports:
+                - { port: "443", protocol: TCP }
+
+This requires Cilium with FQDN policy enabled. Calico operators
+can use a similar GlobalNetworkPolicy with negative selectors.

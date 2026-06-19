@@ -1,0 +1,24 @@
+apiVersion: v2
+name: llmsafespaces
+description: |
+  Kubernetes-first platform for running AI agents securely in isolated workspaces.
+  Each workspace runs `opencode serve` as a persistent HTTP server with a
+  PVC-backed workspace. The API service acts as a reverse proxy to the agent.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.27.0-0"
+home: https://github.com/lenaxia/llmsafespaces
+sources:
+  - https://github.com/lenaxia/llmsafespaces
+keywords:
+  - ai
+  - agent
+  - workspace
+  - opencode
+  - mcp
+maintainers:
+  - name: lenaxia
+    url: https://github.com/lenaxia
+annotations:
+  category: AI

@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 func TestPgOrgStore_GetUserIDByEmail_Found(t *testing.T) {
@@ -230,4 +230,502 @@ func TestAcceptInvitationTx_MigratesPersonalWorkspaces(t *testing.T) {
 	assert.Equal(t, "org-1", member.OrgID)
 	assert.Equal(t, "user-1", member.UserID)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// --- US-43.20: ListAllAudit ---
+
+func auditListRows(now time.Time) *sqlmock.Rows {
+	return sqlmock.NewRows([]string{"id", "actor_id", "domain", "action", "target_id", "org_id", "metadata", "created_at"}).
+		AddRow(int64(1), "user-1", "org", "policy.set", "allowed_models", "org-1", []byte(`{}`), now).
+		AddRow(int64(2), "user-2", "admin", "user.suspend", "user-9", "org-2", []byte(`{"reason":"abuse"}`), now)
+}
+
+func strPtr(s string) *string { return &s }
+
+func TestPgOrgStore_ListAllAudit_NoFilterReturnsAll(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+	now := time.Now()
+
+	mock.ExpectQuery(`COUNT\(\*\) FROM audit_log`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+	mock.ExpectQuery(`SELECT id, actor_id, domain, action`).
+		WithArgs(100, 0).
+		WillReturnRows(auditListRows(now))
+
+	entries, page, err := store.ListAllAudit(context.Background(), types.AuditFilters{})
+	require.NoError(t, err)
+	require.NotNil(t, page)
+	assert.Equal(t, 2, page.Total)
+	assert.Len(t, entries, 2)
+	assert.Equal(t, "policy.set", entries[0].Action)
+	assert.Equal(t, map[string]any{"reason": "abuse"}, entries[1].Metadata)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgOrgStore_ListAllAudit_OrgIDFilter(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+	now := time.Now()
+
+	mock.ExpectQuery(`COUNT\(\*\) FROM audit_log`).
+		WithArgs("org-1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT id, actor_id, domain, action`).
+		WithArgs("org-1", 100, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "actor_id", "domain", "action", "target_id", "org_id", "metadata", "created_at"}).
+			AddRow(int64(1), "user-1", "org", "policy.set", "allowed_models", "org-1", []byte(`{}`), now))
+
+	entries, page, err := store.ListAllAudit(context.Background(), types.AuditFilters{OrgID: strPtr("org-1")})
+	require.NoError(t, err)
+	assert.Equal(t, 1, page.Total)
+	assert.Len(t, entries, 1)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgOrgStore_ListAllAudit_ActorIDFilter(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+
+	mock.ExpectQuery(`COUNT\(\*\) FROM audit_log`).
+		WithArgs("user-2").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	// total == 0 ⇒ SELECT is skipped.
+
+	entries, page, err := store.ListAllAudit(context.Background(), types.AuditFilters{ActorID: strPtr("user-2")})
+	require.NoError(t, err)
+	require.NotNil(t, page)
+	assert.Equal(t, 0, page.Total)
+	assert.Len(t, entries, 0)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgOrgStore_ListAllAudit_DomainFilter(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+	now := time.Now()
+
+	mock.ExpectQuery(`COUNT\(\*\) FROM audit_log`).
+		WithArgs("admin").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT id, actor_id, domain, action`).
+		WithArgs("admin", 100, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "actor_id", "domain", "action", "target_id", "org_id", "metadata", "created_at"}).
+			AddRow(int64(2), "user-2", "admin", "user.suspend", "user-9", "", []byte(`{}`), now))
+
+	entries, page, err := store.ListAllAudit(context.Background(), types.AuditFilters{Domain: strPtr("admin")})
+	require.NoError(t, err)
+	assert.Equal(t, 1, page.Total)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "admin", entries[0].Domain)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgOrgStore_ListAllAudit_CombinedFilters(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+	now := time.Now()
+
+	mock.ExpectQuery(`COUNT\(\*\) FROM audit_log`).
+		WithArgs("org-1", "user-1", "org").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT id, actor_id, domain, action`).
+		WithArgs("org-1", "user-1", "org", 100, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "actor_id", "domain", "action", "target_id", "org_id", "metadata", "created_at"}).
+			AddRow(int64(1), "user-1", "org", "policy.set", "allowed_models", "org-1", []byte(`{}`), now))
+
+	entries, page, err := store.ListAllAudit(context.Background(), types.AuditFilters{
+		OrgID:   strPtr("org-1"),
+		ActorID: strPtr("user-1"),
+		Domain:  strPtr("org"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, page.Total)
+	require.Len(t, entries, 1)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgOrgStore_ListAllAudit_LimitClampedToDefaultAndMax(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+
+	// limit <= 0 ⇒ store applies default 100. Non-zero count forces the SELECT
+	// so the clamped value reaches the driver.
+	mock.ExpectQuery(`COUNT\(\*\) FROM audit_log`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT id, actor_id, domain, action`).
+		WithArgs(100, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "actor_id", "domain", "action", "target_id", "org_id", "metadata", "created_at"}).
+			AddRow(int64(1), "u", "admin", "x", "", "", []byte(`{}`), time.Now()))
+
+	_, _, err = store.ListAllAudit(context.Background(), types.AuditFilters{Limit: 0})
+	require.NoError(t, err)
+
+	// limit > 500 ⇒ store clamps to 500.
+	mock.ExpectQuery(`COUNT\(\*\) FROM audit_log`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT id, actor_id, domain, action`).
+		WithArgs(500, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "actor_id", "domain", "action", "target_id", "org_id", "metadata", "created_at"}).
+			AddRow(int64(1), "u", "admin", "x", "", "", []byte(`{}`), time.Now()))
+
+	_, _, err = store.ListAllAudit(context.Background(), types.AuditFilters{Limit: 9999})
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgOrgStore_ListAllAudit_NegativeOffsetNormalized(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+
+	mock.ExpectQuery(`COUNT\(\*\) FROM audit_log`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+
+	_, _, err = store.ListAllAudit(context.Background(), types.AuditFilters{Offset: -7})
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgOrgStore_ListAllAudit_EmptyResultSkipsSelect(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+
+	mock.ExpectQuery(`COUNT\(\*\) FROM audit_log`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	// No SELECT expectation: total == 0 must short-circuit.
+
+	entries, page, err := store.ListAllAudit(context.Background(), types.AuditFilters{})
+	require.NoError(t, err)
+	require.NotNil(t, page)
+	assert.Equal(t, 0, page.Total)
+	assert.Len(t, entries, 0)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgOrgStore_ListAllAudit_CountError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+
+	mock.ExpectQuery(`COUNT\(\*\) FROM audit_log`).
+		WillReturnError(errors.New("connection refused"))
+
+	entries, page, err := store.ListAllAudit(context.Background(), types.AuditFilters{})
+	require.Error(t, err)
+	assert.Nil(t, entries)
+	assert.Nil(t, page)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgOrgStore_ListAllAudit_SelectError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+
+	mock.ExpectQuery(`COUNT\(\*\) FROM audit_log`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+	mock.ExpectQuery(`SELECT id, actor_id, domain, action`).
+		WithArgs(100, 0).
+		WillReturnError(errors.New("select failed"))
+
+	entries, page, err := store.ListAllAudit(context.Background(), types.AuditFilters{})
+	require.Error(t, err)
+	assert.Nil(t, entries)
+	assert.Nil(t, page)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// --- US-43.19: last-admin deadlock prevention (real SQL) ---
+
+func TestPgOrgStore_OrgsWhereUserIsLastActiveAdmin_SoleAdmin(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+
+	// The user is the only admin of org-1 → the NOT EXISTS subquery finds no
+	// other active admin → the org is returned.
+	mock.ExpectQuery(`SELECT m.org_id, o.name FROM org_memberships m`).
+		WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"org_id", "name"}).
+			AddRow("org-1", "Acme"))
+
+	orgs, err := store.OrgsWhereUserIsLastActiveAdmin(context.Background(), "user-1")
+	require.NoError(t, err)
+	require.Len(t, orgs, 1)
+	assert.Equal(t, "org-1", orgs[0].OrgID)
+	assert.Equal(t, "Acme", orgs[0].OrgName)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgOrgStore_OrgsWhereUserIsLastActiveAdmin_NotLast(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+
+	// Another active admin exists → empty result → suspend allowed.
+	mock.ExpectQuery(`SELECT m.org_id, o.name FROM org_memberships m`).
+		WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"org_id", "name"}))
+
+	orgs, err := store.OrgsWhereUserIsLastActiveAdmin(context.Background(), "user-1")
+	require.NoError(t, err)
+	assert.Len(t, orgs, 0, "not-last-admin must return empty (not nil) slice")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgOrgStore_OrgsWhereUserIsLastActiveAdmin_DBError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+
+	mock.ExpectQuery(`SELECT m.org_id, o.name FROM org_memberships m`).
+		WithArgs("user-1").
+		WillReturnError(errors.New("connection refused"))
+
+	orgs, err := store.OrgsWhereUserIsLastActiveAdmin(context.Background(), "user-1")
+	require.Error(t, err)
+	assert.Nil(t, orgs)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestPgOrgStore_OrgsWhereUserIsLastActiveAdmin_QueryShape verifies the SQL
+// actually encodes the "other active admin" condition (NOT EXISTS ... role=
+// 'admin' ... status = 'active') — a regression guard against accidental
+// weakening of the last-admin check.
+func TestPgOrgStore_OrgsWhereUserIsLastActiveAdmin_QueryShape(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+
+	mock.ExpectQuery(`NOT EXISTS.*role = 'admin'.*u\.status = 'active'`).
+		WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"org_id", "name"}))
+
+	_, _ = store.OrgsWhereUserIsLastActiveAdmin(context.Background(), "user-1")
+	require.NoError(t, mock.ExpectationsWereMet(),
+		"query must include NOT EXISTS over active admins")
+}
+
+// --- US-43.19: general audit writer ---
+
+func TestPgOrgStore_LogAuditEvent_PlatformAdminEvent(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+
+	// A platform-admin user.suspend: domain='admin', orgID NULL → NULLIF binds.
+	mock.ExpectExec(`INSERT INTO audit_log`).
+		WithArgs("admin-1", "admin", "user.suspend", "user-9", nil, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	err = store.LogAuditEvent(context.Background(), "admin", "admin-1", "user.suspend", "user-9", nil, nil)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgOrgStore_LogOrgEvent_DelegatesToLogAuditEvent(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+
+	// Org-scoped event: domain='org', orgID passed positionally as $5.
+	orgID := "org-1"
+	mock.ExpectExec(`INSERT INTO audit_log`).
+		WithArgs("admin-1", "org", "policy.set", "allowed_models", orgID, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	err = store.LogOrgEvent(context.Background(), "org-1", "admin-1", "policy.set", "allowed_models", nil)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// --- US-43.18: ListAllOrgs ---
+
+func orgSummaryRows() *sqlmock.Rows {
+	return sqlmock.NewRows([]string{"id", "name", "slug", "created_by", "created_at", "updated_at", "status", "plan_id", "subscription_status", "member_count", "workspace_count"}).
+		AddRow("org-1", "Acme", "acme", "admin-1", time.Now(), time.Now(), "active", "enterprise", "active", 3, 5).
+		AddRow("org-2", "Globex", "globex", "admin-1", time.Now(), time.Now(), "suspended", "team", "past_due", 1, 2)
+}
+
+func TestPgOrgStore_ListAllOrgs_NoFilterReturnsAll(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+
+	mock.ExpectQuery(`COUNT\(\*\) FROM organizations`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+	mock.ExpectQuery(`SELECT o.id, o.name, o.slug`).
+		WithArgs(50, 0).
+		WillReturnRows(orgSummaryRows())
+
+	orgs, page, err := store.ListAllOrgs(context.Background(), 50, 0, nil)
+	require.NoError(t, err)
+	require.NotNil(t, page)
+	assert.Equal(t, 2, page.Total)
+	require.Len(t, orgs, 2)
+	assert.Equal(t, "org-1", orgs[0].ID)
+	assert.Equal(t, 3, orgs[0].MemberCount)
+	assert.Equal(t, 5, orgs[0].WorkspaceCount)
+	assert.Equal(t, types.OrgStatusSuspended, orgs[1].Status)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgOrgStore_ListAllOrgs_StatusFilterAppendsWhere(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+
+	// The status filter adds a $1 placeholder on both COUNT and SELECT.
+	mock.ExpectQuery(`COUNT\(\*\) FROM organizations WHERE deleted_at IS NULL AND status = \$1`).
+		WithArgs("suspended").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`FROM organizations o WHERE deleted_at IS NULL AND status = \$1`).
+		WithArgs("suspended", 50, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "slug", "created_by", "created_at", "updated_at", "status", "plan_id", "subscription_status", "member_count", "workspace_count"}).
+			AddRow("org-2", "Globex", "globex", "admin-1", time.Now(), time.Now(), "suspended", "team", "past_due", 1, 2))
+
+	orgs, page, err := store.ListAllOrgs(context.Background(), 50, 0, strPtr("suspended"))
+	require.NoError(t, err)
+	assert.Equal(t, 1, page.Total)
+	require.Len(t, orgs, 1)
+	assert.Equal(t, types.OrgStatusSuspended, orgs[0].Status)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgOrgStore_ListAllOrgs_LimitClampedToDefaultAndMax(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+
+	// limit <= 0 ⇒ default 50.
+	mock.ExpectQuery(`COUNT\(\*\) FROM organizations`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT o.id, o.name, o.slug`).
+		WithArgs(50, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "slug", "created_by", "created_at", "updated_at", "status", "plan_id", "subscription_status", "member_count", "workspace_count"}).
+			AddRow("org-1", "Acme", "acme", "admin-1", time.Now(), time.Now(), "active", "enterprise", "active", 0, 0))
+
+	_, _, err = store.ListAllOrgs(context.Background(), 0, 0, nil)
+	require.NoError(t, err)
+
+	// limit > 200 ⇒ clamped to 200.
+	mock.ExpectQuery(`COUNT\(\*\) FROM organizations`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT o.id, o.name, o.slug`).
+		WithArgs(200, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "slug", "created_by", "created_at", "updated_at", "status", "plan_id", "subscription_status", "member_count", "workspace_count"}).
+			AddRow("org-1", "Acme", "acme", "admin-1", time.Now(), time.Now(), "active", "enterprise", "active", 0, 0))
+
+	_, _, err = store.ListAllOrgs(context.Background(), 9999, 0, nil)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgOrgStore_ListAllOrgs_EmptyResultSkipsSelect(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+
+	mock.ExpectQuery(`COUNT\(\*\) FROM organizations`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	// No SELECT expectation: total == 0 must short-circuit.
+
+	orgs, page, err := store.ListAllOrgs(context.Background(), 50, 0, nil)
+	require.NoError(t, err)
+	require.NotNil(t, page)
+	assert.Equal(t, 0, page.Total)
+	assert.Len(t, orgs, 0)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgOrgStore_ListAllOrgs_CountError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+
+	mock.ExpectQuery(`COUNT\(\*\) FROM organizations`).
+		WillReturnError(errors.New("connection refused"))
+
+	orgs, page, err := store.ListAllOrgs(context.Background(), 50, 0, nil)
+	require.Error(t, err)
+	assert.Nil(t, orgs)
+	assert.Nil(t, page)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgOrgStore_ListAllOrgs_SelectError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+
+	mock.ExpectQuery(`COUNT\(\*\) FROM organizations`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+	mock.ExpectQuery(`SELECT o.id, o.name, o.slug`).
+		WithArgs(50, 0).
+		WillReturnError(errors.New("select failed"))
+
+	orgs, page, err := store.ListAllOrgs(context.Background(), 50, 0, nil)
+	require.Error(t, err)
+	assert.Nil(t, orgs)
+	assert.Nil(t, page)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestPgOrgStore_ListAllOrgs_QueryShape verifies the SQL aggregates member and
+// workspace counts in a single statement (no N+1) — a regression guard against
+// an accidental refactor that drops the correlated subqueries.
+func TestPgOrgStore_ListAllOrgs_QueryShape(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+
+	mock.ExpectQuery(`COUNT\(\*\) FROM organizations`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+
+	_, _, _ = store.ListAllOrgs(context.Background(), 50, 0, nil)
+	// The select is short-circuited on total==0, so assert the shape via the
+	// count-only path is insufficient — re-run with a non-zero total so the
+	// SELECT fires and its regex is matched.
+	mock.ExpectQuery(`COUNT\(\*\) FROM organizations`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM org_memberships.*SELECT COUNT\(\*\) FROM workspaces`).
+		WithArgs(50, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "slug", "created_by", "created_at", "updated_at", "status", "plan_id", "subscription_status", "member_count", "workspace_count"}).
+			AddRow("org-1", "Acme", "acme", "admin-1", time.Now(), time.Now(), "active", "enterprise", "active", 0, 0))
+
+	_, _, err = store.ListAllOrgs(context.Background(), 50, 0, nil)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet(),
+		"query must include correlated subqueries for member_count and workspace_count")
 }

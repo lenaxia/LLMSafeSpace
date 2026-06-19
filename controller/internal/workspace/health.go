@@ -14,9 +14,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespaces/controller/internal/metrics"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 func (r *WorkspaceReconciler) setCondition(ws *v1.Workspace, condType v1.WorkspaceConditionType, status, reason, message string) {
@@ -111,18 +111,9 @@ func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Works
 		r.setCondition(ws, v1.WorkspaceConditionAgentHealthy, "Unknown",
 			v1.ReasonHealthCheckFailed, err.Error())
 		if ws.Status.ConsecutiveHealthFailures >= healthCheckFailureThreshold {
-			podN := podName(ws.Name, string(ws.UID))
 			logger.Info("Agent unreachable beyond threshold; restarting pod",
-				"failures", ws.Status.ConsecutiveHealthFailures, "pod", podN, "lastError", err.Error())
-			r.deletePodByName(ctx, podN, ws.Namespace)
-			metrics.WorkspacesRunning.WithLabelValues(ws.Spec.Runtime, string(ws.Spec.SecurityLevel)).Dec()
-			ws.Status.Phase = v1.WorkspacePhaseCreating
-			ws.Status.PodIP = ""
-			ws.Status.Endpoint = ""
-			ws.Status.RestartCount++
-			ws.Status.ControllerRestartCount++
-			metrics.WorkspaceControllerRestartsTotal.Inc()
-			ws.Status.ConsecutiveHealthFailures = 0
+				"failures", ws.Status.ConsecutiveHealthFailures, "pod", podName(ws.Name, string(ws.UID)), "lastError", err.Error())
+			r.restartAgentPod(ctx, ws)
 		}
 		return
 	}
@@ -142,18 +133,9 @@ func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Works
 		r.setCondition(ws, v1.WorkspaceConditionAgentHealthy, "False",
 			v1.ReasonAgentUnhealthy, "agent process not responding")
 		if ws.Status.ConsecutiveHealthFailures >= healthCheckFailureThreshold {
-			podN := podName(ws.Name, string(ws.UID))
 			logger.Info("Agent unhealthy beyond threshold; restarting pod",
-				"failures", ws.Status.ConsecutiveHealthFailures, "pod", podN)
-			r.deletePodByName(ctx, podN, ws.Namespace)
-			metrics.WorkspacesRunning.WithLabelValues(ws.Spec.Runtime, string(ws.Spec.SecurityLevel)).Dec()
-			ws.Status.Phase = v1.WorkspacePhaseCreating
-			ws.Status.PodIP = ""
-			ws.Status.Endpoint = ""
-			ws.Status.RestartCount++
-			ws.Status.ControllerRestartCount++
-			metrics.WorkspaceControllerRestartsTotal.Inc()
-			ws.Status.ConsecutiveHealthFailures = 0
+				"failures", ws.Status.ConsecutiveHealthFailures, "pod", podName(ws.Name, string(ws.UID)))
+			r.restartAgentPod(ctx, ws)
 		}
 		return
 	}
@@ -162,6 +144,49 @@ func (r *WorkspaceReconciler) checkAgentHealth(ctx context.Context, ws *v1.Works
 	ws.Status.ConsecutiveHealthFailures = 0
 	r.setCondition(ws, v1.WorkspaceConditionAgentHealthy, "True",
 		v1.ReasonAgentHealthy, fmt.Sprintf("agentd alive, uptime=%ds", healthResp.UptimeSeconds))
+}
+
+// controllerRestartSafeModeThreshold is the ControllerRestartCount above
+// which the workspace enters SafeMode without a stability window between
+// restarts (US-24.7 AC 3 / US-24.13 entry trigger 2 — the A13 fix for
+// persistent unreachability). ControllerRestartCount is reset to 0 on
+// stability (maybeResetConsecutiveFailures) and on restartGeneration bump,
+// so exceeding this threshold implies relentless health-check cycling.
+const controllerRestartSafeModeThreshold = 5
+
+// restartAgentPod performs the controller-initiated pod restart shared by
+// the unreachable and unhealthy health-check paths: deletes the pod,
+// decrements WorkspacesRunning, transitions to Creating, bumps the restart
+// counters, and evaluates the persistent-unreachability SafeMode trigger.
+func (r *WorkspaceReconciler) restartAgentPod(ctx context.Context, ws *v1.Workspace) {
+	r.deletePodByName(ctx, podName(ws.Name, string(ws.UID)), ws.Namespace)
+	metrics.WorkspacesRunning.WithLabelValues(ws.Spec.Runtime, string(ws.Spec.SecurityLevel)).Dec()
+	ws.Status.Phase = v1.WorkspacePhaseCreating
+	ws.Status.PodIP = ""
+	ws.Status.Endpoint = ""
+	ws.Status.RestartCount++
+	ws.Status.ControllerRestartCount++
+	metrics.WorkspaceControllerRestartsTotal.Inc()
+	ws.Status.ConsecutiveHealthFailures = 0
+	r.maybeEnterSafeModeFromRestarts(ctx, ws)
+}
+
+// maybeEnterSafeModeFromRestarts trips SafeMode when ControllerRestartCount
+// exceeds the persistent-unreachability threshold. Idempotent: no-op when
+// already in SafeMode. Emitted metrics use the "controller_restart" trigger
+// label so operators can distinguish this entry from recovery-exhaustion
+// (ConsecutiveFailures) entries labeled by failure class.
+func (r *WorkspaceReconciler) maybeEnterSafeModeFromRestarts(ctx context.Context, ws *v1.Workspace) {
+	if ws.Status.SafeMode || ws.Status.ControllerRestartCount <= controllerRestartSafeModeThreshold {
+		return
+	}
+	ws.Status.SafeMode = true
+	r.setCondition(ws, v1.WorkspaceConditionType("SafeMode"), "True", "PersistentUnreachability",
+		fmt.Sprintf("Entering safe mode after %d controller-initiated restarts", ws.Status.ControllerRestartCount))
+	log.FromContext(ctx).Info("Entering safe mode (controller restart threshold)",
+		"controllerRestartCount", ws.Status.ControllerRestartCount)
+	metrics.WorkspaceSafeModeActive.Inc()
+	metrics.WorkspaceSafeModeEntriesTotal.WithLabelValues("controller_restart").Inc()
 }
 
 // maybeEnrichAgentStatus calls enrichAgentStatus at most once per
@@ -257,7 +282,7 @@ func (r *WorkspaceReconciler) enrichAgentStatus(ctx context.Context, ws *v1.Work
 	if len(status.Sessions) > 0 {
 		sessions := make([]v1.AgentSessionStatus, len(status.Sessions))
 		for i, s := range status.Sessions {
-			sessions[i] = v1.AgentSessionStatus{ID: s.ID, Title: s.Title, Status: s.Status, ContextUsed: s.ContextUsed}
+			sessions[i] = v1.AgentSessionStatus{ID: s.ID, Title: s.Title, Status: s.Status, ContextUsed: s.ContextUsed, EstimatedMemoryMB: s.EstimatedMemoryMB}
 		}
 		ws.Status.Sessions = sessions
 	} else {
@@ -296,6 +321,21 @@ func (r *WorkspaceReconciler) enrichAgentStatus(ctx context.Context, ws *v1.Work
 		metrics.WorkspaceMemoryUsedBytesSecondsTotal.WithLabelValues(ws.Name, userID).Add(byteSecs)
 		metrics.UserMemoryBytesSecondsTotal.WithLabelValues(userID).Add(byteSecs)
 		metrics.WorkspaceMemoryUsedBytes.WithLabelValues(ws.Name, userID).Set(float64(status.Memory.UsedBytes))
+	}
+	// US-44.5: surface memory pressure condition from agentd's cgroup
+	// monitoring. agentd checks every 60s; the condition auto-clears
+	// when pressure drops below the 85% threshold. Never restarts the
+	// pod — this is a degraded signal, not a recoverable failure.
+	if status.MemoryPressure {
+		usedPct := 0.0
+		if status.Memory != nil && status.Memory.TotalBytes > 0 {
+			usedPct = float64(status.Memory.UsedBytes) / float64(status.Memory.TotalBytes) * 100
+		}
+		r.setCondition(ws, v1.WorkspaceConditionMemoryPressure, "True",
+			v1.ReasonMemoryPressure,
+			fmt.Sprintf("memory usage high (%.0f%%). Consider reducing concurrent sessions or increasing workspace memory limit.", usedPct))
+	} else {
+		r.removeCondition(ws, v1.WorkspaceConditionMemoryPressure)
 	}
 	if status.CPU != nil && status.CPU.UsageMicros > 0 {
 		if ws.Status.CpuUsageMicros > 0 && status.CPU.UsageMicros >= ws.Status.CpuUsageMicros {

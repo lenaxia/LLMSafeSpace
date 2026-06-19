@@ -1,26 +1,26 @@
 ---
-# Minimal Postgres + Valkey for kind-based local testing of LLMSafeSpace.
+# Minimal Postgres + Valkey for kind-based local testing of LLMSafeSpaces.
 # THIS IS A DEVELOPMENT-ONLY LAYOUT. Do NOT use in production:
 #   - PVC sized at 1Gi (no resize semantics tested)
 #   - No backup, no replication, no monitoring
 #   - postgres image pinned to :17-alpine but not by digest
 #
 # G26 (Epic 17 worklog 0089 RT-4.5) — passwords are read from the same
-# `llmsafespace-credentials` Secret the chart auto-generates. The chart
+# `llmsafespaces-credentials` Secret the chart auto-generates. The chart
 # must be installed first (it ships the Secret as a pre-install hook
 # with helm.sh/hook-weight=-15). If you apply this manifest before the
 # chart, the postgres pod will CrashLoopBackoff with "POSTGRES_PASSWORD
 # environment variable is required" — that's the desired fail-loud
 # behaviour (no silent fallback to "changeme").
 #
-# Pod labels match `charts/llmsafespace/templates/datastore-network-policy.yaml`'s
+# Pod labels match `charts/llmsafespaces/templates/datastore-network-policy.yaml`'s
 # selectors (`app: postgres`, `app: valkey`). Renaming/changing those
 # labels here without also updating the NetPol selectors will break
 # in-namespace ingress for both API and the migration Job.
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: llmsafespace
+  name: llmsafespaces
 ---
 # ============================================================================
 # Postgres
@@ -29,7 +29,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: postgres-data
-  namespace: llmsafespace
+  namespace: llmsafespaces
 spec:
   accessModes: [ReadWriteOnce]
   resources:
@@ -40,7 +40,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: postgres
-  namespace: llmsafespace
+  namespace: llmsafespaces
   labels:
     app: postgres
 spec:
@@ -59,13 +59,13 @@ spec:
           image: postgres:17-alpine
           env:
             - name: POSTGRES_DB
-              value: llmsafespace
+              value: llmsafespaces
             - name: POSTGRES_USER
-              value: llmsafespace
+              value: llmsafespaces
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: llmsafespace-credentials
+                  name: llmsafespaces-credentials
                   key: postgres-password
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
@@ -73,12 +73,12 @@ spec:
             - { name: postgres, containerPort: 5432 }
           readinessProbe:
             exec:
-              command: [pg_isready, -U, llmsafespace, -d, llmsafespace]
+              command: [pg_isready, -U, llmsafespaces, -d, llmsafespaces]
             initialDelaySeconds: 5
             periodSeconds: 5
           livenessProbe:
             exec:
-              command: [pg_isready, -U, llmsafespace, -d, llmsafespace]
+              command: [pg_isready, -U, llmsafespaces, -d, llmsafespaces]
             initialDelaySeconds: 30
             periodSeconds: 10
           volumeMounts:
@@ -93,7 +93,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: postgres
-  namespace: llmsafespace
+  namespace: llmsafespaces
 spec:
   type: ClusterIP
   ports:
@@ -109,7 +109,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: valkey
-  namespace: llmsafespace
+  namespace: llmsafespaces
   labels:
     app: valkey
 spec:
@@ -136,7 +136,7 @@ spec:
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: llmsafespace-credentials
+                  name: llmsafespaces-credentials
                   key: redis-password
           ports:
             - { name: valkey, containerPort: 6379 }
@@ -157,7 +157,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: valkey
-  namespace: llmsafespace
+  namespace: llmsafespaces
 spec:
   type: ClusterIP
   ports:
@@ -172,7 +172,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: redis-master
-  namespace: llmsafespace
+  namespace: llmsafespaces
 spec:
   type: ClusterIP
   ports:

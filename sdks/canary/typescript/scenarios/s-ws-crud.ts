@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // S-WS-CRUD canary — TypeScript SDK
 
-import { LLMSafeSpace, NotFoundError } from '../../src/index.js';
+import { LLMSafeSpaces, NotFoundError } from '../../src/index.js';
 import { Runner, Config, configFromEnv, nodeFetch, rawDo, hasField } from '../canary.js';
 
 async function run(run: Runner, cfg: Config): Promise<void> {
-  const c = new LLMSafeSpace({ baseUrl: cfg.apiUrl, apiKey: cfg.apiKey, timeout: 20000, fetch: nodeFetch as any });
+  const c = new LLMSafeSpaces({ baseUrl: cfg.apiUrl, apiKey: cfg.apiKey, timeout: 20000, fetch: nodeFetch as any });
   let wsId: string | null = null;
 
   try {

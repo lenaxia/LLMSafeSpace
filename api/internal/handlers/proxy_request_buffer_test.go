@@ -23,9 +23,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 
-	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	k8smocks "github.com/lenaxia/llmsafespaces/mocks/kubernetes"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 func metricValue(t *testing.T, name, workspaceID string) float64 {
@@ -327,10 +327,10 @@ func newBufferTestEnv(t *testing.T, httpClient *http.Client, workspaceID, podIP 
 	gin.SetMode(gin.TestMode)
 
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()
@@ -519,6 +519,130 @@ func TestRequestBuffer_RetryPredicateClassifiesSentinels(t *testing.T) {
 	assert.True(t, isRetryableBufferErr(errBufferRetryLater), "retry-later is retryable")
 	assert.True(t, isRetryableBufferErr(fmt.Errorf("dial tcp: connection refused")), "connection error is retryable")
 	assert.True(t, isRetryableBufferErr(fmt.Errorf("wrapped: %w", errBufferRetryLater)), "wrapped retry-later is retryable")
+}
+
+// ---------------------------------------------------------------------------
+// C5 (worklog 371): global buffer byte cap.
+// ---------------------------------------------------------------------------
+
+// newTestBufferWithGlobalCap creates a buffer with a specific global byte cap
+// so tests can verify the cap rejects oversized requests without needing to
+// allocate ~500MB.
+func newTestBufferWithGlobalCap(maxSize int, timeout, poll time.Duration, globalCap int64) *requestBuffer {
+	return newRequestBufferWithGlobalCap(maxSize, timeout, poll, globalCap, &testLogger{})
+}
+
+// TestRequestBuffer_C5_GlobalByteCap_RejectsOversizedRequest verifies that
+// when the global byte cap is reached, new requests are rejected (returns
+// false from tryEnqueue). Pre-fix, the buffer had no global cap and a
+// platform-wide restart could buffer ~1TB, OOM-killing the API server.
+func TestRequestBuffer_C5_GlobalByteCap_RejectsOversizedRequest(t *testing.T) {
+	// 100-byte global cap, 10-slot per-workspace cap. The per-workspace cap
+	// is generous so the global cap is the binding constraint.
+	b := newTestBufferWithGlobalCap(10, time.Second, 5*time.Millisecond, 100)
+
+	block := make(chan struct{})
+	blockingForward := func() error { <-block; return nil }
+
+	// Enqueue a 60-byte request — succeeds (60 ≤ 100).
+	req1 := makeBufferedReq(blockingForward, time.Now().Add(time.Hour))
+	req1.bodySize = 60
+	require.True(t, b.tryEnqueue("ws-c5-a", req1), "60-byte request must fit under 100-byte cap")
+
+	// Enqueue a 50-byte request — rejected (60+50=110 > 100).
+	req2 := makeBufferedReq(blockingForward, time.Now().Add(time.Hour))
+	req2.bodySize = 50
+	assert.False(t, b.tryEnqueue("ws-c5-b", req2),
+		"50-byte request must be rejected — global cap (100) would be exceeded by 60+50=110")
+
+	// A 0-byte request (no body) must still succeed — it doesn't consume budget.
+	req3 := makeBufferedReq(blockingForward, time.Now().Add(time.Hour))
+	req3.bodySize = 0
+	assert.True(t, b.tryEnqueue("ws-c5-c", req3),
+		"0-byte request must always succeed (doesn't consume global byte budget)")
+
+	close(block)
+	<-req1.result
+	<-req3.result
+}
+
+// TestRequestBuffer_C5_GlobalByteCap_ReleasedOnPop verifies that bytes are
+// returned to the global budget when a request is popped from the queue,
+// allowing subsequent requests to be admitted.
+func TestRequestBuffer_C5_GlobalByteCap_ReleasedOnPop(t *testing.T) {
+	b := newTestBufferWithGlobalCap(10, time.Second, 5*time.Millisecond, 100)
+
+	// Enqueue and complete a 60-byte request.
+	req1 := makeBufferedReq(func() error { return nil }, time.Now().Add(time.Hour))
+	req1.bodySize = 60
+	require.True(t, b.tryEnqueue("ws-c5-rel", req1))
+	<-req1.result
+
+	// The 60 bytes must have been released — a new 60-byte request fits.
+	req2 := makeBufferedReq(func() error { return nil }, time.Now().Add(time.Hour))
+	req2.bodySize = 60
+	assert.True(t, b.tryEnqueue("ws-c5-rel", req2),
+		"after the first request drained, the 60-byte budget must be available again")
+	<-req2.result
+}
+
+// TestRequestBuffer_C5_GlobalByteCap_ZeroBodySizeAlwaysAdmitted verifies that
+// requests without a body (GET history, etc.) are never rejected by the byte
+// cap — they don't consume memory budget. This is important because GETs are
+// not buffered in practice (only SendMessage sets bufferable=true), but the
+// guard must still be correct.
+func TestRequestBuffer_C5_GlobalByteCap_ZeroBodySizeAlwaysAdmitted(t *testing.T) {
+	// Cap of 1 byte — any positive body would be rejected, but 0-byte bodies pass.
+	b := newTestBufferWithGlobalCap(1, time.Second, 5*time.Millisecond, 1)
+
+	for i := 0; i < 20; i++ {
+		req := makeBufferedReq(func() error { return nil }, time.Now().Add(time.Hour))
+		req.bodySize = 0
+		require.True(t, b.tryEnqueue("ws-c5-zero", req),
+			"0-byte request %d must be admitted regardless of global cap", i)
+		<-req.result
+	}
+}
+
+// TestRequestBuffer_C5_GlobalByteCap_ConcurrentNoOversubscribe verifies that
+// concurrent enqueues cannot breach the global cap. N goroutines each try to
+// reserve budget that, individually, fits — but collectively exceeds the cap.
+// The CAS loop must serialize them so the cap is never exceeded.
+func TestRequestBuffer_C5_GlobalByteCap_ConcurrentNoOversubscribe(t *testing.T) {
+	// 1000-byte cap. 50 goroutines × 30 bytes each = 1500 bytes requested.
+	// At most floor(1000/30)=33 should succeed.
+	const cap = int64(1000)
+	const perReq = 30
+	const goroutines = 50
+	b := newTestBufferWithGlobalCap(goroutines, time.Second, 5*time.Millisecond, cap)
+
+	block := make(chan struct{})
+	var wg sync.WaitGroup
+	successes := make(chan bool, goroutines)
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req := makeBufferedReq(func() error { <-block; return nil }, time.Now().Add(time.Hour))
+			req.bodySize = perReq
+			successes <- b.tryEnqueue("ws-c5-conc", req)
+		}()
+	}
+	wg.Wait()
+	close(successes)
+
+	admitted := 0
+	for ok := range successes {
+		if ok {
+			admitted++
+		}
+	}
+	assert.LessOrEqual(t, admitted, int(cap/perReq),
+		"at most floor(cap/perReq)=%d requests must be admitted; got %d (CAS loop must prevent oversubscription)",
+		cap/perReq, admitted)
+	assert.Greater(t, admitted, 0, "at least one request must be admitted")
+
+	close(block)
 }
 
 func TestRequestBuffer_TerminalErrorNotRetried(t *testing.T) {

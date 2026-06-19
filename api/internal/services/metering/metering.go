@@ -12,11 +12,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lenaxia/llmsafespace/api/internal/config"
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/api/internal/services/database"
-	"github.com/lenaxia/llmsafespace/pkg/billing"
-	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	"github.com/lenaxia/llmsafespaces/api/internal/config"
+	"github.com/lenaxia/llmsafespaces/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/database"
+	"github.com/lenaxia/llmsafespaces/pkg/billing"
+	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -33,52 +33,52 @@ const (
 var (
 	metricEventsRecorded = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "llmsafespace_metering_events_recorded_total",
+			Name: "llmsafespaces_metering_events_recorded_total",
 			Help: "Total usage events written to DB",
 		},
 		[]string{"event_type", "source"},
 	)
 	metricEventsFailed = promauto.NewCounterVec(
 		prometheus.CounterOpts{
-			Name: "llmsafespace_metering_events_failed_total",
+			Name: "llmsafespaces_metering_events_failed_total",
 			Help: "Total usage events that failed to write to DB",
 		},
 		[]string{"event_type", "error_type"},
 	)
 	metricEventsDropped = promauto.NewCounter(
 		prometheus.CounterOpts{
-			Name: "llmsafespace_metering_events_dropped_total",
+			Name: "llmsafespaces_metering_events_dropped_total",
 			Help: "Total usage events dropped (buffer full or DLQ also failed)",
 		},
 	)
 	metricBatchDuration = promauto.NewHistogram(
 		prometheus.HistogramOpts{
-			Name:    "llmsafespace_metering_batch_write_duration_seconds",
+			Name:    "llmsafespaces_metering_batch_write_duration_seconds",
 			Help:    "DB batch flush latency",
 			Buckets: prometheus.ExponentialBuckets(0.001, 2, 12),
 		},
 	)
 	metricDLQSize = promauto.NewGauge(
 		prometheus.GaugeOpts{
-			Name: "llmsafespace_metering_dlq_size",
+			Name: "llmsafespaces_metering_dlq_size",
 			Help: "Current number of unresolved DLQ entries",
 		},
 	)
 	metricDLQDead = promauto.NewCounter(
 		prometheus.CounterOpts{
-			Name: "llmsafespace_metering_dlq_dead_total",
+			Name: "llmsafespaces_metering_dlq_dead_total",
 			Help: "Total DLQ entries that exhausted retries",
 		},
 	)
 	metricReconciliationCatchup = promauto.NewCounter(
 		prometheus.CounterOpts{
-			Name: "llmsafespace_metering_reconciliation_catchup_total",
+			Name: "llmsafespaces_metering_reconciliation_catchup_total",
 			Help: "Total compute gap-fill events emitted by reconciliation",
 		},
 	)
 	metricExportLag = promauto.NewGauge(
 		prometheus.GaugeOpts{
-			Name: "llmsafespace_metering_export_lag_seconds",
+			Name: "llmsafespaces_metering_export_lag_seconds",
 			Help: "Seconds since last successful export",
 		},
 	)
@@ -1030,3 +1030,5 @@ func (s *Service) exportLoop() {
 		}
 	}
 }
+
+var _ interfaces.MeteringRecorder = (*Service)(nil)

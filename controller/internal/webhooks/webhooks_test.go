@@ -16,10 +16,10 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
-// newScheme returns a runtime.Scheme with both clientgo and llmsafespace types.
+// newScheme returns a runtime.Scheme with both clientgo and llmsafespaces types.
 func newScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	s := runtime.NewScheme()
@@ -45,7 +45,7 @@ func TestRuntimeEnvironmentValidator_Allowed(t *testing.T) {
 	s := newScheme(t)
 	v := &RuntimeEnvironmentValidator{Decoder: admission.NewDecoder(s), AllowedImageRegistries: []string{"docker.io/", "ghcr.io/"}}
 	re := &v1.RuntimeEnvironment{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "llmsafespace.dev/v1", Kind: "RuntimeEnvironment"},
+		TypeMeta:   metav1.TypeMeta{APIVersion: "llmsafespaces.dev/v1", Kind: "RuntimeEnvironment"},
 		ObjectMeta: metav1.ObjectMeta{Name: "py311"},
 		Spec: v1.RuntimeEnvironmentSpec{
 			Image:    "docker.io/library/python:3.11-slim",
@@ -60,7 +60,7 @@ func TestRuntimeEnvironmentValidator_DeniesEmptyImage(t *testing.T) {
 	s := newScheme(t)
 	v := &RuntimeEnvironmentValidator{Decoder: admission.NewDecoder(s), AllowedImageRegistries: []string{"docker.io/", "ghcr.io/"}}
 	re := &v1.RuntimeEnvironment{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "llmsafespace.dev/v1", Kind: "RuntimeEnvironment"},
+		TypeMeta:   metav1.TypeMeta{APIVersion: "llmsafespaces.dev/v1", Kind: "RuntimeEnvironment"},
 		ObjectMeta: metav1.ObjectMeta{Name: "x"},
 		Spec:       v1.RuntimeEnvironmentSpec{Image: "", Language: "python"},
 	}
@@ -73,7 +73,7 @@ func TestRuntimeEnvironmentValidator_DeniesEmptyLanguage(t *testing.T) {
 	s := newScheme(t)
 	v := &RuntimeEnvironmentValidator{Decoder: admission.NewDecoder(s), AllowedImageRegistries: []string{"docker.io/", "ghcr.io/"}}
 	re := &v1.RuntimeEnvironment{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "llmsafespace.dev/v1", Kind: "RuntimeEnvironment"},
+		TypeMeta:   metav1.TypeMeta{APIVersion: "llmsafespaces.dev/v1", Kind: "RuntimeEnvironment"},
 		ObjectMeta: metav1.ObjectMeta{Name: "x"},
 		Spec:       v1.RuntimeEnvironmentSpec{Image: "ghcr.io/lenaxia/img", Language: ""},
 	}

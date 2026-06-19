@@ -15,7 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 func makeUnboundPVC(name, namespace string) *corev1.PersistentVolumeClaim {
@@ -72,7 +72,7 @@ func TestReconcile_Pending_StalePVC_OwnerUIDMismatch_DeletesAndRecreates(t *test
 
 	stalePVC := makeUnboundPVC("workspace-ws-mismatch", "default")
 	stalePVC.OwnerReferences = []metav1.OwnerReference{{
-		APIVersion: "llmsafespace.dev/v1",
+		APIVersion: "llmsafespaces.dev/v1",
 		Kind:       "Workspace",
 		Name:       "ws-mismatch",
 		UID:        "ws-uid-OLD-DIFFERENT",

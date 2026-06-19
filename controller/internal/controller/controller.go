@@ -4,27 +4,48 @@
 package controller
 
 import (
+	"time"
+
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/lenaxia/llmsafespace/controller/internal/relay"
-	"github.com/lenaxia/llmsafespace/controller/internal/workspace"
-	"github.com/lenaxia/llmsafespace/pkg/agent/opencode"
+	"github.com/lenaxia/llmsafespaces/controller/internal/relay"
+	"github.com/lenaxia/llmsafespaces/controller/internal/workspace"
+	"github.com/lenaxia/llmsafespaces/pkg/agent/opencode"
 )
 
 func init() {
 	opencode.Register()
 }
 
-func SetupControllers(mgr ctrl.Manager, inferenceRelayURL, inferenceRelaySecret string) error {
+// orgStatusCacheTTL is the freshness window for the controller's in-memory
+// org-status cache (D20). 30s balances staleness (a suspended org's workspaces
+// keep running for up to this long after suspension) against API load (one
+// status fetch per org per window).
+const orgStatusCacheTTL = 30 * time.Second
+
+func SetupControllers(mgr ctrl.Manager, inferenceRelayURL, inferenceRelaySecret, apiServiceURL, apiInternalToken string) error {
 	logger := log.Log.WithName("controller")
 	logger.Info("Setting up controllers")
+
+	// US-43.19 / D20: build the org-status client the reconciler polls to drive
+	// org-level workspace suspension. Empty apiServiceURL disables the feature
+	// (the reconciler then never org-suspends — safe default for installs that
+	// have not wired the internal endpoint).
+	var orgStatusClient workspace.OrgStatusClient
+	if apiServiceURL != "" {
+		orgStatusClient = workspace.NewCachedOrgStatusClient(apiServiceURL, apiInternalToken, orgStatusCacheTTL, logger)
+		logger.Info("org-status suspension enabled", "apiServiceURL", apiServiceURL, "cacheTTL", orgStatusCacheTTL)
+	} else {
+		logger.Info("org-status suspension disabled (--api-service-url unset)")
+	}
 
 	if err := (&workspace.WorkspaceReconciler{
 		Client:               mgr.GetClient(),
 		Scheme:               mgr.GetScheme(),
 		InferenceRelayURL:    inferenceRelayURL,
 		InferenceRelaySecret: inferenceRelaySecret,
+		OrgStatusClient:      orgStatusClient,
 	}).SetupWithManager(mgr); err != nil {
 		logger.Error(err, "unable to create Workspace controller")
 		return err

@@ -1,9 +1,9 @@
-FROM ghcr.io/lenaxia/llmsafespace/python:latest
+FROM ghcr.io/lenaxia/llmsafespaces/python:latest
 
 # Add metadata labels
-LABEL org.opencontainers.image.title="LLMSafeSpace Python ML Runtime"
-LABEL org.opencontainers.image.description="Python runtime with ML packages for LLMSafeSpace"
-LABEL org.opencontainers.image.source="https://github.com/lenaxia/llmsafespace"
+LABEL org.opencontainers.image.title="LLMSafeSpaces Python ML Runtime"
+LABEL org.opencontainers.image.description="Python runtime with ML packages for LLMSafeSpaces"
+LABEL org.opencontainers.image.source="https://github.com/lenaxia/llmsafespaces"
 LABEL org.opencontainers.image.version="1.0.0"
 
 # Version arguments
@@ -43,4 +43,4 @@ ENV TF_CPP_MIN_LOG_LEVEL=2
 
 USER sandbox
 WORKDIR /workspace
-CMD ["/opt/llmsafespace/bin/python-security-wrapper.py"]
+CMD ["/opt/llmsafespaces/bin/python-security-wrapper.py"]

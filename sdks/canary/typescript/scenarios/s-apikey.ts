@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // S-APIKEY canary — TypeScript SDK
 
-import { LLMSafeSpace } from '../../src/index.js';
+import { LLMSafeSpaces } from '../../src/index.js';
 import { Runner, Config, configFromEnv, nodeFetch } from '../canary.js';
 
 async function run(r: Runner, cfg: Config): Promise<void> {
-  const c = new LLMSafeSpace({ baseUrl: cfg.apiUrl, apiKey: cfg.apiKey, timeout: 20000, fetch: nodeFetch as any });
+  const c = new LLMSafeSpaces({ baseUrl: cfg.apiUrl, apiKey: cfg.apiKey, timeout: 20000, fetch: nodeFetch as any });
   let keyId: string | null = null;
   try {
     const [ok, key] = await r.assertNoError(() => c.auth.createApiKey('canary-ts-key'), 'create-key: no error');
@@ -25,7 +25,7 @@ async function run(r: Runner, cfg: Config): Promise<void> {
     }
 
     // New key authenticates
-    const nc = new LLMSafeSpace({ baseUrl: cfg.apiUrl, apiKey: key.key, timeout: 10000, fetch: nodeFetch as any });
+    const nc = new LLMSafeSpaces({ baseUrl: cfg.apiUrl, apiKey: key.key, timeout: 10000, fetch: nodeFetch as any });
     await r.assertNoError(() => nc.auth.me(), 'new-key: authenticates');
 
     // Delete

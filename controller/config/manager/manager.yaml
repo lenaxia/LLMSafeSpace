@@ -1,13 +1,13 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: llmsafespace-system
+  name: llmsafespaces-system
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: controller
-  namespace: llmsafespace-system
+  namespace: llmsafespaces-system
   labels:
     app: controller
 spec:
@@ -22,7 +22,7 @@ spec:
     spec:
       serviceAccountName: controller
       # Defense-in-depth security context applied to the pod and the
-      # manager container. The chart in charts/llmsafespace/ is the
+      # manager container. The chart in charts/llmsafespaces/ is the
       # canonical install path; this manifest is kept for kubebuilder
       # tooling compatibility but should match the chart's posture.
       securityContext:
@@ -33,7 +33,7 @@ spec:
           type: RuntimeDefault
       containers:
       - name: manager
-        image: llmsafespace/controller:latest
+        image: llmsafespaces/controller:latest
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -71,7 +71,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: controller
-  namespace: llmsafespace-system
+  namespace: llmsafespaces-system
 spec:
   selector:
     app: controller
@@ -87,7 +87,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: controller
-  namespace: llmsafespace-system
+  namespace: llmsafespaces-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -97,10 +97,10 @@ rules:
 - apiGroups: [""]
   resources: ["pods"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-- apiGroups: ["llmsafespace.dev"]
+- apiGroups: ["llmsafespaces.dev"]
   resources: ["sandboxes", "sandboxprofiles", "warmpools", "warmpods", "runtimeenvironments"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-- apiGroups: ["llmsafespace.dev"]
+- apiGroups: ["llmsafespaces.dev"]
   resources: ["sandboxes/status", "warmpools/status", "warmpods/status", "runtimeenvironments/status"]
   verbs: ["get", "update", "patch"]
 - apiGroups: [""]
@@ -118,4 +118,4 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: controller
-  namespace: llmsafespace-system
+  namespace: llmsafespaces-system

@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/lenaxia/llmsafespace/pkg/agent"
+	"github.com/lenaxia/llmsafespaces/pkg/agent"
 )
 
 func TestOpenCodeAgent_Type(t *testing.T) {

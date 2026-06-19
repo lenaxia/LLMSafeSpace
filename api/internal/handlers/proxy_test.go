@@ -28,17 +28,17 @@ import (
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
-	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
-	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	k8smocks "github.com/lenaxia/llmsafespaces/mocks/kubernetes"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/api/internal/mocks"
-	"github.com/lenaxia/llmsafespace/api/internal/services/activity"
-	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
-	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
-	"github.com/lenaxia/llmsafespace/api/internal/services/wsstate"
+	"github.com/lenaxia/llmsafespaces/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespaces/api/internal/mocks"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/activity"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/eventbroker"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/sse"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/wsstate"
 )
 
 type testLogger struct{}
@@ -90,7 +90,7 @@ func (t *alwaysFailTransport) RoundTrip(req *http.Request) (*http.Response, erro
 type testEnv struct {
 	handler   *ProxyHandler
 	k8sMock   *k8smocks.MockKubernetesClient
-	llmMock   *k8smocks.MockLLMSafespaceV1Interface
+	llmMock   *k8smocks.MockLLMSafespacesV1Interface
 	wsMock    *k8smocks.MockWorkspaceInterface
 	clientset *k8sfake.Clientset
 	backend   *httptest.Server
@@ -125,10 +125,10 @@ func newTestEnvWithBackend(t *testing.T, backendHandler http.HandlerFunc) *testE
 	httpClient := &http.Client{Transport: transport, Timeout: 5 * time.Second}
 
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()
@@ -299,10 +299,10 @@ func TestProxy_RetriesOnStaleIP(t *testing.T) {
 	httpClient := &http.Client{Transport: transport, Timeout: 5 * time.Second}
 
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()
@@ -340,10 +340,10 @@ func TestProxy_RetriesOnStaleIP(t *testing.T) {
 
 func TestProxy_ConnectionFailureReturns503(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()
@@ -1005,10 +1005,10 @@ func TestProxy_E2E_SSEDrivenSessionLifecycle(t *testing.T) {
 	httpClient := &http.Client{Transport: transport, Timeout: 5 * time.Second}
 
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()
@@ -1111,10 +1111,10 @@ func TestProxy_SessionLeak_NotOnConnectionCeilingReject(t *testing.T) {
 
 func TestProxy_SessionLeak_CleanedUpOn503(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()
@@ -1151,10 +1151,10 @@ func TestProxy_SessionLeak_CleanedUpOn503(t *testing.T) {
 
 func TestProxy_GetPodIPForSSE_RunningReturnsIP(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	crd := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
@@ -1169,10 +1169,10 @@ func TestProxy_GetPodIPForSSE_RunningReturnsIP(t *testing.T) {
 
 func TestProxy_GetPodIPForSSE_SuspendedReturnsEmpty(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	crd := makeWorkspaceCRDWithStatus("ws-1", "", "Suspended", "ws-1")
@@ -1187,10 +1187,10 @@ func TestProxy_GetPodIPForSSE_SuspendedReturnsEmpty(t *testing.T) {
 
 func TestProxy_GetPodIPForSSE_NotFoundReturnsEmpty(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	wsMock.On("Get", mock.Anything, "sb-missing", metav1.GetOptions{}).Return(nil, fmt.Errorf("not found")).Once()
@@ -1402,10 +1402,10 @@ func TestProxy_OnPhaseChange_SeedCallActive_StartsSSETracker(t *testing.T) {
 
 func TestProxy_ActivityNotRecordedOnProxyFailure(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()
@@ -1454,10 +1454,10 @@ func TestProxy_ActivityRecordedOnSuccess(t *testing.T) {
 	httpClient := &http.Client{Transport: transport, Timeout: 5 * time.Second}
 
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	fakeClientset := k8sfake.NewSimpleClientset()
@@ -1538,9 +1538,9 @@ func TestProxy_B2_MidStreamReadError_WritesSSEErrorEvent(t *testing.T) {
 	httpClient := &http.Client{Transport: &midStreamResetTransport{}, Timeout: 5 * time.Second}
 
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 	fakeClientset := k8sfake.NewSimpleClientset()
 	k8sMock.On("Clientset").Return(fakeClientset)
@@ -1593,9 +1593,9 @@ func TestProxy_B2_CleanStreamEnd_NoSSEError(t *testing.T) {
 	httpClient := &http.Client{Transport: transport, Timeout: 5 * time.Second}
 
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 	fakeClientset := k8sfake.NewSimpleClientset()
 	k8sMock.On("Clientset").Return(fakeClientset)
@@ -1635,7 +1635,7 @@ func TestActivityTracker_B5_NotFound_RemovesMapEntry(t *testing.T) {
 	tracker := newTestTracker(wsMock)
 
 	notFoundErr := apierrors.NewNotFound(
-		schema.GroupResource{Group: "llmsafespace.dev", Resource: "workspaces"},
+		schema.GroupResource{Group: "llmsafespaces.dev", Resource: "workspaces"},
 		"ws-deleted",
 	)
 	// US-23.3: tracker now calls Patch (not Get+UpdateStatus).
@@ -1661,7 +1661,7 @@ func TestActivityTracker_B5_NotFound_DoesNotAffectOtherEntries(t *testing.T) {
 
 	existing := makeWorkspaceCRD("ws-alive", 5)
 	notFoundErr := apierrors.NewNotFound(
-		schema.GroupResource{Group: "llmsafespace.dev", Resource: "workspaces"},
+		schema.GroupResource{Group: "llmsafespaces.dev", Resource: "workspaces"},
 		"ws-deleted",
 	)
 	// US-23.3: tracker now calls Patch (not Get+UpdateStatus).
@@ -1759,8 +1759,8 @@ func makeWorkspaceCRDWithStatus(name, podIP, phase, _ string) *v1.Workspace {
 
 func newTestTracker(wsMock *k8smocks.MockWorkspaceInterface) *activity.ActivityTracker {
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 	return activity.NewActivityTracker(k8sMock, &testLogger{}, "default")
 }
@@ -2237,9 +2237,9 @@ func (r *recordingActivitySessionIndex) Stop() error  { return nil }
 
 func TestProxy_OnSessionIdle_RecordsSessionIndexWithoutWsConfig(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil).Maybe()
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil).Maybe()
 	llmMock.On("Workspaces", "default").Return(wsMock).Maybe()
 	ws := makeWorkspaceCRDWithStatus("ws-1", "", string(v1.WorkspacePhaseActive), "ws-1")
 	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil).Maybe()
@@ -2281,10 +2281,10 @@ func TestProxy_OnSessionIdle_FetchAndPersistTitleWithoutWsConfig(t *testing.T) {
 	httpClient := &http.Client{Transport: transport, Timeout: 5 * time.Second}
 
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
 
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 	k8sMock.On("Clientset").Return(k8sfake.NewSimpleClientset())
 
@@ -2389,9 +2389,9 @@ func TestProxy_SendPromptAsync_409DoesNotAffectSendMessage(t *testing.T) {
 
 func TestProxy_OnSessionIdle_SessionIndexIndependentOfActivityTracker(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil).Maybe()
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil).Maybe()
 	llmMock.On("Workspaces", "default").Return(wsMock).Maybe()
 	ws := makeWorkspaceCRDWithStatus("ws-1", "", string(v1.WorkspacePhaseActive), "ws-1")
 	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil).Maybe()

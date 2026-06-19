@@ -17,9 +17,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 
-	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
-	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	k8smocks "github.com/lenaxia/llmsafespaces/mocks/kubernetes"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
 )
 
 type testLogger struct{}
@@ -51,8 +51,8 @@ func makeWorkspaceCRD(name string, maxActiveSessions int) *v1.Workspace {
 
 func newTestTracker(wsMock *k8smocks.MockWorkspaceInterface) *ActivityTracker {
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 	return NewActivityTracker(k8sMock, &testLogger{}, "default")
 }
@@ -284,7 +284,7 @@ func TestActivityTracker_Flush_RetryOnConflict(t *testing.T) {
 	ws := makeWorkspaceCRD("ws-1", 5)
 
 	conflictErr := apierrors.NewConflict(
-		schema.GroupResource{Group: "llmsafespace.dev", Resource: "workspaces"},
+		schema.GroupResource{Group: "llmsafespaces.dev", Resource: "workspaces"},
 		"ws-1",
 		fmt.Errorf("object has been modified"),
 	)
@@ -321,7 +321,7 @@ func TestActivityTracker_Flush_NotFoundDeletesEntry(t *testing.T) {
 	tracker := newTestTracker(wsMock)
 
 	notFoundErr := apierrors.NewNotFound(
-		schema.GroupResource{Group: "llmsafespace.dev", Resource: "workspaces"},
+		schema.GroupResource{Group: "llmsafespaces.dev", Resource: "workspaces"},
 		"ws-gone",
 	)
 	wsMock.On("Patch", mock.Anything, "ws-gone", types.MergePatchType, mock.Anything, mock.Anything).

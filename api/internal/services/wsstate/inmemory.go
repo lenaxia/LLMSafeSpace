@@ -141,6 +141,13 @@ func (s *InMemoryStore) ClearActiveSessions(workspaceID string) {
 	delete(s.activeSess, workspaceID)
 }
 
+// TouchActiveSessions is a no-op for the InMemoryStore: in-memory entries
+// have no TTL (they persist until explicitly removed). The Redis
+// implementation refreshes the key TTL; see redis.go TouchActiveSessions.
+func (s *InMemoryStore) TouchActiveSessions(workspaceID string) {
+	// Intentionally empty — no TTL to refresh.
+}
+
 // --- Deleted-session tombstones ---
 
 func (s *InMemoryStore) MarkSessionDeleted(workspaceID, sessionID string) {

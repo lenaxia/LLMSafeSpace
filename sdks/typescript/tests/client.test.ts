@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { LLMSafeSpace } from "../src/client.js";
-import { AuthError, NotFoundError, TimeoutError, LLMSafeSpaceError } from "../src/errors.js";
+import { LLMSafeSpaces } from "../src/client.js";
+import { AuthError, NotFoundError, TimeoutError, LLMSafeSpacesError } from "../src/errors.js";
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -20,12 +20,12 @@ function errorResponse(error: string, status: number) {
   });
 }
 
-describe("LLMSafeSpace Client", () => {
-  let client: LLMSafeSpace;
+describe("LLMSafeSpaces Client", () => {
+  let client: LLMSafeSpaces;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    client = new LLMSafeSpace({
+    client = new LLMSafeSpaces({
       baseUrl: "http://localhost:8080",
       apiKey: "lsp_test123",
     });
@@ -103,7 +103,7 @@ describe("LLMSafeSpace Client", () => {
     });
 
     it("auto-logins with credentials on first request", async () => {
-      const credClient = new LLMSafeSpace({
+      const credClient = new LLMSafeSpaces({
         baseUrl: "http://localhost:8080",
         credentials: { email: "test@example.com", password: "pass123" },
         timeout: 5000,
@@ -140,10 +140,10 @@ describe("LLMSafeSpace Client", () => {
       await expect(client.workspaces.list()).rejects.toThrow(TimeoutError);
     });
 
-    it("throws LLMSafeSpaceError for 500", async () => {
+    it("throws LLMSafeSpacesError for 500", async () => {
       mockFetch.mockResolvedValueOnce(errorResponse("internal error", 500));
 
-      await expect(client.workspaces.list()).rejects.toThrow(LLMSafeSpaceError);
+      await expect(client.workspaces.list()).rejects.toThrow(LLMSafeSpacesError);
     });
   });
 

@@ -11,7 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lib/pq"
+
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 // PendingOrgCleanup describes a pending_activation org eligible for the cleanup
@@ -36,6 +38,10 @@ type OrgStore interface {
 	AddOrgMember(ctx context.Context, orgID, userID string, role types.OrgRole) error
 	GetOrgMember(ctx context.Context, orgID, userID string) (*types.OrgMember, error)
 	ListOrgMembers(ctx context.Context, orgID string) ([]*types.OrgMember, error)
+	// CountOrgAdmins returns the number of admin members in an active (non-
+	// deleted) org. Used by the SSO login flow to avoid demoting the last admin
+	// on an IdP-driven role change (org orphaning prevention, cf. D19).
+	CountOrgAdmins(ctx context.Context, orgID string) (int, error)
 	UpdateOrgMemberRole(ctx context.Context, orgID, userID string, role types.OrgRole) error
 	RemoveOrgMember(ctx context.Context, orgID, userID string) error
 	RemoveOrgAdminIfNotLast(ctx context.Context, orgID, targetUserID string) (bool, error)
@@ -89,7 +95,42 @@ type OrgStore interface {
 
 	// --- US-43.13: Org-scoped audit log ---
 	LogOrgEvent(ctx context.Context, orgID, actorID, action, targetID string, metadata map[string]any) error
+	// LogAuditEvent is the general audit writer (US-43.19). domain must be one
+	// of audit_log_domain_chk's allowed values; orgID is nil for platform-level
+	// (non-org-scoped) events.
+	LogAuditEvent(ctx context.Context, domain, actorID, action, targetID string, orgID *string, metadata map[string]any) error
 	ListOrgAudit(ctx context.Context, orgID string, limit, offset int) ([]*types.AuditEntry, *types.PaginationMetadata, error)
+	// US-43.20: cross-org audit. ListAllAudit returns audit_log rows across all
+	// orgs, narrowed by the supplied filters (nil pointers ⇒ no filter). Limit
+	// defaults to 100 and is clamped to [1, 500]; Offset defaults to 0.
+	ListAllAudit(ctx context.Context, filters types.AuditFilters) ([]*types.AuditEntry, *types.PaginationMetadata, error)
+	// US-43.19: last-admin deadlock prevention. Returns orgs where the given
+	// user is the sole active admin — suspending them would orphan the org.
+	OrgsWhereUserIsLastActiveAdmin(ctx context.Context, userID string) ([]types.LastAdminOrg, error)
+	// US-43.18: platform-admin dashboard. ListAllOrgs returns every
+	// non-deleted org with aggregated member + workspace counts, optionally
+	// narrowed by status. statusFilter is applied only when non-nil/non-empty.
+	// limit is clamped to [1, adminListMaxLimit]; offset defaults to 0.
+	ListAllOrgs(ctx context.Context, limit, offset int, statusFilter *string) ([]types.OrgSummary, *types.PaginationMetadata, error)
+
+	// --- US-43.10: OIDC SSO configuration ---
+	// GetSSOConfig returns the org's SSO config or (nil, nil) when none exists.
+	GetSSOConfig(ctx context.Context, orgID string) (*types.OrgSSOConfig, error)
+	// UpsertSSOConfig inserts or replaces the org's SSO config. ClientSecret is
+	// the already-encrypted blob (server KEK, D17-S4).
+	UpsertSSOConfig(ctx context.Context, config *types.OrgSSOConfig) error
+	// DeleteSSOConfig removes the org's SSO config.
+	DeleteSSOConfig(ctx context.Context, orgID string) error
+	// FindSSOConfigByDomain resolves a claimed email domain (without leading
+	// "@") to the owning org's SSO config. Returns (nil, nil) when no org has
+	// claimed the domain.
+	FindSSOConfigByDomain(ctx context.Context, domain string) (*types.OrgSSOConfig, error)
+	// ListSSODomains returns every claimed domain across all orgs with non-empty
+	// claimed_domains, for the login-page discovery endpoint.
+	ListSSODomains(ctx context.Context) ([]types.SSODomain, error)
+	// CountSSOConfigs returns the number of orgs with an SSO config. Used by
+	// GET /auth/config to set the OIDCEnabled feature flag.
+	CountSSOConfigs(ctx context.Context) (int, error)
 }
 
 // PgOrgStore implements OrgStore using database/sql.
@@ -329,6 +370,20 @@ func (s *PgOrgStore) UpdateOrgMemberRole(ctx context.Context, orgID, userID stri
 	return nil
 }
 
+func (s *PgOrgStore) CountOrgAdmins(ctx context.Context, orgID string) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM org_memberships m
+		 JOIN organizations o ON o.id = m.org_id
+		 WHERE m.org_id = $1 AND m.role = 'admin' AND o.deleted_at IS NULL`,
+		orgID,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count org admins: %w", err)
+	}
+	return count, nil
+}
+
 func (s *PgOrgStore) RemoveOrgMember(ctx context.Context, orgID, userID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -454,6 +509,52 @@ func (s *PgOrgStore) DemoteOrgAdminIfNotLast(ctx context.Context, orgID, targetU
 
 	committed = true
 	return true, tx.Commit()
+}
+
+// OrgsWhereUserIsLastActiveAdmin returns every organization where the given
+// user is an admin AND no OTHER active admin exists. Suspending such a user
+// (D19) would orphan the org — no remaining admin could manage it (promote
+// members, change policies, manage billing). The user-suspend path refuses
+// with 409 when this returns a non-empty slice (unless force=true).
+//
+// "Active admin" means role='admin' with users.status='active'. The legacy
+// pending_key_wrap filter from D19 is intentionally NOT used: that column was
+// dropped in migration 000035, and the authoritative gate is now users.status.
+// Soft-deleted orgs are excluded (their memberships are irrelevant).
+func (s *PgOrgStore) OrgsWhereUserIsLastActiveAdmin(ctx context.Context, userID string) ([]types.LastAdminOrg, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT m.org_id, o.name
+		 FROM org_memberships m
+		 JOIN organizations o ON o.id = m.org_id
+		 WHERE m.user_id = $1 AND m.role = 'admin' AND o.deleted_at IS NULL
+		   AND NOT EXISTS (
+		     SELECT 1 FROM org_memberships m2
+		     JOIN users u ON u.id = m2.user_id
+		     WHERE m2.org_id = m.org_id AND m2.role = 'admin'
+		       AND m2.user_id <> m.user_id AND u.status = 'active'
+		   )`,
+		userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("find last-active-admin orgs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var orgs []types.LastAdminOrg
+	for rows.Next() {
+		var lo types.LastAdminOrg
+		if err := rows.Scan(&lo.OrgID, &lo.OrgName); err != nil {
+			return nil, fmt.Errorf("scan last-active-admin org: %w", err)
+		}
+		orgs = append(orgs, lo)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate last-active-admin orgs: %w", err)
+	}
+	if orgs == nil {
+		orgs = []types.LastAdminOrg{}
+	}
+	return orgs, nil
 }
 
 func (s *PgOrgStore) IsOrgMember(ctx context.Context, orgID, userID string) (bool, error) {
@@ -623,7 +724,7 @@ func (s *PgOrgStore) UpdateOrgStatus(ctx context.Context, orgID string, status *
 		args = append(args, string(*planID))
 	}
 
-	query := fmt.Sprintf( //nolint:gosec // setParts contains only literal column assignments, no user input
+	query := fmt.Sprintf( //nolint:gosec // G201: $N placeholder indexes only, no string interpolation of user input //nolint:gosec // setParts contains only literal column assignments, no user input
 		`UPDATE organizations SET %s WHERE id = $1 AND deleted_at IS NULL`,
 		strings.Join(setParts, ", "),
 	)
@@ -1033,7 +1134,12 @@ func (s *PgOrgStore) DeleteOrgPolicy(ctx context.Context, orgID string, key type
 
 // --- US-43.13: Audit log implementations ---
 
-func (s *PgOrgStore) LogOrgEvent(ctx context.Context, orgID, actorID, action, targetID string, metadata map[string]any) error {
+// LogAuditEvent inserts a row into audit_log with an explicit domain and an
+// optional org scope. It is the general audit writer used by both org-scoped
+// events (domain='org', orgID non-nil) and platform-admin events
+// (domain='admin', orgID nil). The domain must be one of the values allowed by
+// the audit_log_domain_chk CHECK constraint (billing/secrets/admin/org).
+func (s *PgOrgStore) LogAuditEvent(ctx context.Context, domain, actorID, action, targetID string, orgID *string, metadata map[string]any) error {
 	var metaBytes []byte
 	if metadata != nil {
 		var err error
@@ -1044,15 +1150,23 @@ func (s *PgOrgStore) LogOrgEvent(ctx context.Context, orgID, actorID, action, ta
 	} else {
 		metaBytes = []byte(`{}`)
 	}
+	var oid interface{}
+	if orgID != nil && *orgID != "" {
+		oid = *orgID
+	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO audit_log (actor_id, domain, action, target_id, org_id, metadata, created_at)
-		 VALUES ($1, 'org', $2, NULLIF($3, ''), $4, $5, NOW())`,
-		actorID, action, targetID, orgID, metaBytes,
+		 VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, NOW())`,
+		actorID, domain, action, targetID, oid, metaBytes,
 	)
 	if err != nil {
 		return fmt.Errorf("insert audit log: %w", err)
 	}
 	return nil
+}
+
+func (s *PgOrgStore) LogOrgEvent(ctx context.Context, orgID, actorID, action, targetID string, metadata map[string]any) error {
+	return s.LogAuditEvent(ctx, "org", actorID, action, targetID, &orgID, metadata)
 }
 
 func (s *PgOrgStore) ListOrgAudit(ctx context.Context, orgID string, limit, offset int) ([]*types.AuditEntry, *types.PaginationMetadata, error) {
@@ -1107,4 +1221,400 @@ func (s *PgOrgStore) ListOrgAudit(ctx context.Context, orgID string, limit, offs
 		entries = []*types.AuditEntry{}
 	}
 	return entries, pagination, nil
+}
+
+// --- US-43.20: cross-org audit ---
+
+const (
+	auditDefaultLimit = 100
+	auditMaxLimit     = 500
+)
+
+// ListAllAudit returns audit_log rows across every org, narrowed by filters.
+// The WHERE clause is built from conditional ANDs over a parameterised args
+// slice — no user input is ever interpolated into the SQL text.
+func (s *PgOrgStore) ListAllAudit(ctx context.Context, filters types.AuditFilters) ([]*types.AuditEntry, *types.PaginationMetadata, error) {
+	limit := filters.Limit
+	if limit <= 0 {
+		limit = auditDefaultLimit
+	}
+	if limit > auditMaxLimit {
+		limit = auditMaxLimit
+	}
+	offset := filters.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	var (
+		conditions []string
+		args       []interface{}
+	)
+	if filters.OrgID != nil && *filters.OrgID != "" {
+		conditions = append(conditions, fmt.Sprintf("org_id = $%d", len(args)+1))
+		args = append(args, *filters.OrgID)
+	}
+	if filters.ActorID != nil && *filters.ActorID != "" {
+		conditions = append(conditions, fmt.Sprintf("actor_id = $%d", len(args)+1))
+		args = append(args, *filters.ActorID)
+	}
+	if filters.Domain != nil && *filters.Domain != "" {
+		conditions = append(conditions, fmt.Sprintf("domain = $%d", len(args)+1))
+		args = append(args, *filters.Domain)
+	}
+
+	whereClause := ""
+	if len(conditions) > 0 {
+		whereClause = " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	var total int
+	if err := s.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM audit_log"+whereClause,
+		args...,
+	).Scan(&total); err != nil {
+		return nil, nil, fmt.Errorf("count cross-org audit entries: %w", err)
+	}
+
+	pagination := &types.PaginationMetadata{
+		Total: total, Start: offset, End: offset + limit, Limit: limit, Offset: offset,
+	}
+	if pagination.End > total {
+		pagination.End = total
+	}
+	if total == 0 {
+		return []*types.AuditEntry{}, pagination, nil
+	}
+
+	listArgs := append(args, limit, offset)
+	limitIdx := len(args) + 1
+	offsetIdx := len(args) + 2
+	rows, err := s.db.QueryContext(ctx,
+		fmt.Sprintf(
+			"SELECT id, actor_id, domain, action, COALESCE(target_id, ''), org_id::text, metadata, created_at FROM audit_log%s ORDER BY created_at DESC LIMIT $%d OFFSET $%d",
+			whereClause, limitIdx, offsetIdx,
+		),
+		listArgs...,
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list cross-org audit: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	entries := []*types.AuditEntry{}
+	for rows.Next() {
+		var e types.AuditEntry
+		var metaBytes []byte
+		if err := rows.Scan(&e.ID, &e.ActorID, &e.Domain, &e.Action, &e.TargetID, &e.OrgID, &metaBytes, &e.CreatedAt); err != nil {
+			return nil, nil, fmt.Errorf("scan audit entry: %w", err)
+		}
+		if len(metaBytes) > 0 && string(metaBytes) != "{}" {
+			if err := json.Unmarshal(metaBytes, &e.Metadata); err != nil {
+				return nil, nil, fmt.Errorf("unmarshal audit metadata: %w", err)
+			}
+		}
+		entries = append(entries, &e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("iterate audit entries: %w", err)
+	}
+	return entries, pagination, nil
+}
+
+// --- US-43.18: platform-admin dashboard list ---
+
+const (
+	adminListDefaultLimit = 50
+	adminListMaxLimit     = 200
+)
+
+func clampAdminLimit(limit int) int {
+	if limit <= 0 {
+		return adminListDefaultLimit
+	}
+	if limit > adminListMaxLimit {
+		return adminListMaxLimit
+	}
+	return limit
+}
+
+// ListAllOrgs returns every non-deleted organization with aggregated member and
+// workspace counts for the platform-admin dashboard. The optional statusFilter
+// narrows the result to a single OrgStatus (e.g. "suspended"); an empty/nil
+// filter returns all statuses. Results are ordered by created_at DESC.
+//
+// The two counts are correlated subqueries on the same row, so a single round
+// trip returns the full summary without an N+1 fan-out. The COUNT(*) total is
+// fetched first so an empty page short-circuits the SELECT.
+func (s *PgOrgStore) ListAllOrgs(ctx context.Context, limit, offset int, statusFilter *string) ([]types.OrgSummary, *types.PaginationMetadata, error) {
+	limit = clampAdminLimit(limit)
+	if offset < 0 {
+		offset = 0
+	}
+
+	var (
+		countArgs    []interface{}
+		countWhere   string
+		listWhere    string
+		listArgs     []interface{}
+		statusArgIdx int
+	)
+	if statusFilter != nil && *statusFilter != "" {
+		countArgs = append(countArgs, *statusFilter)
+		countWhere = " WHERE deleted_at IS NULL AND status = $1"
+		listArgs = append(listArgs, *statusFilter)
+		statusArgIdx = 1
+		listWhere = " WHERE deleted_at IS NULL AND status = $1"
+	} else {
+		countWhere = " WHERE deleted_at IS NULL"
+		listWhere = " WHERE deleted_at IS NULL"
+	}
+
+	var total int
+	if err := s.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM organizations"+countWhere,
+		countArgs...,
+	).Scan(&total); err != nil {
+		return nil, nil, fmt.Errorf("count all orgs: %w", err)
+	}
+
+	pagination := &types.PaginationMetadata{
+		Total: total, Start: offset, End: offset + limit, Limit: limit, Offset: offset,
+	}
+	if pagination.End > total {
+		pagination.End = total
+	}
+	if total == 0 {
+		return []types.OrgSummary{}, pagination, nil
+	}
+
+	// LIMIT/OFFSET bind after the optional status parameter; their placeholder
+	// indexes depend on whether the status filter is present.
+	limitIdx := statusArgIdx + 1
+	offsetIdx := statusArgIdx + 2
+	listArgs = append(listArgs, limit, offset)
+	query := fmt.Sprintf( //nolint:gosec // G201: $N placeholder indexes only, no string interpolation of user input
+		`SELECT o.id, o.name, o.slug, o.created_by, o.created_at, o.updated_at,
+		        o.status, o.plan_id, o.subscription_status,
+		        (SELECT COUNT(*) FROM org_memberships m WHERE m.org_id = o.id) AS member_count,
+		        (SELECT COUNT(*) FROM workspaces w WHERE w.org_id = o.id AND w.deleted_at IS NULL) AS workspace_count
+		 FROM organizations o%s
+		 ORDER BY o.created_at DESC
+		 LIMIT $%d OFFSET $%d`,
+		listWhere, limitIdx, offsetIdx,
+	)
+
+	rows, err := s.db.QueryContext(ctx, query, listArgs...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list all orgs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]types.OrgSummary, 0)
+	for rows.Next() {
+		var o types.OrgSummary
+		if err := rows.Scan(
+			&o.ID, &o.Name, &o.Slug, &o.CreatedBy, &o.CreatedAt, &o.UpdatedAt,
+			&o.Status, &o.PlanID, &o.SubscriptionStatus,
+			&o.MemberCount, &o.WorkspaceCount,
+		); err != nil {
+			return nil, nil, fmt.Errorf("scan org summary: %w", err)
+		}
+		out = append(out, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("iterate org summaries: %w", err)
+	}
+	return out, pagination, nil
+}
+
+// --- US-43.10: OIDC SSO configuration implementations ---
+
+// decodeGroupRoleMapping parses a JSONB group_role_mapping blob into a typed
+// map. Invalid values (non-admin/member roles) are dropped silently rather than
+// failing the whole read — a corrupt mapping should not lock users out of SSO.
+func decodeGroupRoleMapping(b []byte) map[string]types.OrgRole {
+	if len(b) == 0 || string(b) == "null" {
+		return map[string]types.OrgRole{}
+	}
+	var raw map[string]string
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return map[string]types.OrgRole{}
+	}
+	out := make(map[string]types.OrgRole, len(raw))
+	for group, role := range raw {
+		switch types.OrgRole(role) {
+		case types.OrgRoleAdmin, types.OrgRoleMember:
+			out[group] = types.OrgRole(role)
+		}
+	}
+	return out
+}
+
+// scanSSOConfig scans one org_sso_configs row into a typed config. group_role_mapping
+// (JSONB) is scanned as raw bytes then decoded to map[string]OrgRole.
+func scanSSOConfig(row *sql.Row, cfg *types.OrgSSOConfig) error {
+	var groupMappingBytes []byte
+	if err := row.Scan(
+		&cfg.OrgID,
+		&cfg.DiscoveryURL,
+		&cfg.ClientID,
+		&cfg.ClientSecret,
+		pq.Array(&cfg.ClaimedDomains),
+		&cfg.AutoProvision,
+		&groupMappingBytes,
+		&cfg.CreatedAt,
+		&cfg.UpdatedAt,
+	); err != nil {
+		return err
+	}
+	cfg.GroupRoleMapping = decodeGroupRoleMapping(groupMappingBytes)
+	if cfg.ClaimedDomains == nil {
+		cfg.ClaimedDomains = []string{}
+	}
+	return nil
+}
+
+func (s *PgOrgStore) GetSSOConfig(ctx context.Context, orgID string) (*types.OrgSSOConfig, error) {
+	var cfg types.OrgSSOConfig
+	if err := scanSSOConfig(s.db.QueryRowContext(ctx,
+		`SELECT org_id, oidc_discovery_url, oidc_client_id, oidc_client_secret,
+		        claimed_domains, auto_provision, group_role_mapping, created_at, updated_at
+		 FROM org_sso_configs WHERE org_id = $1`,
+		orgID,
+	), &cfg); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get sso config: %w", err)
+	}
+	return &cfg, nil
+}
+
+func (s *PgOrgStore) UpsertSSOConfig(ctx context.Context, config *types.OrgSSOConfig) error {
+	groupMapping := encodeGroupRoleMapping(config.GroupRoleMapping)
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO org_sso_configs
+		   (org_id, oidc_discovery_url, oidc_client_id, oidc_client_secret,
+		    claimed_domains, auto_provision, group_role_mapping, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+		 ON CONFLICT (org_id) DO UPDATE SET
+		   oidc_discovery_url = EXCLUDED.oidc_discovery_url,
+		   oidc_client_id     = EXCLUDED.oidc_client_id,
+		   oidc_client_secret = EXCLUDED.oidc_client_secret,
+		   claimed_domains    = EXCLUDED.claimed_domains,
+		   auto_provision     = EXCLUDED.auto_provision,
+		   group_role_mapping = EXCLUDED.group_role_mapping,
+		   updated_at         = NOW()`,
+		config.OrgID, config.DiscoveryURL, config.ClientID, config.ClientSecret,
+		pq.Array(ssoDomainsParam(config.ClaimedDomains)), config.AutoProvision, groupMapping,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert sso config: %w", err)
+	}
+	return nil
+}
+
+func (s *PgOrgStore) DeleteSSOConfig(ctx context.Context, orgID string) error {
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM org_sso_configs WHERE org_id = $1`, orgID,
+	); err != nil {
+		return fmt.Errorf("delete sso config: %w", err)
+	}
+	return nil
+}
+
+func (s *PgOrgStore) FindSSOConfigByDomain(ctx context.Context, domain string) (*types.OrgSSOConfig, error) {
+	var cfg types.OrgSSOConfig
+	if err := scanSSOConfig(s.db.QueryRowContext(ctx,
+		`SELECT c.org_id, c.oidc_discovery_url, c.oidc_client_id, c.oidc_client_secret,
+		        c.claimed_domains, c.auto_provision, c.group_role_mapping, c.created_at, c.updated_at
+		 FROM org_sso_configs c
+		 JOIN organizations o ON o.id = c.org_id AND o.deleted_at IS NULL
+		 WHERE $1 = ANY (c.claimed_domains)`,
+		domain,
+	), &cfg); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("find sso config by domain: %w", err)
+	}
+	return &cfg, nil
+}
+
+func (s *PgOrgStore) ListSSODomains(ctx context.Context) ([]types.SSODomain, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT o.slug, o.name, c.claimed_domains
+		 FROM org_sso_configs c
+		 JOIN organizations o ON o.id = c.org_id AND o.deleted_at IS NULL
+		 WHERE array_length(c.claimed_domains, 1) IS NOT NULL
+		 ORDER BY o.name`)
+	if err != nil {
+		return nil, fmt.Errorf("list sso domains: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []types.SSODomain
+	for rows.Next() {
+		var slug, name string
+		var domains []string
+		if err := rows.Scan(&slug, &name, pq.Array(&domains)); err != nil {
+			return nil, fmt.Errorf("scan sso domain row: %w", err)
+		}
+		for _, d := range domains {
+			out = append(out, types.SSODomain{
+				Domain:  normalizeDomain(d),
+				OrgSlug: slug,
+				OrgName: name,
+			})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate sso domain rows: %w", err)
+	}
+	if out == nil {
+		out = []types.SSODomain{}
+	}
+	return out, nil
+}
+
+func (s *PgOrgStore) CountSSOConfigs(ctx context.Context) (int, error) {
+	var count int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM org_sso_configs`,
+	).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count sso configs: %w", err)
+	}
+	return count, nil
+}
+
+// encodeGroupRoleMapping serializes the typed mapping to JSONB-ready bytes.
+func encodeGroupRoleMapping(m map[string]types.OrgRole) []byte {
+	if len(m) == 0 {
+		return []byte(`{}`)
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return []byte(`{}`)
+	}
+	return b
+}
+
+// normalizeDomain returns the domain with a leading "@" and lowercased, the
+// form exposed by the discovery endpoint and matched against email suffixes.
+func normalizeDomain(d string) string {
+	d = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(d), "@")))
+	if d == "" {
+		return ""
+	}
+	return "@" + d
+}
+
+// ssoDomainsParam normalizes the claimed-domains slice for binding: nil becomes
+// an empty slice to honor the NOT NULL DEFAULT '{}' constraint.
+func ssoDomainsParam(domains []string) []string {
+	if domains == nil {
+		return []string{}
+	}
+	return domains
 }

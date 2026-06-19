@@ -11,15 +11,15 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 from canary import Runner, Config, config_from_env, raw_do
-from llmsafespace import LLMSafeSpace
+from llmsafespaces import LLMSafeSpaces
 
 
 def run(r: Runner, cfg: Config) -> None:
-    email = os.environ.get("LLMSAFESPACE_ROTATE_EMAIL", "canary-rotate@llmsafespace.test")
-    password = os.environ.get("LLMSAFESPACE_ROTATE_PASSWORD", "canary-rotate-password!")
+    email = os.environ.get("LLMSAFESPACES_ROTATE_EMAIL", "canary-rotate@llmsafespaces.test")
+    password = os.environ.get("LLMSAFESPACES_ROTATE_PASSWORD", "canary-rotate-password!")
     new_password = "canary-recover-pw-99!"
 
-    c = LLMSafeSpace(cfg.api_url, email=email, password=password, timeout=30.0)
+    c = LLMSafeSpaces(cfg.api_url, email=email, password=password, timeout=30.0)
     secret_id = None
     try:
         ok_me, me = r.assert_no_error(lambda: c.auth.me(), "login: no error")
@@ -56,7 +56,7 @@ def run(r: Runner, cfg: Config) -> None:
                 str(list(recover_resp.keys())),
             )
 
-        c2 = LLMSafeSpace(cfg.api_url, email=email, password=new_password, timeout=30.0)
+        c2 = LLMSafeSpaces(cfg.api_url, email=email, password=new_password, timeout=30.0)
         ok4, me2 = r.assert_no_error(lambda: c2.auth.me(), "login-after-recover: no error")
         r.assert_(ok4, "login-after-recover: succeeds")
 

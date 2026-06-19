@@ -7,8 +7,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -51,6 +51,10 @@ func (m *MockDatabaseService) UpdateUser(ctx context.Context, userID string, upd
 
 func (m *MockDatabaseService) DeleteUser(ctx context.Context, userID string) error {
 	return m.Called(ctx, userID).Error(0)
+}
+
+func (m *MockDatabaseService) SetUserStatus(ctx context.Context, userID string, status types.UserStatus) error {
+	return m.Called(ctx, userID, status).Error(0)
 }
 
 func (m *MockDatabaseService) GetUserByAPIKey(ctx context.Context, apiKey string) (*types.User, error) {

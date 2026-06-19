@@ -17,8 +17,8 @@ import (
 	k8s "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
-	"github.com/lenaxia/llmsafespace/pkg/interfaces"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+	"github.com/lenaxia/llmsafespaces/pkg/interfaces"
 )
 
 // MockKubernetesClient mocks interfaces.KubernetesClient.
@@ -46,31 +46,31 @@ func (m *MockKubernetesClient) InformerFactory() informers.SharedInformerFactory
 	}
 	return v.(informers.SharedInformerFactory)
 }
-func (m *MockKubernetesClient) LlmsafespaceV1() (interfaces.LLMSafespaceV1Interface, error) {
+func (m *MockKubernetesClient) LlmsafespacesV1() (interfaces.LLMSafespacesV1Interface, error) {
 	args := m.Called()
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(interfaces.LLMSafespaceV1Interface), args.Error(1)
+	return args.Get(0).(interfaces.LLMSafespacesV1Interface), args.Error(1)
 }
 
-// MockLLMSafespaceV1Interface mocks interfaces.LLMSafespaceV1Interface.
-type MockLLMSafespaceV1Interface struct{ mock.Mock }
+// MockLLMSafespacesV1Interface mocks interfaces.LLMSafespacesV1Interface.
+type MockLLMSafespacesV1Interface struct{ mock.Mock }
 
-var _ interfaces.LLMSafespaceV1Interface = (*MockLLMSafespaceV1Interface)(nil)
+var _ interfaces.LLMSafespacesV1Interface = (*MockLLMSafespacesV1Interface)(nil)
 
-func NewMockLLMSafespaceV1Interface() *MockLLMSafespaceV1Interface {
-	return &MockLLMSafespaceV1Interface{}
+func NewMockLLMSafespacesV1Interface() *MockLLMSafespacesV1Interface {
+	return &MockLLMSafespacesV1Interface{}
 }
 
-func (m *MockLLMSafespaceV1Interface) RuntimeEnvironments() interfaces.RuntimeEnvironmentInterface {
+func (m *MockLLMSafespacesV1Interface) RuntimeEnvironments() interfaces.RuntimeEnvironmentInterface {
 	return m.Called().Get(0).(interfaces.RuntimeEnvironmentInterface)
 }
-func (m *MockLLMSafespaceV1Interface) Workspaces(ns string) interfaces.WorkspaceInterface {
+func (m *MockLLMSafespacesV1Interface) Workspaces(ns string) interfaces.WorkspaceInterface {
 	return m.Called(ns).Get(0).(interfaces.WorkspaceInterface)
 }
 
-func (m *MockLLMSafespaceV1Interface) InferenceRelays() interfaces.InferenceRelayInterface {
+func (m *MockLLMSafespacesV1Interface) InferenceRelays() interfaces.InferenceRelayInterface {
 	return m.Called().Get(0).(interfaces.InferenceRelayInterface)
 }
 

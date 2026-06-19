@@ -16,10 +16,35 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/pkg/agent/opencode"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
+
+// newTestModelsHandler creates a ModelsHandler backed by a real
+// WorkspaceClient that resolves to 127.0.0.1 with the given password.
+// Used by tests that start a real listener on port 4096.
+func newTestModelsHandler(password string) *ModelsHandler {
+	ac := opencode.NewWorkspaceClient(
+		mockPasswordGetter(password),
+		&staticPodIPResolver{addr: "127.0.0.1"},
+		zap.NewNop(),
+	)
+	return NewModelsHandler(ac)
+}
+
+// newTestModelsHandlerNoPod creates a ModelsHandler whose AgentClient
+// will fail to resolve (empty pod IP). Tests error-handling paths.
+func newTestModelsHandlerNoPod() *ModelsHandler {
+	ac := opencode.NewWorkspaceClient(
+		func(context.Context, string) (string, error) { return "", nil },
+		&staticPodIPResolver{addr: ""},
+		zap.NewNop(),
+	)
+	return NewModelsHandler(ac)
+}
 
 // --- Mocks ---
 
@@ -92,9 +117,7 @@ func TestListModels_HappyPath(t *testing.T) {
 	srv.Start()
 	defer srv.Close()
 
-	handler := NewSecretsHandler(nil)
-	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
-	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
+	handler := newTestModelsHandler(testPassword)
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -114,10 +137,10 @@ func TestListModels_HappyPath(t *testing.T) {
 }
 
 func TestListModels_NoPodRunning(t *testing.T) {
+	clearModelCache()
 	gin.SetMode(gin.TestMode)
 
-	handler := NewSecretsHandler(nil)
-	handler.SetPodIPResolver(&staticPodIPResolver{addr: ""})
+	handler := newTestModelsHandlerNoPod()
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -137,7 +160,7 @@ func TestListModels_NoPodRunning(t *testing.T) {
 func TestListModels_NoPodIPResolver(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	handler := NewSecretsHandler(nil)
+	handler := NewModelsHandler(nil)
 	// No resolver set
 
 	router := gin.New()
@@ -158,9 +181,10 @@ func TestListModels_AgentUnreachable(t *testing.T) {
 	clearModelCache()
 	gin.SetMode(gin.TestMode)
 
-	handler := NewSecretsHandler(nil)
-	handler.SetPodIPResolver(&staticPodIPResolver{addr: "192.0.2.1"})
-	handler.SetPasswordGetter(mockPasswordGetter("some-pw"))
+	// With nil AgentClient, ListModels returns 503 "model discovery unavailable".
+	// (The old test tested the no-resolver path; with AgentClient, nil =
+	// discovery unavailable.)
+	handler := NewModelsHandler(nil)
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -173,13 +197,13 @@ func TestListModels_AgentUnreachable(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusBadGateway, w.Code)
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
 func TestListModels_Unauthenticated(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	handler := NewSecretsHandler(nil)
+	handler := NewModelsHandler(nil)
 	router := gin.New()
 	// No userID in context
 	router.GET("/api/v1/workspaces/:id/models", handler.ListModels)
@@ -205,9 +229,8 @@ func TestSetModel_HappyPath(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	updater := &mockWSUpdater{}
-	handler := NewSecretsHandler(nil)
-	handler.SetPodIPResolver(&staticPodIPResolver{addr: ""}) // no pod needed — SetModel persists only
-	handler.SetWorkspaceMetadataUpdater(updater)
+	handler := newTestModelsHandlerNoPod() // no pod needed — SetModel persists only
+	handler.SetModelStore(updater)
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -227,8 +250,9 @@ func TestSetModel_HappyPath(t *testing.T) {
 	var resp map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	require.Equal(t, "anthropic/claude-sonnet-4-5", resp["model"])
-	// applied is always false — no live push (PATCH /global/config disposed all
-	// instances, which aborts streams; removed per Epic 27a principles)
+	// applied is false because the AgentClient resolves to an empty pod IP
+	// (no pod running), so the live PATCH to opencode fails.
+	// The model IS persisted to workspace metadata (verified below).
 	require.Equal(t, false, resp["applied"])
 
 	// Verify workspace metadata was updated.
@@ -241,8 +265,8 @@ func TestSetModel_HappyPath(t *testing.T) {
 func TestSetModel_MissingModelField(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	handler := NewSecretsHandler(nil)
-	handler.SetWorkspaceMetadataUpdater(&mockWSUpdater{})
+	handler := NewModelsHandler(nil)
+	handler.SetModelStore(&mockWSUpdater{})
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -262,7 +286,7 @@ func TestSetModel_MissingModelField(t *testing.T) {
 func TestSetModel_NoUpdater(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	handler := NewSecretsHandler(nil)
+	handler := NewModelsHandler(nil)
 	// No updater set
 
 	router := gin.New()
@@ -281,13 +305,39 @@ func TestSetModel_NoUpdater(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
 
+// TestSetModel_NilAgentClient_Returns503 is a regression test for the
+// nil-agentClient panic found in review. When agentClient is nil (e.g.
+// agentReloadHandler was nil so AgentClient was never wired), SetModel
+// must return 503, not panic.
+func TestSetModel_NilAgentClient_Returns503(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	handler := NewModelsHandler(nil)
+	handler.SetModelStore(&mockWSUpdater{}) // updater is set, but agentClient is nil
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", "user-1")
+		c.Next()
+	})
+	router.PUT("/api/v1/workspaces/:id/model", handler.SetModel)
+
+	body, _ := json.Marshal(map[string]string{"model": "test/model"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/workspaces/ws-1/model", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	require.Contains(t, w.Body.String(), "agent client")
+}
+
 func TestSetModel_NoPod_AppliedFalse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	updater := &mockWSUpdater{}
-	handler := NewSecretsHandler(nil)
-	handler.SetPodIPResolver(&staticPodIPResolver{addr: ""}) // no pod
-	handler.SetWorkspaceMetadataUpdater(updater)
+	handler := newTestModelsHandlerNoPod() // no pod
+	handler.SetModelStore(updater)
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -346,10 +396,8 @@ func TestSetModel_LivePush_SendsBasicAuth(t *testing.T) {
 	defer srv.Close()
 
 	updater := &mockWSUpdater{ownerUserID: "user-1"}
-	handler := NewSecretsHandler(nil)
-	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
-	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
-	handler.SetWorkspaceMetadataUpdater(updater)
+	handler := newTestModelsHandler(testPassword)
+	handler.SetModelStore(updater)
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) { c.Set("userID", "user-1"); c.Next() })
@@ -371,8 +419,8 @@ func TestSetModel_LivePush_SendsBasicAuth(t *testing.T) {
 func TestSetModel_Unauthenticated(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	handler := NewSecretsHandler(nil)
-	handler.SetWorkspaceMetadataUpdater(&mockWSUpdater{})
+	handler := NewModelsHandler(nil)
+	handler.SetModelStore(&mockWSUpdater{})
 
 	router := gin.New()
 	// No userID
@@ -391,9 +439,9 @@ func TestListModels_NoPasswordGetter_Returns503(t *testing.T) {
 	clearModelCache()
 	gin.SetMode(gin.TestMode)
 
-	handler := NewSecretsHandler(nil)
-	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
-	// No SetPasswordGetter — should fail gracefully
+	// With nil AgentClient (no password resolution path configured),
+	// ListModels returns 503 "model discovery unavailable".
+	handler := NewModelsHandler(nil)
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -407,7 +455,7 @@ func TestListModels_NoPasswordGetter_Returns503(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusServiceUnavailable, w.Code)
-	require.Contains(t, w.Body.String(), "password getter")
+	require.Contains(t, w.Body.String(), "model discovery unavailable")
 }
 
 func TestListModels_WrongPassword_Returns502(t *testing.T) {
@@ -427,9 +475,7 @@ func TestListModels_WrongPassword_Returns502(t *testing.T) {
 	srv.Start()
 	defer srv.Close()
 
-	handler := NewSecretsHandler(nil)
-	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
-	handler.SetPasswordGetter(mockPasswordGetter("wrong-pw")) // wrong password
+	handler := newTestModelsHandler("wrong-pw") // wrong password
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -442,8 +488,8 @@ func TestListModels_WrongPassword_Returns502(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	// opencode returns 401 → handler passes through as error
-	require.NotEqual(t, http.StatusOK, w.Code)
+	// opencode returns 401 (wrong password) → handler returns 502 Bad Gateway
+	require.Equal(t, http.StatusBadGateway, w.Code)
 }
 
 // Ensure unused import doesn't break compilation.
@@ -597,9 +643,7 @@ func TestListModels_ResponseAnnotated(t *testing.T) {
 	srv.Start()
 	defer srv.Close()
 
-	handler := NewSecretsHandler(nil)
-	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
-	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
+	handler := newTestModelsHandler(testPassword)
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -768,10 +812,8 @@ func TestListModels_IncludesCurrentModel(t *testing.T) {
 	srv.Start()
 	defer srv.Close()
 
-	handler := NewSecretsHandler(nil)
-	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
-	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
-	handler.SetWorkspaceMetadataUpdater(&mockModelReader{model: "claude-sonnet-4-5"})
+	handler := newTestModelsHandler(testPassword)
+	handler.SetModelStore(&mockModelReader{model: "claude-sonnet-4-5"})
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -830,10 +872,8 @@ func TestListModels_FiltersPaidOpencodeModels(t *testing.T) {
 	srv.Start()
 	defer srv.Close()
 
-	handler := NewSecretsHandler(nil)
-	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
-	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
-	handler.SetWorkspaceMetadataUpdater(&mockWSUpdater{})
+	handler := newTestModelsHandler(testPassword)
+	handler.SetModelStore(&mockWSUpdater{})
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -869,32 +909,17 @@ func TestListModels_FiltersPaidOpencodeModels(t *testing.T) {
 	require.Len(t, resp.Models, 3)
 }
 
-// TestResolveModelIDFromCatalog verifies that patchAgentModel sends providerID/modelID
-// to opencode's /global/config, not the flat catalog ID.
+// TestResolveModelFromCatalog_PrefixesProvider verifies that the model
+// resolution function returns providerID/modelID format.
 // Regression test for the opencode 1.15.x ProviderModelNotFoundError bug.
-func TestResolveModelIDFromCatalog_PrefixesProvider(t *testing.T) {
-	const pw = "test-pw"
-	listener, err := net.Listen("tcp", "127.0.0.1:4096")
-	if err != nil {
-		t.Skip("port 4096 not available")
-	}
-	srv := httptest.NewUnstartedServer(authEnforcingHandler(pw, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/provider" {
-			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{
-				"connected": ["openai","anthropic"],
-				"all": [
-					{"id":"openai","models":{"gpt-5.5":{"id":"gpt-5.5","name":"GPT-5.5","cost":{"input":5,"output":15}}}},
-					{"id":"anthropic","models":{"claude-3":{"id":"claude-3","name":"Claude 3","cost":{"input":3,"output":15}}}}
-				]
-			}`))
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	srv.Listener = listener
-	srv.Start()
-	defer srv.Close()
+func TestResolveModelFromCatalog_PrefixesProvider(t *testing.T) {
+	rawCatalog := []byte(`{
+		"connected": ["openai","anthropic"],
+		"all": [
+			{"id":"openai","models":{"gpt-5.5":{"id":"gpt-5.5","name":"GPT-5.5","cost":{"input":5,"output":15}}}},
+			{"id":"anthropic","models":{"claude-3":{"id":"claude-3","name":"Claude 3","cost":{"input":3,"output":15}}}}
+		]
+	}`)
 
 	tests := []struct {
 		catalogID string
@@ -902,12 +927,11 @@ func TestResolveModelIDFromCatalog_PrefixesProvider(t *testing.T) {
 	}{
 		{"gpt-5.5", "openai/gpt-5.5"},
 		{"claude-3", "anthropic/claude-3"},
-		{"unknown-model", "unknown-model"}, // not in catalog → unchanged
+		{"unknown-model", "unknown-model"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.catalogID, func(t *testing.T) {
-			h := NewSecretsHandler(nil)
-			got := h.resolveModelIDFromCatalog(context.Background(), "127.0.0.1", pw, tt.catalogID)
+			got := resolveModelFromCatalog(rawCatalog, tt.catalogID, false, nil, context.Background(), "", "")
 			require.Equal(t, tt.want, got)
 		})
 	}
@@ -944,10 +968,8 @@ func TestSetModel_LivePush_ResolvesProviderPrefix(t *testing.T) {
 	defer srv.Close()
 
 	updater := &mockWSUpdater{ownerUserID: "user-1"}
-	handler := NewSecretsHandler(nil)
-	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
-	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
-	handler.SetWorkspaceMetadataUpdater(updater)
+	handler := newTestModelsHandler(testPassword)
+	handler.SetModelStore(updater)
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) { c.Set("userID", "user-1"); c.Next() })
@@ -990,10 +1012,8 @@ func TestListModels_CurrentModelProviderID(t *testing.T) {
 	srv.Start()
 	defer srv.Close()
 
-	handler := NewSecretsHandler(nil)
-	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
-	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
-	handler.SetWorkspaceMetadataUpdater(&mockModelReader{model: "glm-5.1"})
+	handler := newTestModelsHandler(testPassword)
+	handler.SetModelStore(&mockModelReader{model: "glm-5.1"})
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) { c.Set("userID", "user-1"); c.Next() })
@@ -1040,10 +1060,8 @@ func TestListModels_CurrentModelProviderID_Collision(t *testing.T) {
 	srv.Start()
 	defer srv.Close()
 
-	handler := NewSecretsHandler(nil)
-	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
-	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
-	handler.SetWorkspaceMetadataUpdater(&mockModelReader{model: "shared-model"})
+	handler := newTestModelsHandler(testPassword)
+	handler.SetModelStore(&mockModelReader{model: "shared-model"})
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) { c.Set("userID", "user-1"); c.Next() })
@@ -1111,11 +1129,35 @@ func TestListModels_CurrentModelProviderID_RelayActive(t *testing.T) {
 	adminSrv.Start()
 	defer adminSrv.Close()
 
-	handler := NewSecretsHandler(nil)
-	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
-	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
-	handler.SetWorkspaceMetadataUpdater(&mockModelReader{model: "glm-5.1-free"})
+	handler := newTestModelsHandler(testPassword)
+	handler.SetModelStore(&mockModelReader{model: "glm-5.1-free"})
 	handler.SetRelayActive(true)
+	// Wire a relayChecker that hits the agentd admin server (port 4098)
+	// started above. Without this, h.relayChecker is nil and the handler
+	// skips the readyz check, leaving relayInjected=false (Bug: assertion
+	// would see "opencode" instead of "opencode-relay").
+	handler.SetRelayChecker(func(_ context.Context, _, _ string) bool {
+		req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:4098/v1/readyz", nil)
+		if err != nil {
+			return false
+		}
+		req.Header.Set("Authorization", "Bearer "+testPassword)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return false
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusOK {
+			return false
+		}
+		var rz struct {
+			RelayInjected bool `json:"relay_injected"`
+		}
+		if json.NewDecoder(resp.Body).Decode(&rz) != nil {
+			return false
+		}
+		return rz.RelayInjected
+	})
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) { c.Set("userID", "user-1"); c.Next() })
@@ -1177,10 +1219,34 @@ func TestListModels_RelayActive_PersonalKey_NoRemap(t *testing.T) {
 	adminSrv.Start()
 	defer adminSrv.Close()
 
-	handler := NewSecretsHandler(nil)
-	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
-	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
+	handler := newTestModelsHandler(testPassword)
 	handler.SetRelayActive(true)
+	// Wire a relayChecker that hits the agentd admin server (port 4098)
+	// started above. Without this, h.relayChecker is nil and the handler
+	// skips the readyz check — the test would pass for the wrong reason
+	// (nil checker → no remap, instead of readyz=false → no remap).
+	handler.SetRelayChecker(func(_ context.Context, _, _ string) bool {
+		req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:4098/v1/readyz", nil)
+		if err != nil {
+			return false
+		}
+		req.Header.Set("Authorization", "Bearer "+testPassword)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return false
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusOK {
+			return false
+		}
+		var rz struct {
+			RelayInjected bool `json:"relay_injected"`
+		}
+		if json.NewDecoder(resp.Body).Decode(&rz) != nil {
+			return false
+		}
+		return rz.RelayInjected
+	})
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) { c.Set("userID", "user-1"); c.Next() })

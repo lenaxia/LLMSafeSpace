@@ -5,6 +5,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -14,14 +15,15 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/lenaxia/llmsafespace/api/internal/handlers"
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	apilogger "github.com/lenaxia/llmsafespace/api/internal/logger"
-	"github.com/lenaxia/llmsafespace/api/internal/middleware"
-	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
-	"github.com/lenaxia/llmsafespace/api/internal/utilities"
-	"github.com/lenaxia/llmsafespace/pkg/settings"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	apierrors "github.com/lenaxia/llmsafespaces/api/internal/errors"
+	"github.com/lenaxia/llmsafespaces/api/internal/handlers"
+	"github.com/lenaxia/llmsafespaces/api/internal/interfaces"
+	apilogger "github.com/lenaxia/llmsafespaces/api/internal/logger"
+	"github.com/lenaxia/llmsafespaces/api/internal/middleware"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/workspace"
+	"github.com/lenaxia/llmsafespaces/api/internal/utilities"
+	"github.com/lenaxia/llmsafespaces/pkg/settings"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 // RouterConfig defines configuration for the router
@@ -52,6 +54,10 @@ type RouterConfig struct {
 
 	// SecretsHandler is the handler for secret management endpoints (optional)
 	SecretsHandler *handlers.SecretsHandler
+
+	// ModelsHandler handles model listing and selection (optional).
+	// Extracted from SecretsHandler (US-29.5).
+	ModelsHandler *handlers.ModelsHandler
 
 	// WorkspaceEnvHandler is the handler for workspace env-var endpoints (optional).
 	// Extracted from SecretsHandler (US-29.4).
@@ -90,7 +96,27 @@ type RouterConfig struct {
 	// RelayAdminHandler handles relay admin setup + status endpoints (optional)
 	RelayAdminHandler *handlers.RelayAdminHandler
 
+	// AdminSessionHandler handles admin-only session recovery endpoints (optional).
+	// US-44.11: force-abort a workspace session stuck in activeSess after the
+	// workspace pod was deleted/unreachable.
+	AdminSessionHandler *handlers.AdminSessionHandler
+
+	// PlatformAdminHandler handles platform-admin org/user suspension
+	// endpoints (US-43.19, D19/D20). Mounted behind AuthMiddleware + AdminGuard.
+	PlatformAdminHandler *handlers.PlatformAdminHandler
+
+	// InternalOrgStatusHandler, when non-nil, registers the cluster-internal
+	// GET /api/v1/internal/orgs/:orgID/status endpoint that the controller
+	// polls to drive org-suspension of workspaces (D20). It is intentionally
+	// NOT behind AuthMiddleware; access is gated by the X-Internal-Token
+	// header (see InternalOrgStatusHandler) and the cluster NetworkPolicy.
+	InternalOrgStatusHandler *handlers.InternalOrgStatusHandler
+
 	CookieName string
+
+	// SSOHandler handles org-admin SSO config CRUD + the public OIDC login flow
+	// (start/callback) and claimed-domain discovery (US-43.10, D17).
+	SSOHandler *handlers.SSOHandler
 }
 
 // cookieName returns the session cookie name, falling back to "lsp_session" when empty.
@@ -162,7 +188,7 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 
 	// Auth routes (public — no auth middleware)
 	authGroup := router.Group("/api/v1/auth")
-	registerAuthRoutes(authGroup, services, cfg.InstanceSettings, logger, cfg.cookieName())
+	registerAuthRoutes(authGroup, services, cfg.InstanceSettings, logger, cfg.cookieName(), cfg.SSOHandler)
 
 	// Authenticated workspace routes
 	workspaceGroup := router.Group("/api/v1/workspaces")
@@ -314,6 +340,45 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		relayAdmin.POST("/resume", cfg.RelayAdminHandler.Resume)
 	}
 
+	// Admin session recovery routes (US-44.11)
+	if cfg.AdminSessionHandler != nil {
+		adminSessions := router.Group("/api/v1/admin/workspaces/:workspaceId/sessions")
+		adminSessions.Use(services.GetAuth().AuthMiddleware())
+		adminSessions.Use(middleware.AdminGuard())
+		adminSessions.POST("/:sessionId/force-abort", cfg.AdminSessionHandler.ForceAbortSession)
+	}
+
+	// US-43.20: Cross-org audit view (platform admin only).
+	if cfg.AuditHandler != nil {
+		platformAudit := router.Group("/api/v1/admin/audit")
+		platformAudit.Use(services.GetAuth().AuthMiddleware())
+		platformAudit.Use(middleware.AdminGuard())
+		platformAudit.GET("", cfg.AuditHandler.ListCrossOrg)
+	}
+
+	// US-43.19: Platform-admin org/user suspension (D19/D20). Behind
+	// AuthMiddleware + AdminGuard so only users.role='admin' can call them.
+	// US-43.18: the same group also hosts the dashboard list endpoints
+	// (GET /admin/orgs, GET /admin/users).
+	if cfg.PlatformAdminHandler != nil {
+		suspendGrp := router.Group("/api/v1/admin")
+		suspendGrp.Use(services.GetAuth().AuthMiddleware())
+		suspendGrp.Use(middleware.AdminGuard())
+		suspendGrp.GET("/orgs", cfg.PlatformAdminHandler.ListOrgs)
+		suspendGrp.GET("/users", cfg.PlatformAdminHandler.ListUsers)
+		suspendGrp.POST("/orgs/:id/suspend", cfg.PlatformAdminHandler.SuspendOrg)
+		suspendGrp.POST("/orgs/:id/unsuspend", cfg.PlatformAdminHandler.UnsuspendOrg)
+		suspendGrp.POST("/users/:id/suspend", cfg.PlatformAdminHandler.SuspendUser)
+		suspendGrp.POST("/users/:id/unsuspend", cfg.PlatformAdminHandler.UnsuspendUser)
+	}
+
+	// US-43.19 / D20: cluster-internal org-status endpoint polled by the
+	// workspace controller. NOT behind AuthMiddleware (the controller has no
+	// user identity); gated by the X-Internal-Token header + NetworkPolicy.
+	if cfg.InternalOrgStatusHandler != nil {
+		router.GET("/api/v1/internal/orgs/:orgID/status", cfg.InternalOrgStatusHandler.GetOrgStatus)
+	}
+
 	// Secret management routes (Epic 10)
 	if cfg.SecretsHandler != nil {
 		secretsGroup := router.Group("/api/v1/secrets")
@@ -334,8 +399,13 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		idGroup.PUT("/bindings", cfg.SecretsHandler.SetBindings)
 		idGroup.GET("/bindings", cfg.SecretsHandler.GetBindings)
 		idGroup.POST("/reload-secrets", cfg.SecretsHandler.ReloadSecrets)
-		idGroup.GET("/models", cfg.SecretsHandler.ListModels)
-		idGroup.PUT("/model", cfg.SecretsHandler.SetModel)
+	}
+
+	// Model routes (US-29.5: extracted from SecretsHandler)
+	// Registered on idGroup so they inherit WorkspaceAccessMiddleware.
+	if cfg.ModelsHandler != nil {
+		idGroup.GET("/models", cfg.ModelsHandler.ListModels)
+		idGroup.PUT("/model", cfg.ModelsHandler.SetModel)
 	}
 
 	// Workspace env-var routes (US-29.4: extracted from SecretsHandler).
@@ -357,7 +427,7 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 
 	// Org CRUD routes (Epic 11)
 	if cfg.OrgsHandler != nil {
-		registerOrgRoutes(router, services, cfg.OrgsHandler, cfg.OrgCredentialsHandler, cfg.InvitationsHandler, cfg.PolicyHandler, cfg.AuditHandler)
+		registerOrgRoutes(router, services, cfg.OrgsHandler, cfg.OrgCredentialsHandler, cfg.InvitationsHandler, cfg.PolicyHandler, cfg.AuditHandler, cfg.SSOHandler)
 	}
 
 	// Metrics endpoint.
@@ -366,11 +436,11 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 	// internal counters (request rates per route, error rates, etc.)
 	// to any pod that could route to the API service. We now require
 	// `Authorization: Bearer <token>` if the env var
-	// LLMSAFESPACE_METRICS_TOKEN is set. Operators who want
+	// LLMSAFESPACES_METRICS_TOKEN is set. Operators who want
 	// Prometheus to scrape unauthenticated should leave the env unset
 	// (matching the pre-fix behavior with explicit opt-in).
 	router.GET("/metrics", func(c *gin.Context) {
-		token := os.Getenv("LLMSAFESPACE_METRICS_TOKEN")
+		token := os.Getenv("LLMSAFESPACES_METRICS_TOKEN")
 		if token != "" && c.GetHeader("Authorization") != "Bearer "+token {
 			c.Header("WWW-Authenticate", `Bearer realm="metrics"`)
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
@@ -458,13 +528,13 @@ func setSessionCookie(c *gin.Context, token string, maxAge int, cookieName strin
 }
 
 // API key management routes.
-func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, instanceSettings *settings.InstanceService, logger *apilogger.Logger, cookieName string) {
+func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, instanceSettings *settings.InstanceService, logger *apilogger.Logger, cookieName string, ssoHandler *handlers.SSOHandler) {
 	authSvc := services.GetAuth()
 
 	// Public: feature flag discovery
 	rg.GET("/config", func(c *gin.Context) {
 		regEnabled := true // default
-		instanceName := "LLMSafeSpace"
+		instanceName := "LLMSafeSpaces"
 		motd := ""
 		if instanceSettings != nil {
 			if v, err := instanceSettings.GetBool(c.Request.Context(), "auth.registrationEnabled"); err == nil {
@@ -477,13 +547,27 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, insta
 				motd = v
 			}
 		}
+		// OIDCEnabled is true when at least one org has configured SSO. Falls
+		// back to false on DB error or when SSO is not wired.
+		oidcEnabled := false
+		if ssoHandler != nil {
+			oidcEnabled = ssoHandler.OIDCEnabled(c.Request.Context())
+		}
 		c.JSON(http.StatusOK, types.AuthConfig{
 			RegistrationEnabled: regEnabled,
-			OIDCEnabled:         false,
+			OIDCEnabled:         oidcEnabled,
 			InstanceName:        instanceName,
 			MOTD:                motd,
 		})
 	})
+
+	// US-43.10: public OIDC SSO endpoints. Start + callback carry the org slug
+	// in the path; domains powers login-page discovery. All three are anonymous.
+	if ssoHandler != nil {
+		rg.GET("/sso/domains", ssoHandler.Domains)
+		rg.GET("/sso/:orgSlug/start", ssoHandler.Start)
+		rg.GET("/sso/:orgSlug/callback", ssoHandler.Callback)
+	}
 
 	rg.POST("/register", func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxAuthBodyBytes)
@@ -682,11 +766,11 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, idGroup *gin.RouterGroup, serv
 		}
 
 		// G32 (Epic 17): per-user workspace quota. When the env var
-		// LLMSAFESPACE_MAX_WORKSPACES_PER_USER is set to a positive
+		// LLMSAFESPACES_MAX_WORKSPACES_PER_USER is set to a positive
 		// integer, count the user's existing non-deleted workspaces
 		// and reject CreateWorkspace if at or above the limit.
 		// Default unset = unbounded (single-tenant deployments).
-		if maxWS := os.Getenv("LLMSAFESPACE_MAX_WORKSPACES_PER_USER"); maxWS != "" {
+		if maxWS := os.Getenv("LLMSAFESPACES_MAX_WORKSPACES_PER_USER"); maxWS != "" {
 			if cap, parseErr := strconv.Atoi(maxWS); parseErr == nil && cap > 0 {
 				_, page, err := services.GetDatabase().ListWorkspaces(c.Request.Context(), userID, 1, 0)
 				if err == nil && page != nil && page.Total >= cap {
@@ -959,13 +1043,20 @@ func registerProxyRoutes(idGroup *gin.RouterGroup, proxyHandler *handlers.ProxyH
 	idGroup.POST("/permission/:requestID/reply", proxyHandler.PermissionReply)
 }
 
-// respondWithError maps API errors to HTTP responses.
+// respondWithError maps API errors to HTTP responses. It uses errors.As to
+// find an *apierrors.APIError anywhere in the error chain (handles both direct
+// returns and fmt.Errorf-wrapped errors), falling back to a duck-typed
+// StatusCode() check for other typed errors, then 500 for plain errors.
 func respondWithError(c *gin.Context, err error) {
-	type apiError interface {
+	var apiErr *apierrors.APIError
+	if errors.As(err, &apiErr) {
+		c.JSON(apiErr.StatusCode(), gin.H{"error": apiErr.Error()})
+		return
+	}
+	if ae, ok := err.(interface {
 		StatusCode() int
 		Error() string
-	}
-	if ae, ok := err.(apiError); ok {
+	}); ok {
 		c.JSON(ae.StatusCode(), gin.H{"error": ae.Error()})
 		return
 	}
@@ -1004,7 +1095,7 @@ func getMaxActiveSessions(ctx context.Context, instanceSettings *settings.Instan
 }
 
 // registerOrgRoutes adds all /api/v1/orgs routes.
-func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *handlers.OrgsHandler, credH *handlers.OrgCredentialsHandler, invH *handlers.InvitationsHandler, polH *handlers.PolicyHandler, audH *handlers.AuditHandler) {
+func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *handlers.OrgsHandler, credH *handlers.OrgCredentialsHandler, invH *handlers.InvitationsHandler, polH *handlers.PolicyHandler, audH *handlers.AuditHandler, ssoH *handlers.SSOHandler) {
 	authMW := services.GetAuth().AuthMiddleware()
 
 	orgGroup := router.Group("/api/v1/orgs")
@@ -1060,6 +1151,13 @@ func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *hand
 	if audH != nil {
 		// Audit log access requires Business+ plan (per billing.PlanTiers).
 		orgAdminGroup.GET("/audit", middleware.FeatureGuard(h, "audit"), audH.List)
+	}
+
+	// US-43.10: org-admin SSO config CRUD.
+	if ssoH != nil {
+		orgAdminGroup.GET("/sso", ssoH.Get)
+		orgAdminGroup.PUT("/sso", ssoH.Put)
+		orgAdminGroup.DELETE("/sso", ssoH.Delete)
 	}
 
 	// Public invitation routes (token is the credential).

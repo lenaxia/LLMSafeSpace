@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
+	"github.com/lenaxia/llmsafespaces/controller/internal/metrics"
 )
 
 // isolatedRegistry returns a fresh Prometheus registry with all package
@@ -63,7 +63,7 @@ func TestWorkspaceCreateDurationObserve(t *testing.T) {
 	metrics.WorkspaceCreateDurationSeconds.WithLabelValues("false", "false").Observe(5.0)
 	metrics.WorkspaceCreateDurationSeconds.WithLabelValues("true", "false").Observe(45.0)
 
-	mf := gatherFamily(t, reg, "llmsafespace_workspace_create_duration_seconds")
+	mf := gatherFamily(t, reg, "llmsafespaces_workspace_create_duration_seconds")
 	require.NotNil(t, mf)
 
 	// Two label combinations should produce two metric series.
@@ -86,7 +86,7 @@ func TestWorkspaceResumeDurationLabels(t *testing.T) {
 	metrics.WorkspaceResumeDurationSeconds.WithLabelValues("first_resume").Observe(20.0)
 	metrics.WorkspaceResumeDurationSeconds.WithLabelValues("subsequent_resume").Observe(12.0)
 
-	mf := gatherFamily(t, reg, "llmsafespace_workspace_resume_duration_seconds")
+	mf := gatherFamily(t, reg, "llmsafespaces_workspace_resume_duration_seconds")
 	require.NotNil(t, mf)
 	assert.Len(t, mf.GetMetric(), 2)
 }
@@ -98,7 +98,7 @@ func TestWorkspaceInitContainerDuration(t *testing.T) {
 
 	metrics.WorkspaceInitContainerDurationSeconds.Observe(7.3)
 
-	mf := gatherFamily(t, reg, "llmsafespace_workspace_init_container_duration_seconds")
+	mf := gatherFamily(t, reg, "llmsafespaces_workspace_init_container_duration_seconds")
 	require.NotNil(t, mf)
 	require.Len(t, mf.GetMetric(), 1)
 	assert.EqualValues(t, 1, mf.GetMetric()[0].GetHistogram().GetSampleCount())
@@ -114,7 +114,7 @@ func TestWorkspacesRunningGauge(t *testing.T) {
 	metrics.WorkspacesRunning.WithLabelValues("python:3.11", "standard").Inc()
 	metrics.WorkspacesRunning.WithLabelValues("python:3.11", "standard").Dec()
 
-	mf := gatherFamily(t, reg, "llmsafespace_workspaces_running")
+	mf := gatherFamily(t, reg, "llmsafespaces_workspaces_running")
 	require.NotNil(t, mf)
 	m := findMetricByLabels(t, mf, map[string]string{
 		"runtime": "python:3.11", "security_level": "standard",
@@ -132,7 +132,7 @@ func TestWorkspacesFailedLabels(t *testing.T) {
 	metrics.WorkspacesFailedTotal.WithLabelValues("PodBuildFailed").Inc()
 	metrics.WorkspacesFailedTotal.WithLabelValues("PodFailedDuringCreation").Inc()
 
-	mf := gatherFamily(t, reg, "llmsafespace_workspaces_failed_total")
+	mf := gatherFamily(t, reg, "llmsafespaces_workspaces_failed_total")
 	require.NotNil(t, mf)
 	assert.Len(t, mf.GetMetric(), 2)
 
@@ -151,7 +151,7 @@ func TestBucketCoverage(t *testing.T) {
 	metrics.WorkspaceCreateDurationSeconds.
 		WithLabelValues("true", "true").Observe(240.0)
 
-	mf := gatherFamily(t, reg, "llmsafespace_workspace_create_duration_seconds")
+	mf := gatherFamily(t, reg, "llmsafespaces_workspace_create_duration_seconds")
 	require.NotNil(t, mf)
 	h := mf.GetMetric()[0].GetHistogram()
 
@@ -178,7 +178,7 @@ func TestSeedWorkspacesRunningOverrides(t *testing.T) {
 
 	metrics.SeedWorkspacesRunning("base", "standard", 6)
 
-	mf := gatherFamily(t, reg, "llmsafespace_workspaces_running")
+	mf := gatherFamily(t, reg, "llmsafespaces_workspaces_running")
 	require.NotNil(t, mf)
 	m := findMetricByLabels(t, mf, map[string]string{
 		"runtime": "base", "security_level": "standard",
@@ -196,7 +196,7 @@ func TestSeedWorkspacesRunningZeroActiveWorkspaces(t *testing.T) {
 
 	metrics.SeedWorkspacesRunning("base", "standard", 0)
 
-	mf := gatherFamily(t, reg, "llmsafespace_workspaces_running")
+	mf := gatherFamily(t, reg, "llmsafespaces_workspaces_running")
 	require.NotNil(t, mf)
 	m := findMetricByLabels(t, mf, map[string]string{
 		"runtime": "base", "security_level": "standard",
@@ -250,14 +250,13 @@ func TestAllCollectorsGatherableAfterRegisterWith(t *testing.T) {
 	// Labeled metrics (CounterVec/GaugeVec) only appear after their first
 	// WithLabelValues().Inc()/Set() call, so we don't assert them here —
 	// that's tested by the individual metric tests above.
-	// Note: llmsafespace_workspace_status_update_conflicts_total is a
+	// Note: llmsafespaces_workspace_status_update_conflicts_total is a
 	// CounterVec with a "site" label (Epic 23) so it lives in the labeled
 	// bucket; conflict-iteration coverage is asserted in
 	// controller/internal/workspace/status_update_retry_test.go.
 	expected := []string{
-		"llmsafespace_workspace_consecutive_failures_max",
-		"llmsafespace_api_key_legacy_total",
-		"llmsafespace_workspace_init_container_duration_seconds",
+		"llmsafespaces_api_key_legacy_total",
+		"llmsafespaces_workspace_init_container_duration_seconds",
 	}
 	for _, name := range expected {
 		assert.True(t, names[name], "metric %q must be gatherable after RegisterWith", name)

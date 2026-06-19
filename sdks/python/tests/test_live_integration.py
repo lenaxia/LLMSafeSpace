@@ -9,12 +9,12 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from llmsafespace import LLMSafeSpace, NotFoundError, AuthError
+from llmsafespaces import LLMSafeSpaces, NotFoundError, AuthError
 
 API_URL = os.environ.get("API_URL", "http://localhost:18080")
 API_KEY = os.environ.get("API_KEY", "lsp_upgradetest1234567890abcdef")
 
-client = LLMSafeSpace(API_URL, api_key=API_KEY, timeout=120.0)
+client = LLMSafeSpaces(API_URL, api_key=API_KEY, timeout=120.0)
 
 passed = 0
 failed = 0
@@ -252,7 +252,7 @@ except Exception:
     ok(True, "nonexistent ws → error (non-NotFoundError)")
 
 try:
-    bad = LLMSafeSpace(API_URL, api_key="lsp_invalid")
+    bad = LLMSafeSpaces(API_URL, api_key="lsp_invalid")
     bad.auth.me()
     ok(False, "invalid key should throw")
 except AuthError:

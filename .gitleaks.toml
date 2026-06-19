@@ -1,4 +1,4 @@
-# gitleaks configuration for LLMSafeSpace.
+# gitleaks configuration for LLMSafeSpaces.
 #
 # Extends the default ruleset (rules: jwt, generic-api-key, private-key,
 # curl-auth-header, etc. — see https://github.com/gitleaks/gitleaks for
@@ -10,7 +10,7 @@
 # contain a real secret. Real PRs wanting to add a credential should
 # fail the gate; this is the entire point.
 
-title = "LLMSafeSpace gitleaks config"
+title = "LLMSafeSpaces gitleaks config"
 
 [extend]
 useDefault = true
@@ -58,7 +58,7 @@ paths = [
   # Build artifact (minified JS); generated, never committed by hand.
   # Already in .gitignore but kept here as defense in depth.
   '''frontend/dist/.*''',
-  # Epic-34 master-key test file: uses LLMSAFESPACE_MASTER_SECRET env var
+  # Epic-34 master-key test file: uses LLMSAFESPACES_MASTER_SECRET env var
   # with synthetic test values (high-entropy but not real secrets — test fixture
   # for the master-key encryption round-trip. No real key material; verified
   # by inspection 2026-06-08).
@@ -107,7 +107,7 @@ regexes = [
   # The test-only JWT secret literal used across the test suite.
   # If a new file is added that uses a *different* test secret, prefer
   # changing it to this one rather than expanding the allowlist.
-  '''test-secret-key-for-llmsafespace-only''',
+  '''test-secret-key-for-llmsafespaces-only''',
   # Sample API-key prefix used in worklogs and SDK examples. Real
   # API keys have an additional 32 random bytes after the prefix.
   '''lsp_(test|example|placeholder|demo)[A-Za-z0-9_]*''',

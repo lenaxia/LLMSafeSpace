@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	sec "github.com/lenaxia/llmsafespace/pkg/secrets"
+	sec "github.com/lenaxia/llmsafespaces/pkg/secrets"
 )
 
 // fakeModelsServer returns an httptest.Server that serves a static
@@ -321,7 +321,7 @@ func TestEnrichProviderModels_CacheWrittenToEnricherCacheDir(t *testing.T) {
 
 	dir := t.TempDir()
 	secretsBaseDir := filepath.Join(dir, "secrets-base")     // simulates /home/sandbox/.secrets
-	enricherCacheDir := filepath.Join(dir, "enricher-cache") // simulates /home/sandbox/.local/state/llmsafespace
+	enricherCacheDir := filepath.Join(dir, "enricher-cache") // simulates /home/sandbox/.local/state/llmsafespaces
 	require.NoError(t, os.MkdirAll(secretsBaseDir, 0o700))
 	// enricherCacheDir intentionally NOT pre-created — MkdirAll inside fetchOrCacheModels must create it.
 

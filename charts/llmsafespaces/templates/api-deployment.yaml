@@ -1,0 +1,114 @@
+{{- if .Values.api.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "llmsafespaces.fullname" . }}-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmsafespaces.api.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.api.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "llmsafespaces.api.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "llmsafespaces.api.selectorLabels" . | nindent 8 }}
+        {{- with .Values.api.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap-api.yaml") . | sha256sum }}
+        {{- with .Values.api.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "llmsafespaces.api.serviceAccountName" . }}
+      {{- with .Values.api.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.api.podSecurityContext | nindent 8 }}
+      containers:
+        - name: api
+          image: {{ include "llmsafespaces.api.image" . }}
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.api.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.api.config.server.port }}
+              protocol: TCP
+          env:
+            - name: CONFIG_PATH
+              value: /etc/llmsafespaces/config.yaml
+            - name: LLMSAFESPACES_DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "llmsafespaces.secretName" . }}
+                  key: postgres-password
+            - name: LLMSAFESPACES_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "llmsafespaces.secretName" . }}
+                  key: redis-password
+                  optional: true
+            - name: LLMSAFESPACES_AUTH_JWTSECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "llmsafespaces.secretName" . }}
+                  key: jwt-secret
+            - name: LLMSAFESPACES_MASTER_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "llmsafespaces.secretName" . }}
+                  key: master-secret
+            - name: LLMSAFESPACES_KUBERNETES_PODNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: LLMSAFESPACES_KUBERNETES_PODNAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- with .Values.inferenceRelayURL }}
+            - name: LLMSAFESPACES_SERVER_INFERENCERELAYURL
+              value: {{ . | quote }}
+            {{- end }}
+          {{- with .Values.api.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.api.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/llmsafespaces
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "llmsafespaces.fullname" . }}-api-config
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.api.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.api.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

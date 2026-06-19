@@ -16,9 +16,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
-	"github.com/lenaxia/llmsafespace/pkg/secrets"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
+	"github.com/lenaxia/llmsafespaces/pkg/secrets"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 // TestHandler_E2E_CreateListGetDeleteRoundTrip tests the full CRUD cycle via HTTP

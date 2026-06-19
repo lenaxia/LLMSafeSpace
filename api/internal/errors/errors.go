@@ -4,7 +4,6 @@
 package errors
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 )
@@ -13,7 +12,16 @@ import (
 // workspace_agent_state row does not exist for the given workspace.
 // Both database.go (returns it) and handler code (checks via errors.Is)
 // import this shared package — neither imports the other.
-var ErrNoAgentStateRow = errors.New("workspace_agent_state row not found for workspace")
+//
+// It is a *APIError (not a plain sentinel) so the centralized error handler
+// (respondWithError) can map it to HTTP 409 Conflict automatically via
+// StatusCode(). Callers can still use errors.Is for backwards compat and
+// errors.As for the new typed-error path.
+var ErrNoAgentStateRow = &APIError{
+	Type:    ErrorTypeConflict,
+	Code:    "no_pending_agent_reload",
+	Message: "workspace has no pending credentials to reload",
+}
 
 // ErrorType defines the type of error
 type ErrorType string

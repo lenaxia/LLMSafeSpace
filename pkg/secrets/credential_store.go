@@ -12,6 +12,13 @@ import (
 // credential that is bound via an auto-apply rule (source_type='auto').
 // Auto-bindings are managed by SeedWorkspaceCredentials and can only be
 // removed by deleting the underlying credential or the workspace.
+//
+// This sentinel lives in pkg/ (not api/internal/errors) because it is shared
+// between the API server and the agentd daemon. It cannot be converted to a
+// *apierrors.APIError because Go's internal-package visibility rule prevents
+// pkg/ packages from importing api/internal/. The API handler that surfaces
+// this to HTTP (user_provider_credentials.go) wraps it into an *APIError at
+// the boundary if centralized status mapping is needed.
 var ErrAutoBindingProtected = errors.New("auto-binding cannot be removed via unbind; delete the credential or workspace to remove it")
 
 // CredentialBinding is a joined row from workspace_credential_bindings + provider_credentials.
@@ -62,5 +69,5 @@ type CredentialStore interface {
 
 // AdminKeyDeriver derives a server-side encryption key for admin credentials.
 // The label parameter scopes the derived key (e.g. "provider-credentials").
-// Returns nil when LLMSAFESPACE_MASTER_SECRET is not set.
+// Returns nil when LLMSAFESPACES_MASTER_SECRET is not set.
 type AdminKeyDeriver func(label string) []byte

@@ -4,23 +4,23 @@
 package main
 
 import (
+	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/lenaxia/llmsafespace/pkg/agentd/secrets"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd/secrets"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // US-44.2: Session-aware restart mechanism.
 // US-44.3: Fix api-key restart bug.
-//
-// When env-secret or api-key credentials change, opencode must be
-// restarted (Node.js process.env is immutable after startup). The old
-// code restarted IMMEDIATELY regardless of active sessions — destroying
-// in-flight work (Incident B, 2026-06-16). The fix defers the restart
-// until all sessions are idle, with no forced timeout.
+// Worklog 371 C2/H1: deferred-restart goroutine must be cancellable (H1a),
+// bounded by maxDefer (H1b), tracked (H1c), prune stale busy entries (C2a),
+// and not immediately restart on a cold-start empty tracker when opencode
+// is reachable (C2b).
 
 // ---------------------------------------------------------------------------
 // sessionStatusTracker.hasAnyBusy / listBusy (US-44.2 prerequisite)
@@ -109,7 +109,7 @@ func TestShouldRestart_APIKeyMixedWithSSHKey_ReturnsTrue(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Session-aware restart decision (US-44.2)
+// Session-aware restart decision (US-44.2 + worklog 371 C2/H1)
 // ---------------------------------------------------------------------------
 
 // TestSessionAwareRestartDecision_AllIdle_RestartsImmediately verifies
@@ -121,7 +121,7 @@ func TestSessionAwareRestartDecision_AllIdle_RestartsImmediately(t *testing.T) {
 	tracker.set("ses_2", "idle")
 
 	proc := &mockManagedProcess{}
-	decided := makeSessionAwareRestartDecision(proc, tracker, 5*time.Second)
+	decided := makeSessionAwareRestartDecision(context.Background(), proc, tracker, 5*time.Second, time.Hour, nil, nil)
 
 	assert.True(t, decided,
 		"all sessions idle — restart must proceed immediately")
@@ -139,7 +139,7 @@ func TestSessionAwareRestartDecision_SessionsBusy_DefersRestart(t *testing.T) {
 	tracker.set("ses_2", "idle")
 
 	proc := &mockManagedProcess{}
-	decided := makeSessionAwareRestartDecision(proc, tracker, 50*time.Millisecond)
+	decided := makeSessionAwareRestartDecision(context.Background(), proc, tracker, 50*time.Millisecond, time.Hour, nil, nil)
 
 	assert.False(t, decided,
 		"sessions busy — restart must be deferred, not immediate")
@@ -155,7 +155,7 @@ func TestSessionAwareRestartDecision_DeferredRestart_AppliesWhenIdle(t *testing.
 	tracker.set("ses_1", "busy")
 
 	proc := &mockManagedProcess{}
-	_ = makeSessionAwareRestartDecision(proc, tracker, 20*time.Millisecond)
+	_ = makeSessionAwareRestartDecision(context.Background(), proc, tracker, 20*time.Millisecond, time.Hour, nil, nil)
 
 	// Session is still busy — restart should NOT fire yet.
 	time.Sleep(50 * time.Millisecond)
@@ -171,21 +171,6 @@ func TestSessionAwareRestartDecision_DeferredRestart_AppliesWhenIdle(t *testing.
 		"deferred restart must fire once sessions become idle")
 }
 
-// TestSessionAwareRestartDecision_EmptyTracker_RestartsImmediately
-// verifies the SSE-disconnect fallback: if the tracker has no data (map
-// empty, SSE disconnected), treat as "all idle" and restart immediately
-// with a logged warning.
-func TestSessionAwareRestartDecision_EmptyTracker_RestartsImmediately(t *testing.T) {
-	tracker := newSessionStatusTracker()
-
-	proc := &mockManagedProcess{}
-	decided := makeSessionAwareRestartDecision(proc, tracker, 5*time.Second)
-
-	assert.True(t, decided,
-		"empty tracker (SSE disconnected) must restart immediately — no data to defer on")
-	assert.Equal(t, 1, proc.restartCount())
-}
-
 // TestSessionAwareRestartDecision_NilProc_NoPanic verifies graceful
 // degradation when proc is nil (test-only or misconfigured).
 func TestSessionAwareRestartDecision_NilProc_NoPanic(t *testing.T) {
@@ -193,21 +178,269 @@ func TestSessionAwareRestartDecision_NilProc_NoPanic(t *testing.T) {
 	tracker.set("ses_1", "idle")
 
 	assert.NotPanics(t, func() {
-		decided := makeSessionAwareRestartDecision(nil, tracker, 5*time.Second)
+		decided := makeSessionAwareRestartDecision(context.Background(), nil, tracker, 5*time.Second, time.Hour, nil, nil)
 		assert.True(t, decided, "nil proc with idle sessions returns true (no-op)")
 	})
 }
 
-// TestSessionAwareRestartDecision_NilTracker_RestartsImmediately
-// verifies that a nil tracker is treated as "all idle" — same fallback
-// as empty tracker.
-func TestSessionAwareRestartDecision_NilTracker_RestartsImmediately(t *testing.T) {
+// ---------------------------------------------------------------------------
+// C2a: prune stale busy entries from the deferred-restart poll tick
+// ---------------------------------------------------------------------------
+
+// TestSessionAwareRestartDecision_C2a_PruneClearsStaleBusy verifies that
+// when opencode dies mid-busy and the supervisor respawns it, the stale
+// "busy" entry is pruned (via the liveSessions lister) and the deferred
+// restart fires on the next poll tick instead of deferring forever.
+//
+// Scenario: session ses_stale is marked busy in the tracker. opencode dies
+// and respawns; the live session list no longer includes ses_stale. The
+// lister returns the new live IDs; prune removes ses_stale; hasAnyBusy
+// returns false; the deferred restart fires.
+func TestSessionAwareRestartDecision_C2a_PruneClearsStaleBusy(t *testing.T) {
+	tracker := newSessionStatusTracker()
+	tracker.set("ses_stale", "busy")
+
+	// Lister reports that opencode now has only ses_alive (idle) — ses_stale
+	// no longer exists (it died with the previous opencode process).
+	lister := func(ctx context.Context) []string {
+		return []string{"ses_alive"}
+	}
+	// Pre-seed the tracker so the first prune has something to remove.
+	tracker.set("ses_alive", "idle")
+
 	proc := &mockManagedProcess{}
-	decided := makeSessionAwareRestartDecision(proc, nil, 5*time.Second)
+	_ = makeSessionAwareRestartDecision(context.Background(), proc, tracker, 20*time.Millisecond, time.Hour, lister, nil)
+
+	// ses_stale is pruned on the first poll tick → hasAnyBusy false → restart.
+	require.Eventually(t, func() bool {
+		return proc.restartCount() == 1
+	}, 500*time.Millisecond, 10*time.Millisecond,
+		"stale busy entry must be pruned so the deferred restart fires")
+}
+
+// ---------------------------------------------------------------------------
+// C2b: cold-start empty tracker does NOT immediately restart if opencode
+// is reachable with sessions (regression: would destroy in-flight work).
+// ---------------------------------------------------------------------------
+
+// TestSessionAwareRestartDecision_C2b_EmptyTracker_OpencodeAliveWithSessions_Defers
+// is the core C2b regression test: an empty tracker (agentd restarted, SSE
+// not yet reconnected) with opencode reachable and holding sessions must
+// DEFER, not immediately restart. Pre-fix, this would immediately restart
+// and destroy in-flight agentic work (Incident B regression).
+func TestSessionAwareRestartDecision_C2b_EmptyTracker_OpencodeAliveWithSessions_Defers(t *testing.T) {
+	tracker := newSessionStatusTracker() // empty — cold start
+
+	lister := func(ctx context.Context) []string {
+		return []string{"ses_inflight_1", "ses_inflight_2"} // opencode alive, sessions exist
+	}
+
+	proc := &mockManagedProcess{}
+	decided := makeSessionAwareRestartDecision(context.Background(), proc, tracker, 50*time.Millisecond, 200*time.Millisecond, lister, nil)
+
+	assert.False(t, decided,
+		"empty tracker with opencode alive + sessions must DEFER (C2b) — immediate restart would destroy in-flight work")
+	assert.Equal(t, 0, proc.restartCount(),
+		"restart must NOT fire immediately on cold-start with live opencode")
+}
+
+// TestSessionAwareRestartDecision_C2b_EmptyTracker_OpencodeUnreachable_RestartsImmediately
+// preserves the legitimate SSE-disconnect fallback: if opencode is genuinely
+// unreachable (not just SSE-disconnected), there is nothing to lose — restart
+// immediately so the credential applies.
+func TestSessionAwareRestartDecision_C2b_EmptyTracker_OpencodeUnreachable_RestartsImmediately(t *testing.T) {
+	tracker := newSessionStatusTracker() // empty — cold start
+
+	lister := func(ctx context.Context) []string {
+		return nil // opencode unreachable
+	}
+
+	proc := &mockManagedProcess{}
+	decided := makeSessionAwareRestartDecision(context.Background(), proc, tracker, 5*time.Second, time.Hour, lister, nil)
 
 	assert.True(t, decided,
-		"nil tracker must restart immediately — cannot check session state")
+		"empty tracker + unreachable opencode must restart immediately — nothing to lose")
 	assert.Equal(t, 1, proc.restartCount())
+}
+
+// TestSessionAwareRestartDecision_C2b_EmptyTracker_OpencodeAliveNoSessions_RestartsImmediately
+// verifies that an alive opencode with zero sessions restarts immediately —
+// there is no in-flight work to protect.
+func TestSessionAwareRestartDecision_C2b_EmptyTracker_OpencodeAliveNoSessions_RestartsImmediately(t *testing.T) {
+	tracker := newSessionStatusTracker()
+
+	lister := func(ctx context.Context) []string {
+		return []string{} // opencode alive, zero sessions
+	}
+
+	proc := &mockManagedProcess{}
+	decided := makeSessionAwareRestartDecision(context.Background(), proc, tracker, 5*time.Second, time.Hour, lister, nil)
+
+	assert.True(t, decided,
+		"alive opencode with zero sessions must restart immediately — nothing to lose")
+	assert.Equal(t, 1, proc.restartCount())
+}
+
+// TestSessionAwareRestartDecision_NilTracker_NilLister_RestartsImmediately
+// preserves the original no-lister fallback: nil tracker + nil lister →
+// immediate restart (no way to probe opencode, assume safe).
+func TestSessionAwareRestartDecision_NilTracker_NilLister_RestartsImmediately(t *testing.T) {
+	proc := &mockManagedProcess{}
+	decided := makeSessionAwareRestartDecision(context.Background(), proc, nil, 5*time.Second, time.Hour, nil, nil)
+
+	assert.True(t, decided,
+		"nil tracker with no lister must restart immediately — cannot probe opencode")
+	assert.Equal(t, 1, proc.restartCount())
+}
+
+// TestSessionAwareRestartDecision_FallbackDefaults_ZeroValues_UseDefaults verifies
+// the defensive fallbacks: maxDefer <= 0 and pollInterval <= 0 must fall back to
+// their defaults (defaultMaxDefer / restartIdleCheckInterval) rather than
+// disabling the mechanism or crashing. We cannot observe the 2h maxDefer
+// directly in a test, so we assert the observable contract: a busy session
+// DEFERS (does not immediately restart, which would happen if maxDefer were 0
+// or negative), and once it goes idle the restart fires via the default poll
+// interval (proving pollInterval=0 fell back to 5s, not infinity).
+func TestSessionAwareRestartDecision_FallbackDefaults_ZeroValues_UseDefaults(t *testing.T) {
+	tracker := newSessionStatusTracker()
+	tracker.set("ses_1", "busy")
+
+	proc := &mockManagedProcess{}
+	// maxDefer=0 and pollInterval=0 — both must fall back to their defaults.
+	decided := makeSessionAwareRestartDecision(context.Background(), proc, tracker, 0, 0, nil, nil)
+
+	assert.False(t, decided, "busy session must DEFER even with zero maxDefer/pollInterval (fallbacks active)")
+	assert.Equal(t, 0, proc.restartCount(),
+		"restart must not fire immediately — maxDefer=0 must not mean 'force now'")
+
+	// Session goes idle — restart must fire via the default poll interval (5s),
+	// proving pollInterval=0 fell back. Within 2x the default poll is generous.
+	tracker.set("ses_1", "idle")
+	require.Eventually(t, func() bool {
+		return proc.restartCount() == 1
+	}, 15*time.Second, 10*time.Millisecond,
+		"restart must fire via the default poll interval after idle — pollInterval=0 must fall back to restartIdleCheckInterval")
+}
+
+// TestSessionAwareRestartDecision_C2a_PruneDuringDeferredPollTick verifies the
+// PRIMARY C2a path: a session that is genuinely busy at decision time (so the
+// restart DEFERS), then goes stale (removed from opencode's live session list)
+// WHILE the deferred goroutine is polling. The ticker's pruneFromLister must
+// remove the stale entry so the deferred restart fires instead of waiting
+// forever for a session that no longer exists.
+//
+// Distinct from TestSessionAwareRestartDecision_C2a_PruneClearsStaleBusy, which
+// only exercises the initial prune (before the deferral decision) — that path
+// prunes immediately and never reaches the deferred goroutine's ticker.
+func TestSessionAwareRestartDecision_C2a_PruneDuringDeferredPollTick(t *testing.T) {
+	tracker := newSessionStatusTracker()
+	tracker.set("ses_stale", "busy")
+
+	// listerCalls tracks how many times the lister was invoked. On the first
+	// call (decision-time prune) it reports ses_stale alive so the restart
+	// defers. On subsequent calls (ticker prune) it reports ses_stale gone
+	// (pruned away by opencode respawn), so prune removes it and the restart
+	// fires.
+	var listerCalls atomic.Int32
+	lister := func(ctx context.Context) []string {
+		if listerCalls.Add(1) == 1 {
+			return []string{"ses_stale"} // alive at decision time → defer
+		}
+		return []string{} // gone on poll → prune → restart
+	}
+
+	proc := &mockManagedProcess{}
+	_ = makeSessionAwareRestartDecision(context.Background(), proc, tracker, 15*time.Millisecond, time.Hour, lister, nil)
+
+	require.Eventually(t, func() bool {
+		return proc.restartCount() == 1
+	}, 500*time.Millisecond, 5*time.Millisecond,
+		"stale-busy entry must be pruned on the deferred poll tick so the restart fires")
+}
+
+// ---------------------------------------------------------------------------
+// H1a: deferred-restart goroutine is cancellable via context (shutdown)
+// ---------------------------------------------------------------------------
+
+// TestSessionAwareRestartDecision_H1a_ContextCancel_StopsGoroutine verifies
+// that canceling the context (agentd shutdown) stops the deferred-restart
+// goroutine. Pre-fix, the goroutine had no context and polled forever.
+func TestSessionAwareRestartDecision_H1a_ContextCancel_StopsGoroutine(t *testing.T) {
+	tracker := newSessionStatusTracker()
+	tracker.set("ses_1", "busy")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	proc := &mockManagedProcess{}
+	_ = makeSessionAwareRestartDecision(ctx, proc, tracker, 20*time.Millisecond, time.Hour, nil, nil)
+
+	// Cancel the context (simulate shutdown) while session is still busy.
+	cancel()
+
+	// Give the goroutine time to observe the cancellation.
+	time.Sleep(80 * time.Millisecond)
+
+	// Now transition to idle — the restart must NOT fire because the
+	// goroutine has exited.
+	tracker.set("ses_1", "idle")
+	time.Sleep(80 * time.Millisecond)
+	assert.Equal(t, 0, proc.restartCount(),
+		"canceled deferred-restart goroutine must not fire a restart after shutdown")
+}
+
+// ---------------------------------------------------------------------------
+// H1b: maxDefer force-restarts a stuck-busy session
+// ---------------------------------------------------------------------------
+
+// TestSessionAwareRestartDecision_H1b_MaxDefer_ForceRestarts verifies that
+// a session stuck busy (infinite loop, hung tool) eventually gets the
+// credential applied via the maxDefer force-restart. Pre-fix, the goroutine
+// deferred forever and the credential silently never applied.
+func TestSessionAwareRestartDecision_H1b_MaxDefer_ForceRestarts(t *testing.T) {
+	tracker := newSessionStatusTracker()
+	tracker.set("ses_stuck", "busy") // never goes idle
+
+	proc := &mockManagedProcess{}
+	_ = makeSessionAwareRestartDecision(context.Background(), proc, tracker, 10*time.Millisecond, 80*time.Millisecond, nil, nil)
+
+	// Session stays busy; maxDefer (80ms) must force the restart.
+	require.Eventually(t, func() bool {
+		return proc.restartCount() == 1
+	}, 500*time.Millisecond, 10*time.Millisecond,
+		"maxDefer must force-restart a stuck-busy session so the credential applies")
+}
+
+// ---------------------------------------------------------------------------
+// H1c: deferred-restart goroutine is tracked by the WaitGroup
+// ---------------------------------------------------------------------------
+
+// TestSessionAwareRestartDecision_H1c_WaitGroupTracked verifies that the
+// deferred-restart goroutine registers with the provided WaitGroup so
+// shutdown can wait for it before proc.stop(). The WaitGroup must reach
+// zero once the goroutine exits (here, via context cancellation).
+func TestSessionAwareRestartDecision_H1c_WaitGroupTracked(t *testing.T) {
+	tracker := newSessionStatusTracker()
+	tracker.set("ses_1", "busy")
+
+	bgWg := &sync.WaitGroup{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	proc := &mockManagedProcess{}
+	_ = makeSessionAwareRestartDecision(ctx, proc, tracker, 20*time.Millisecond, time.Hour, nil, bgWg)
+
+	// Goroutine is running (session busy). Cancel and Wait must return.
+	cancel()
+
+	waitDone := make(chan struct{})
+	go func() {
+		bgWg.Wait()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+		// success — goroutine called Done()
+	case <-time.After(time.Second):
+		t.Fatal("bgWg.Wait() did not return after context cancel — goroutine not tracked")
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -216,13 +449,9 @@ func TestSessionAwareRestartDecision_NilTracker_RestartsImmediately(t *testing.T
 
 type mockManagedProcess struct {
 	restarts atomic.Int32
-	done     chan struct{}
 }
 
 func (m *mockManagedProcess) restart() {
-	if m.done == nil {
-		m.done = make(chan struct{})
-	}
 	m.restarts.Add(1)
 }
 

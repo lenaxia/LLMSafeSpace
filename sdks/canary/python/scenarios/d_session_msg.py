@@ -14,14 +14,14 @@ from canary import (
     wait_active,
     ensure_session_with_retry,
 )
-from llmsafespace import LLMSafeSpace
+from llmsafespaces import LLMSafeSpaces
 
 
 def run(r: Runner, cfg: Config) -> None:
     if not cfg.llm_api_key:
         r.ok("session-msg: skipped (no LLM API key)")
         return
-    c = LLMSafeSpace(cfg.api_url, api_key=cfg.api_key, timeout=120.0)
+    c = LLMSafeSpaces(cfg.api_url, api_key=cfg.api_key, timeout=120.0)
     ws_id = None
     try:
         ok, ws = r.assert_no_error(

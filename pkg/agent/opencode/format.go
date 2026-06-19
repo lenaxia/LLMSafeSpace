@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/lenaxia/llmsafespace/pkg/secrets"
+	"github.com/lenaxia/llmsafespaces/pkg/secrets"
 )
 
 // FormatOpenCodeConfig renders a slice of validated LLMProviderData into

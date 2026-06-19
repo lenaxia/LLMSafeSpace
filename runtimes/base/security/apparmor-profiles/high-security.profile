@@ -1,6 +1,6 @@
 #include <tunables/global>
 
-profile llmsafespace-high-security flags=(attach_disconnected) {
+profile llmsafespaces-high-security flags=(attach_disconnected) {
     #include <abstractions/base>
     #include <abstractions/nameservice>
 

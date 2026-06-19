@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
 )
 
 const testPassword = "test-pw"

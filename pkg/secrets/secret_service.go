@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lenaxia/llmsafespace/pkg/validation"
+	"github.com/lenaxia/llmsafespaces/pkg/validation"
 )
 
 // SecretService provides encrypted secret CRUD operations.
@@ -45,6 +45,11 @@ func (s *SecretService) CreateSecret(ctx context.Context, userID, sessionID stri
 	if !ValidSecretTypes[req.Type] {
 		return nil, fmt.Errorf("%w: %s (valid: %s)",
 			ErrInvalidSecretType, req.Type, formatSecretTypes(ValidSecretTypesList()))
+	}
+
+	if req.Type == SecretTypeAPIKey && isAPIKeySunset() {
+		return nil, fmt.Errorf("%w: api-key secret type was removed on %s; migrate to llm-provider (for LLM APIs) or env-secret (for other APIs). See docs/migration/api-key-to-llm-provider.md",
+			ErrInvalidSecretType, APIKeySunsetDate)
 	}
 
 	if err := validation.ValidateSecretName(req.Name); err != nil {
@@ -539,7 +544,7 @@ func validateMountPath(mp string) error {
 	// because filepath.Clean strips leading "..". The concrete base in
 	// production is /home/sandbox/.secrets but only the depth matters
 	// for this check.
-	const base = "/llmsafespace/notional/secrets"
+	const base = "/llmsafespaces/notional/secrets"
 	candidate := filepath.Clean(filepath.Join(base, mp))
 	rel, err := filepath.Rel(base, candidate)
 	if err != nil {

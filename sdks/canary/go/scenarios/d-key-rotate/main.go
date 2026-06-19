@@ -3,7 +3,7 @@
 
 // Canary scenario: D-KEY-ROTATE
 // Tests encryption key rotation.
-// Uses canary-rotate@llmsafespace.test account.
+// Uses canary-rotate@llmsafespaces.test account.
 package main
 
 import (
@@ -13,8 +13,8 @@ import (
 	"os"
 	"time"
 
-	llm "github.com/lenaxia/llmsafespace/sdk/go"
-	canary "github.com/lenaxia/llmsafespace/sdks/canary/go"
+	llm "github.com/lenaxia/llmsafespaces/sdk/go"
+	canary "github.com/lenaxia/llmsafespaces/sdks/canary/go"
 )
 
 func Handler(w http.ResponseWriter, r *http.Request) {
@@ -39,11 +39,11 @@ func main() {
 }
 
 func runKeyRotate(ctx context.Context, run *canary.Runner, cfg canary.Config) {
-	rotateEmail := os.Getenv("LLMSAFESPACE_ROTATE_EMAIL")
+	rotateEmail := os.Getenv("LLMSAFESPACES_ROTATE_EMAIL")
 	if rotateEmail == "" {
-		rotateEmail = "canary-rotate@llmsafespace.test"
+		rotateEmail = "canary-rotate@llmsafespaces.test"
 	}
-	rotatePassword := os.Getenv("LLMSAFESPACE_ROTATE_PASSWORD")
+	rotatePassword := os.Getenv("LLMSAFESPACES_ROTATE_PASSWORD")
 	if rotatePassword == "" {
 		rotatePassword = "canary-rotate-password!"
 	}

@@ -15,7 +15,7 @@ Users reported that workspaces `eb598645-245e-40ca-a6ba-cdea88fb2b11` and `c3bce
 ## Work Completed
 
 - Investigated workspace CRD states via `kubectl get workspace -o yaml` on default namespace — both in `Suspended` phase, `c3bce097` had stale DB phase of "Resuming"
-- Traced API logs (`kubectl logs deploy/llmsafespace-api`) — found `enforceMaxActiveWorkspaces` trying to suspend `3facbcb6` which was already `Suspended` on the live K8s CRD, producing "cannot suspend workspace in phase Suspended" error and blocking activation of `eb598645`
+- Traced API logs (`kubectl logs deploy/llmsafespaces-api`) — found `enforceMaxActiveWorkspaces` trying to suspend `3facbcb6` which was already `Suspended` on the live K8s CRD, producing "cannot suspend workspace in phase Suspended" error and blocking activation of `eb598645`
 - Root caused three bugs (commit `ce79464`):
   - `enforceMaxActiveWorkspaces` (`max_active.go:43-49`) read workspace phases from PostgreSQL. When the controller auto-suspends, it updates K8s CRDs but the DB is only synced when the API explicitly calls `syncPhase`. Stale DB phases caused the API to count already-suspended workspaces as active, attempt to suspend them, and fail.
   - `SuspendWorkspace` (`workspace_service.go:416-422`) rejected requests for already-suspended/suspending workspaces instead of returning nil (not idempotent).

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/lenaxia/llmsafespace/pkg/secrets"
+	"github.com/lenaxia/llmsafespaces/pkg/secrets"
 )
 
 func main() {

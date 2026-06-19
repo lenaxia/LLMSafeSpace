@@ -19,8 +19,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	ctrMetrics "github.com/lenaxia/llmsafespace/controller/internal/metrics"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	ctrMetrics "github.com/lenaxia/llmsafespaces/controller/internal/metrics"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 // --- Helpers ---

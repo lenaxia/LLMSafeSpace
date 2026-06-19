@@ -30,7 +30,7 @@ type InjectedSecret struct {
 // ARCHITECTURAL NOTE — user credential injection in non-interactive contexts (C-1):
 //
 // Admin credentials (owner_type='admin') use a server-side KEK derived from
-// LLMSAFESPACE_MASTER_SECRET and can always be decrypted regardless of session.
+// LLMSAFESPACES_MASTER_SECRET and can always be decrypted regardless of session.
 //
 // User credentials (owner_type='user') are encrypted with the user's DEK, which
 // requires an active authenticated session. When called without a session (e.g.

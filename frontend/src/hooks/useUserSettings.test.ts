@@ -43,13 +43,13 @@ describe("useUserSettings", () => {
     renderHook(() => useUserSettings());
 
     await waitFor(() => {
-      const cached = JSON.parse(localStorage.getItem("llmsafespace_user_settings")!);
+      const cached = JSON.parse(localStorage.getItem("llmsafespaces_user_settings")!);
       expect(cached.theme).toBe("dark");
     });
   });
 
   it("reads from localStorage cache on mount", () => {
-    localStorage.setItem("llmsafespace_user_settings", JSON.stringify({ theme: "light" }));
+    localStorage.setItem("llmsafespaces_user_settings", JSON.stringify({ theme: "light" }));
     _resetStoreFromStorage();
     mockGetUserSettings.mockReturnValue(new Promise(() => {}));
 
@@ -58,7 +58,7 @@ describe("useUserSettings", () => {
   });
 
   it("API overrides localStorage cache", async () => {
-    localStorage.setItem("llmsafespace_user_settings", JSON.stringify({ theme: "light" }));
+    localStorage.setItem("llmsafespaces_user_settings", JSON.stringify({ theme: "light" }));
     _resetStoreFromStorage();
     mockGetUserSettings.mockResolvedValue({ settings: { theme: "dark" }, schemaVersion: 1 });
 
@@ -84,7 +84,7 @@ describe("useUserSettings", () => {
   });
 
   it("falls back to cache when API fails", async () => {
-    localStorage.setItem("llmsafespace_user_settings", JSON.stringify({ theme: "cached" }));
+    localStorage.setItem("llmsafespaces_user_settings", JSON.stringify({ theme: "cached" }));
     _resetStoreFromStorage();
     mockGetUserSettings.mockRejectedValue(new Error("network"));
 

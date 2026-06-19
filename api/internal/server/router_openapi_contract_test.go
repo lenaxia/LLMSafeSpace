@@ -36,10 +36,10 @@ import (
 	"github.com/stretchr/testify/mock"
 	"gopkg.in/yaml.v3"
 
-	"github.com/lenaxia/llmsafespace/api/internal/handlers"
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	apilogger "github.com/lenaxia/llmsafespace/api/internal/logger"
-	imocks "github.com/lenaxia/llmsafespace/api/internal/mocks"
+	"github.com/lenaxia/llmsafespaces/api/internal/handlers"
+	"github.com/lenaxia/llmsafespaces/api/internal/interfaces"
+	apilogger "github.com/lenaxia/llmsafespaces/api/internal/logger"
+	imocks "github.com/lenaxia/llmsafespaces/api/internal/mocks"
 )
 
 // route is a (method, path) pair. Paths use Gin's :param syntax;
@@ -367,6 +367,7 @@ func newContractFixture(t *testing.T) *gin.Engine {
 		Debug:               false,
 		SettingsHandler:     &handlers.SettingsHandler{},
 		SecretsHandler:      &handlers.SecretsHandler{},
+		ModelsHandler:       &handlers.ModelsHandler{},
 		WorkspaceEnvHandler: &handlers.WorkspaceEnvHandler{},
 		RotateKeyHandler:    &handlers.RotateKeyHandler{},
 		TerminalHandler:     &handlers.TerminalHandler{},

@@ -6,8 +6,8 @@ package mocks
 import (
 	"context"
 
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 	"github.com/stretchr/testify/mock"
 )
 

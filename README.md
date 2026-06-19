@@ -1,10 +1,10 @@
-# LLMSafeSpace
+# LLMSafeSpaces
 
 A Kubernetes-first platform for running AI agents in isolated, persistent workspaces.
 
-Each workspace runs [`opencode serve`](https://opencode.ai/docs/server/) — a headless HTTP server that drives an LLM agent — backed by a PVC-mounted filesystem at `/workspace`. The LLMSafeSpace API service is a stateless reverse proxy in front of the workspace pods, with auth, ownership checks, encrypted secret management, and quality-of-life filtering.
+Each workspace runs [`opencode serve`](https://opencode.ai/docs/server/) — a headless HTTP server that drives an LLM agent — backed by a PVC-mounted filesystem at `/workspace`. The LLMSafeSpaces API service is a stateless reverse proxy in front of the workspace pods, with auth, ownership checks, encrypted secret management, and quality-of-life filtering.
 
-Repository: `github.com/lenaxia/llmsafespace`
+Repository: `github.com/lenaxia/llmsafespaces`
 
 ---
 
@@ -16,7 +16,7 @@ Repository: `github.com/lenaxia/llmsafespace`
 │         │                                                            │
 │         ▼                                                            │
 │  ┌──────────────────────────────────────────────────────────────┐   │
-  │  │  LLMSafeSpace API (Gin, stateless, horizontally scalable)    │   │
+  │  │  LLMSafeSpaces API (Gin, stateless, horizontally scalable)    │   │
   │  │  - Auth (JWT + API keys + HttpOnly cookies)                   │   │
   │  │  - Workspace CRUD + lifecycle (activate/suspend/restart)      │   │
   │  │  - Reverse proxy to workspace pods (basic auth, IP refresh)   │   │
@@ -55,7 +55,7 @@ Repository: `github.com/lenaxia/llmsafespace`
 
 ### Custom Resource Definitions
 
-Two CRDs in the `llmsafespace.dev/v1` API group:
+Two CRDs in the `llmsafespaces.dev/v1` API group:
 
 | Kind | Scope | Purpose |
 |------|-------|---------|
@@ -375,7 +375,7 @@ runtimes/                # Container images
   python/, nodejs/, go/  # Language-specific extensions
 
 pkg/                     # Shared Go packages
-  apis/llmsafespace/v1/  # CRD Go types (Workspace, RuntimeEnvironment)
+  apis/llmsafespaces/v1/  # CRD Go types (Workspace, RuntimeEnvironment)
   agent/                 # Agent runtime abstraction and registry (opencode, claude-code, codex)
   agentd/                # Workspace-agentd sidecar types and in-pod secret materializer
   secrets/               # Zero-knowledge secret store (key wrapping, encryption, audit)
@@ -387,7 +387,7 @@ pkg/                     # Shared Go packages
   validation/            # Shared validation (secret names)
   types/                 # API DTOs
 
-charts/llmsafespace/     # Helm chart (API, controller, frontend, CRDs, RBAC, webhooks)
+charts/llmsafespaces/     # Helm chart (API, controller, frontend, CRDs, RBAC, webhooks)
 sdks/                    # Client SDKs (Go, TypeScript, Python, Java, VS Code extension)
 workers/inference-relay/ # Cloudflare Worker for free-tier inference relay
 local/                   # bootstrap.sh, test.sh, teardown.sh for kind
@@ -417,7 +417,7 @@ go test -timeout 90s -race ./...
 ```bash
 cd local
 
-# Bootstrap a kind cluster, build images, deploy LLMSafeSpace
+# Bootstrap a kind cluster, build images, deploy LLMSafeSpaces
 ./bootstrap.sh
 
 # Run the e2e suite (9 tests). Set LLM_* env vars to enable the prompt
@@ -435,19 +435,19 @@ LLM_MODEL=default \
 
 ```bash
 # API
-docker build -f api/Dockerfile -t llmsafespace/api:dev .
+docker build -f api/Dockerfile -t llmsafespaces/api:dev .
 
 # Controller
-docker build -f controller/Dockerfile -t llmsafespace/controller:dev .
+docker build -f controller/Dockerfile -t llmsafespaces/controller:dev .
 
 # Base runtime (opencode + redact + workspace-agentd + entrypoints)
-docker build -f runtimes/base/Dockerfile -t llmsafespace/runtime-base:dev runtimes/base
+docker build -f runtimes/base/Dockerfile -t llmsafespaces/runtime-base:dev runtimes/base
 
 # Frontend
-docker build -f frontend/Dockerfile -t llmsafespace/frontend:dev frontend
+docker build -f frontend/Dockerfile -t llmsafespaces/frontend:dev frontend
 ```
 
-CI builds and pushes these to `ghcr.io/lenaxia/llmsafespace/{api,controller,base,frontend}:dev` on every push to `main` (see `.github/workflows/ci.yml`).
+CI builds and pushes these to `ghcr.io/lenaxia/llmsafespaces/{api,controller,base,frontend}:dev` on every push to `main` (see `.github/workflows/ci.yml`).
 
 ---
 
@@ -467,19 +467,19 @@ See `design/0027_2026-05-24_security-policy-v21.md` and `design/0021_2026-05-21_
 
 ## License
 
-LLMSafeSpace is licensed under the **GNU Affero General Public License v3.0
+LLMSafeSpaces is licensed under the **GNU Affero General Public License v3.0
 or later** (AGPL-3.0-or-later). See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 The AGPL requires that anyone who runs a modified version of this software
 as a network service make the corresponding source code available to its
-users. If you self-host LLMSafeSpace for your own internal use, this is
+users. If you self-host LLMSafeSpaces for your own internal use, this is
 unlikely to affect you.
 
 ### Commercial license
 
 A commercial license is available for organizations that cannot or do not
 wish to comply with the AGPL — for example, those who wish to incorporate
-LLMSafeSpace into a proprietary product, or offer it as a hosted service
+LLMSafeSpaces into a proprietary product, or offer it as a hosted service
 without releasing the corresponding source.
 
 Commercial licensing inquiries: **safespace@47north.lat**

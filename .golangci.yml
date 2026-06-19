@@ -1,4 +1,4 @@
-# golangci-lint v2 configuration for LLMSafeSpace.
+# golangci-lint v2 configuration for LLMSafeSpaces.
 #
 # Ruleset rationale: catch the audit-cycle bugs that pre-merge automation
 # could have caught mechanically (see worklogs 0094, 0099) instead of
@@ -65,7 +65,7 @@ linters:
        # frontend/node_modules; this guards CI runs that npm install.
        - frontend/node_modules
        - sdks/typescript/node_modules
-       - sdks/vscode-llmsafespace/node_modules
+       - sdks/vscode-llmsafespaces/node_modules
        # The SDK canary suite (sdks/canary/go/) and MCP canary
        # (sdks/canary/mcp/) each have their own go.mod. golangci-lint
        # cannot typecheck sub-module packages from the repo root.
@@ -111,6 +111,12 @@ linters:
       excludes:
         # G104 (audit errors not checked) duplicates errcheck.
         - G104
+        # G117 (struct field matches secret pattern): fires on any field
+        # named *Key/*Secret/*Token that has a json tag. Our credential
+        # DTOs (e.g. credentialProviderValue.APIKey) legitimately hold
+        # API keys for JSON transmission — they are never logged. gitleaks
+        # catches real hardcoded secrets.
+        - G117
         # G304 (file include via variable): too many false positives in
         # config-loading paths. Re-enable after a real incident.
         - G304

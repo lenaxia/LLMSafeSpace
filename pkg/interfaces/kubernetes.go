@@ -14,7 +14,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 type KubernetesClient interface {
@@ -24,10 +24,10 @@ type KubernetesClient interface {
 	DynamicClient() dynamic.Interface
 	RESTConfig() *rest.Config
 	InformerFactory() informers.SharedInformerFactory
-	LlmsafespaceV1() (LLMSafespaceV1Interface, error)
+	LlmsafespacesV1() (LLMSafespacesV1Interface, error)
 }
 
-type LLMSafespaceV1Interface interface {
+type LLMSafespacesV1Interface interface {
 	RuntimeEnvironments() RuntimeEnvironmentInterface
 	Workspaces(namespace string) WorkspaceInterface
 	InferenceRelays() InferenceRelayInterface

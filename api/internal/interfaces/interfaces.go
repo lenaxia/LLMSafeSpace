@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lenaxia/llmsafespace/api/internal/services/msgqueue"
-	k8sinterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
-	"github.com/lenaxia/llmsafespace/pkg/types"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/msgqueue"
+	k8sinterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 type SessionManager interface {
@@ -55,6 +55,9 @@ type DatabaseService interface {
 	UpdateUser(ctx context.Context, userID string, updates types.UserUpdates) error
 	DeleteUser(ctx context.Context, userID string) error
 	CountUsers(ctx context.Context) (int, error)
+	// SetUserStatus sets the authoritative operational status of a user
+	// (D19): 'suspended' blocks across all contexts, 'active' restores.
+	SetUserStatus(ctx context.Context, userID string, status types.UserStatus) error
 	GetUserByAPIKey(ctx context.Context, apiKey string) (*types.User, error)
 	CreateAPIKey(ctx context.Context, apiKey *types.APIKey) error
 	ListAPIKeys(ctx context.Context, userID string) ([]*types.APIKey, error)
@@ -182,6 +185,34 @@ type MeteringService interface {
 	Stop() error
 }
 
+// MeteringRecorder is the subset of MeteringService that record-only
+// consumers depend on (middleware, proxy event handlers, inference-token
+// trackers). ISP-extracted (US-46.7) so these consumers don't depend on
+// query/export methods they never call.
+type MeteringRecorder interface {
+	Record(event types.UsageEvent)
+	RecordLifecycleEvent(ctx context.Context, workspaceID, ownerID string, ownerType types.OwnerType, fromPhase, toPhase, resourceTier string, eventTime time.Time) error
+}
+
+// SettingsReader is the read-only subset of settings.InstanceService.
+// 6 consumers (router, workspace_service, auth, rate_limit, max_active)
+// only call Get* methods — they never Set. ISP-extracted (US-46.7).
+type SettingsReader interface {
+	GetBool(ctx context.Context, key string) (bool, error)
+	GetInt(ctx context.Context, key string) (int, error)
+	GetString(ctx context.Context, key string) (string, error)
+	GetStrings(ctx context.Context, key string) ([]string, error)
+}
+
+// WorkspaceMetadataStore is the workspace-CRUD subset of DatabaseService.
+// Handlers that only need to read/update workspace metadata depend on
+// this narrow interface instead of the full DatabaseService. ISP-extracted
+// (US-46.7).
+type WorkspaceMetadataStore interface {
+	GetWorkspace(ctx context.Context, workspaceID string) (*types.WorkspaceMetadata, error)
+	UpdateWorkspace(ctx context.Context, workspaceID string, updates types.WorkspaceUpdates) error
+}
+
 type Services interface {
 	GetAuth() AuthService
 	GetDatabase() DatabaseService
@@ -193,6 +224,6 @@ type Services interface {
 }
 
 type KubernetesClient = k8sinterfaces.KubernetesClient
-type LLMSafespaceV1Interface = k8sinterfaces.LLMSafespaceV1Interface
+type LLMSafespacesV1Interface = k8sinterfaces.LLMSafespacesV1Interface
 type RuntimeEnvironmentInterface = k8sinterfaces.RuntimeEnvironmentInterface
 type WorkspaceInterface = k8sinterfaces.WorkspaceInterface

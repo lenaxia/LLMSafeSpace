@@ -7,7 +7,7 @@ import "time"
 
 const (
 	// InferenceRelayFinalizer is the finalizer name for cleanup on CR deletion.
-	InferenceRelayFinalizer = "inferencerelay.llmsafespace.dev/finalizer"
+	InferenceRelayFinalizer = "inferencerelay.llmsafespaces.dev/finalizer"
 
 	// Requeue intervals for different reconcile outcomes.
 	requeueProvisioning = 10 * time.Second // waiting for VM to come up
@@ -42,8 +42,8 @@ const (
 	routerWGSecret       = "relay-router-wg"
 
 	// Annotation keys read by the reconciler.
-	annotationRotate = "relay.llmsafespace.dev/rotate"
-	annotationPaused = "relay.llmsafespace.dev/paused"
+	annotationRotate = "relay.llmsafespaces.dev/rotate"
+	annotationPaused = "relay.llmsafespaces.dev/paused"
 )
 
 // wgIPForProvider returns the WireGuard mesh IP for a given provider.

@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
 )
 
 // UserStore is the database interface for user settings.

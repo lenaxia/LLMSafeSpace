@@ -31,7 +31,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/lenaxia/llmsafespace/pkg/agentd/secrets"
+	"github.com/lenaxia/llmsafespaces/pkg/agentd/secrets"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -63,11 +64,11 @@ func runMaterializeSubcommand(t *testing.T, bin, secretsPath, secretsBase, sshDi
 	// Override paths via env so we don't need root or to write into
 	// /home/sandbox during tests.
 	cmd.Env = append(os.Environ(),
-		"LLMSAFESPACE_SECRETS_BASE_DIR="+secretsBase,
-		"LLMSAFESPACE_SSH_DIR="+sshDir,
-		"LLMSAFESPACE_AGENT_CONFIG_PATH="+agentCfg,
-		"LLMSAFESPACE_SECRETS_ENV_PATH="+envPath,
-		"LLMSAFESPACE_GIT_CREDS_PATH="+gitCreds,
+		"LLMSAFESPACES_SECRETS_BASE_DIR="+secretsBase,
+		"LLMSAFESPACES_SSH_DIR="+sshDir,
+		"LLMSAFESPACES_AGENT_CONFIG_PATH="+agentCfg,
+		"LLMSAFESPACES_SECRETS_ENV_PATH="+envPath,
+		"LLMSAFESPACES_GIT_CREDS_PATH="+gitCreds,
 		"HOME="+filepath.Dir(sshDir),
 	)
 	var stdout, stderr bytes.Buffer
@@ -249,7 +250,7 @@ func TestReloadSecretsHandler_HappyPath(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
-	reloadSecretsHandler(cfg, nil, "", nil)(rec, req)
+	reloadSecretsHandler(cfg, reloadSecretsDeps{})(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	var resp struct {
@@ -270,7 +271,7 @@ func TestReloadSecretsHandler_BadJSON(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader("not json"))
 	rec := httptest.NewRecorder()
 
-	reloadSecretsHandler(cfg, nil, "", nil)(rec, req)
+	reloadSecretsHandler(cfg, reloadSecretsDeps{})(rec, req)
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
@@ -280,7 +281,7 @@ func TestReloadSecretsHandler_WrongMethod(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/reload-secrets", nil)
 	rec := httptest.NewRecorder()
 
-	reloadSecretsHandler(cfg, nil, "", nil)(rec, req)
+	reloadSecretsHandler(cfg, reloadSecretsDeps{})(rec, req)
 	require.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 }
 
@@ -423,7 +424,7 @@ func TestReloadSecretsHandler_LLMProvider_CallsOpenCodeClient(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
-	reloadSecretsHandler(cfg, nil, "", nil)(rec, req)
+	reloadSecretsHandler(cfg, reloadSecretsDeps{})(rec, req)
 
 	// Handler should succeed (materializer and flush work in-process)
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -461,7 +462,7 @@ func TestReloadSecretsHandler_LLMProvider_FlushFailure_Returns500(t *testing.T) 
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
-	reloadSecretsHandler(cfg, nil, "", nil)(rec, req)
+	reloadSecretsHandler(cfg, reloadSecretsDeps{})(rec, req)
 
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
 	var resp map[string]string
@@ -495,7 +496,7 @@ func TestReloadSecretsHandler_MixedBatch_LLMAndEnv(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
-	reloadSecretsHandler(cfg, nil, "", nil)(rec, req)
+	reloadSecretsHandler(cfg, reloadSecretsDeps{})(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
 
@@ -538,7 +539,7 @@ func TestReloadSecretsHandler_EnvOnly_NoConfigReload(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	// proc=nil means restart won't actually fire, but we can check the response
-	reloadSecretsHandler(cfg, nil, "", nil)(rec, req)
+	reloadSecretsHandler(cfg, reloadSecretsDeps{})(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	var resp struct {
@@ -584,7 +585,7 @@ func TestReloadSecretsHandler_RemergesRelayAfterFlush(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
-	reloadSecretsHandler(cfg, nil, "", nil)(rec, req)
+	reloadSecretsHandler(cfg, reloadSecretsDeps{})(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	// agent-config.json must contain both the credential provider (thekao)
@@ -637,7 +638,7 @@ func TestReloadSecretsHandler_SkipsRelayMergeWhenModelsNil(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
-	reloadSecretsHandler(cfg, nil, "", nil)(rec, req)
+	reloadSecretsHandler(cfg, reloadSecretsDeps{})(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	cfgData, err := os.ReadFile(agentCfg)
@@ -714,7 +715,7 @@ func TestReloadSecretsHandler_RelayRemergeError_StillReturns200(t *testing.T) {
 	//   1. The code path using Warn (not Error + return) at secrets.go:302-303
 	//   2. The integration of the re-merge inside the existing 200-path
 	// This test validates FlushProviders failure → 500 (separate from re-merge).
-	reloadSecretsHandler(cfg, nil, "", nil)(rec, req)
+	reloadSecretsHandler(cfg, reloadSecretsDeps{})(rec, req)
 	// FlushProviders to unwritable dir → 500
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
 
@@ -724,7 +725,7 @@ func TestReloadSecretsHandler_RelayRemergeError_StillReturns200(t *testing.T) {
 	cfg2.agentConfigPath = agentCfg
 	req2 := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec2 := httptest.NewRecorder()
-	reloadSecretsHandler(cfg2, nil, "", nil)(rec2, req2)
+	reloadSecretsHandler(cfg2, reloadSecretsDeps{})(rec2, req2)
 	require.Equal(t, http.StatusOK, rec2.Code,
 		"handler must return 200 even when re-merge path hits non-fatal warn")
 }
@@ -884,7 +885,7 @@ func TestReloadSecretsHandler_ConcurrentCalls_NoRace(t *testing.T) {
 		enricherCacheDir: filepath.Join(dir, "cache"),
 	}
 
-	handler := reloadSecretsHandler(cfg, nil, "", nil)
+	handler := reloadSecretsHandler(cfg, reloadSecretsDeps{})
 	body := `[{"type":"env-secret","name":"FOO","metadata":{"var_name":"FOO"},"plaintext":"bar"}]`
 
 	var wg sync.WaitGroup
@@ -905,4 +906,154 @@ func TestReloadSecretsHandler_ConcurrentCalls_NoRace(t *testing.T) {
 	for i, code := range results {
 		assert.Equal(t, http.StatusOK, code, "handler %d returned non-200", i)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// H2 (worklog 371): reloadSecretsHandler records secret-change restarts in
+// the workspace_restarts_total Prometheus counter.
+// ---------------------------------------------------------------------------
+
+// TestReloadSecretsHandler_H2_EnvSecretRecordsRestartMetric verifies that a
+// credential reload containing an env-secret (which triggers a restart) also
+// increments workspace_restarts_total with reason="env_secrets". Pre-fix,
+// the most common restart type (user-initiated credential change) was
+// invisible in Prometheus — RecordRestart was only called from the crash
+// and oom paths.
+func TestReloadSecretsHandler_H2_EnvSecretRecordsRestartMetric(t *testing.T) {
+	dir := t.TempDir()
+	cfg := materializeConfig{
+		secretsBaseDir:  filepath.Join(dir, "secrets"),
+		sshDir:          filepath.Join(dir, ".ssh"),
+		agentConfigPath: filepath.Join(dir, "agent-config.json"),
+		secretsEnvPath:  filepath.Join(dir, "secrets-env"),
+		gitCredsPath:    filepath.Join(dir, ".git-credentials"),
+		home:            dir,
+	}
+
+	t.Setenv("WORKSPACE_ID", "ws-h2-env")
+	// The handler writes the restart-reason marker to the package constant
+	// RestartReasonMarkerPath. Clean it up so it does not leak into other
+	// tests (the boot-time reader would otherwise log it).
+	t.Cleanup(func() { _ = os.Remove(RestartReasonMarkerPath) })
+
+	// Idle tracker + nil lister → trackerHasBusyOrUnknown returns false →
+	// makeSessionAwareRestartDecision restarts immediately (mock captures it).
+	tracker := newSessionStatusTracker()
+	tracker.set("ses_idle", "idle")
+	proc := &mockManagedProcess{}
+
+	before := testutil.ToFloat64(pkgOpsMetrics.restartsTotal.WithLabelValues("ws-h2-env", "env_secrets"))
+
+	body := `[{"type":"env-secret","name":"x","metadata":{"var_name":"X"},"plaintext":"v"}]`
+	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	reloadSecretsHandler(cfg, reloadSecretsDeps{
+		Proc:    proc,
+		Tracker: tracker,
+	})(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	after := testutil.ToFloat64(pkgOpsMetrics.restartsTotal.WithLabelValues("ws-h2-env", "env_secrets"))
+	assert.Equal(t, before+1, after,
+		"workspace_restarts_total{reason=\"env_secrets\"} must increment on env-secret reload (H2)")
+	assert.Equal(t, 1, proc.restartCount(),
+		"the mock proc must have been restarted")
+}
+
+// TestReloadSecretsHandler_H2_APIKeyRecordsRestartMetric verifies the same
+// for an api-key batch (reason="api_key").
+func TestReloadSecretsHandler_H2_APIKeyRecordsRestartMetric(t *testing.T) {
+	dir := t.TempDir()
+	cfg := materializeConfig{
+		secretsBaseDir:  filepath.Join(dir, "secrets"),
+		sshDir:          filepath.Join(dir, ".ssh"),
+		agentConfigPath: filepath.Join(dir, "agent-config.json"),
+		secretsEnvPath:  filepath.Join(dir, "secrets-env"),
+		gitCredsPath:    filepath.Join(dir, ".git-credentials"),
+		home:            dir,
+	}
+
+	t.Setenv("WORKSPACE_ID", "ws-h2-apikey")
+	t.Cleanup(func() { _ = os.Remove(RestartReasonMarkerPath) })
+
+	tracker := newSessionStatusTracker()
+	tracker.set("ses_idle", "idle")
+	proc := &mockManagedProcess{}
+
+	before := testutil.ToFloat64(pkgOpsMetrics.restartsTotal.WithLabelValues("ws-h2-apikey", "api_key"))
+
+	body := `[{"type":"api-key","name":"k","plaintext":"secret"}]`
+	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	reloadSecretsHandler(cfg, reloadSecretsDeps{
+		Proc:    proc,
+		Tracker: tracker,
+	})(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	after := testutil.ToFloat64(pkgOpsMetrics.restartsTotal.WithLabelValues("ws-h2-apikey", "api_key"))
+	assert.Equal(t, before+1, after,
+		"workspace_restarts_total{reason=\"api_key\"} must increment on api-key reload (H2)")
+}
+
+// TestMetricRestartReason_MapsMarkerReasonToMetricLabel verifies the marker
+// → metric reason mapping. The marker file uses the longer human-readable
+// form (env_secrets_changed); the Prometheus label uses the short form
+// (env_secrets) that matches the metric help text and the crash/oom reasons.
+func TestMetricRestartReason_MapsMarkerReasonToMetricLabel(t *testing.T) {
+	assert.Equal(t, "env_secrets", metricRestartReason("env_secrets_changed"))
+	assert.Equal(t, "api_key", metricRestartReason("api_key_changed"))
+	assert.Equal(t, "crash", metricRestartReason("crash"), "unknown reasons pass through unchanged")
+	assert.Equal(t, "oom", metricRestartReason("oom"))
+}
+
+// TestReloadSecretsHandler_H2_MetricRecordedEvenWhenMarkerWriteFails verifies
+// the H2 fix: RecordRestart is called UNCONDITIONALLY (after the marker/log
+// block), not gated on marker-write success. Pre-fix, a full/read-only PVC
+// would suppress workspace_restarts_total for the most common restart type
+// (credential change) even though the restart still proceeded. This test points
+// the marker path at an unwritable location (a path whose parent is a file,
+// not a directory) so writeRestartReasonMarker fails, then asserts the counter
+// still increments.
+func TestReloadSecretsHandler_H2_MetricRecordedEvenWhenMarkerWriteFails(t *testing.T) {
+	dir := t.TempDir()
+	cfg := materializeConfig{
+		secretsBaseDir:  filepath.Join(dir, "secrets"),
+		sshDir:          filepath.Join(dir, ".ssh"),
+		agentConfigPath: filepath.Join(dir, "agent-config.json"),
+		secretsEnvPath:  filepath.Join(dir, "secrets-env"),
+		gitCredsPath:    filepath.Join(dir, ".git-credentials"),
+		home:            dir,
+	}
+
+	t.Setenv("WORKSPACE_ID", "ws-h2-markerfail")
+
+	// Sabotage the marker write: create a regular file, then set the marker
+	// path INSIDE it. writeRestartReasonMarker does MkdirAll(filepath.Dir(path))
+	// which fails because the parent is a file → the marker write errors out.
+	blockingFile := filepath.Join(dir, "blocker")
+	require.NoError(t, os.WriteFile(blockingFile, []byte("x"), 0o600))
+	sabotagedMarkerPath := filepath.Join(blockingFile, "marker")
+
+	tracker := newSessionStatusTracker()
+	tracker.set("ses_idle", "idle")
+	proc := &mockManagedProcess{}
+
+	before := testutil.ToFloat64(pkgOpsMetrics.restartsTotal.WithLabelValues("ws-h2-markerfail", "env_secrets"))
+
+	body := `[{"type":"env-secret","name":"x","metadata":{"var_name":"X"},"plaintext":"v"}]`
+	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	reloadSecretsHandler(cfg, reloadSecretsDeps{
+		Proc:                    proc,
+		Tracker:                 tracker,
+		RestartReasonMarkerPath: sabotagedMarkerPath,
+	})(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	after := testutil.ToFloat64(pkgOpsMetrics.restartsTotal.WithLabelValues("ws-h2-markerfail", "env_secrets"))
+	assert.Equal(t, before+1, after,
+		"workspace_restarts_total must increment even when the marker write fails (H2 unconditional recording)")
+	assert.Equal(t, 1, proc.restartCount(),
+		"the restart must still proceed despite the marker write failure")
 }

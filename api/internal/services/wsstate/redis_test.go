@@ -12,6 +12,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/go-redis/redis/v8"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -445,4 +446,106 @@ func TestRedisStore_LoadTest_1000ConcurrentOps_NoDoubleCounting(t *testing.T) {
 		"1000 concurrent ops with maxSessions=10 must produce exactly 10 successful adds — no oversubscription")
 	assert.Equal(t, maxSessions, store.ActiveSessionCount("ws-load"),
 		"final count must match maxSessions exactly")
+}
+
+// ---------------------------------------------------------------------------
+// C3 (worklog 371): TouchActiveSessions refreshes the active-set TTL.
+// ---------------------------------------------------------------------------
+
+// TestRedisStore_TouchActiveSessions_RefreshesTTL verifies that TouchActiveSessions
+// extends the TTL of the workspace's active set. This is the core C3 fix: a
+// multi-hour agentic turn emits session.status=busy once and no further
+// session.status events until completion. Without periodic TTL refresh, the
+// 30-minute TTL expires mid-turn, admitting a concurrent request that
+// corrupts opencode's SQLite session history.
+func TestRedisStore_TouchActiveSessions_RefreshesTTL(t *testing.T) {
+	store, mr, _, cleanup := setupRedisStore(t)
+	defer cleanup()
+
+	require.True(t, store.CheckAndAddActiveSession("ws-c3", "s1", 5))
+	ttlBefore := mr.TTL(activeKey("ws-c3"))
+	require.Greater(t, ttlBefore, 20*time.Minute, "initial TTL must be near 30m")
+
+	// Fast-forward miniredis close to expiry, then touch.
+	mr.FastForward(25 * time.Minute)
+	ttlAged := mr.TTL(activeKey("ws-c3"))
+	require.Less(t, ttlAged, 10*time.Minute, "TTL must have aged after fast-forward")
+
+	store.TouchActiveSessions("ws-c3")
+	ttlAfter := mr.TTL(activeKey("ws-c3"))
+	assert.Greater(t, ttlAfter, 25*time.Minute,
+		"TouchActiveSessions must refresh the TTL back near 30m")
+}
+
+// TestRedisStore_TouchActiveSessions_NonExistentKey_NoOp verifies that touching
+// a workspace with no active sessions is a no-op (EXPIRE on a missing key).
+// This is important because onRawEvent calls TouchActiveSessions unconditionally
+// on every SSE event — including events for workspaces with no active sessions.
+func TestRedisStore_TouchActiveSessions_NonExistentKey_NoOp(t *testing.T) {
+	store, mr, _, cleanup := setupRedisStore(t)
+	defer cleanup()
+
+	assert.NotPanics(t, func() { store.TouchActiveSessions("ws-empty") })
+	assert.False(t, mr.Exists(activeKey("ws-empty")),
+		"touching a non-existent key must NOT create it")
+	assert.Equal(t, 0, store.ActiveSessionCount("ws-empty"))
+}
+
+// TestRedisStore_TouchActiveSessions_RedisDown_NoPanic verifies graceful
+// degradation when Redis is unreachable.
+func TestRedisStore_TouchActiveSessions_RedisDown_NoPanic(t *testing.T) {
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	store := NewRedisStore(client, testActiveSessTTL)
+	mr.Close()
+	assert.NotPanics(t, func() { store.TouchActiveSessions("ws-down") })
+	_ = client.Close()
+}
+
+// ---------------------------------------------------------------------------
+// M1 (worklog 371): IsSessionDeleted fail-closed counter.
+// ---------------------------------------------------------------------------
+
+// TestRedisStore_IsSessionDeleted_RedisDown_IncrementsFailClosedCounter verifies
+// that each fail-closed return (true due to Redis error) increments
+// ws_state_is_session_deleted_fail_closed_total. This makes the silent
+// suppression of session-event processing during a Redis outage alertable.
+func TestRedisStore_IsSessionDeleted_RedisDown_IncrementsFailClosedCounter(t *testing.T) {
+	// Force metric registration (sync.Once in this test binary).
+	registerMetrics()
+	before := testutil.ToFloat64(pkgIsSessionDeletedFailClosedTotal)
+
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	store := NewRedisStore(client, testActiveSessTTL)
+	mr.Close()
+
+	// Two calls → counter increments twice.
+	assert.True(t, store.IsSessionDeleted("ws-m1", "s1"))
+	assert.True(t, store.IsSessionDeleted("ws-m1", "s2"))
+
+	after := testutil.ToFloat64(pkgIsSessionDeletedFailClosedTotal)
+	assert.Equal(t, before+2, after,
+		"each fail-closed return must increment ws_state_is_session_deleted_fail_closed_total")
+	_ = client.Close()
+}
+
+// TestRedisStore_IsSessionDeleted_RealTombstone_DoesNotIncrementCounter verifies
+// that a legitimate tombstone (session actually deleted) does NOT increment
+// the fail-closed counter — only Redis errors do.
+func TestRedisStore_IsSessionDeleted_RealTombstone_DoesNotIncrementCounter(t *testing.T) {
+	registerMetrics()
+	before := testutil.ToFloat64(pkgIsSessionDeletedFailClosedTotal)
+
+	store, _, _, cleanup := setupRedisStore(t)
+	defer cleanup()
+
+	store.MarkSessionDeleted("ws-m1b", "s-dead")
+	assert.True(t, store.IsSessionDeleted("ws-m1b", "s-dead"))
+
+	after := testutil.ToFloat64(pkgIsSessionDeletedFailClosedTotal)
+	assert.Equal(t, before, after,
+		"a real tombstone must NOT increment the fail-closed counter (only Redis errors do)")
 }

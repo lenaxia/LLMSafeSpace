@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // S-USER-SETTINGS canary — TypeScript SDK
 
-import { LLMSafeSpace } from '../../src/index.js';
+import { LLMSafeSpaces } from '../../src/index.js';
 import { Runner, Config, configFromEnv, nodeFetch, rawDo } from '../canary.js';
 
 const EXPECTED_SCHEMA_VERSION = 1;
 
 async function run(r: Runner, cfg: Config): Promise<void> {
-  const c = new LLMSafeSpace({ baseUrl: cfg.apiUrl, apiKey: cfg.apiKey, timeout: 15000, fetch: nodeFetch as any });
+  const c = new LLMSafeSpaces({ baseUrl: cfg.apiUrl, apiKey: cfg.apiKey, timeout: 15000, fetch: nodeFetch as any });
 
   // P1: GET settings
   const [ok, settings] = await r.assertNoError(() => c.userSettings.get(), 'get-settings: no error');

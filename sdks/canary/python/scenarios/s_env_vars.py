@@ -8,11 +8,11 @@ import sys, os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 from canary import Runner, Config, config_from_env, raw_do
-from llmsafespace import LLMSafeSpace
+from llmsafespaces import LLMSafeSpaces
 
 
 def run(r: Runner, cfg: Config) -> None:
-    c = LLMSafeSpace(cfg.api_url, api_key=cfg.api_key, timeout=20.0)
+    c = LLMSafeSpaces(cfg.api_url, api_key=cfg.api_key, timeout=20.0)
     ws_id = None
     try:
         ok, ws = r.assert_no_error(

@@ -1,0 +1,22 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.dashboards.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "llmsafespaces.fullname" . }}-grafana-dashboards
+  namespace: {{ default .Release.Namespace .Values.monitoring.dashboards.namespace }}
+  labels:
+    {{- include "llmsafespaces.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring
+    {{- with .Values.monitoring.dashboards.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.monitoring.dashboards.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  {{- range $path, $_ := .Files.Glob "dashboards/**.json" }}
+  {{ base $path }}: |-
+{{ $.Files.Get $path | indent 4 }}
+  {{- end }}
+{{- end }}

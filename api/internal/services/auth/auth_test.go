@@ -14,12 +14,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/lenaxia/llmsafespace/api/internal/config"
-	"github.com/lenaxia/llmsafespace/api/internal/logger"
-	"github.com/lenaxia/llmsafespace/api/internal/mocks"
-	"github.com/lenaxia/llmsafespace/api/internal/utilities"
-	"github.com/lenaxia/llmsafespace/pkg/types"
-	pkgutil "github.com/lenaxia/llmsafespace/pkg/utilities"
+	"github.com/lenaxia/llmsafespaces/api/internal/config"
+	"github.com/lenaxia/llmsafespaces/api/internal/logger"
+	"github.com/lenaxia/llmsafespaces/api/internal/mocks"
+	"github.com/lenaxia/llmsafespaces/api/internal/utilities"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
+	pkgutil "github.com/lenaxia/llmsafespaces/pkg/utilities"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -858,6 +858,61 @@ func TestLogin_InactiveUser(t *testing.T) {
 	assert.Nil(t, resp)
 }
 
+// TestLogin_SuspendedUser verifies D19 user-level suspension: a user whose
+// status='suspended' cannot log in, even with the correct password and the
+// legacy active flag still true. The error is the explicit "account suspended"
+// message (the password check already passed, so this is not an enumeration
+// vector).
+func TestLogin_SuspendedUser(t *testing.T) {
+	svc, mockDb, _ := newTestService(t)
+	ctx := context.Background()
+
+	hash, _ := bcrypt.GenerateFromPassword([]byte("pass"), bcrypt.DefaultCost)
+	mockDb.On("GetUserByEmail", ctx, "suspended@example.com").Return(&types.User{
+		ID:           "u1",
+		PasswordHash: string(hash),
+		Active:       true, // legacy flag still true — status is authoritative
+		Status:       types.UserStatusSuspended,
+	}, nil)
+
+	resp, err := svc.Login(ctx, types.LoginRequest{
+		Email:    "suspended@example.com",
+		Password: "pass",
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "account suspended")
+	assert.Nil(t, resp)
+	mockDb.AssertExpectations(t)
+}
+
+// TestLogin_ActiveUser_StatusActive verifies the status gate does not block a
+// normal active user.
+func TestLogin_ActiveUser_StatusActive(t *testing.T) {
+	svc, mockDb, _ := newTestService(t)
+	ctx := context.Background()
+
+	hash, _ := bcrypt.GenerateFromPassword([]byte("pass"), bcrypt.DefaultCost)
+	mockDb.On("GetUserByEmail", ctx, "ok@example.com").Return(&types.User{
+		ID:           "u1",
+		Username:     "ok",
+		Email:        "ok@example.com",
+		PasswordHash: string(hash),
+		Active:       true,
+		Status:       types.UserStatusActive,
+	}, nil)
+
+	resp, err := svc.Login(ctx, types.LoginRequest{
+		Email:    "ok@example.com",
+		Password: "pass",
+	})
+
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	assert.Equal(t, "u1", resp.User.ID)
+	mockDb.AssertExpectations(t)
+}
+
 func TestCreateAPIKey_Success(t *testing.T) {
 	svc, mockDb, _ := newTestService(t)
 	ctx := context.Background()
@@ -1484,14 +1539,14 @@ func TestLogin_InactiveUser_RecordsAuthFailureMetric(t *testing.T) {
 	assert.Equal(t, before+1, after)
 }
 
-// gatherAuthFailureCount reads the current value of llmsafespace_auth_failures_total
+// gatherAuthFailureCount reads the current value of llmsafespaces_auth_failures_total
 // for a specific reason label from the default Prometheus registry.
 func gatherAuthFailureCount(t *testing.T, reason string) float64 {
 	t.Helper()
 	mfs, err := prometheus.DefaultGatherer.Gather()
 	require.NoError(t, err)
 	for _, mf := range mfs {
-		if mf.GetName() != "llmsafespace_auth_failures_total" {
+		if mf.GetName() != "llmsafespaces_auth_failures_total" {
 			continue
 		}
 		for _, m := range mf.GetMetric() {

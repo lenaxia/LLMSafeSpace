@@ -18,9 +18,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/lenaxia/llmsafespace/controller/internal/common"
-	"github.com/lenaxia/llmsafespace/controller/internal/metrics"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespaces/controller/internal/common"
+	"github.com/lenaxia/llmsafespaces/controller/internal/metrics"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 // relayWGKeysSecret is where relay WG public keys are persisted across restarts.

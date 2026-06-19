@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	keyPrefix = "llmsafespace:msgqueue:"
+	keyPrefix = "llmsafespaces:msgqueue:"
 	keyTTL    = 24 * time.Hour
 )
 

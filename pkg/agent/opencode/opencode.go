@@ -6,8 +6,8 @@ package opencode
 import (
 	"encoding/json"
 
-	"github.com/lenaxia/llmsafespace/pkg/agent"
-	"github.com/lenaxia/llmsafespace/pkg/secrets"
+	"github.com/lenaxia/llmsafespaces/pkg/agent"
+	"github.com/lenaxia/llmsafespaces/pkg/secrets"
 )
 
 type OpenCodeAgent struct{}

@@ -20,9 +20,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 
-	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
-	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/eventbroker"
+	k8smocks "github.com/lenaxia/llmsafespaces/mocks/kubernetes"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 // authRecordingBackend is a test HTTP backend that records whether each
@@ -120,9 +120,9 @@ func TestContract_ProxyRoutesSendBasicAuth(t *testing.T) {
 	httpClient := &http.Client{Transport: transport}
 
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 	fakeClientset := k8sfake.NewSimpleClientset()
 	k8sMock.On("Clientset").Return(fakeClientset)
@@ -234,9 +234,8 @@ func TestContract_ModelsRoutesSendBasicAuth(t *testing.T) {
 	srv.Start()
 	t.Cleanup(srv.Close)
 
-	handler := NewSecretsHandler(nil)
-	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
-	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
+	handler := newTestModelsHandler(testPassword)
+
 	clearModelCache()
 
 	router := gin.New()

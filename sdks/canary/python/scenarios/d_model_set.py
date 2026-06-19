@@ -19,7 +19,7 @@ from canary import (
     ensure_session_with_retry,
     raw_do,
 )
-from llmsafespace import LLMSafeSpace
+from llmsafespaces import LLMSafeSpaces
 
 
 def run(r: Runner, cfg: Config) -> None:
@@ -27,7 +27,7 @@ def run(r: Runner, cfg: Config) -> None:
         r.ok("model-set: skipped (no LLM API key or model)")
         return
 
-    c = LLMSafeSpace(cfg.api_url, api_key=cfg.api_key, timeout=120.0)
+    c = LLMSafeSpaces(cfg.api_url, api_key=cfg.api_key, timeout=120.0)
     ws_id = None
     cred_id = None
     try:

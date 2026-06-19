@@ -1,6 +1,6 @@
-# LLMSafeSpace Frontend
+# LLMSafeSpaces Frontend
 
-React SPA for the LLMSafeSpace platform — a chat interface for driving AI agents running in Kubernetes-backed workspaces.
+React SPA for the LLMSafeSpaces platform — a chat interface for driving AI agents running in Kubernetes-backed workspaces.
 
 ## Stack
 

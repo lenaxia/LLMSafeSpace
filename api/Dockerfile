@@ -2,7 +2,7 @@
 # Build the API server binary.
 # Build context MUST be the repository root (single Go module at root).
 #
-#   docker build -f api/Dockerfile -t llmsafespace/api:dev .
+#   docker build -f api/Dockerfile -t llmsafespaces/api:dev .
 
 ARG TARGETARCH=amd64
 
@@ -40,10 +40,10 @@ FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 
 COPY --from=builder /out/api /usr/local/bin/api
-COPY api/config/config.yaml /etc/llmsafespace/config.yaml
-COPY api/migrations /etc/llmsafespace/migrations
+COPY api/config/config.yaml /etc/llmsafespaces/config.yaml
+COPY api/migrations /etc/llmsafespaces/migrations
 
-ENV CONFIG_PATH=/etc/llmsafespace/config.yaml
+ENV CONFIG_PATH=/etc/llmsafespaces/config.yaml
 
 USER 65532:65532
 

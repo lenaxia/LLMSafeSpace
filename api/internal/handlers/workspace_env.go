@@ -11,13 +11,22 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
-	"github.com/lenaxia/llmsafespace/pkg/secrets"
+	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
+	"github.com/lenaxia/llmsafespaces/pkg/secrets"
 )
 
 // WorkspaceEnvService is the caller-shaped subset of SecretService methods
 // used by the workspace-env endpoints. *secrets.SecretService satisfies it.
 type WorkspaceEnvService interface {
+	// GetSecretByName returns the named secret for the user.
+	//
+	// Contract: a not-found secret is reported as (nil, nil) — NOT
+	// (nil, ErrNotFound). SetWorkspaceEnv and DeleteWorkspaceEnv rely on
+	// this: they branch on `existing != nil` to decide create-vs-update
+	// (and to short-circuit a no-op delete), so any implementation that
+	// returned a non-nil error for the absence case would surface as a
+	// spurious 500 and break env-var creation. Backed by
+	// pg_secret_store.go, which maps pgx.ErrNoRows → (nil, nil).
 	GetSecretByName(ctx context.Context, userID, name string) (*secrets.SecretResponse, error)
 	UpdateSecret(ctx context.Context, userID, sessionID, secretID string, req secrets.UpdateSecretRequest) error
 	CreateSecret(ctx context.Context, userID, sessionID string, req secrets.CreateSecretRequest) (*secrets.SecretResponse, error)

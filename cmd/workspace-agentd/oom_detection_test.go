@@ -4,6 +4,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,58 +18,19 @@ import (
 // When opencode is killed by the OOM killer (SIGKILL / exit 137), the
 // managedProcess supervisor must:
 // 1. Detect the OOM kill signal
-// 2. Write a marker file to the PVC so the next boot can surface it
-// 3. Increment a Prometheus counter for ops dashboards
+// 2. Write the unified restart-reason marker (reason="oom") to the PVC so
+//    the next boot can surface it
+// 3. Increment Prometheus counters (oom_kills + restarts) for ops dashboards
 // 4. Log the event
 //
 // opencode is third-party and cannot be modified — all detection and
 // marker-writing happens in agentd's supervisor loop.
-
-// ---------------------------------------------------------------------------
-// OOM marker file
-// ---------------------------------------------------------------------------
-
-func TestWriteOOMMarker_CreatesFileWithTimestamp(t *testing.T) {
-	dir := t.TempDir()
-	markerPath := filepath.Join(dir, ".opencode-oom-marker")
-
-	err := writeOOMMarker(markerPath, "2Gi")
-	require.NoError(t, err)
-
-	data, err := os.ReadFile(markerPath)
-	require.NoError(t, err)
-	assert.Contains(t, string(data), `"reason":"oom"`)
-	assert.Contains(t, string(data), `"memoryLimit":"2Gi"`)
-	assert.Contains(t, string(data), `"exitCode":137`)
-	assert.Contains(t, string(data), `"timestamp":"`)
-}
-
-func TestWriteOOMMarker_OverwritesExistingMarker(t *testing.T) {
-	dir := t.TempDir()
-	markerPath := filepath.Join(dir, ".opencode-oom-marker")
-
-	require.NoError(t, writeOOMMarker(markerPath, "2Gi"))
-	require.NoError(t, writeOOMMarker(markerPath, "4Gi"))
-
-	data, err := os.ReadFile(markerPath)
-	require.NoError(t, err)
-	assert.Contains(t, string(data), `"memoryLimit":"4Gi"`,
-		"second write must overwrite the first")
-}
-
-func TestWriteOOMMarker_CreatesParentDirIfMissing(t *testing.T) {
-	// writeOOMMarker calls MkdirAll on the parent — the marker dir may
-	// not exist if init containers haven't run yet. This is a feature:
-	// the supervisor must be able to write the marker even on first boot.
-	dir := t.TempDir()
-	markerPath := filepath.Join(dir, "subdir", ".opencode-oom-marker")
-
-	err := writeOOMMarker(markerPath, "2Gi")
-	require.NoError(t, err, "MkdirAll must create missing parent dirs")
-
-	_, err = os.Stat(markerPath)
-	assert.NoError(t, err, "marker file must exist after writeOOMMarker")
-}
+//
+// Worklog 371 H5: the separate OOM-specific marker (writeOOMMarker +
+// OOMMarkerPath) was removed — it had zero read-side consumers and its
+// exitCode/memoryLimit fields were dead data. The restart-reason marker
+// (reason="oom") is the single persistent surface; workspace_oom_kills_total
+// and workspace_restarts_total are the metric surfaces.
 
 // ---------------------------------------------------------------------------
 // OOM exit code detection
@@ -92,4 +54,51 @@ func TestIsOOMExit_NormalExit_ReturnsFalse(t *testing.T) {
 func TestIsOOMExit_CrashExit_ReturnsFalse(t *testing.T) {
 	assert.False(t, isOOMExit(exitCrash),
 		"non-SIGKILL crash (e.g. segfault exit code 139) is not OOM")
+}
+
+// ---------------------------------------------------------------------------
+// handleOOMExit writes the unified restart-reason marker (US-44.7) and
+// records the OOM in Prometheus counters. H5 removed the separate OOM
+// marker — only the restart-reason marker remains.
+// ---------------------------------------------------------------------------
+
+func TestHandleOOMExit_WritesRestartReasonMarker(t *testing.T) {
+	dir := t.TempDir()
+	restartPath := filepath.Join(dir, ".opencode-restart-reason")
+
+	handleOOMExit("ws-123", restartPath)
+
+	// Restart-reason marker is written with reason="oom".
+	restartData, err := os.ReadFile(restartPath)
+	require.NoError(t, err, "restart-reason marker must be written")
+	var r restartReason
+	require.NoError(t, json.Unmarshal(restartData, &r))
+	assert.Equal(t, "oom", r.Reason)
+	assert.NotEmpty(t, r.Timestamp)
+	assert.Empty(t, r.SecretNames, "oom reason has no secret names")
+}
+
+func TestHandleOOMExit_DoesNotWriteOOMSpecificMarker(t *testing.T) {
+	// H5: the separate OOM marker (OOMMarkerPath) no longer exists.
+	// handleOOMExit must not create it.
+	dir := t.TempDir()
+	restartPath := filepath.Join(dir, ".opencode-restart-reason")
+	oomPath := filepath.Join(dir, ".opencode-oom-marker")
+
+	handleOOMExit("ws-h5", restartPath)
+
+	require.FileExists(t, restartPath, "restart-reason marker written")
+	_, err := os.Stat(oomPath)
+	assert.True(t, os.IsNotExist(err),
+		"the dead OOM-specific marker must NOT be written (H5 removed it)")
+}
+
+func TestHandleOOMExit_EmptyWorkspaceID_DefaultsToUnknown(t *testing.T) {
+	dir := t.TempDir()
+	restartPath := filepath.Join(dir, ".opencode-restart-reason")
+
+	// Must not panic; counter increment uses the defaulted label.
+	assert.NotPanics(t, func() { handleOOMExit("", restartPath) })
+
+	require.FileExists(t, restartPath, "restart-reason marker written even with empty workspace ID")
 }

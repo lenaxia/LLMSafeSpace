@@ -12,8 +12,8 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
-	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespaces/api/internal/interfaces"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 func (h *ProxyHandler) SetSessionIndex(si interfaces.SessionIndexService) {
@@ -24,7 +24,7 @@ func (h *ProxyHandler) fetchAndPersistTitle(workspaceID, sessionID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	v1Client, err := h.k8sClient.LlmsafespaceV1()
+	v1Client, err := h.k8sClient.LlmsafespacesV1()
 	if err != nil {
 		return
 	}
@@ -59,12 +59,12 @@ func (h *ProxyHandler) fetchAndPersistTitle(workspaceID, sessionID string) {
 	}
 
 	if session.Title != "" {
-		if err := h.sessionIndex.UpsertTitle(context.Background(), workspaceID, sessionID, session.Title); err != nil {
+		if err := h.sessionIndex.UpsertTitle(ctx, workspaceID, sessionID, session.Title); err != nil {
 			h.logger.Error("Failed to persist session title", err, "workspaceID", workspaceID, "sessionID", sessionID)
 		}
 	}
 	if session.ParentID != "" {
-		if err := h.sessionIndex.UpsertParent(context.Background(), workspaceID, sessionID, session.ParentID); err != nil {
+		if err := h.sessionIndex.UpsertParent(ctx, workspaceID, sessionID, session.ParentID); err != nil {
 			h.logger.Error("Failed to persist session parent", err, "workspaceID", workspaceID, "sessionID", sessionID)
 		}
 	}
@@ -86,7 +86,7 @@ func (h *ProxyHandler) runParentBackfill(workspaceID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	v1Client, v1Err := h.k8sClient.LlmsafespaceV1()
+	v1Client, v1Err := h.k8sClient.LlmsafespacesV1()
 	workspace, err := func() (*v1.Workspace, error) {
 		if v1Err != nil {
 			return nil, v1Err
@@ -136,7 +136,7 @@ func (h *ProxyHandler) runParentBackfill(workspaceID string) {
 		if s.ID == "" || s.ParentID == "" {
 			continue
 		}
-		if err := h.sessionIndex.UpsertParent(context.Background(), workspaceID, s.ID, s.ParentID); err != nil {
+		if err := h.sessionIndex.UpsertParent(ctx, workspaceID, s.ID, s.ParentID); err != nil {
 			h.logger.Debug("Backfill: upsert parent failed", "workspaceID", workspaceID, "sessionID", s.ID, "error", err)
 			continue
 		}
