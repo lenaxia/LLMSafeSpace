@@ -79,7 +79,7 @@ type App struct {
 
 // newEmailMailer resolves the configured email provider into an
 // emailpkg.EmailProvider. Extracted from New to keep New under the funlen
-// limit (worklog 0399). SES validation fails fast at boot.
+// limit (worklog 0410). SES validation fails fast at boot.
 func newEmailMailer(cfg *config.Config) (emailpkg.EmailProvider, error) {
 	switch strings.ToLower(cfg.Email.Provider) {
 	case "ses":

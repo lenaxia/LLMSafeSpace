@@ -41,7 +41,7 @@ data:
     # visible, fall back to userspace wireguard-go via the
     # WG_QUICK_USERSPACE_IMPLEMENTATION env that wg-quick honours. This makes
     # the sidecar work on Talos (kernel WG), generic Linux, and locked-down
-    # kernels (userspace) alike — worklog 0399 assumption A-IMG.
+    # kernels (userspace) alike — worklog 0410 assumption A-IMG.
     detect_wg_impl() {
       if modprobe wireguard 2>/dev/null || [ -d /sys/module/wireguard ]; then
         log "using in-kernel WireGuard"

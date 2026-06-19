@@ -747,7 +747,7 @@ All assumptions below were validated against provider documentation and technica
 | A19 | WireGuard is available in standard Linux kernels ≥5.6 (no DKMS needed) | ✅ Verified | WireGuard was merged into the Linux kernel in 5.6 (2020-03). OCI Oracle Linux 8/9 and GCP Ubuntu 20.04+ images ship kernels ≥5.6. |
 | A20 | WireGuard UDP hole-punching works through cloud NAT with PersistentKeepalive | ✅ Verified | wireguard.com quickstart: "A sensible interval that works with a wide variety of firewalls is 25 seconds." `PersistentKeepalive = 25` is the documented standard NAT-traversal mechanism. Per-provider NAT behavior still needs live verification during US-42.5/42.6. |
 | A21 | Cluster can expose a reachable UDP endpoint for WG via at least one of: cloud LB, MetalLB, kube-vip, NodePort, hostNetwork, or operator-supplied DNAT | ✅ Verified (multi-mode) | The chart ships four operator-selectable ingress modes (`external`, `loadBalancer`, `nodePort`, `hostNetwork`); see Layer 2 redesign. The chart does **not** install MetalLB or any other LB controller — that's an operator responsibility (same model as Postgres/Redis). Default mode is `external`: the chart creates no ingress resources, the operator points DNS at whatever they already run. This guarantees `helm install` works on any K8s distribution. |
-| A22 | OCI and AWS IPs are not blocked by opencode.ai/zen | ✅ Validated (AWS) / ⚠️ OCI pending | **AWS validated (worklog 0399):** deployed a t4g.micro (us-east-1b, public IP 34.205.17.204), `curl https://opencode.ai/zen/v1/models` returned **HTTP 200** with a 4020-byte model list (claude-fable-5, claude-opus-4-8, …) in 0.12s — AWS IPs are NOT blocked. **OCI still pending** (no OCI credentials in this session; operator must run the same check on an Always Free A1 VM before relying on OCI as the secondary). |
+| A22 | OCI and AWS IPs are not blocked by opencode.ai/zen | ✅ Validated (AWS) / ⚠️ OCI pending | **AWS validated (worklog 0410):** deployed a t4g.micro (us-east-1b, public IP 34.205.17.204), `curl https://opencode.ai/zen/v1/models` returned **HTTP 200** with a 4020-byte model list (claude-fable-5, claude-opus-4-8, …) in 0.12s — AWS IPs are NOT blocked. **OCI still pending** (no OCI credentials in this session; operator must run the same check on an Always Free A1 VM before relying on OCI as the secondary). |
 
 ---
 
@@ -788,7 +788,7 @@ OCI will reclaim Always Free instances where CPU utilization (95th percentile), 
 | Story | Title | Effort | Depends On |
 |-------|-------|--------|------------|
 | US-42.1 | Portable relay Go binary (proxy + health + metrics incl. egress bytes + keepalive) | Small-Medium (1d) | None |
-| US-42.2 | Cloud-init template + artifact publishing (with SHA-256 verification) + **day-one validation** (deploy VM on AWS, OCI; curl Zen, verify not blocked — A22; verify `@ai-sdk/openai-compatible` headers support) — **AWS done (HTTP 200, worklog 0399); OCI pending** | Small (0.5-1d) | US-42.1 |
+| US-42.2 | Cloud-init template + artifact publishing (with SHA-256 verification) + **day-one validation** (deploy VM on AWS, OCI; curl Zen, verify not blocked — A22; verify `@ai-sdk/openai-compatible` headers support) — **AWS done (HTTP 200, worklog 0410); OCI pending** | Small (0.5-1d) | US-42.1 |
 | US-42.3 | InferenceRelay CRD + types + deepcopy + RBAC + **validating webhook** (CredentialsRef Secret existence + keys) | Medium (1d) | None |
 | US-42.4 | WireGuard keypair generation + config rendering | Small (0.5d) | None |
 | US-42.5 | OCI provider driver (provision, destroy, status) — **blocked by 7-day reclamation validation gate** | Medium (1-2d) | US-42.2, US-42.4 |
@@ -803,7 +803,7 @@ OCI will reclaim Always Free instances where CPU utilization (95th percentile), 
 
 **Total estimated effort:** 12.5-16.5 days
 
-**Day-one gate (US-42.2):** Before any controller work, manually deploy a relay VM on AWS, OCI, and GCP; curl `opencode.ai/zen/v1` from each. If any provider's IPs are blocked by Zen, remove that provider from the fleet. This is the cheapest possible validation. **AWS half: VALIDATED** (worklog 0399 — HTTP 200 from t4g.micro 34.205.17.204). **OCI half: still pending** operator action (no OCI creds in the validating session).
+**Day-one gate (US-42.2):** Before any controller work, manually deploy a relay VM on AWS, OCI, and GCP; curl `opencode.ai/zen/v1` from each. If any provider's IPs are blocked by Zen, remove that provider from the fleet. This is the cheapest possible validation. **AWS half: VALIDATED** (worklog 0410 — HTTP 200 from t4g.micro 34.205.17.204). **OCI half: still pending** operator action (no OCI creds in the validating session).
 
 ---
 

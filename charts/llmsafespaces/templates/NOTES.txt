@@ -267,7 +267,7 @@ forbids hostPath and NET_ADMIN/NET_RAW, both of which the sidecar requires.
 The chart's other pods remain individually hardened regardless.
 {{- end }}
 
-See worklog 0399 (US-42.8) and Epic 42 Layer 2 for the full rationale.
+See worklog 0410 (US-42.8) and Epic 42 Layer 2 for the full rationale.
 {{- end }}
 
 {{- if .Values.email.enabled }}
