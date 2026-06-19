@@ -193,7 +193,7 @@ func makeSessionAwareRestartDecision(
 	// only context source is r.Context() (avoids a contextcheck lint conflict
 	// between the request-scoped and background contexts in the same scope).
 	if ctx == nil {
-		ctx = context.Background()
+		ctx = context.Background() //nolint:contextcheck // root context for a background goroutine that must outlive any HTTP request — intentionally not derived from a parent
 	}
 
 	// Prune stale entries before deciding (C2a).
@@ -687,7 +687,7 @@ func reloadSecretsHandler(cfg materializeConfig, deps reloadSecretsDeps) http.Ha
 				// the crash/oom reasons.
 				pkgOpsMetrics.RecordRestart(workspaceIDFromEnv(), metricRestartReason(reason))
 			}
-			restarted = makeSessionAwareRestartDecision(deps.BgCtx, proc, tracker, restartIdleCheckInterval, defaultMaxDefer, lister, deps.BgWg)
+			restarted = makeSessionAwareRestartDecision(deps.BgCtx, proc, tracker, restartIdleCheckInterval, defaultMaxDefer, lister, deps.BgWg) //nolint:contextcheck // deps.BgCtx is the agentd lifecycle context (not the request context) — the deferred goroutine must outlive the HTTP request
 		}
 
 		status := http.StatusOK
