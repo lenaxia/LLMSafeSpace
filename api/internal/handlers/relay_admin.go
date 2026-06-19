@@ -520,7 +520,7 @@ func (h *RelayAdminHandler) Deploy(c *gin.Context) {
 	// client at pkg/kubernetes/client_crds.go pre-allocates an empty struct
 	// and returns it alongside the NotFound error, so a nil-pointer check is
 	// always false and we would always fall into the Update branch — which
-	// then fails with NotFound on a fresh cluster (worklog 0381).
+	// then fails with NotFound on a fresh cluster (worklog 0385).
 	if apierrors.IsNotFound(err) {
 		_, err = h.llmClient.InferenceRelays().Create(ctx, relay)
 	} else {

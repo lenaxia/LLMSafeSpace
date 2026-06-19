@@ -794,7 +794,7 @@ OCI will reclaim Always Free instances where CPU utilization (95th percentile), 
 | US-42.5 | OCI provider driver (provision, destroy, status) — **blocked by 7-day reclamation validation gate** | Medium (1-2d) | US-42.2, US-42.4 |
 | US-42.6 | GCP provider driver (provision, destroy, status) — **optional, not in default fleet** | Medium (1d) | US-42.2, US-42.4 |
 | US-42.7 | Relay-router: weighted selection + health checking + 429 detection + ConfigMap poll (5s) + metrics (per-relay health, streams, egress) | Medium-Large (2d) | US-42.3 |
-| US-42.8 | **Router WireGuard sidecar** + **network-agnostic ingress** (4 modes: `external`, `loadBalancer`, `nodePort`, `hostNetwork`; chart does NOT install MetalLB) + **NetworkPolicy** (router ingress limited to workspace pods) — see Layer 2 redesign in worklog 0381 | Medium (1.5d) | US-42.4, US-42.7 |
+| US-42.8 | **Router WireGuard sidecar** + **network-agnostic ingress** (4 modes: `external`, `loadBalancer`, `nodePort`, `hostNetwork`; chart does NOT install MetalLB) + **NetworkPolicy** (router ingress limited to workspace pods) — see Layer 2 redesign in worklog 0385 | Medium (1.5d) | US-42.4, US-42.7 |
 | US-42.9 | InferenceRelay reconciler (lifecycle: provision, health via router /metrics, graceful drain, destroy+recreate, ConfigMap sync, provisioning circuit breaker, egress quota tracking) | Large (2-3d) | US-42.3, US-42.5, US-42.6, US-42.7 |
 | US-42.10 | Helm chart integration (CRD, router Deployment+Service+PDB, NetworkPolicy, controller flags, WG Secret) | Small (0.5d) | US-42.3, US-42.9 |
 | US-42.11 | Fallback mode: rate-limited direct routing when all relays unhealthy (1 req/2s, max 1 concurrent) | Small-Medium (1d) | US-42.7 |
