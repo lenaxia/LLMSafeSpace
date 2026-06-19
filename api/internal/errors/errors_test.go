@@ -5,6 +5,7 @@ package errors
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -197,4 +198,43 @@ func TestIsWorkspaceNotFoundError_FalsePlainError(t *testing.T) {
 
 func TestIsWorkspaceNotFoundError_FalseNil(t *testing.T) {
 	assert.False(t, IsWorkspaceNotFoundError(nil))
+}
+
+// ---------------------------------------------------------------------------
+// Sentinel-error migration tests (US-46.4)
+//
+// ErrNoAgentStateRow was a plain sentinel (errors.New). It is now a *APIError
+// value so it carries its own HTTP status code and category, enabling
+// centralized error mapping. These tests lock in the contract:
+//   - errors.Is still works (backwards compat for existing callers)
+//   - errors.As now works (new typed-error capability)
+//   - StatusCode returns the mapped HTTP status
+// ---------------------------------------------------------------------------
+
+func TestErrNoAgentStateRow_IsAPIError(t *testing.T) {
+	var apiErr *APIError
+	assert.True(t, errors.As(ErrNoAgentStateRow, &apiErr),
+		"ErrNoAgentStateRow must satisfy errors.As(*APIError)")
+}
+
+func TestErrNoAgentStateRow_ErrorsIsPreserved(t *testing.T) {
+	var err error = ErrNoAgentStateRow
+	assert.True(t, errors.Is(err, ErrNoAgentStateRow),
+		"errors.Is must still work after sentinel → *APIError migration")
+}
+
+func TestErrNoAgentStateRow_Category(t *testing.T) {
+	assert.Equal(t, ErrorTypeConflict, ErrNoAgentStateRow.Type)
+}
+
+func TestErrNoAgentStateRow_StatusCode(t *testing.T) {
+	assert.Equal(t, http.StatusConflict, ErrNoAgentStateRow.StatusCode())
+}
+
+func TestErrNoAgentStateRow_WrappedErrorsAsStillWorks(t *testing.T) {
+	wrapped := fmt.Errorf("context: %w", ErrNoAgentStateRow)
+	var apiErr *APIError
+	assert.True(t, errors.As(wrapped, &apiErr),
+		"errors.As must find *APIError through a wrapped error chain")
+	assert.Equal(t, http.StatusConflict, apiErr.StatusCode())
 }

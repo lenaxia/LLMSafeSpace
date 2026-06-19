@@ -134,6 +134,11 @@ func (r *MaterializeResult) HasFailures() bool {
 // ErrPartialFailure is returned by Materialize when at least one secret
 // reached OutcomeFailed. Callers should still consider partially-applied
 // state — files for already-materialized secrets remain on disk.
+//
+// This sentinel stays a plain error (not *apierrors.APIError) because it
+// lives in pkg/ which cannot import api/internal/ (Go internal-package
+// visibility). It is consumed only by cmd/workspace-agentd (the agent
+// daemon), never by an HTTP handler, so HTTP status mapping is not needed.
 var ErrPartialFailure = errors.New("secret materialization had partial failures")
 
 // Filesystem is the minimal interface Materialize needs. Tests inject a
