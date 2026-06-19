@@ -41,8 +41,16 @@ Whether the operator points the fleet at a real Zen key (keeps free-tier
   So: router sets `Authorization: Bearer <realkey>` → encrypted WG tunnel → relay
   VM forwards it in memory → upstream. The key is never written to the VM's disk;
   on destroy/recreate (Epic 42's rotation model) the key is not recovered from the
-  VM. This preserves Epic 42 Layer 2 §3 ("WG keypairs per-VM... the router's private
-  key is in a K8s Secret") posture for the upstream key too.
+  VM.
+- **A-BLAST-RADIUS: a compromised relay VM can observe the upstream key in transit.**
+  This is **true and fleet-wide**, not per-VM like the WG private key (Layer 2 §3).
+  A compromised VM that logs/exports transit headers could steal the upstream key
+  and impersonate the whole fleet's inference credential. This is a real increase
+  in blast radius vs the pre-A23 `public` design (where the VM carried nothing
+  worth stealing). Mitigations: destroy-and-recreate limits the exposure window;
+  WG-only listener means only authenticated peers reach the relay; operators who
+  can't accept fleet-wide exposure should put a rate-limited/quota-capped gateway
+  key upstream, not their primary key. Documented in Epic 42 Security §2 (updated).
 - **A-NOBREAK: empty key = current behavior.** Validated by
   `TestApplyUpstreamAuth_NoOpWhenKeyEmpty` + `TestRelayRouter_UpstreamAuth_OmittedWhenSecretEmpty`.
   A default install (keySecret empty) forwards the client header unchanged — no
@@ -90,10 +98,15 @@ Whether the operator points the fleet at a real Zen key (keeps free-tier
 
 ## Key Decisions
 
-1. **Inject at the router, not the relay VM.** Keeps relay VMs free of the upstream
-   key at rest (the key transits the encrypted WG tunnel only). This preserves Epic
-   42's "no secrets on relay VMs" posture for the upstream key, sidestepping the
-   secret-distribution design conversation that option (1) would otherwise force.
+1. **Inject at the router, not the relay VM.** Keeps the upstream key off VM
+   disks (it transits the encrypted WG tunnel only, in memory). This avoids the
+   explicit secret-in-cloud-init distribution that injecting at the VM would
+   require. **Caveat (PR review, Rule 11):** this does NOT fully preserve the
+   pre-A23 "nothing worth stealing on a relay VM" posture — a compromised VM can
+   still observe the fleet-wide upstream key in transit (see A-BLAST-RADIUS).
+   The blast radius is now fleet-wide, not per-VM; Epic 42 Security §2 updated
+   to state this honestly. Operators who can't accept that should use a
+   rate-limited/quota-capped gateway key rather than their primary credential.
 2. **Don't pick the upstream.** `upstreamURL` + `upstreamAuth.keySecret` default to
    empty/`public`-forwarding; the operator creates the Secret and chooses Zen-real-key
    vs. operator-gateway. This is the decision-independent core; the operator's
