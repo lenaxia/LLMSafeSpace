@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/database"
 	emailsvc "github.com/lenaxia/llmsafespaces/api/internal/services/email"
 	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
@@ -91,12 +93,18 @@ func NewPasswordResetHandler(
 	}
 }
 
+// maxPasswordResetBodySize limits request body size on the public
+// password-reset endpoints, matching the auth endpoints' 1 MiB limit.
+// Prevents memory-exhaustion DoS on the unauthenticated request endpoint.
+const maxPasswordResetBodySize = 1 << 20 // 1 MiB
+
 // Request handles POST /api/v1/auth/password-reset/request.
 //
 // Always returns 202 (no email enumeration). Only sends a reset email if:
 //   - the user exists
 //   - the user's email is verified (don't send to unverified mailboxes)
 func (h *PasswordResetHandler) Request(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxPasswordResetBodySize)
 	var req struct {
 		Email string `json:"email" binding:"required,email"`
 	}
@@ -171,6 +179,7 @@ func (h *PasswordResetHandler) Request(c *gin.Context) {
 //
 // Returns the new recovery key so the user can save it.
 func (h *PasswordResetHandler) Confirm(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxPasswordResetBodySize)
 	var req struct {
 		Token       string `json:"token" binding:"required"`
 		NewPassword string `json:"newPassword" binding:"required,min=8"`
@@ -206,9 +215,17 @@ func (h *PasswordResetHandler) Confirm(c *gin.Context) {
 	}
 
 	// Consume first — single-use. If another request consumed the token
-	// between Get and Consume (TOCTOU race), return 410.
+	// between Get and Consume (TOCTOU race), return 410. A genuine DB error
+	// (not the sentinel) returns 500 so it's distinguishable from consumption.
 	if err := h.store.ConsumeEmailToken(ctx, tok.ID); err != nil {
-		c.JSON(http.StatusGone, gin.H{"error": "token already used"})
+		if errors.Is(err, database.ErrTokenAlreadyConsumed) {
+			c.JSON(http.StatusGone, gin.H{"error": "token already used"})
+			return
+		}
+		if h.log != nil {
+			h.log.Error("password-reset: consume token DB error", err)
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to consume token"})
 		return
 	}
 
