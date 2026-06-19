@@ -511,19 +511,23 @@ func (s *PgOrgStore) DemoteOrgAdminIfNotLast(ctx context.Context, orgID, targetU
 	return true, tx.Commit()
 }
 
-// OrgsWhereUserIsLastActiveAdmin returns every organization where the given
-// user is an admin AND no OTHER active admin exists. Suspending such a user
-// (D19) would orphan the org — no remaining admin could manage it (promote
-// members, change policies, manage billing). The user-suspend path refuses
-// with 409 when this returns a non-empty slice (unless force=true).
+// queryer is the subset of *sql.DB / *sql.Tx needed to run the last-admin
+// lookup. Sharing the query between the standalone read and the transactional
+// suspend lets us guarantee atomicity without duplicating the SQL.
+type queryer interface {
+	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+}
+
+// lastActiveAdminOrgsQuery is the SQL that finds every org where userID is an
+// admin AND no OTHER active admin exists. It is shared by the standalone
+// OrgsWhereUserIsLastActiveAdmin read and the transactional
+// SuspendUserGuardedByLastAdmin write (F7) so the two cannot drift.
 //
 // "Active admin" means role='admin' with users.status='active'. The legacy
 // pending_key_wrap filter from D19 is intentionally NOT used: that column was
 // dropped in migration 000035, and the authoritative gate is now users.status.
 // Soft-deleted orgs are excluded (their memberships are irrelevant).
-func (s *PgOrgStore) OrgsWhereUserIsLastActiveAdmin(ctx context.Context, userID string) ([]types.LastAdminOrg, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT m.org_id, o.name
+const lastActiveAdminOrgsQuery = `SELECT m.org_id, o.name
 		 FROM org_memberships m
 		 JOIN organizations o ON o.id = m.org_id
 		 WHERE m.user_id = $1 AND m.role = 'admin' AND o.deleted_at IS NULL
@@ -532,9 +536,10 @@ func (s *PgOrgStore) OrgsWhereUserIsLastActiveAdmin(ctx context.Context, userID 
 		     JOIN users u ON u.id = m2.user_id
 		     WHERE m2.org_id = m.org_id AND m2.role = 'admin'
 		       AND m2.user_id <> m.user_id AND u.status = 'active'
-		   )`,
-		userID,
-	)
+		   )`
+
+func scanLastActiveAdminOrgs(ctx context.Context, q queryer, userID string) ([]types.LastAdminOrg, error) {
+	rows, err := q.QueryContext(ctx, lastActiveAdminOrgsQuery, userID)
 	if err != nil {
 		return nil, fmt.Errorf("find last-active-admin orgs: %w", err)
 	}
@@ -555,6 +560,84 @@ func (s *PgOrgStore) OrgsWhereUserIsLastActiveAdmin(ctx context.Context, userID 
 		orgs = []types.LastAdminOrg{}
 	}
 	return orgs, nil
+}
+
+// OrgsWhereUserIsLastActiveAdmin returns every organization where the given
+// user is an admin AND no OTHER active admin exists. Suspending such a user
+// (D19) would orphan the org — no remaining admin could manage it (promote
+// members, change policies, manage billing). The user-suspend path refuses
+// with 409 when this returns a non-empty slice (unless force=true).
+func (s *PgOrgStore) OrgsWhereUserIsLastActiveAdmin(ctx context.Context, userID string) ([]types.LastAdminOrg, error) {
+	return scanLastActiveAdminOrgs(ctx, s.db, userID)
+}
+
+// SuspendUserGuardedByLastAdmin atomically refuses to suspend the user when
+// they are the sole active admin of any org (unless force), and otherwise sets
+// the user's status to suspended. The SELECT … FOR UPDATE on the admin
+// membership rows of every org the user administers plus the UPDATE on users
+// run in a single transaction, closing the TOCTOU window of the prior
+// read-then-write sequence (F7, US-43.19): two concurrent admin suspensions or
+// a suspend racing a demote can no longer both pass the last-admin check and
+// leave the org adminless. `active` is mirrored to `false` so the legacy column
+// cannot drift from `status` (F6).
+//
+// Returns a non-nil *LastAdminOrg when the suspend was refused (last admin); the
+// caller surfaces this as 409. Returns (nil, nil) on a successful suspension.
+func (s *PgOrgStore) SuspendUserGuardedByLastAdmin(ctx context.Context, userID string, force bool) (*types.LastAdminOrg, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if !force {
+		// Lock ALL admin rows of every org the user administers so a concurrent
+		// suspend/demote of another admin in any of those orgs serializes behind
+		// this transaction and re-evaluates the last-admin check against the
+		// post-commit state. This is the same locking discipline as
+		// RemoveOrgAdminIfNotLast/DemoteOrgAdminIfNotLast, generalized to the
+		// multi-org case.
+		lockRows, err := tx.QueryContext(ctx,
+			`SELECT m.org_id FROM org_memberships m
+			 WHERE m.role = 'admin'
+			   AND m.org_id IN (SELECT org_id FROM org_memberships WHERE user_id = $1 AND role = 'admin')
+			 FOR UPDATE`,
+			userID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("lock admin rows: %w", err)
+		}
+		if err := lockRows.Close(); err != nil { //nolint:sqlclosecheck // must close before next tx query; defer would close too late
+			return nil, fmt.Errorf("close admin lock rows: %w", err)
+		}
+
+		conflicts, err := scanLastActiveAdminOrgs(ctx, tx, userID)
+		if err != nil {
+			return nil, err
+		}
+		if len(conflicts) > 0 {
+			// Refuse — defer rolls the tx back; no state changes.
+			return &conflicts[0], nil
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE users SET status = 'suspended', active = false, updated_at = NOW() WHERE id = $1`,
+		userID,
+	); err != nil {
+		return nil, fmt.Errorf("suspend user: %w", err)
+	}
+
+	committed = true
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit suspend user: %w", err)
+	}
+	return nil, nil
 }
 
 func (s *PgOrgStore) IsOrgMember(ctx context.Context, orgID, userID string) (bool, error) {

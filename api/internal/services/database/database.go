@@ -256,12 +256,19 @@ func (s *Service) UpdateUser(ctx context.Context, userID string, updates types.U
 
 // SetUserStatus sets the authoritative operational status of a user account
 // (D19). status='suspended' blocks the user across all contexts via the auth
-// middleware; 'active' restores access. The legacy active flag is left
-// untouched so existing readers are unaffected.
+// middleware; 'active' restores access.
+//
+// F6 (US-43.19): the legacy `active` boolean is mirrored from `status`
+// (active = (status='active')) so the two columns cannot drift apart. The auth
+// middleware authorizes on `status`; Login historically checks `active`. Before
+// this fix, any path that wrote `active` independently of `status` would leave
+// the user blocked at Login but not at the middleware (or vice-versa). Keeping
+// them in lockstep removes that divergence vector.
 func (s *Service) SetUserStatus(ctx context.Context, userID string, status types.UserStatus) error {
+	active := status == types.UserStatusActive
 	_, err := s.DB.ExecContext(ctx,
-		`UPDATE users SET status = $1, updated_at = NOW() WHERE id = $2`,
-		string(status), userID,
+		`UPDATE users SET status = $1, active = $2, updated_at = NOW() WHERE id = $3`,
+		string(status), active, userID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to set user status: %w", err)
@@ -666,13 +673,8 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
 	// user is no longer a current member of the org (offboarded or org
 	// soft-deleted). Personal workspaces (org_id IS NULL) are always shown.
 	// The membership check mirrors IsOrgMember: joins organizations for the
-	// deleted_at + status guards. The fragment is inlined into both queries
-	// (rather than concatenated) so each is self-contained and lint-clean.
-
-	var total int
-	if err := s.DB.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM workspaces w
-		WHERE w.deleted_at IS NULL AND w.user_id = $1
+	// deleted_at + status guards.
+	membershipCondition := `
         AND (
             w.org_id IS NULL
             OR EXISTS (
@@ -681,7 +683,12 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
                 WHERE m.org_id = w.org_id AND m.user_id = $1
                   AND o.deleted_at IS NULL AND o.status != 'suspended'
             )
-        )`,
+        )`
+
+	var total int
+	if err := s.DB.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM workspaces w
+		WHERE w.deleted_at IS NULL AND w.user_id = $1`+membershipCondition,
 		userID,
 	).Scan(&total); err != nil {
 		return nil, nil, fmt.Errorf("failed to count workspaces: %w", err)
@@ -707,16 +714,7 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, limit, offs
                w.org_id
         FROM workspaces w
         LEFT JOIN workspace_agent_state s ON s.workspace_id = w.id
-        WHERE w.deleted_at IS NULL AND w.user_id = $1
-        AND (
-            w.org_id IS NULL
-            OR EXISTS (
-                SELECT 1 FROM org_memberships m
-                JOIN organizations o ON o.id = m.org_id
-                WHERE m.org_id = w.org_id AND m.user_id = $1
-                  AND o.deleted_at IS NULL AND o.status != 'suspended'
-            )
-        )
+        WHERE w.deleted_at IS NULL AND w.user_id = $1`+membershipCondition+`
         ORDER BY w.created_at DESC
         LIMIT $2 OFFSET $3
     `, userID, limit, offset)

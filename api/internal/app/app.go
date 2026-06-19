@@ -356,9 +356,11 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		}
 
 		// US-43.19: platform-admin suspension handlers. orgStore provides
-		// UpdateOrgStatus + audit + last-admin check; dbSvc provides
-		// SetUserStatus. log surfaces best-effort audit-write failures.
-		platformAdminHandler = handlers.NewPlatformAdminHandler(pgOrgStore, dbSvc, svc.GetAuth(), log)
+		// UpdateOrgStatus + audit + the atomic last-admin-guarded suspend;
+		// dbSvc provides SetUserStatus. svc.GetAuth() wires the F4 token
+		// revocation primitive (MarkUserSuspended/ClearUserSuspended). log
+		// surfaces best-effort audit-write + revocation-write failures.
+		platformAdminHandler = handlers.NewPlatformAdminHandler(pgOrgStore, dbSvc, svc.GetAuth(), svc.GetAuth(), log)
 		internalOrgStatusHandler = handlers.NewInternalOrgStatusHandler(pgOrgStore)
 
 		if rkp != nil {

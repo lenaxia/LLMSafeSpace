@@ -55,7 +55,7 @@ func (m *mockPlatformUserStore) ListAllUsers(_ context.Context, limit, offset in
 func setupPlatformListRouter(t *testing.T, orgs *mockPlatformOrgStore, users *mockPlatformUserStore) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	h := NewPlatformAdminHandler(orgs, users, &mockOrgAuthService{userID: "admin-1"}, &stubLogger{})
+	h := NewPlatformAdminHandler(orgs, users, &mockOrgAuthService{userID: "admin-1"}, nil, &stubLogger{})
 	r := gin.New()
 	r.GET("/api/v1/admin/orgs", h.ListOrgs)
 	r.GET("/api/v1/admin/users", h.ListUsers)
