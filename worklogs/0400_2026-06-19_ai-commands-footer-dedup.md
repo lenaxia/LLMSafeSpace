@@ -65,7 +65,7 @@ None.
 ## Next Steps
 
 - Land PR #288 after the automated review approves.
-- Follow-up (worklog 0400): add `/design` and `/merge` commands and a `--no-merge` hold flag to the code-change commands.
+- Follow-up (worklog 0401): add `/design` and `/merge` commands and a `--no-merge` hold flag to the code-change commands.
 
 ---
 
@@ -75,4 +75,4 @@ None.
 - `.github/workflows/ai-comment.yml` (removed footer from prompt; added dedup post-run step)
 - `.github/workflows/pr-review.yml` (same)
 - `.github/workflows/issue-opened.yml` (same)
-- `worklogs/0399_2026-06-19_ai-commands-footer-dedup.md` (new — this file)
+- `worklogs/0400_2026-06-19_ai-commands-footer-dedup.md` (new — this file)
