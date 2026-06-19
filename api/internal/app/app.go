@@ -615,7 +615,12 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// Epic 49: email + password-reset wiring. Extracted into a helper to
 	// keep New() under the funlen limit. The helper constructs the email
 	// provider, EmailService, EmailHandler, and PasswordResetHandler.
-	emailService, emailHandler, passwordResetHandler = initEmailStack(cfg, svc, dbSvc, keyService, log, cancel)
+	var emailInitErr error
+	emailService, emailHandler, passwordResetHandler, emailInitErr = initEmailStack(cfg, svc, dbSvc, keyService, log)
+	if emailInitErr != nil {
+		cancel()
+		return nil, emailInitErr
+	}
 
 	// Invitations still needs the raw provider + the org store.
 	if pgOrgStore != nil {
@@ -1019,19 +1024,19 @@ func newRelayChecker(
 
 // initEmailStack constructs the EmailService, EmailHandler, and
 // PasswordResetHandler. Extracted from New() to keep it under the funlen
-// limit. Returns (emailService, emailHandler, passwordResetHandler).
+// limit. Returns an error if the email provider is misconfigured (SES
+// requires fromAddress + baseUrl); the caller must propagate it to fail
+// fast at boot.
 func initEmailStack(
 	cfg *config.Config,
 	svc *services.Services,
 	dbSvc *database.Service,
 	keyService *secrets.KeyService,
 	log *logger.Logger,
-	cancel context.CancelFunc,
-) (*emailsvc.Service, *handlers.EmailHandler, *handlers.PasswordResetHandler) {
+) (*emailsvc.Service, *handlers.EmailHandler, *handlers.PasswordResetHandler, error) {
 	mailer, err := newEmailMailer(cfg)
 	if err != nil {
-		cancel()
-		return nil, nil, nil
+		return nil, nil, nil, err
 	}
 	emailService := emailsvc.NewService(mailer, cfg.Email.BaseURL, cfg.Email.Provider)
 	emailHandler := handlers.NewEmailHandler(emailService, svc.GetRateLimiter(), log)
@@ -1052,5 +1057,5 @@ func initEmailStack(
 		emailService,
 		log,
 	)
-	return emailService, emailHandler, passwordResetHandler
+	return emailService, emailHandler, passwordResetHandler, nil
 }

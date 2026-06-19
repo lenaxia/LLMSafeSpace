@@ -6,6 +6,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -347,6 +348,32 @@ func TestPasswordReset_Confirm_WrongKind_404(t *testing.T) {
 	w := doRequest(router, http.MethodPost, "/api/v1/auth/password-reset/confirm",
 		`{"token":"verify-token","newPassword":"newpass123"}`)
 	assert.Equal(t, http.StatusNotFound, w.Code, "email_verify token must not work for password reset")
+}
+
+func TestPasswordReset_Confirm_ConsumeError_DBTransient_500(t *testing.T) {
+	// A genuine DB error during consume (not the sentinel) must return 500,
+	// not 410. This distinguishes TOCTOU race (token consumed by another
+	// request) from DB unavailability.
+	store := &memTokenStore{
+		tokens:     map[string]*types.EmailToken{},
+		consumeErr: errors.New("connection refused"),
+	}
+	tokenHash := hashTokenForTest("db-error-token")
+	store.tokens[tokenHash] = &types.EmailToken{
+		ID:        "tok-6",
+		UserID:    "user-1",
+		Kind:      "password_reset",
+		TokenHash: tokenHash,
+		ExpiresAt: time.Now().Add(10 * time.Minute),
+	}
+
+	h := NewPasswordResetHandler(store, newMemUserStore(), &memKeyInit{}, &memPwUpdater{}, &memSessionRevoker{}, emailsvc.NewService(&fakeEmailProvider{}, "", ""), nil)
+	router := setupPasswordResetRouter(h)
+
+	w := doRequest(router, http.MethodPost, "/api/v1/auth/password-reset/confirm",
+		`{"token":"db-error-token","newPassword":"newpass123"}`)
+	assert.Equal(t, http.StatusInternalServerError, w.Code,
+		"DB transient error during consume must return 500, not 410")
 }
 
 func hashTokenForTest(token string) string {

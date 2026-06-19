@@ -130,10 +130,10 @@ func TestGetUserByAPIKey(t *testing.T) {
 	expectedStatus := types.UserStatusActive
 
 	// Set up expectations for valid API key
-	rows := sqlmock.NewRows([]string{"id", "username", "email", "created_at", "updated_at", "active", "role", "status"}).
-		AddRow(expectedUserID, expectedUsername, expectedEmail, expectedCreatedAt, expectedUpdatedAt, expectedActive, expectedRole, expectedStatus)
+	rows := sqlmock.NewRows([]string{"id", "username", "email", "created_at", "updated_at", "active", "role", "status", "email_verified"}).
+		AddRow(expectedUserID, expectedUsername, expectedEmail, expectedCreatedAt, expectedUpdatedAt, expectedActive, expectedRole, expectedStatus, true)
 
-	mock.ExpectQuery("SELECT u.id, u.username, u.email, u.created_at, u.updated_at, u.active, u.role, u.status FROM users u JOIN api_keys k").
+	mock.ExpectQuery("SELECT u.id, u.username, u.email, u.created_at, u.updated_at, u.active, u.role, u.status, u.email_verified FROM users u JOIN api_keys k").
 		WithArgs(apiKey).
 		WillReturnRows(rows)
 
@@ -150,7 +150,7 @@ func TestGetUserByAPIKey(t *testing.T) {
 
 	// Test case: Invalid API key
 	invalidKey := "invalid_key"
-	mock.ExpectQuery("SELECT u.id, u.username, u.email, u.created_at, u.updated_at, u.active, u.role, u.status FROM users u JOIN api_keys k").
+	mock.ExpectQuery("SELECT u.id, u.username, u.email, u.created_at, u.updated_at, u.active, u.role, u.status, u.email_verified FROM users u JOIN api_keys k").
 		WithArgs(invalidKey).
 		WillReturnError(sql.ErrNoRows)
 
