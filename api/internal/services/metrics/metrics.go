@@ -482,6 +482,23 @@ var (
 		},
 		[]string{"workspace_id"},
 	)
+	// requestBufferGlobalBytes (C5) is the total body bytes currently held
+	// across all workspaces' buffers. Single time series (no labels) — the
+	// global cap is a per-replica budget. Alert when approaching
+	// defaultGlobalBufferBytesCap (500MB).
+	requestBufferGlobalBytes = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "workspace_request_buffer_global_bytes",
+		Help: "Total body bytes currently buffered across all workspaces (C5 global cap budget use)",
+	})
+	// requestBufferGlobalFullTotal (C5) counts requests rejected because the
+	// global byte cap was reached (as opposed to the per-workspace cap).
+	requestBufferGlobalFullTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "workspace_request_buffer_global_full_total",
+			Help: "Total requests rejected because the global buffer byte cap was reached (C5)",
+		},
+		[]string{"workspace_id"},
+	)
 )
 
 func RecordRequestBufferTimeout(workspaceID string) {
@@ -524,4 +541,19 @@ func DeleteRequestBufferMetrics(workspaceID string) {
 		workspaceID = "unknown"
 	}
 	requestBufferSize.DeleteLabelValues(workspaceID)
+}
+
+// SetRequestBufferGlobalBytes (C5) reports the total body bytes currently
+// buffered across all workspaces. Single time series (no labels).
+func SetRequestBufferGlobalBytes(bytes int64) {
+	requestBufferGlobalBytes.Set(float64(bytes))
+}
+
+// RecordRequestBufferGlobalFull (C5) increments the counter for requests
+// rejected because the global byte cap was reached.
+func RecordRequestBufferGlobalFull(workspaceID string) {
+	if workspaceID == "" {
+		workspaceID = "unknown"
+	}
+	requestBufferGlobalFullTotal.WithLabelValues(workspaceID).Inc()
 }
