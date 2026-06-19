@@ -406,16 +406,16 @@ To deliver the user-facing goal ("Frontend shows ⚠️ Agent was terminated"), 
 #### US-44.11: Admin Session Recovery Tools
 **Problem:** Sessions can get stuck in "busy" state if workspaces are deleted before cleanup (incident recovery)  
 **Solution:** Add admin API endpoint to force-abort sessions without requiring running workspace  
-**Files:** `api/internal/handlers/admin.go` (new), `api/internal/server/router.go`  
+**Files:** `api/internal/handlers/admin_session.go` (new), `api/internal/server/router.go`, `api/internal/app/app.go`  
 **Acceptance:**
-- [ ] New endpoint: `POST /api/v1/admin/sessions/:sessionId/force-abort`
-- [ ] Requires admin role (not accessible to regular users)
-- [ ] Marks session as aborted in database (if session tracking exists in DB)
-- [ ] OR deletes session record entirely (if sessions are purely in-memory/SQLite)
-- [ ] Returns 200 with `{"aborted": true, "sessionId": "..."}` on success
-- [ ] Returns 404 if session not found
-- [ ] Logs admin action for audit trail
-- [ ] Documentation: When to use (workspace deleted, session stuck)
+- [x] New endpoint: `POST /api/v1/admin/workspaces/:workspaceId/sessions/:sessionId/force-abort` *(refined from design's sessionID-only signature — wsstate is workspace-scoped, no global session→workspace index exists; consistent with all other session endpoints)*
+- [x] Requires admin role (not accessible to regular users) *(AdminGuard middleware, returns 404 for non-admin)*
+- [x] Clears the stuck session from `wsstate.Store.activeSess` *(the actual stuck state — NOT in DB or opencode SQLite; see STUCK-SESSIONS-RECOVERY.md)*
+- [x] Returns 200 with `{"aborted": true, "sessionId": "...", "workspaceId": "..."}` on success
+- [x] Returns 404 if the session is not currently active/stuck
+- [x] Logs admin action for audit trail *(audit_log table, domain='admin', action='session_force_abort')*
+- [x] Publishes `session.status=aborted` SSE so connected UIs update
+- [ ] Documentation: When to use (workspace deleted, session stuck) *(follow-up — doc page; the handler doc comment covers the use case)*
 
 **Use Case:** Recovery from incidents like Incident A & B where workspaces were deleted but sessions persist in stuck state (see STUCK-SESSIONS-RECOVERY.md).
 
