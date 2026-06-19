@@ -8,8 +8,7 @@ package main
 // Note: buildRelayConfig logic (merge relay provider into existing config) is
 // now tested via agent_config_writer_test.go (TestAgentConfigWriter_Rebuild_*).
 // activeRelayModels coordination is removed; relay state lives in
-// AgentConfigWriter and is tested via TestAgentConfigWriter_HasRelay /
-// TestAgentConfigWriter_GetRelayModels.
+// AgentConfigWriter and is tested via TestAgentConfigWriter_HasRelay.
 
 import (
 	"context"

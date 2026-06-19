@@ -463,13 +463,6 @@ func TestReloadSecretsHandler_WriterRebuildFailure_Returns500(t *testing.T) {
 		home:            dir,
 	}
 
-	// An llm-provider with an empty provider ID will cause FormatOpenCodeConfig
-	// to produce invalid output (provider map with empty key). We use a
-	// nil-formatter scenario by passing a provider that the formatter rejects.
-	// Actually FormatOpenCodeConfig only errors on empty input. Since our batch
-	// has one llm-provider, formatting succeeds. To trigger a format error we
-	// need an empty stagedProviders — but that returns (nil, nil) which is not
-	// an error. So we verify the graceful path: writer rebuild failure → 200.
 	body := `[{"type":"llm-provider","name":"p","plaintext":"{\"provider\":\"openai\",\"apiKey\":\"sk-oai\"}"}]`
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
