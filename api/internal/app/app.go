@@ -484,9 +484,9 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 					dbSvc, log,
 				)
 				pwAdapter := func(ctx context.Context, wsID string) (string, error) {
-				return pwGetter.WorkspacePassword(ctx, wsID)
-			}
-			agentClient := agentoc.NewWorkspaceClient(pwAdapter, ipResolver, log.ZapLogger())
+					return pwGetter.WorkspacePassword(ctx, wsID)
+				}
+				agentClient := agentoc.NewWorkspaceClient(pwAdapter, ipResolver, log.ZapLogger())
 				modelsHandler.SetAgentClient(agentClient)
 				if relayURL := cfg.Server.InferenceRelayURL; relayURL != "" {
 					modelsHandler.SetRelayChecker(buildRelayChecker(ipResolver, pwAdapter))
