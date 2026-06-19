@@ -34,24 +34,23 @@ import (
 // underlying no-op mock (cache miss).
 type suspensionCache struct {
 	*mockCache
-	mu          sync.Mutex
-	suspended   map[string]bool
-	setMarkers  []string
-	delMarkers  []string
-	setErr      error
-	delErr      error
-	getMarkerOK bool // when false, Get reports a marker miss even if set
+	mu         sync.Mutex
+	suspended  map[string]bool
+	setMarkers []string
+	delMarkers []string
+	setErr     error
+	delErr     error
 }
 
 func newSuspensionCache() *suspensionCache {
-	return &suspensionCache{mockCache: &mockCache{}, suspended: map[string]bool{}, getMarkerOK: true}
+	return &suspensionCache{mockCache: &mockCache{}, suspended: map[string]bool{}}
 }
 
 func (c *suspensionCache) Get(ctx context.Context, key string) (string, error) {
 	if strings.HasPrefix(key, "user_suspended:") {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		if c.getMarkerOK && c.suspended[strings.TrimPrefix(key, "user_suspended:")] {
+		if c.suspended[strings.TrimPrefix(key, "user_suspended:")] {
 			return "1", nil
 		}
 		return "", nil
@@ -280,9 +279,7 @@ func TestMarkUserSuspended_CacheError_ReturnsError(t *testing.T) {
 // request via the middleware, but the operator should see the warning).
 func TestClearUserSuspended_CacheError_ReturnsError(t *testing.T) {
 	cache := newSuspensionCache()
-	// suspensionCache only injects setErr; for the Delete error path, wrap a
-	// failing cache. Reuse a minimal inline type via the same suspensionCache
-	// shape by giving Delete an error path.
+	// Inject a Delete error to exercise ClearUserSuspended's error wrapping.
 	cache.delErr = errors.New("redis connection refused")
 	svc := newAuthSvc(t, &errDB{mockDB: &mockDB{}}, cache)
 
