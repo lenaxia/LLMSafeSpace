@@ -4,19 +4,11 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/gin-gonic/gin"
-
-	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
@@ -33,35 +25,25 @@ type ModelSelectionRequest struct {
 	Model string `json:"model" binding:"required"`
 }
 
-// SetWorkspaceMetadataUpdater installs the model store for workspace metadata operations.
-func (h *SecretsHandler) SetWorkspaceMetadataUpdater(u ModelStore) {
-	h.wsUpdater = u
-}
+// --- Model catalog cache ---
 
 // ModelCache abstracts model catalog caching. Default: in-process map.
-// Future: Redis-backed for multi-replica consistency (US-30.11).
 type ModelCache interface {
 	Get(workspaceID string) []byte
 	Set(workspaceID string, data []byte)
 	Evict(workspaceID string)
 }
 
-// inMemoryModelCache is the default in-process cache (5s TTL).
 type inMemoryModelCache struct {
 	mu    sync.Mutex
 	cache map[string]*modelCacheEntry
 }
 
 type modelCacheEntry struct {
-	// serialized modelCachePayload JSON
 	data      []byte
 	expiresAt time.Time
 }
 
-// modelCachePayload is the type stored (as JSON) inside modelCacheEntry.data.
-// Including relayInjected here avoids a separate per-request readyz round-trip:
-// both pieces of data are fetched together on a cache miss and cached for the
-// same 5s TTL.
 type modelCachePayload struct {
 	Models        []annotatedModel `json:"models"`
 	RelayInjected bool             `json:"relayInjected"`
@@ -93,185 +75,16 @@ func (c *inMemoryModelCache) Evict(workspaceID string) {
 	delete(c.cache, workspaceID)
 }
 
-// defaultModelCache is the singleton used when no Redis is wired.
 var defaultModelCache = newInMemoryModelCache()
 
-var modelHTTPClient = &http.Client{Timeout: 5 * time.Second}
-
-// clearModelCache resets the cache. Exported for testing.
 func clearModelCache() {
 	defaultModelCache.mu.Lock()
 	defer defaultModelCache.mu.Unlock()
 	defaultModelCache.cache = make(map[string]*modelCacheEntry)
 }
 
-// ListModels handles GET /api/v1/workspaces/:id/models.
-// Proxies to the running opencode instance's model catalog.
-func (h *SecretsHandler) ListModels(c *gin.Context) {
-	workspaceID := c.Param("id")
-	userID, _ := extractAuth(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
-		return
-	}
+// --- Model annotation types and functions ---
 
-	if h.podIPResolver == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "model discovery unavailable"})
-		return
-	}
-
-	podIP, err := h.podIPResolver.GetWorkspacePodIP(c.Request.Context(), userID, workspaceID)
-	if err != nil || podIP == "" {
-		c.JSON(http.StatusNotFound, gin.H{"error": "workspace pod not running"})
-		return
-	}
-
-	// Check cache first (5s TTL). Cache stores models + relayInjected together
-	// so both are fresh at the same rate.
-	var annotated []annotatedModel
-	var relayInjected bool
-	if cached := defaultModelCache.Get(workspaceID); cached != nil {
-		var payload modelCachePayload
-		if err := json.Unmarshal(cached, &payload); err == nil {
-			annotated = payload.Models
-			relayInjected = payload.RelayInjected
-		}
-	}
-
-	if annotated == nil {
-		// Retrieve workspace password for opencode Basic auth.
-		if h.passwordGetter == nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "model discovery unavailable (no password getter)"})
-			return
-		}
-		password, err := h.passwordGetter(c.Request.Context(), workspaceID)
-		if err != nil || password == "" {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to retrieve workspace credentials"})
-			return
-		}
-
-		url := fmt.Sprintf("http://%s:%d/provider", podIP, agentd.AgentPort)
-		req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, url, nil) //nolint:gosec // G107: URL constructed from trusted podIP (internal cluster network)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build request"})
-			return
-		}
-		req.SetBasicAuth(agentd.AuthUsername, password)
-
-		resp, err := modelHTTPClient.Do(req)
-		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to reach agent"})
-			return
-		}
-		defer resp.Body.Close() //nolint:errcheck // best-effort drain
-
-		// The /provider response can be large (100+ providers × many models from models.dev).
-		// 32MB is sufficient headroom; annotateModels filters to connected-only before caching.
-		body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
-		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to read agent response"})
-			return
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "agent returned error"})
-			return
-		}
-
-		// Fetch relayInjected from the agentd /v1/readyz endpoint. This tells us
-		// whether the relay injector actually ran for this pod (vs. was skipped
-		// due to a personal opencode key). The static h.relayActive flag only
-		// tells us whether relay is globally configured — it cannot distinguish
-		// Phase 1 (relay pending) from the personal-key case (relay skipped).
-		// Best-effort: if readyz is unreachable, default false (conservative —
-		// no remap, free models show as "opencode" providerID).
-		if h.relayActive {
-			relayInjected = h.fetchRelayInjected(c.Request.Context(), podIP, password)
-		}
-
-		// Annotate (filters to connected providers only) and cache the compact result.
-		annotated, err = annotateModels(body, h.relayActive, relayInjected)
-		if err != nil {
-			// annotateModels failed — return empty rather than crashing.
-			annotated = []annotatedModel{}
-		}
-		if serialized, serErr := json.Marshal(modelCachePayload{Models: annotated, RelayInjected: relayInjected}); serErr == nil {
-			defaultModelCache.Set(workspaceID, serialized)
-		}
-	}
-
-	// annotateModels already filters to connected-only models.
-	// ModelUnavailable cannot appear in the result, but keep the guard
-	// for safety in case the provider response schema changes.
-	usable := make([]annotatedModel, 0, len(annotated))
-	for _, m := range annotated {
-		if m.Availability == ModelUnavailable {
-			continue
-		}
-		usable = append(usable, m)
-	}
-	annotated = usable
-
-	// US-43.8: Filter models by org allowed_models / allowed_providers policy.
-	if h.policyChecker != nil && h.wsUpdater != nil {
-		meta, err := h.wsUpdater.GetWorkspace(c.Request.Context(), workspaceID)
-		if err == nil && meta != nil && meta.OrgID != nil && *meta.OrgID != "" {
-			pol, polErr := h.policyChecker.GetEffectivePolicy(c.Request.Context(), *meta.OrgID)
-			if polErr == nil && pol != nil {
-				filtered := make([]annotatedModel, 0, len(annotated))
-				for _, m := range annotated {
-					if pol.IsModelAllowed(m.ID) && pol.IsProviderAllowed(m.ProviderID) {
-						filtered = append(filtered, m)
-					}
-				}
-				annotated = filtered
-			}
-		}
-	}
-
-	// Include current workspace model selection for convenience.
-	var currentModel string
-	if h.wsUpdater != nil {
-		currentModel, _ = h.wsUpdater.GetDefaultModel(c.Request.Context(), workspaceID)
-	}
-
-	// Resolve the providerID for the selected model so the frontend can build
-	// the fully-qualified {providerID, modelID} pair without a client-side
-	// find(). If multiple connected providers expose the same model ID
-	// (ambiguous), emit "" so the frontend detects the collision and falls
-	// back to the first-match heuristic (same behavior as before this fix).
-	var currentModelProviderID string
-	if currentModel != "" {
-		for _, m := range annotated {
-			if m.ID == currentModel {
-				if currentModelProviderID == "" {
-					currentModelProviderID = m.ProviderID
-				} else if currentModelProviderID != m.ProviderID {
-					// Collision: more than one connected provider has this model ID.
-					currentModelProviderID = ""
-					break
-				}
-			}
-		}
-	}
-
-	// Mark the selected model in the array.
-	if currentModel != "" {
-		for i := range annotated {
-			if annotated[i].ID == currentModel {
-				annotated[i].Selected = true
-			}
-		}
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"models":                 annotated,
-		"currentModel":           currentModel,
-		"currentModelProviderID": currentModelProviderID,
-	})
-}
-
-// annotatedModel is the enriched model response returned to callers.
 type annotatedModel struct {
 	ID            string            `json:"id"`
 	ProviderID    string            `json:"providerID"`
@@ -280,101 +93,34 @@ type annotatedModel struct {
 	Enabled       bool              `json:"enabled"`
 	Status        string            `json:"status,omitempty"`
 	Availability  ModelAvailability `json:"availability"`
-	Tier          string            `json:"tier"`          // "free" or "paid" (deprecated, use Availability)
-	FreeTier      bool              `json:"freeTier"`      // convenience boolean (deprecated)
-	ProxyRequired bool              `json:"proxyRequired"` // true if model requires client-side relay (Epic 26)
-	Selected      bool              `json:"selected"`      // true if this is the workspace's current default
-	Details       json.RawMessage   `json:"details"`       // reserved: always null with /provider endpoint (unstable schema, not populated)
+	Tier          string            `json:"tier"`
+	FreeTier      bool              `json:"freeTier"`
+	ProxyRequired bool              `json:"proxyRequired"`
+	Selected      bool              `json:"selected"`
+	Details       json.RawMessage   `json:"details"`
 }
 
-// providerListResponse is the shape of GET /provider from opencode.
-// all[] contains every provider from models.dev (139+) regardless of auth.
-// connected[] is the subset with live credentials — the only models we can use.
 type providerListResponse struct {
 	Connected []string       `json:"connected"`
 	All       []providerInfo `json:"all"`
 }
 
-// fetchRelayInjected reads the RelayInjected field from the agentd /v1/readyz
-// endpoint. Returns false on any error (conservative: when uncertain, do not
-// remap free models to opencode-relay — better to show them with providerID
-// "opencode" and fail only for Phase-1 users than to break personal-key users).
-//
-// Design choices:
-//   - Uses /v1/readyz (not /v1/statusz) because readyz is lighter than statusz.
-//     readyz reads from the healthz cache (atomic snapshot) and providerCache
-//     (15s TTL). On providerCache hit, zero synchronous opencode calls are made.
-//     On providerCache miss, readyz makes up to 3 live opencode calls under a
-//     mutex — but these are bounded by the 5s modelHTTPClient timeout below,
-//     after which fetchRelayInjected returns false conservatively.
-//     statusz additionally calls IsHealthy (live), reads disk/memory/CPU, and
-//     queries model context limits — significantly more expensive.
-//   - Uses Authorization: Bearer token (not Basic auth) because the agentd
-//     admin port (4098) is protected by requireBearerToken, not Basic auth.
-//     AGENTD_ADMIN_TOKEN == workspace password (both come from the password
-//     Secret), so the same value is used with a different auth scheme.
-//
-// Stale window: relayInjected is cached in modelCachePayload with a 5s TTL.
-// The providerCache inside readyz has a 15s TTL. In the worst case, the
-// relayInjected transition from false to true may take up to 5s + 15s = 20s
-// to be visible in ListModels responses after relay injection completes. This
-// is acceptable: relay injection happens at ~T+7s, and the brief window where
-// free models show providerID="opencode" is harmless (users are unlikely to
-// interact within the first 20s of pod boot).
-//
-// Backwards compatibility: pods running the old image (before RelayInjected was
-// added to ReadyzResponse) return JSON without the relay_injected field.
-// Go's json.Decode sets RelayInjected=false (zero value) — which is the correct
-// behavior: old Phase 2 pods have opencode-relay in connected[] (not opencode),
-// so the remap guard p.ID=="opencode" is never triggered regardless of
-// relayInjected. Old pods are safe with relayInjected=false. (Validated on
-// live cluster 2026-06-08: connected=["opencode-relay"] on Phase 2 old pod.)
-func (h *SecretsHandler) fetchRelayInjected(ctx context.Context, podIP, password string) bool {
-	url := fmt.Sprintf("http://%s:%d/v1/readyz", podIP, agentd.AgentdAdminPort) //nolint:gosec // G107: internal pod
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return false
-	}
-	// AGENTD_ADMIN_TOKEN == workspace password — same value, Bearer scheme.
-	if password != "" {
-		req.Header.Set("Authorization", "Bearer "+password)
-	}
-	resp, err := modelHTTPClient.Do(req)
-	if err != nil {
-		return false
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return false
-	}
-	var readyz agentd.ReadyzResponse
-	if json.NewDecoder(io.LimitReader(resp.Body, 16*1024)).Decode(&readyz) != nil {
-		return false
-	}
-	return readyz.RelayInjected
-}
-
-// providerInfo is a single provider entry in the /provider response.
 type providerInfo struct {
 	ID     string                   `json:"id"`
 	Models map[string]providerModel `json:"models"`
 }
 
-// providerModel is a model entry within a provider in the /provider response.
-// cost is an object {input, output}, not an array.
 type providerModel struct {
 	ID   string       `json:"id"`
 	Name string       `json:"name"`
 	Cost providerCost `json:"cost"`
 }
 
-// providerCost is the cost object in /provider model entries.
 type providerCost struct {
 	Input  float64 `json:"input"`
 	Output float64 `json:"output"`
 }
 
-// ModelAvailability classifies model accessibility.
 type ModelAvailability string
 
 const (
@@ -383,28 +129,15 @@ const (
 	ModelFreeTier    ModelAvailability = "free"
 )
 
-// annotateModels enriches the raw GET /provider response with tier, availability,
-// and relay information.
-//
-// relayGloballyEnabled: true when INFERENCE_RELAY_BASEURL is set for this
-// deployment — i.e. the relay feature is configured at all. When false, no
-// remapping occurs regardless of other conditions.
-//
-// relayInjected: true when the relay injector for this specific pod successfully
-// completed. Read from the pod's /v1/readyz RelayInjected field. When false,
-// no remap occurs — this covers both Phase 1 (~7s window before injection
-// completes, free models briefly show providerID="opencode") and the personal-key
-// case (relay skipped forever). See inline comment for the trade-off rationale.
-//
-// Only models whose providerID is in connected[] are returned as available;
-// all others (from models.dev but without credentials) are omitted.
+// annotateModels enriches the raw GET /provider response with tier,
+// availability, and relay information. Only models whose providerID is
+// in connected[] are returned; all others are omitted.
 func annotateModels(raw []byte, relayGloballyEnabled, relayInjected bool) ([]annotatedModel, error) {
 	var provResp providerListResponse
 	if err := json.Unmarshal(raw, &provResp); err != nil {
 		return nil, err
 	}
 
-	// Build a set of connected provider IDs — the only ones we have credentials for.
 	connectedSet := make(map[string]bool, len(provResp.Connected))
 	for _, id := range provResp.Connected {
 		connectedSet[id] = true
@@ -413,7 +146,7 @@ func annotateModels(raw []byte, relayGloballyEnabled, relayInjected bool) ([]ann
 	var result []annotatedModel
 	for _, p := range provResp.All {
 		if !connectedSet[p.ID] {
-			continue // no credentials — skip entire provider
+			continue
 		}
 		for modelKey, m := range p.Models {
 			id := m.ID
@@ -423,21 +156,6 @@ func annotateModels(raw []byte, relayGloballyEnabled, relayInjected bool) ([]ann
 			avail := classifyAvailability(p.ID, m.Cost)
 			providerID := p.ID
 
-			// Remap free-tier opencode models to opencode-relay so inference
-			// routes through the CF Worker rather than the built-in provider.
-			//
-			// In practice this branch is never reached in a valid system state:
-			//   - relayInjected=true means the injector completed, which means
-			//     disabled_providers:["opencode"] was written and opencode restarted.
-			//     After restart, opencode is absent from connected[], so
-			//     p.ID=="opencode" is filtered out above — this branch is
-			//     unreachable in Phase 2 (validated on live cluster 2026-06-08).
-			//   - relayInjected=false (Phase 1 or personal key) → condition false.
-			//
-			// The guard is kept as defense-in-depth: if an opencode version ever
-			// keeps the built-in provider in connected[] despite disabled_providers,
-			// this code correctly remaps it rather than silently routing to a
-			// disabled provider.
 			if relayGloballyEnabled && relayInjected && avail == ModelFreeTier && p.ID == "opencode" {
 				providerID = "opencode-relay"
 			}
@@ -445,7 +163,7 @@ func annotateModels(raw []byte, relayGloballyEnabled, relayInjected bool) ([]ann
 				ID:            id,
 				ProviderID:    providerID,
 				Name:          m.Name,
-				Enabled:       true, // connected = credentials present = enabled
+				Enabled:       true,
 				Availability:  avail,
 				Tier:          tierFromAvailability(avail),
 				FreeTier:      avail == ModelFreeTier,
@@ -463,11 +181,6 @@ func classifyAvailability(providerID string, cost providerCost) ModelAvailabilit
 	return ModelAvailable
 }
 
-// isZeroCostOpencode returns true when the model is from the opencode free
-// tier — either the built-in opencode provider (Phase 1, before relay
-// injection) or the synthesized opencode-relay provider (Phase 2, after
-// relay injection). Both represent the same free-tier relay and should be
-// classified as ModelFreeTier / proxyRequired=true.
 func isZeroCostOpencode(providerID string, cost providerCost) bool {
 	if providerID != "opencode" && providerID != "opencode-relay" {
 		return false
@@ -480,264 +193,4 @@ func tierFromAvailability(a ModelAvailability) string {
 		return "free"
 	}
 	return "paid"
-}
-
-// SetModel handles PUT /api/v1/workspaces/:id/model.
-// Stores the selected model as workspace metadata. The model takes effect
-// on next agent reload or pod restart (not pushed live to avoid stream
-// disruption — see Epic 27a principles). Returns applied:false always.
-func (h *SecretsHandler) SetModel(c *gin.Context) {
-	workspaceID := c.Param("id")
-	userID, _ := extractAuth(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
-		return
-	}
-
-	var req ModelSelectionRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "model field is required"})
-		return
-	}
-
-	if h.wsUpdater == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "model selection unavailable"})
-		return
-	}
-
-	// Validate model exists in the live catalog (if pod is running).
-	if h.podIPResolver != nil {
-		podIP, err := h.podIPResolver.GetWorkspacePodIP(c.Request.Context(), userID, workspaceID)
-		if err == nil && podIP != "" {
-			if !h.modelExistsInCatalog(c.Request.Context(), podIP, workspaceID, req.Model) {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "model not found in workspace catalog"})
-				return
-			}
-		}
-		// If pod not running, skip validation (store optimistically).
-	}
-
-	// Persist to workspace metadata (survives pod restarts).
-	if err := h.wsUpdater.UpdateWorkspace(c.Request.Context(), workspaceID, types.WorkspaceUpdates{
-		DefaultModel: &req.Model,
-	}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update workspace"})
-		return
-	}
-
-	// Clear this workspace's model cache so next ListModels reflects the new selection.
-	defaultModelCache.Evict(workspaceID)
-
-	// Also persist to K8s Secret so the next pod boot picks it up.
-	// Log a warning on failure — the DB write already succeeded, so the user's
-	// selection is durable in PostgreSQL. The Secret write failing is recoverable
-	// (the selection will take effect on next successful SetModel call or the next
-	// credential bind which also calls EnsureSecretsManifest). Do not return a 500:
-	// the user's intent has been recorded and the live agent patch (below) may still
-	// succeed for the current session.
-	if h.manifestWriter != nil {
-		if cfgErr := h.manifestWriter.EnsureWorkspaceConfig(c.Request.Context(), workspaceID, types.WorkspaceConfig{
-			DefaultModel: req.Model,
-		}); cfgErr != nil {
-			h.warn("SetModel: EnsureWorkspaceConfig failed — model will not persist across pod restart until next successful write",
-				"workspaceID", workspaceID, "error", cfgErr.Error())
-		}
-	}
-
-	// Push model selection to running agent (if pod available).
-	// resolved holds the "providerID/modelID" form returned by patchAgentModel,
-	// reused for metricsRecorder to avoid a second catalog + relay-state round-trip.
-	applied := false
-	var resolvedModel string // "providerID/modelID" from the live catalog, or ""
-	if h.podIPResolver != nil {
-		podIP, err := h.podIPResolver.GetWorkspacePodIP(c.Request.Context(), userID, workspaceID)
-		if err == nil && podIP != "" {
-			// Fetch workspace password once; used for all opencode calls below.
-			password := ""
-			if h.passwordGetter != nil {
-				password, _ = h.passwordGetter(c.Request.Context(), workspaceID)
-			}
-
-			var patchErr error
-			resolvedModel, patchErr = h.patchAgentModel(c.Request.Context(), podIP, password, req.Model)
-			if patchErr != nil {
-				h.warn("PATCH model to agent failed", "error", patchErr.Error())
-			} else {
-				applied = true
-			}
-		}
-	}
-
-	// Metering: record the model selection for billing dashboards.
-	// Reuse resolvedModel from patchAgentModel — no additional catalog fetch.
-	if h.metricsRecorder != nil {
-		providerID := "unknown"
-		if idx := strings.Index(resolvedModel, "/"); idx >= 0 {
-			providerID = resolvedModel[:idx]
-		}
-		h.metricsRecorder.RecordModelSelection(req.Model, providerID)
-	}
-	c.JSON(http.StatusOK, gin.H{"model": req.Model, "applied": applied})
-}
-
-// catalogEntry is a model record parsed from the /provider response, used for
-// model existence checks and providerID resolution.
-type catalogEntry struct {
-	ID         string
-	ProviderID string
-	Cost       providerCost
-}
-
-// fetchCatalog retrieves the model catalog from the running agent via GET /provider.
-// Returns only models whose provider is in connected[]. Returns nil on any error
-// (callers should fail open when the catalog is unavailable).
-func (h *SecretsHandler) fetchCatalog(ctx context.Context, podIP, workspaceID string) []catalogEntry {
-	if h.passwordGetter == nil {
-		return nil
-	}
-	password, err := h.passwordGetter(ctx, workspaceID)
-	if err != nil || password == "" {
-		return nil
-	}
-	url := fmt.Sprintf("http://%s:%d/provider", podIP, agentd.AgentPort)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil) //nolint:gosec // G107: URL to internal pod
-	if err != nil {
-		return nil
-	}
-	req.SetBasicAuth(agentd.AuthUsername, password)
-	resp, err := modelHTTPClient.Do(req)
-	if err != nil {
-		return nil
-	}
-	defer resp.Body.Close() //nolint:errcheck // best-effort drain
-	if resp.StatusCode != http.StatusOK {
-		return nil
-	}
-	var provResp providerListResponse
-	if json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&provResp) != nil {
-		return nil
-	}
-	connectedSet := make(map[string]bool, len(provResp.Connected))
-	for _, id := range provResp.Connected {
-		connectedSet[id] = true
-	}
-	var entries []catalogEntry
-	for _, p := range provResp.All {
-		if !connectedSet[p.ID] {
-			continue
-		}
-		for modelKey, m := range p.Models {
-			id := m.ID
-			if id == "" {
-				id = modelKey
-			}
-			entries = append(entries, catalogEntry{
-				ID:         id,
-				ProviderID: p.ID,
-				Cost:       m.Cost,
-			})
-		}
-	}
-	return entries
-}
-
-// modelExistsInCatalog checks if a model ID exists in the running agent's catalog.
-func (h *SecretsHandler) modelExistsInCatalog(ctx context.Context, podIP, workspaceID, model string) bool {
-	entries := h.fetchCatalog(ctx, podIP, workspaceID)
-	if entries == nil {
-		return true // fail open — don't block on catalog retrieval failure
-	}
-	for _, e := range entries {
-		if e.ID == model {
-			return true
-		}
-	}
-	return false
-}
-
-// resolveModelIDFromCatalog fetches the catalog via GET /provider and returns
-// the providerID/modelID form. When h.relayActive is true and the model
-// resolves to a free-tier opencode model (providerID=opencode, cost.input=0),
-// the providerID is remapped to "opencode-relay" so inference routes through
-// the CF Worker. Falls back to model unchanged on any error.
-func (h *SecretsHandler) resolveModelIDFromCatalog(ctx context.Context, podIP, password, model string) string {
-	url := fmt.Sprintf("http://%s:%d/provider", podIP, agentd.AgentPort)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil) //nolint:gosec // G107: internal pod
-	if err != nil {
-		return model
-	}
-	if password != "" {
-		req.SetBasicAuth(agentd.AuthUsername, password)
-	}
-	resp, err := modelHTTPClient.Do(req)
-	if err != nil {
-		return model
-	}
-	defer resp.Body.Close() //nolint:errcheck // best-effort drain
-	if resp.StatusCode != http.StatusOK {
-		return model
-	}
-	var provResp providerListResponse
-	if json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&provResp) != nil {
-		return model
-	}
-	connectedSet := make(map[string]bool, len(provResp.Connected))
-	for _, id := range provResp.Connected {
-		connectedSet[id] = true
-	}
-	for _, p := range provResp.All {
-		if !connectedSet[p.ID] {
-			continue
-		}
-		for modelKey, m := range p.Models {
-			id := m.ID
-			if id == "" {
-				id = modelKey
-			}
-			if id != model {
-				continue
-			}
-			providerID := p.ID
-			// Remap free-tier opencode models to opencode-relay only when the relay
-			// injector actually ran for this pod. h.relayActive alone does not
-			// distinguish Phase 1 (relay pending) from personal-key (relay skipped).
-			// fetchRelayInjected reads the pod's /v1/readyz to get the live state.
-			if h.relayActive && isZeroCostOpencode(providerID, m.Cost) {
-				if h.fetchRelayInjected(ctx, podIP, password) {
-					providerID = "opencode-relay"
-				}
-			}
-			return providerID + "/" + id
-		}
-	}
-	return model
-}
-
-// patchAgentModel sends the model selection to the running opencode agent.
-// It resolves the catalog flat model ID to providerID/modelID format before patching.
-// Returns the resolved "providerID/modelID" string (for callers to reuse, e.g.
-// metricsRecorder) alongside any error.
-func (h *SecretsHandler) patchAgentModel(ctx context.Context, podIP, password, model string) (string, error) {
-	// Resolve to opencode's providerID/modelID format (e.g. "openai/gpt-5.5").
-	resolved := h.resolveModelIDFromCatalog(ctx, podIP, password, model)
-	body := []byte(fmt.Sprintf(`{"model":%q}`, resolved))
-	url := fmt.Sprintf("http://%s:%d/global/config", podIP, agentd.AgentPort)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewReader(body)) //nolint:gosec // G107: internal pod
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if password != "" {
-		req.SetBasicAuth(agentd.AuthUsername, password)
-	}
-	resp, err := modelHTTPClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("PATCH /global/config returned %d: %s", resp.StatusCode, string(respBody))
-	}
-	return resolved, nil
 }

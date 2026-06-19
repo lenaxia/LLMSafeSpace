@@ -6,6 +6,7 @@ package app
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -155,6 +156,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 
 	// Wire secret management (Epic 10).
 	var secretsHandler *handlers.SecretsHandler
+	var modelsHandler *handlers.ModelsHandler
 	var workspaceEnvHandler *handlers.WorkspaceEnvHandler
 	var rotateKeyHandler *handlers.RotateKeyHandler
 	var adminProvCredHandler *handlers.AdminProviderCredentialsHandler
@@ -227,21 +229,26 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		auditStore = asyncAudit
 
 		secretsHandler = handlers.NewSecretsHandler(secretService)
-		// US-29.4: WorkspaceEnvHandler owns the env-var endpoints,
-		// extracted from SecretsHandler. Shares the same SecretService.
-		workspaceEnvHandler = handlers.NewWorkspaceEnvHandler(secretService)
-		workspaceEnvHandler.SetLogger(log)
+		// US-29.5: ModelsHandler extracted from SecretsHandler. AgentClient
+		// is set later after proxyHandler is constructed.
+		modelsHandler = handlers.NewModelsHandler(nil) // agentClient wired below
+
 		// Wire billing/metering metrics recorder.
 		if metricsSvc, ok := svc.GetMetrics().(*metrics.Service); ok {
-			secretsHandler.SetMetricsRecorder(metricsSvc)
+			modelsHandler.SetMetricsRecorder(metricsSvc)
 		}
-		// Epic 26: mark relay active when LLMSAFESPACE_INFERENCE_RELAY_URL is
-		// configured. This causes ListModels to remap free-tier opencode model
-		// providerIDs to "opencode-relay" so clients route inference through
-		// the CF Worker (which the phase-2 relay injector configures in agentd).
+		// Epic 26: mark relay active when configured.
 		if inferenceRelayURL := cfg.Server.InferenceRelayURL; inferenceRelayURL != "" {
-			secretsHandler.SetRelayActive(true)
+			modelsHandler.SetRelayActive(true)
 		}
+		modelsHandler.SetLogger(log)
+		modelsHandler.SetModelStore(dbSvc)
+		if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
+			modelsHandler.SetManifestWriter(wsSvc)
+		}
+		// US-29.4: WorkspaceEnvHandler owns the env-var endpoints.
+		workspaceEnvHandler = handlers.NewWorkspaceEnvHandler(secretService)
+		workspaceEnvHandler.SetLogger(log)
 		adminProvCredHandler = handlers.NewAdminProviderCredentialsHandler(pgStore, deriveServerKey)
 		adminProvCredHandler.SetAutoApplyStore(pgStore)
 		userProvCredHandler = handlers.NewUserProviderCredentialsHandler(pgStore, pgStore, keyService, secrets.NewPgKeyStore(secretsPool))
@@ -262,7 +269,6 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		))
 		secretsHandler.SetLogger(log)
 		secretsHandler.SetCredentialStateWriter(dbSvc)
-		secretsHandler.SetWorkspaceMetadataUpdater(dbSvc)
 		// Wire password getter so ListModels/SetModel can authenticate
 		// to opencode. Uses the same K8s-secret-backed getter as ProxyHandler.
 		// Wired after proxyHandler construction (see below).
@@ -459,8 +465,18 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		if pwGetter := proxyHandler.GetPasswordGetter(); pwGetter != nil {
 			agentReloadHandler.SetPasswordGetter(pwGetter)
 			bulkReloadHandler.SetPasswordGetter(pwGetter)
-			if secretsHandler != nil {
-				secretsHandler.SetPasswordGetter(pwGetter)
+			// US-29.5: construct ModelsHandler with AgentClient now that
+			// the password getter is available.
+			if modelsHandler != nil {
+				ipResolver := newSecretsPodIPResolver(
+					&k8sWorkspaceGetterAdapter{client: k8sClient, namespace: cfg.Kubernetes.Namespace},
+					dbSvc, log,
+				)
+				agentClient := agentoc.NewWorkspaceClient(pwGetter, ipResolver, log.ZapLogger())
+				modelsHandler.SetAgentClient(agentClient)
+				if relayURL := cfg.Server.InferenceRelayURL; relayURL != "" {
+					modelsHandler.SetRelayChecker(buildRelayChecker(ipResolver, pwGetter))
+				}
 			}
 		}
 	}
@@ -565,8 +581,8 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	}
 
 	// US-43.8: Wire policy checker into secrets handler for model filtering.
-	if policySvc != nil && secretsHandler != nil {
-		secretsHandler.SetPolicyChecker(policySvc)
+	if policySvc != nil && modelsHandler != nil {
+		modelsHandler.SetPolicyChecker(policySvc)
 	}
 
 	relayRouterSvcURL := os.Getenv("RELAY_ROUTER_SVC_URL")
@@ -602,6 +618,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		AdminProviderCredentialsHandler: adminProvCredHandler,
 		UserProviderCredentialsHandler:  userProvCredHandler,
 		SecretsHandler:                  secretsHandler,
+		ModelsHandler:                   modelsHandler,
 		WorkspaceEnvHandler:             workspaceEnvHandler,
 		RotateKeyHandler:                rotateKeyHandler,
 		OrgsHandler:                     orgsHandler,
@@ -877,4 +894,46 @@ func validateMasterSecret(log *logger.Logger) error {
 			len(master))
 	}
 	return nil
+}
+
+// buildRelayChecker creates a RelayStateChecker that reads the relay
+// injection state from the agentd admin port (/v1/readyz). The checker
+// resolves podIP + password internally, keeping the ModelsHandler free
+// of pod/auth concerns (US-29.5 design).
+func buildRelayChecker(
+	ipResolver handlers.PodIPResolver,
+	pwGetter func(context.Context, string) (string, error),
+) handlers.RelayStateChecker {
+	client := &http.Client{Timeout: 5 * time.Second}
+	return func(ctx context.Context, userID, workspaceID string) bool {
+		podIP, err := ipResolver.GetWorkspacePodIP(ctx, userID, workspaceID)
+		if err != nil || podIP == "" {
+			return false
+		}
+		password, err := pwGetter(ctx, workspaceID)
+		if err != nil || password == "" {
+			return false
+		}
+		url := fmt.Sprintf("http://%s:4098/v1/readyz", podIP)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return false
+		}
+		req.Header.Set("Authorization", "Bearer "+password)
+		resp, err := client.Do(req)
+		if err != nil {
+			return false
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusOK {
+			return false
+		}
+		var readyz struct {
+			RelayInjected bool `json:"relay_injected"`
+		}
+		if json.NewDecoder(resp.Body).Decode(&readyz) != nil {
+			return false
+		}
+		return readyz.RelayInjected
+	}
 }
