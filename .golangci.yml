@@ -24,6 +24,9 @@
 #   - revive (style preferences vary, lots of noise)
 #   - lll (line length nag)
 #   - funlen / gocyclo (subjective, lots of false positives)
+#     NOW ENABLED (US-46.13) with a baseline that grandfathers existing
+#     violations. Only NEW violations fail CI. See issues.new below.
+#     Target: shrink to zero grandfathered violations within 2 quarters.
 #   - tagliatelle (struct tag style)
 #   - exportloopref (removed in v2; loopvar fix in Go 1.22+)
 #
@@ -55,6 +58,15 @@ linters:
     - bidichk
     - misspell
     - gosec
+    # US-46.13: complexity linters enabled with baseline grandfathering.
+    # funlen: flags functions >60 lines (Rule 4 guidance is ≤50; the 60-line
+    #         threshold gives a 10-line grace band for existing code).
+    # gocyclo: flags cyclomatic complexity >15 (industry-standard threshold).
+    # Both are enforced via issues.new.from-rev — only violations introduced
+    # AFTER the baseline commit fail CI. Pre-existing violations are grandfathered
+    # and tracked for incremental cleanup via normal PRs.
+    - funlen
+    - gocyclo
   exclusions:
     # Don't apply default excludes — they hide real bugs (especially
     # errcheck on os.Setenv, db.Close, etc.).
@@ -104,6 +116,11 @@ linters:
         linters:
           - errcheck
   settings:
+    funlen:
+      lines: 60
+      statements: 40
+    gocyclo:
+      min-complexity: 15
     errcheck:
       check-type-assertions: false
       check-blank: false
@@ -161,3 +178,14 @@ linters:
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
+  # US-46.13: Baseline for funlen/gocyclo. Only issues introduced AFTER
+  # this revision are reported as new (and fail CI). Pre-existing violations
+  # are silently grandfathered. To regenerate the baseline after cleaning up
+  # violations:
+  #   1. Fix some violations via normal PRs
+  #   2. Update from-rev to the new HEAD
+  #   3. Verify CI passes
+  # Target: reduce to zero grandfathered violations within 2 quarters, then
+  # remove the new section entirely so ALL violations are caught.
+  new:
+    from-rev: 06a4822487ee29dbf746aca7c5e6692ff4c080a4
