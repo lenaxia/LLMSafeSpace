@@ -612,6 +612,16 @@ func (s *PgOrgStore) SuspendUserGuardedByLastAdmin(ctx context.Context, userID s
 		if err != nil {
 			return nil, fmt.Errorf("lock admin rows: %w", err)
 		}
+		// Drain + check Err() to surface driver-level errors from the lock
+		// query (matches the rows.Err() discipline in RemoveOrgAdminIfNotLast /
+		// DemoteOrgAdminIfNotLast). The rows themselves are not read — the lock
+		// is the FOR UPDATE side effect — but Err() catches execution failures.
+		for lockRows.Next() {
+		}
+		if err := lockRows.Err(); err != nil {
+			_ = lockRows.Close() //nolint:sqlclosecheck // best-effort cleanup before early return on iteration error
+			return nil, fmt.Errorf("iterate admin lock rows: %w", err)
+		}
 		if err := lockRows.Close(); err != nil { //nolint:sqlclosecheck // must close before next tx query; defer would close too late
 			return nil, fmt.Errorf("close admin lock rows: %w", err)
 		}
