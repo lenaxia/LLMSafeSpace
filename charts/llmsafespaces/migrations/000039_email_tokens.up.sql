@@ -14,4 +14,4 @@ CREATE TABLE IF NOT EXISTS email_tokens (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_email_tokens_user_kind ON email_tokens(user_id, kind);
+CREATE INDEX IF NOT EXISTS idx_email_tokens_user_kind ON email_tokens(user_id, kind);
