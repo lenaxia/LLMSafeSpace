@@ -173,6 +173,14 @@ controller:
   leaderElection:
     enabled: true
 
+  # US-43.19 / D20: in-cluster root URL of the API service the controller polls
+  # (every 30s, cached) to drive org-level workspace suspension. Empty ("")
+  # derives the default in-cluster API service URL from the release name +
+  # namespace. The controller's --api-service-url flag is wired from this value;
+  # org-suspension is disabled (inert) only if you explicitly set this to "" AND
+  # clear internalToken — by default both are wired so D20 is functional.
+  apiServiceURL: ""
+
   # F1.4.3 (Epic 17): pre-fix the controller bound /metrics on
   # 0.0.0.0:8080, reachable from any pod with route to the controller
   # IP. The default now binds to loopback so only same-pod sidecars
@@ -748,6 +756,16 @@ inferenceRelayURL: "https://relay.safespaces.dev"
 # and pushed to the CF Worker automatically if cloudflare credentials are set.
 # Only set this manually if you need to force a specific value.
 inferenceRelaySecret: ""
+
+# US-43.19 / D20: shared secret authenticating the controller→API internal
+# org-status calls (the endpoint the workspace reconciler polls to drive
+# org-level suspension). Leave empty ("") to have the chart auto-generate a
+# random secret on first install and preserve it across upgrades (same model
+# as jwtSecret). The value is stored as the `internal-token` key in the
+# llmsafespaces-credentials Secret and mounted as LLMSAFESPACES_INTERNAL_TOKEN on
+# BOTH the API and the controller. The internal org-status endpoint FAILS
+# CLOSED (403) when this is unset, so it MUST be set for org-suspension to work.
+internalToken: ""
 
 # Cloudflare credentials for automated relay secret management.
 # When set, a post-install/post-upgrade Job pushes inferenceRelaySecret to

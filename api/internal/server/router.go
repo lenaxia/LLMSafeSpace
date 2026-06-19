@@ -110,7 +110,7 @@ type RouterConfig struct {
 	// polls to drive org-suspension of workspaces (D20). It is intentionally
 	// NOT behind AuthMiddleware; access is gated by a mandatory X-Internal-Token
 	// shared-secret header (see InternalOrgStatusHandler — the endpoint FAILS
-	// CLOSED with 403 when LLMSAFESPACE_INTERNAL_TOKEN is unset). An optional
+	// CLOSED with 403 when LLMSAFESPACES_INTERNAL_TOKEN is unset). An optional
 	// API NetworkPolicy (chart value networkPolicy.apiIngressRestricted) adds
 	// L3/L4 defense-in-depth; the token is the load-bearing control.
 	InternalOrgStatusHandler *handlers.InternalOrgStatusHandler

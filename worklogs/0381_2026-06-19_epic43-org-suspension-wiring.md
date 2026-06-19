@@ -17,12 +17,12 @@
 
 ### F1 — Wire org-suspension in the chart
 - `values.yaml`: `controller.apiServiceURL` (default `""` → chart derives the in-cluster URL) + top-level `internalToken` (default `""` → auto-generated).
-- `controller-deployment.yaml`: derive `--api-service-url` from release name + namespace + API port when unset; always wire `LLMSAFESPACE_INTERNAL_TOKEN` env.
-- `api-deployment.yaml`: wire `LLMSAFESPACE_INTERNAL_TOKEN` env.
+- `controller-deployment.yaml`: derive `--api-service-url` from release name + namespace + API port when unset; always wire `LLMSAFESPACES_INTERNAL_TOKEN` env.
+- `api-deployment.yaml`: wire `LLMSAFESPACES_INTERNAL_TOKEN` env.
 - `secret.yaml`: generate + persist an `internal-token` key (same rotation model as jwt/master secrets).
 
 ### F5 — Fail-closed internal endpoint
-- `internal_org_status.go`: invert the default — **403** when `LLMSAFESPACE_INTERNAL_TOKEN` is unset; `crypto/subtle.ConstantTimeCompare` for the comparison (was `!=`, a timing leak).
+- `internal_org_status.go`: invert the default — **403** when `LLMSAFESPACES_INTERNAL_TOKEN` is unset; `crypto/subtle.ConstantTimeCompare` for the comparison (was `!=`, a timing leak).
 - `api-network-policy.yaml` (new): opt-in default-deny ingress for the API pod (gated on `networkPolicy.apiIngressRestricted`, default **false** — a default-on API default-deny would lock users out given deployment-specific ingress selectors; the token gate is the load-bearing control, the NetworkPolicy is defense-in-depth).
 - Corrected now-stale comments in `controller/main.go` and `router.go` (2 spots) that described the pre-F5 "reachable when unset" / "NetworkPolicy is co-primary" behaviour.
 
@@ -33,7 +33,7 @@ F5's fail-closed requires F1 to wire the token on BOTH the API (so the endpoint 
 
 ## Key Decisions
 
-1. **Token gate is mandatory fail-closed; NetworkPolicy is opt-in defense-in-depth.** Validated the controller sends `X-Internal-Token` when non-empty (`org_status_client.go:137`) and reads it from `LLMSAFESPACE_INTERNAL_TOKEN` (`controller/main.go:104`); both deployments now mount the same Secret key. A default-on API NetworkPolicy would lock users out (ingress selectors are deployment-specific), so it ships off.
+1. **Token gate is mandatory fail-closed; NetworkPolicy is opt-in defense-in-depth.** Validated the controller sends `X-Internal-Token` when non-empty (`org_status_client.go:137`) and reads it from `LLMSAFESPACES_INTERNAL_TOKEN` (`controller/main.go:104`); both deployments now mount the same Secret key. A default-on API NetworkPolicy would lock users out (ingress selectors are deployment-specific), so it ships off.
 2. **`internalToken` reuses the jwt/master-secret rotation model** — generate on first install, reuse across upgrades (rotation would briefly break org-suspension polling until both pods restart).
 3. **`controller.apiServiceURL` defaults to in-cluster derivation** so D20 is functional out-of-the-box; operators can override.
 
@@ -49,7 +49,7 @@ None.
 
 - Handler: `TestInternalOrgStatus_TokenUnsetFailsClosed` (was `...AllowsAccess`), `...TokenRequiredWhenSet`, suspended/active/missing-org fail-open.
 - Chart (`helm template`): `TestF1_ControllerArgs_PassesApiServiceURL`, `...ApiServiceURL_HonorsOverride`, `...InternalTokenEnv_OnBothDeployments`, `...SecretIncludesInternalToken`, `TestF5_ApiNetworkPolicy_DefaultOff`, `...OptIn`.
-- Renders `--api-service-url=http://<release>-api.<ns>.svc:8080`, `LLMSAFESPACE_INTERNAL_TOKEN` on both deployments, `internal-token` in the Secret.
+- Renders `--api-service-url=http://<release>-api.<ns>.svc:8080`, `LLMSAFESPACES_INTERNAL_TOKEN` on both deployments, `internal-token` in the Secret.
 
 ---
 
