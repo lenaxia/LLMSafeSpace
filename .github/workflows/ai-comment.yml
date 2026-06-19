@@ -18,10 +18,10 @@ jobs:
        startsWith(github.event.comment.body, '/security') ||
        startsWith(github.event.comment.body, '/explain') ||
        startsWith(github.event.comment.body, '/triage') ||
-        startsWith(github.event.comment.body, '/help') ||
-        startsWith(github.event.comment.body, '/design') ||
-        startsWith(github.event.comment.body, '/merge') ||
-        contains(github.event.comment.body, ' /ai') ||
+       startsWith(github.event.comment.body, '/help') ||
+       startsWith(github.event.comment.body, '/design') ||
+       startsWith(github.event.comment.body, '/merge') ||
+       contains(github.event.comment.body, ' /ai') ||
        contains(github.event.comment.body, ' /review') ||
        contains(github.event.comment.body, ' /fix') ||
        contains(github.event.comment.body, ' /implement') ||
@@ -30,9 +30,9 @@ jobs:
        contains(github.event.comment.body, ' /security') ||
        contains(github.event.comment.body, ' /explain') ||
        contains(github.event.comment.body, ' /triage') ||
-        contains(github.event.comment.body, ' /help') ||
-        contains(github.event.comment.body, ' /design') ||
-        contains(github.event.comment.body, ' /merge')) &&
+       contains(github.event.comment.body, ' /help') ||
+       contains(github.event.comment.body, ' /design') ||
+       contains(github.event.comment.body, ' /merge')) &&
       (github.event.comment.author_association == 'OWNER' ||
        github.event.comment.author_association == 'MEMBER' ||
        github.event.comment.author_association == 'COLLABORATOR')
@@ -68,6 +68,10 @@ jobs:
       #   /ai [text]        → original behavior (context-dependent)
       #   /ai on PR         → full re-review (pr-review.md)
       #   /ai on issue      → issue responder (issue-responder.md)
+      #
+      # Routing logic lives in .github/scripts/route-command.sh (sourced) so it
+      # is exercised by tests/gharouter/route_test.go — a regression guard for
+      # command detection, NOTE extraction, --no-merge hold, and prompt assembly.
       - name: Build prompt
         env:
           COMMENT_BODY: ${{ github.event.comment.body }}
@@ -75,165 +79,14 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-
-          CONTEXT_FILE=".github/prompts/context.md"
-          CORE_FILE=".github/prompts/core-rules.md"
-          WORKFLOW_FILE=".github/prompts/code-change-workflow.md"
-          OUT="/tmp/opencode_prompt.txt"
-
-          # Detect which command was used (check start of comment first, then inline).
-          # Each pattern requires the command keyword followed by end-of-string or
-          # a space — this prevents false matches like /testing → /test or /fixing → /fix.
-          COMMAND=""
-          case "$COMMENT_BODY" in
-            /implement\ *|/implement) COMMAND="/implement" ;;
-            /security\ *|/security)   COMMAND="/security" ;;
-            /analyze\ *|/analyze)     COMMAND="/analyze" ;;
-            /review\ *|/review)       COMMAND="/review" ;;
-            /explain\ *|/explain)     COMMAND="/explain" ;;
-            /triage\ *|/triage)       COMMAND="/triage" ;;
-            /design\ *|/design)       COMMAND="/design" ;;
-            /merge\ *|/merge)         COMMAND="/merge" ;;
-            /test\ *|/test)           COMMAND="/test" ;;
-            /fix\ *|/fix)             COMMAND="/fix" ;;
-            /help\ *|/help)           COMMAND="/help" ;;
-            /ai\ *|/ai)               COMMAND="/ai" ;;
-            *" /implement "*) COMMAND="/implement" ;;
-            *" /security "*)  COMMAND="/security" ;;
-            *" /analyze "*)   COMMAND="/analyze" ;;
-            *" /review "*)    COMMAND="/review" ;;
-            *" /explain "*)   COMMAND="/explain" ;;
-            *" /triage "*)    COMMAND="/triage" ;;
-            *" /design "*)    COMMAND="/design" ;;
-            *" /merge "*)     COMMAND="/merge" ;;
-            *" /test "*)      COMMAND="/test" ;;
-            *" /fix "*)       COMMAND="/fix" ;;
-            *" /help "*)      COMMAND="/help" ;;
-            *" /ai "*)        COMMAND="/ai" ;;
-            *)               COMMAND="/ai" ;;
-          esac
-
-          NOTE="$(printf '%s' "$COMMENT_BODY" | sed "s|.*${COMMAND}||" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')"
-
-          # Detect the --no-merge hold flag. It's a global modifier:
-          # strip it from NOTE for EVERY command (so it never pollutes the
-          # description/topic), but only ACT on it for the four auto-merging
-          # code-change commands. `/design` always holds (enforced in its prompt);
-          # `/merge` is the explicit merge and ignores the flag.
-          HOLD_MERGE=0
-          case "$COMMENT_BODY" in
-            *"--no-merge"*)
-              NOTE="$(printf '%s' "$NOTE" | sed -E 's/[[:space:]]*--no-merge[[:space:]]*/ /g; s/^[[:space:]]*//; s/[[:space:]]*$//')"
-              case "$COMMAND" in
-                /fix|/implement|/test|/security) HOLD_MERGE=1 ;;
-              esac
-              ;;
-          esac
-
-          # Write context header + core rules
-          cat "$CONTEXT_FILE" > "$OUT"
-          printf '\n\n---\n\n' >> "$OUT"
-          cat "$CORE_FILE" >> "$OUT"
-          printf '\n\n---\n\n' >> "$OUT"
-
-          # Route to command-specific prompt
-          case "$COMMAND" in
-            /review)
-              cat ".github/prompts/pr-review.md" >> "$OUT"
-              if [ -n "$NOTE" ]; then
-                printf '\n\nAdditional review focus from collaborator:\n\n> %s\n' "$NOTE" >> "$OUT"
-              fi
-              printf '\n\nA collaborator requested an explicit review using `/review`.\n' >> "$OUT"
-              ;;
-            /fix)
-              cat ".github/prompts/fix.md" >> "$OUT"
-              printf '\n\n' >> "$OUT"
-              cat "$WORKFLOW_FILE" >> "$OUT"
-              if [ -n "$NOTE" ]; then
-                printf '\n\nBug or issue to fix:\n\n> %s\n' "$NOTE" >> "$OUT"
-              fi
-              ;;
-            /implement)
-              cat ".github/prompts/implement.md" >> "$OUT"
-              printf '\n\n' >> "$OUT"
-              cat "$WORKFLOW_FILE" >> "$OUT"
-              if [ -n "$NOTE" ]; then
-                printf '\n\nFeature or story to implement:\n\n> %s\n' "$NOTE" >> "$OUT"
-              fi
-              ;;
-            /test)
-              cat ".github/prompts/test.md" >> "$OUT"
-              printf '\n\n' >> "$OUT"
-              cat "$WORKFLOW_FILE" >> "$OUT"
-              if [ -n "$NOTE" ]; then
-                printf '\n\nTarget to write or improve tests for:\n\n> %s\n' "$NOTE" >> "$OUT"
-              fi
-              ;;
-            /security)
-              cat ".github/prompts/security.md" >> "$OUT"
-              printf '\n\n' >> "$OUT"
-              cat "$WORKFLOW_FILE" >> "$OUT"
-              if [ -n "$NOTE" ]; then
-                printf '\n\nSecurity review focus:\n\n> %s\n' "$NOTE" >> "$OUT"
-              fi
-              ;;
-            /analyze)
-              cat ".github/prompts/analyze.md" >> "$OUT"
-              if [ -n "$NOTE" ]; then
-                printf '\n\nAnalysis focus:\n\n> %s\n' "$NOTE" >> "$OUT"
-              fi
-              ;;
-            /explain)
-              cat ".github/prompts/explain.md" >> "$OUT"
-              if [ -n "$NOTE" ]; then
-                printf '\n\nTopic to explain:\n\n> %s\n' "$NOTE" >> "$OUT"
-              fi
-              ;;
-            /triage)
-              cat ".github/prompts/triage.md" >> "$OUT"
-              if [ -n "$NOTE" ]; then
-                printf '\n\nTriage context:\n\n> %s\n' "$NOTE" >> "$OUT"
-              fi
-              ;;
-            /design)
-              cat ".github/prompts/design.md" >> "$OUT"
-              printf '\n\n' >> "$OUT"
-              cat "$WORKFLOW_FILE" >> "$OUT"
-              if [ -n "$NOTE" ]; then
-                printf '\n\nDesign focus / topic:\n\n> %s\n' "$NOTE" >> "$OUT"
-              fi
-              ;;
-            /merge)
-              cat ".github/prompts/merge.md" >> "$OUT"
-              ;;
-            /help)
-              cat ".github/prompts/help.md" >> "$OUT"
-              ;;
-            /ai)
-              if [ -n "$NOTE" ]; then
-                printf 'A collaborator has asked:\n\n> %s\n\nAddress this request. For any code changes: create a feature branch, open a PR, never commit to main directly.\n' "$NOTE" >> "$OUT"
-              elif [ -n "$PR_URL" ] || [ "$EVENT_NAME" = "pull_request_review_comment" ]; then
-                cat ".github/prompts/pr-review.md" >> "$OUT"
-                printf '\n\nA collaborator triggered a re-review by posting `/ai`. Re-assess the PR in full, taking into account all commits pushed since the last review. Note what changed since the previous review if one exists.\n' >> "$OUT"
-              else
-                cat ".github/prompts/issue-responder.md" >> "$OUT"
-                printf '\n\nA collaborator triggered you by posting `/ai`. Analyze the full issue thread and take the appropriate action.\n' >> "$OUT"
-              fi
-              ;;
-          esac
-
-          # If --no-merge was passed on a code-change command, override the
-          # Code Change Workflow's auto-merge (step 7). Placed last so it is the
-          # final, unambiguous instruction. `/design` holds via its own prompt;
-          # `/merge` is the explicit release and is never held.
-          if [ "$HOLD_MERGE" = "1" ]; then
-            printf '\n\n---\n\n**MERGE HOLD (`--no-merge`):** The collaborator passed `--no-merge` on this `%s`. Override Code Change Workflow step 7: after the automated review posts APPROVE, do NOT merge. Post a comment on the PR stating it is approved and awaiting an explicit `/merge` from a collaborator. Do not merge until `/merge` is received.\n' "$COMMAND" >> "$OUT"
-          fi
+          # shellcheck source=.github/scripts/route-command.sh
+          source .github/scripts/route-command.sh
+          OUT_FILE=/tmp/opencode_prompt.txt route_command
 
           # Export as multiline GITHUB_ENV entry
           {
             echo "OPENCODE_PROMPT<<__PROMPT_EOF__"
-            cat "$OUT"
+            cat "$OUT_FILE"
             echo "__PROMPT_EOF__"
           } >> "$GITHUB_ENV"
 

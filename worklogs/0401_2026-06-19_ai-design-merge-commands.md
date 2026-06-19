@@ -70,9 +70,20 @@ None.
 ## Tests Run
 
 - `yaml.safe_load` on `ai-comment.yml` → OK.
-- `bash -n` on the full Build-prompt script → OK.
-- Routing + `--no-merge` harness (14 cases, all PASS): `/design` and `/merge` route (standalone + inline); `--no-merge` sets HOLD only for /fix,/implement,/test,/security and is stripped from NOTE everywhere; prefix safety (`/testing` does not route to `/test`); correct prompt files attached (design.md+workflow for /design; merge.md only for /merge); HOLD directive injected iff HOLD_MERGE=1; design holds via prompt even with `--no-merge`.
+- `bash -n` on `.github/scripts/route-command.sh` → OK.
+- `go test ./tests/gharouter/...` → PASS. 28 sub-tests covering: every command (standalone + inline), prefix safety (`/testing`/`/fixing`/`/implementing` do not route), `--no-merge` trailing-only detection (trailing holds on /fix,/implement,/test,/security; leading/mid treated as description and NOT held; /design stripped-ignored; /merge ignored; trailing whitespace tolerated), correct prompt files attached, HOLD directive injected iff `HOLD_MERGE=1`, and the shared context+core-rules header on every command.
+- Parity check: the new sourced-script workflow produces identical routing to the prior inline logic (Python harness, 6 representative cases, all PASS).
+- `golangci-lint run ./tests/gharouter/...` → 0 issues. `go vet` → clean.
+- `repolint` → all checks passed.
 - (Pending) live validation once the PR's automated review runs and the footer/comment behaviour is observed.
+
+### Reviewer nits addressed (PR #292 review)
+
+All three optional findings from the #292 automated review were resolved:
+
+1. **Persist the routing harness as a regression test** — extracted routing logic into `.github/scripts/route-command.sh` (a sourced library; the workflow's `Build prompt` step now `source`s it and calls `route_command`). Added `tests/gharouter/route_test.go` (Go + testify) that invokes the script as the workflow does and asserts across 28 cases — runs under `make test`/CI. The shell remains the single source of truth (no logic duplicated in Go).
+2. **Tighten `--no-merge` to a discrete token** — refined to **trailing-only**: `--no-merge` is the flag only when it is the last non-whitespace token (`(^|[[:space:]])--no-merge[[:space:]]*$`). This eliminates the false positive where a mid-description literal like `/fix the --no-merge stripping is greedy` would hold and mangle NOTE. Leading position is now treated as description text (documented; users append the flag, matching the "append" verb already in the docs).
+3. **Normalize `if:` indentation** — the `/help` `/design` `/merge` trigger lines were 8-space while surrounding lines were 7-space; normalized to 7 throughout.
 
 ---
 
@@ -92,5 +103,7 @@ None.
 - `.github/prompts/context.md` (modified — new commands)
 - `.github/prompts/help.md` (modified — new commands + `--no-merge`)
 - `.github/prompts/commands-footer.md` (modified — new commands)  *(also changed by #288)*
-- `.github/workflows/ai-comment.yml` (modified — triggers, routing, `--no-merge`)  *(also changed by #288)*
-- `worklogs/0400_2026-06-19_ai-design-merge-commands.md` (new — this file)
+- `.github/workflows/ai-comment.yml` (modified — triggers, routing now sources the script, `--no-merge`)  *(also changed by #288)*
+- `.github/scripts/route-command.sh` (new — extracted routing logic; sourced by the workflow; exercised by the Go test)
+- `tests/gharouter/route_test.go` (new — 28-case regression guard for routing/hold detection)
+- `worklogs/0401_2026-06-19_ai-design-merge-commands.md` (new — this file)
