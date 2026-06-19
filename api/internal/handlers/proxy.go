@@ -165,6 +165,7 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 // (opencode restarting), the request is parked in the per-workspace request
 // buffer and retried until the upstream recovers or the buffer timeout elapses,
 // instead of returning 503 immediately. Only SendMessage sets bufferable.
+//
 //nolint:gocyclo // proxy path has many independent guard clauses; complexity is inherent
 func (h *ProxyHandler) proxyToWorkspaceWithErrBody(
 	c *gin.Context,
