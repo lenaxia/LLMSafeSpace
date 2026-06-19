@@ -101,14 +101,19 @@ func runtimeRefHasTraversal(s string) bool {
 
 // storageSizePattern is a stricter form of the CRD pattern. The CRD
 // allows any number of digits; we additionally enforce an upper bound
-// in storageSizeGi.
-var storageSizePattern = regexp.MustCompile(`^([0-9]+)(Gi|Mi)$`)
+// in storageSizeGi. Pattern sourced from pkg/settings (the source of
+// truth shared with the admin settings UI) — wrapping the canonical
+// regex with capture groups for the parser, but the accept set is
+// identical to settings.StorageQuantityPattern.
+var storageSizePattern = regexp.MustCompile(`^([1-9][0-9]*)(Gi|Mi)$`)
 
-// cpuPattern matches the CRD's spec.resources.cpu pattern.
+// cpuPattern matches the CRD's spec.resources.cpu pattern. Same source
+// of truth as settings.CPUQuantityPattern.
 var cpuPattern = regexp.MustCompile(`^([0-9]+)m$|^([0-9]+\.[0-9]+)$`)
 
 // memoryPattern matches the CRD's spec.resources.memory pattern (Ki|Mi|Gi).
-var memoryPattern = regexp.MustCompile(`^([0-9]+)(Ki|Mi|Gi)$`)
+// Same source of truth as settings.MemoryQuantityPattern.
+var memoryPattern = regexp.MustCompile(`^([1-9][0-9]*)(Ki|Mi|Gi)$`)
 
 // parseCPUMillis converts a CPU string ("500m" or "1.5") to integer
 // millicores. Returns (-1, err) on malformed input.

@@ -151,10 +151,7 @@ func (s *InstanceService) Set(ctx context.Context, key string, value any) error 
 	if !ok {
 		return fmt.Errorf("unknown instance setting key: %q", key)
 	}
-	normalized, err := Normalize(def, value)
-	if err != nil {
-		return err
-	}
+	normalized := Normalize(def, value)
 	if err := Validate(def, normalized); err != nil {
 		return err
 	}

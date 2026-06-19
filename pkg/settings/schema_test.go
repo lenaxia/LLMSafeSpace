@@ -312,26 +312,25 @@ func TestValidate_UnknownType(t *testing.T) {
 // field on the Workspace CRD must declare a Pattern that matches the
 // CRD/webhook regex. These tests pin that contract.
 
-// memoryPattern mirrors the constant in
-// controller/internal/webhooks/workspace_webhook.go and the
-// kubebuilder annotation on
-// pkg/apis/llmsafespace/v1/workspace_types.go ResourceRequirements.Memory.
-// Duplicated here intentionally so a drift between the webhook and
-// the settings schema fails this package's tests, not just the
-// controller's.
-const expectedMemoryPattern = `^[0-9]+(Ki|Mi|Gi)$`
-const expectedCPUPattern = `^([0-9]+m|[0-9]+\.[0-9]+)$`
-const expectedStoragePattern = `^[0-9]+(Gi|Mi)$`
+// Pattern source-of-truth verification. The canonical patterns live
+// in pkg/settings/quantity_patterns.go and are referenced by the
+// schema (pkg/settings/schema.go), the validating webhook
+// (controller/internal/webhooks/workspace_webhook.go), and the CRD
+// kubebuilder annotation (pkg/apis/llmsafespaces/v1/workspace_types.go).
+// These tests verify the schema side of that contract. The webhook's
+// regex variables additionally have capture groups for parsing — that
+// integration is verified by TestSettingsAndWebhookAcceptIdenticalInputs
+// in controller/internal/webhooks (which can import this package).
 
 // resourceQuantitySettings are the keys that end up on a CRD as a
-// Kubernetes Quantity. Each MUST declare a Pattern in the schema, AND
-// the Pattern must match the corresponding webhook regex. If you add a
-// new resource setting (e.g. workspace.defaultResources.ephemeralStorage)
+// Kubernetes Quantity. Each MUST declare a Pattern in the schema,
+// sourced from the canonical pkg/settings constants. If you add a new
+// resource setting (e.g. workspace.defaultResources.ephemeralStorage)
 // add it here so the contract is enforced.
 var resourceQuantitySettings = map[string]string{
-	"workspace.defaultResources.memory": expectedMemoryPattern,
-	"workspace.defaultResources.cpu":    expectedCPUPattern,
-	"workspace.defaultStorageSize":      expectedStoragePattern,
+	"workspace.defaultResources.memory": MemoryQuantityPattern,
+	"workspace.defaultResources.cpu":    CPUQuantityPattern,
+	"workspace.defaultStorageSize":      StorageQuantityPattern,
 }
 
 func TestInstanceSettings_ResourceQuantitiesHavePatterns(t *testing.T) {
@@ -350,11 +349,16 @@ func TestInstanceSettings_ResourceQuantitiesHavePatterns(t *testing.T) {
 	}
 }
 
-func TestInstanceSettings_ResourcePatternsAgreeWithWebhook(t *testing.T) {
-	// Drift guard: if the webhook regex changes, this test forces the
-	// settings schema to track. Mismatch means an admin could save a
-	// value the schema accepts but the webhook rejects (or vice
-	// versa), reproducing the "8gi" failure mode.
+func TestInstanceSettings_ResourcePatternsUseCanonicalConstants(t *testing.T) {
+	// Drift guard A (schema ↔ canonical): the schema must reference
+	// the constants from quantity_patterns.go, not literal strings.
+	// If a developer changes either the canonical constant or the
+	// schema pattern in isolation, this test fires.
+	//
+	// Drift guard B (canonical ↔ webhook) is enforced in the
+	// webhook's own test file by importing this package's constants
+	// and asserting the webhook's regex variables match (with the
+	// capture-group decoration the parsers need).
 	idx := InstanceSettingIndex()
 	for key, expected := range resourceQuantitySettings {
 		def, ok := idx[key]
@@ -362,8 +366,9 @@ func TestInstanceSettings_ResourcePatternsAgreeWithWebhook(t *testing.T) {
 			continue // covered by TestInstanceSettings_ResourceQuantitiesHavePatterns
 		}
 		if def.Pattern != expected {
-			t.Errorf("setting %q pattern %q does not match webhook regex %q. "+
-				"If the webhook regex was updated, update the schema in lockstep.",
+			t.Errorf("setting %q pattern %q does not equal canonical constant %q. "+
+				"Use the constant from pkg/settings/quantity_patterns.go directly so the "+
+				"webhook, schema, and frontend all share one source of truth.",
 				key, def.Pattern, expected)
 		}
 	}
@@ -395,6 +400,15 @@ func TestValidate_Memory_RejectsLowercaseUnit(t *testing.T) {
 		"",       // empty string accepted by no-pattern; should not be saved as a default
 		"-1Gi",   // negative
 		"8",      // bare number, no unit
+		// Zero-magnitude values are rejected by the webhook's
+		// parseMemoryMi (which requires n >= 1) but a naive regex
+		// `^[0-9]+(Ki|Mi|Gi)$` accepts them. Same failure class as
+		// the original "8gi" bug: passes settings, breaks workspace
+		// creation. The schema pattern must reject them too.
+		"0Gi",
+		"0Mi",
+		"0Ki",
+		"00Gi", // leading zeros also weird; safest to reject
 	}
 	for _, v := range rejected {
 		if err := Validate(def, v); err == nil {
@@ -450,7 +464,9 @@ func TestValidate_StorageSize_RejectsBogusValues(t *testing.T) {
 		t.Fatal("workspace.defaultStorageSize missing from InstanceSettings")
 	}
 	// Pattern was already present pre-fix; treat this as a drift guard.
-	rejected := []string{"15gi", "15Ti", "15GB", "banana", "", "-1Gi"}
+	// Zero-magnitude values added because the webhook's storageSizeGi
+	// rejects n < 1.
+	rejected := []string{"15gi", "15Ti", "15GB", "banana", "", "-1Gi", "0Gi", "0Mi"}
 	for _, v := range rejected {
 		if err := Validate(def, v); err == nil {
 			t.Errorf("Validate accepted invalid storage value %q", v)
