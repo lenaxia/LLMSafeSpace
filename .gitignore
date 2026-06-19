@@ -66,6 +66,12 @@ sdks/canary/go/d-*
 sdks/canary/mcp/mcp
 sdks/canary/go/cmd/seed-accounts/seed-accounts
 
+# Generated build artifacts — never track (regenerable, large, host-specific).
+# Caught after a stray `git add -A` swept 76MB into PR #276 (worklog 0389).
+controller/bin/
+cmd/workspace-agentd/workspace-agentd
+sdks/java/target/
+
 # Local credentials and binaries
 .cf
 mcp
