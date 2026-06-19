@@ -277,9 +277,9 @@ func TestGetUser(t *testing.T) {
 	status := types.UserStatusActive
 
 	// Set up expectations
-	rows := sqlmock.NewRows([]string{"id", "username", "email", "password_hash", "created_at", "updated_at", "active", "role", "status"}).
-		AddRow(userID, username, email, "$2a$10$hash", createdAt, updatedAt, active, role, status)
-	mock.ExpectQuery("SELECT id, username, email, password_hash, created_at, updated_at, active, role, status FROM users WHERE id = \\$1").
+	rows := sqlmock.NewRows([]string{"id", "username", "email", "password_hash", "created_at", "updated_at", "active", "role", "status", "email_verified"}).
+		AddRow(userID, username, email, "$2a$10$hash", createdAt, updatedAt, active, role, status, true)
+	mock.ExpectQuery("SELECT id, username, email, password_hash, created_at, updated_at, active, role, status, email_verified FROM users WHERE id = \\$1").
 		WithArgs(userID).
 		WillReturnRows(rows)
 
@@ -295,7 +295,7 @@ func TestGetUser(t *testing.T) {
 	assert.Equal(t, status, user.Status)
 
 	// Test case: User not found
-	mock.ExpectQuery("SELECT id, username, email, password_hash, created_at, updated_at, active, role, status FROM users WHERE id = \\$1").
+	mock.ExpectQuery("SELECT id, username, email, password_hash, created_at, updated_at, active, role, status, email_verified FROM users WHERE id = \\$1").
 		WithArgs("nonexistent").
 		WillReturnError(sql.ErrNoRows)
 

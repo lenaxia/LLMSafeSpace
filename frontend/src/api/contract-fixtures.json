@@ -28,7 +28,8 @@
       "updatedAt": "0001-01-01T00:00:00Z",
       "active": true,
       "role": "user",
-      "status": ""
+      "status": "",
+      "emailVerified": false
     }
   },
   "PermissionRequest": {

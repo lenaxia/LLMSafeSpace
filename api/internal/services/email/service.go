@@ -15,6 +15,9 @@ package email
 import (
 	"context"
 	"errors"
+	"fmt"
+	"html"
+	"net/url"
 	"strings"
 
 	"github.com/lenaxia/llmsafespaces/pkg/email"
@@ -24,6 +27,10 @@ import (
 // disabled). Callers use ProviderName() to distinguish noop from ses for UX;
 // this sentinel guards against calling Send* on a nil-provider Service.
 var ErrNotConfigured = errors.New("email is not configured")
+
+const (
+	passwordResetExpiryText = "15 minutes"
+)
 
 // Service builds and sends transactional emails via the wrapped provider.
 type Service struct {
@@ -61,6 +68,54 @@ func (s *Service) SendTest(ctx context.Context, to string) error {
 		TextBody: "This is a test email from LLMSafeSpaces. If you received this, outbound email is working.",
 		HTMLBody: "<p>This is a test email from LLMSafeSpaces. If you received this, outbound email is working.</p>",
 	})
+}
+
+// SendPasswordReset sends a password-reset link. The link targets the
+// interstitial frontend page /reset-password, which POSTs to the confirm
+// endpoint — never a consuming GET (scanner-defense invariant, US-49.9).
+func (s *Service) SendPasswordReset(ctx context.Context, to, token string) error {
+	if s.provider == nil {
+		return ErrNotConfigured
+	}
+	link := s.buildLink("/reset-password", token)
+	textBody := fmt.Sprintf(
+		"A request was made to reset your LLMSafeSpaces password.\n\nClick here to set a new password: %s\n\nThis link expires in %s. If you did not request a password reset, you can safely ignore this email.",
+		link, passwordResetExpiryText,
+	)
+	htmlBody := fmt.Sprintf(
+		"<p>A request was made to reset your LLMSafeSpaces password.</p><p><a href=\"%s\">Click here to set a new password</a></p><p>This link expires in %s. If you did not request a password reset, you can safely ignore this email.</p>",
+		html.EscapeString(link), passwordResetExpiryText,
+	)
+	return s.provider.Send(ctx, email.Message{
+		To:       to,
+		Subject:  "Reset your LLMSafeSpaces password",
+		TextBody: textBody,
+		HTMLBody: htmlBody,
+	})
+}
+
+// SendPasswordChanged sends a post-reset notification so the legitimate owner
+// can detect an account takeover. Per OWASP, this is a notification, not a
+// gate — it does not block the reset.
+func (s *Service) SendPasswordChanged(ctx context.Context, to string) error {
+	if s.provider == nil {
+		return ErrNotConfigured
+	}
+	return s.provider.Send(ctx, email.Message{
+		To:       to,
+		Subject:  "Your LLMSafeSpaces password was changed",
+		TextBody: "Your LLMSafeSpaces password was changed. If this was you, no action is needed. If this was not you, contact your administrator immediately or use your recovery key.",
+		HTMLBody: "<p>Your LLMSafeSpaces password was changed.</p><p>If this was you, no action is needed.</p><p><strong>If this was not you, contact your administrator immediately or use your recovery key.</strong></p>",
+	})
+}
+
+// buildLink constructs a frontend URL carrying the token in the query string.
+// Trims trailing slashes from baseURL; URL-encodes the token as
+// defense-in-depth (tokens are crypto/rand base64url which is URL-safe, but
+// escaping guards against future callers passing differently-shaped tokens).
+func (s *Service) buildLink(path, token string) string {
+	base := strings.TrimRight(s.baseURL, "/")
+	return fmt.Sprintf("%s%s?token=%s", base, path, url.QueryEscape(token))
 }
 
 // normaliseProviderName maps the raw config value to the resolved label.

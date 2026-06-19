@@ -5,6 +5,7 @@ package email
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/lenaxia/llmsafespaces/pkg/email"
@@ -73,6 +74,47 @@ func TestSend_PropagatesProviderError(t *testing.T) {
 	err := svc.SendTest(context.Background(), "ops@test.com")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ses down")
+}
+
+func TestSendPasswordReset_BuildsCorrectLink(t *testing.T) {
+	svc, fp := newSvc()
+	token := "abc123reset"
+	err := svc.SendPasswordReset(context.Background(), "alice@test.com", token)
+	require.NoError(t, err)
+	require.NotNil(t, fp.last)
+	assert.Equal(t, "alice@test.com", fp.last.To)
+	assert.Contains(t, fp.last.TextBody, "https://app.test/reset-password?token="+token)
+	assert.Contains(t, fp.last.HTMLBody, "https://app.test/reset-password?token="+token)
+}
+
+func TestSendPasswordReset_ExplainsExpiry(t *testing.T) {
+	svc, fp := newSvc()
+	err := svc.SendPasswordReset(context.Background(), "alice@test.com", "tok")
+	require.NoError(t, err)
+	assert.Contains(t, fp.last.TextBody, "15 minutes")
+}
+
+func TestSendPasswordChanged_BuildsNotification(t *testing.T) {
+	svc, fp := newSvc()
+	err := svc.SendPasswordChanged(context.Background(), "alice@test.com")
+	require.NoError(t, err)
+	require.NotNil(t, fp.last)
+	assert.Contains(t, fp.last.Subject, "password")
+	assert.Contains(t, strings.ToLower(fp.last.TextBody), "if this was not you")
+}
+
+func TestBuildLink_TrimsTrailingSlash(t *testing.T) {
+	svc := NewService(&fakeProvider{}, "https://app.test///", "ses")
+	link := svc.buildLink("/reset-password", "tok")
+	assert.Equal(t, "https://app.test/reset-password?token=tok", link)
+}
+
+func TestHTMLBody_EscapesDynamicValues(t *testing.T) {
+	svc, fp := newSvc()
+	err := svc.SendPasswordReset(context.Background(), "alice@test.com", "<script>alert(1)</script>")
+	require.NoError(t, err)
+	assert.NotContains(t, fp.last.HTMLBody, "<script>alert(1)</script>")
+	assert.Contains(t, fp.last.HTMLBody, "%3Cscript%3E")
 }
 
 type testErr struct{ msg string }
