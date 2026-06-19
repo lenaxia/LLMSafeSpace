@@ -24,7 +24,7 @@ import (
 // won't compile and CI catches it immediately without running a single test.
 var (
 	_ interfaces.KubernetesClient            = (*kmocks.MockKubernetesClient)(nil)
-	_ interfaces.LLMSafespacesV1Interface     = (*kmocks.MockLLMSafespacesV1Interface)(nil)
+	_ interfaces.LLMSafespacesV1Interface    = (*kmocks.MockLLMSafespacesV1Interface)(nil)
 	_ interfaces.RuntimeEnvironmentInterface = (*kmocks.MockRuntimeEnvironmentInterface)(nil)
 	_ watch.Interface                        = (*kmocks.MockWatch)(nil)
 )
