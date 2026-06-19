@@ -234,9 +234,8 @@ func TestContract_ModelsRoutesSendBasicAuth(t *testing.T) {
 	srv.Start()
 	t.Cleanup(srv.Close)
 
-	handler := NewSecretsHandler(nil)
-	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
-	handler.SetPasswordGetter(mockPasswordGetter(testPassword))
+	handler := newTestModelsHandler(testPassword)
+
 	clearModelCache()
 
 	router := gin.New()
