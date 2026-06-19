@@ -186,6 +186,15 @@ func makeSessionAwareRestartDecision(
 	if pollInterval <= 0 {
 		pollInterval = restartIdleCheckInterval
 	}
+	// ctx is the agentd background lifecycle context (outlives any single HTTP
+	// request). When nil (tests, or deps.BgCtx unset), fall back to
+	// context.Background() so the deferred goroutine has a cancellable root.
+	// This fallback lives here rather than in the handler so the handler's
+	// only context source is r.Context() (avoids a contextcheck lint conflict
+	// between the request-scoped and background contexts in the same scope).
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	// Prune stale entries before deciding (C2a).
 	pruneFromLister(ctx, tracker, lister)
@@ -543,10 +552,6 @@ func reloadSecretsHandler(cfg materializeConfig, deps reloadSecretsDeps) http.Ha
 	proc := deps.Proc
 	opencodePassword := deps.OpencodePassword
 	tracker := deps.Tracker
-	bgCtx := deps.BgCtx
-	if bgCtx == nil {
-		bgCtx = context.Background()
-	}
 	lister := deps.Lister
 	markerPath := deps.RestartReasonMarkerPath
 	if markerPath == "" {
@@ -682,7 +687,7 @@ func reloadSecretsHandler(cfg materializeConfig, deps reloadSecretsDeps) http.Ha
 				// the crash/oom reasons.
 				pkgOpsMetrics.RecordRestart(workspaceIDFromEnv(), metricRestartReason(reason))
 			}
-			restarted = makeSessionAwareRestartDecision(bgCtx, proc, tracker, restartIdleCheckInterval, defaultMaxDefer, lister, deps.BgWg)
+			restarted = makeSessionAwareRestartDecision(deps.BgCtx, proc, tracker, restartIdleCheckInterval, defaultMaxDefer, lister, deps.BgWg)
 		}
 
 		status := http.StatusOK
