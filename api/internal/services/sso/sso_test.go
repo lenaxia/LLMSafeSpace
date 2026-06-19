@@ -752,6 +752,18 @@ func TestEffectiveGroups_MergesGroupsAndMemberOf(t *testing.T) {
 	require.ElementsMatch(t, []string{"g", "m"}, merged)
 }
 
+// TestOIDCClaims_AbsentEmailVerified_DecodesFalse is the security regression
+// guard for F8: the production gate treats an ABSENT email_verified claim as
+// unverified (bool zero value). This is the spec-correct default-deny posture.
+// A future change to EmailVerified *bool with "nil = allow" semantics would
+// re-open the unverified-email takeover for IdPs that omit the claim, and this
+// test would catch it.
+func TestOIDCClaims_AbsentEmailVerified_DecodesFalse(t *testing.T) {
+	var c oidcClaims
+	require.NoError(t, json.Unmarshal([]byte(`{"email":"x@y.com"}`), &c))
+	require.False(t, c.EmailVerified, "absent email_verified claim must decode to false (default-deny, F8)")
+}
+
 // --- F10: PKCE verifier is validated against the challenge (US-43.10) ---
 //
 // The client (sso.go) correctly sends code_challenge at /authorize and
