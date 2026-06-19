@@ -174,6 +174,16 @@ var (
 	pkgOpDuration          *prometheus.HistogramVec
 	pkgErrorsTotal         *prometheus.CounterVec
 	pkgActiveSessionsGauge *prometheus.GaugeVec
+
+	// pkgIsSessionDeletedFailClosedTotal (worklog 371 M1) counts the number
+	// of times IsSessionDeleted returned TRUE because of a Redis error
+	// (fail-closed), as opposed to an actual tombstone. During a Redis
+	// outage, every IsSessionDeleted call fail-closes → ALL session-event
+	// processing (title persistence, context-token recording, queue drain,
+	// sessionIndex.RecordMessage) is silently suppressed. This counter makes
+	// that silent suppression alertable: alert on
+	// rate(ws_state_is_session_deleted_fail_closed_total[5m]) > 0.
+	pkgIsSessionDeletedFailClosedTotal prometheus.Counter
 )
 
 func registerMetrics() {
@@ -193,6 +203,11 @@ func registerMetrics() {
 			Name: "ws_state_active_sessions",
 			Help: "wsstate active session count per workspace (sampled on writes)",
 		}, []string{"workspace_id"})
+
+		pkgIsSessionDeletedFailClosedTotal = promauto.NewCounter(prometheus.CounterOpts{
+			Name: "ws_state_is_session_deleted_fail_closed_total",
+			Help: "Total times IsSessionDeleted returned true due to Redis error (fail-closed), suppressing session-event processing. Alert if > 0: a Redis outage makes all sessions look deleted.",
+		})
 	})
 }
 
@@ -393,6 +408,29 @@ func (s *RedisStore) ClearActiveSessions(workspaceID string) {
 	}
 }
 
+// TouchActiveSessions refreshes the TTL of the workspace's active
+// session set (worklog 371 C3). Called on SSE activity so a multi-hour
+// agentic turn does not let the 30-minute TTL expire mid-turn and admit
+// a concurrent request that corrupts opencode's SQLite session history.
+//
+// EXPIRE on a non-existent key is a no-op (returns 0, no error), so it
+// is safe to call unconditionally on every SSE event even when the
+// workspace has no active sessions.
+func (s *RedisStore) TouchActiveSessions(workspaceID string) {
+	const op = "touch_active_sessions"
+	start := time.Now()
+	if err := s.client.Expire(context.Background(), activeSessKey(workspaceID), s.activeSessTTL).Err(); err != nil {
+		s.recordError(op)
+		s.observeOp(op, "error", start)
+		if s.logger != nil {
+			s.logger.Warn("wsstate: Redis TouchActiveSessions failed",
+				"error", err, "workspace_id", workspaceID)
+		}
+		return
+	}
+	s.observeOp(op, "ok", start)
+}
+
 // --- InvalidateAll ---
 
 // InvalidateAll clears all Redis-backed state (active sessions, deleted
@@ -447,6 +485,12 @@ func (s *RedisStore) MarkSessionDeleted(workspaceID, sessionID string) {
 // IsSessionDeleted reports whether the session was recently deleted via
 // the API. Fail-CLOSED: returns TRUE on Redis error (assume deleted to
 // prevent zombie session resurrection).
+//
+// Worklog 371 M1: each fail-closed return increments
+// ws_state_is_session_deleted_fail_closed_total so operators can alert on
+// the silent suppression of session-event processing during a Redis
+// outage (title persistence, context-token recording, queue drain, and
+// sessionIndex.RecordMessage are all gated on !isSessionDeleted).
 func (s *RedisStore) IsSessionDeleted(workspaceID, sessionID string) bool {
 	const op = "is_session_deleted"
 	start := time.Now()
@@ -454,6 +498,13 @@ func (s *RedisStore) IsSessionDeleted(workspaceID, sessionID string) bool {
 	if err != nil {
 		s.recordError(op)
 		s.observeOp(op, "error", start)
+		if pkgIsSessionDeletedFailClosedTotal != nil {
+			pkgIsSessionDeletedFailClosedTotal.Inc()
+		}
+		if s.logger != nil {
+			s.logger.Warn("wsstate: Redis IsSessionDeleted failed — fail-closing (treating as deleted)",
+				"error", err, "workspace_id", workspaceID, "session_id", sessionID)
+		}
 		return true
 	}
 	s.observeOp(op, "ok", start)
@@ -548,6 +599,23 @@ func (s *RedisStore) GetCachedPassword(workspaceID string) (string, bool) {
 // Silently fails on Redis error — the next read returns a miss and
 // falls through to K8s. Idempotent: re-setting the same password
 // refreshes the TTL.
+//
+// H3 (worklog 371): the password is stored in PLAINTEXT in Redis. This is
+// intentional: the API needs the plaintext to set Basic-Auth on every proxied
+// request to opencode, so hashing (which would prevent plaintext retrieval)
+// is not viable — every cache hit would fall through to the K8s Secret fetch,
+// defeating the cache. Production deployments MUST configure Redis with:
+//   - TLS in-transit (rediss:// or a TLS sidecar) so the plaintext is not
+//     exposed on the internal network.
+//   - At-rest encryption (Redis 7 ACL + encryption, or disk-level encryption
+//     on the Redis PVC) so RDB/AOF dumps and backups do not expose it.
+//   - NetworkPolicy restricting ingress to the API pods only.
+//
+// These are deployment responsibilities, not code-level controls — see the
+// chart's redis section in values.yaml and the production runbook. The
+// passwords are per-workspace generated credentials (not user passwords),
+// bounded by the 1h TTL, and the source of truth is the K8s Secret (also
+// encrypted at rest).
 func (s *RedisStore) SetCachedPassword(workspaceID, password string) {
 	const op = "set_cached_password"
 	start := time.Now()
@@ -682,7 +750,25 @@ func (s *RedisStore) GetPriorPhase(workspaceID string) (string, bool) {
 		if err != redis.Nil {
 			s.recordError(op)
 			s.observeOp(op, "error", start)
+			if s.logger != nil {
+				s.logger.Warn("wsstate: Redis GetPriorPhase failed — assuming Active→Active to avoid mass cache wipe",
+					"error", err, "workspace_id", workspaceID)
+			}
+			// C4 (worklog 371): returning ("", false) on Redis error causes
+			// onPhaseChange to treat it as first-invocation and call
+			// invalidateCaches, which wipes activeSess + deletedSessions +
+			// pwCache + wsConfig across all replicas. A transient Redis blip
+			// during a CRD watcher reconnect would silently recreate the
+			// data-loss class Epic 45 exists to prevent. Instead assume the
+			// common case (Active→Active) so only WorkspaceConfig is
+			// invalidated, not the full cache. The Creating→Active edge case
+			// (rare: requires Redis outage exactly when a workspace
+			// transitions to Active) misses the SSE subscription restart,
+			// but the proxy path's EnsureWatching on the next request and
+			// the controller's periodic reconcile recover it.
+			return "Active", true
 		}
+		s.observeOp(op, "miss", start)
 		return "", false
 	}
 	s.observeOp(op, "hit", start)
