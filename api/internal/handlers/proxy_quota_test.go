@@ -12,7 +12,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespaces/api/internal/mocks"
 	"github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -94,6 +93,3 @@ func TestCheckProxyQuota_CheckQuotaError_FailOpen(t *testing.T) {
 
 	assert.True(t, h.checkProxyQuota(c, &v1.Workspace{}), "DB error should fail-open (allow request)")
 }
-
-// Ensure types import is used
-var _ = types.OwnerTypeUser
