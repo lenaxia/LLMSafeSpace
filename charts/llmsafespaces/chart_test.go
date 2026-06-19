@@ -1686,9 +1686,10 @@ func TestRelay_APIInferenceRelayClusterRole_RendersWhenEnabled(t *testing.T) {
 // InferenceRelay — US-42.8 router WireGuard sidecar + network-agnostic ingress
 // =============================================================================
 //
-// These tests guard the US-42.8 chart implementation (worklog 0362 redesign):
-// the relay-router Deployment gains a WireGuard sidecar that brings up wg0
-// (10.42.42.1/24), and a second Service template renders the WireGuard UDP
+// These tests guard the US-42.8 chart implementation (worklog 0386 / Epic 42
+// Layer 2 redesign): the relay-router Deployment gains a WireGuard sidecar
+// that brings up wg0 (10.42.42.1/24), and a second Service template renders
+// the WireGuard UDP
 // endpoint in one of four operator-selectable ingress modes. The chart NEVER
 // installs MetalLB. Default mode is `external` (no WG Service at all).
 
@@ -1814,6 +1815,37 @@ func TestRelayRouter_WGSidecar_RendersWhenInferenceRelayEnabled(t *testing.T) {
 		require.False(t, psc["runAsNonRoot"].(bool),
 			"pod-level runAsNonRoot must be false so the root WG sidecar can start; the router container enforces non-root itself")
 	}
+
+	// The relay-router-wg Secret (router private key) is created by the
+	// controller on first provision, which happens AFTER the pod starts at
+	// chart-install time. Its volume must therefore be optional, or the pod
+	// would block on a Secret that does not exist yet.
+	ps := podSpecMap(deploy)
+	volumes, _ := ps["volumes"].([]any)
+	var wgSecretOptional bool
+	for _, v := range volumes {
+		vm, _ := v.(map[string]any)
+		if name, _ := vm["name"].(string); name == "wg-secret" {
+			sec, _ := vm["secret"].(map[string]any)
+			wgSecretOptional, _ = sec["optional"].(bool)
+		}
+	}
+	require.True(t, wgSecretOptional,
+		"wg-secret volume must be optional:true (controller creates relay-router-wg after the pod starts)")
+
+	// The render-wg.sh entrypoint is shipped as a ConfigMap so the sidecar
+	// can run it without a custom image. Assert it renders + is mounted.
+	var sawScriptsCM bool
+	for _, d := range findByKind(docs, "ConfigMap") {
+		if strings.Contains(metaName(d), "relay-router-wg-scripts") {
+			data, _ := d["data"].(map[string]any)
+			if _, ok := data["render-wg.sh"]; ok {
+				sawScriptsCM = true
+			}
+		}
+	}
+	require.True(t, sawScriptsCM,
+		"relay-router-wg-scripts ConfigMap with render-wg.sh must render when inferenceRelay is enabled")
 }
 
 // TestRelayRouter_WGIngress_ExternalMode_RendersNoUDPService asserts that the
