@@ -263,7 +263,7 @@ Before the relay-router pod will start, ensure that namespace carries
       --overwrite
 
 The chart's other pods remain individually hardened regardless.
-{{- end}}
+{{- end }}
 
 See worklog 0398 (US-42.8) and Epic 42 Layer 2 for the full rationale.
 {{- end }}

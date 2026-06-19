@@ -244,21 +244,30 @@ controller:
       # hostPath, and (in hostNetwork mode) uses hostNetwork. These are REQUIRED
       # for in-pod WireGuard but make the relay-router pod NON-compliant with
       # the PSA `restricted` profile — which is this chart's default when
-      # namespace.create is true (see namespace.podSecurityEnforce above). The
-      # pod would be rejected at admission in a `restricted` namespace. Before
-      # enabling the relay subsystem, the operator MUST place the relay-router
-      # in a namespace that permits it: either set
-      # namespace.podSecurityEnforce to "baseline" or "" for the release
-      # namespace, OR (preferred) deploy relay-router into its own
-      # privileged/baseline namespace. This is the same posture as any other
-      # privileged network sidecar; the privilege is scoped to the sidecar
-      # container and WG public-key pinning remains the auth boundary.
+      # namespace.create is true (see namespace.podSecurityEnforce above).
+      #
+      # The chart handles this automatically when it creates the namespace:
+      # namespace.yaml widens the chart-created namespace's PSA labels
+      # (enforce/audit/warn) from `restricted` to `privileged` when this
+      # subsystem is enabled. The chart's other pods (API, controller,
+      # frontend, migration) remain individually hardened regardless, so the
+      # wider profile only admits the relay-router sidecar. See worklog 0398.
+      #
+      # Operators who set namespace.create=false (pre-existing namespace) must
+      # relax that namespace themselves — NOTES.txt prints the exact kubectl
+      # label command on install. Operators who want the namespace to STAY
+      # restricted can deploy relay-router into a separate privileged namespace
+      # out-of-band; this is the same posture as any other privileged network
+      # sidecar. The privilege is scoped to the sidecar container and WG
+      # public-key pinning remains the auth boundary.
       wireGuard:
         # WireGuard sidecar image. Must provide `wg`, `wg-quick`, `ip`
         # (wireguard-tools + iproute2), `jq` (to parse the peers ConfigMap),
-        # and access to /dev/net/tun. Default follows the project ghcr image
-        # convention; the project publishes a purpose-built image, but any
-        # image with the listed tools works (e.g. linuxserver/wireguard + jq).
+        # and access to /dev/net/tun. The default is the project-published
+        # image (cmd/relay-wireguard/Dockerfile, built by CI). Any image with
+        # the listed tools works (e.g. linuxserver/wireguard + jq), but the
+        # project image also bundles wireguard-go for the userspace fallback
+        # used by detect_wg_impl in render-wg.sh.
         image:
           repository: ghcr.io/lenaxia/llmsafespaces/relay-wireguard
           tag: ""

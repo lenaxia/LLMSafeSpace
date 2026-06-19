@@ -18,10 +18,7 @@
 #
 #   docker build -f cmd/relay-wireguard/Dockerfile -t llmsafespaces/relay-wireguard:dev .
 
-ARG TARGETARCH=amd64
-
 FROM alpine:3.20 AS base
-ARG TARGETARCH
 # wireguard-tools provides wg + wg-quick; iproute2 provides ip; jq parses the
 # peers ConfigMap; wireguard-go is the userspace fallback; openresolv is a
 # wg-quick runtime dep for DNS handling. ca-certificates for TLS if a future
