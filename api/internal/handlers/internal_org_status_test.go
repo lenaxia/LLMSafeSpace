@@ -41,9 +41,10 @@ func setupInternalStatusRouter(t *testing.T, store *fakeInternalOrgStatusStore, 
 
 func TestInternalOrgStatus_SuspendedOrg(t *testing.T) {
 	store := &fakeInternalOrgStatusStore{org: &types.Organization{ID: "o1", Status: types.OrgStatusSuspended}}
-	r, _ := setupInternalStatusRouter(t, store, false)
+	r, _ := setupInternalStatusRouter(t, store, true)
 
 	req := httptest.NewRequest("GET", "/api/v1/internal/orgs/o1/status", nil)
+	req.Header.Set("X-Internal-Token", "sekret")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -57,9 +58,10 @@ func TestInternalOrgStatus_SuspendedOrg(t *testing.T) {
 
 func TestInternalOrgStatus_ActiveOrg(t *testing.T) {
 	store := &fakeInternalOrgStatusStore{org: &types.Organization{ID: "o1", Status: types.OrgStatusActive}}
-	r, _ := setupInternalStatusRouter(t, store, false)
+	r, _ := setupInternalStatusRouter(t, store, true)
 
 	req := httptest.NewRequest("GET", "/api/v1/internal/orgs/o1/status", nil)
+	req.Header.Set("X-Internal-Token", "sekret")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -77,9 +79,10 @@ func TestInternalOrgStatus_ActiveOrg(t *testing.T) {
 // (an unwarranted suspension is more disruptive than leaving a pod running).
 func TestInternalOrgStatus_NotFoundFailsOpen(t *testing.T) {
 	store := &fakeInternalOrgStatusStore{org: nil}
-	r, _ := setupInternalStatusRouter(t, store, false)
+	r, _ := setupInternalStatusRouter(t, store, true)
 
 	req := httptest.NewRequest("GET", "/api/v1/internal/orgs/missing/status", nil)
+	req.Header.Set("X-Internal-Token", "sekret")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -122,19 +125,21 @@ func TestInternalOrgStatus_TokenRequiredWhenSet(t *testing.T) {
 	}
 }
 
-// TestInternalOrgStatus_TokenUnsetAllowsAccess verifies that when
-// LLMSAFESPACES_INTERNAL_TOKEN is unset, the endpoint is reachable without a
-// header — the cluster NetworkPolicy is the primary boundary, matching the
-// /metrics opt-in pattern.
-func TestInternalOrgStatus_TokenUnsetAllowsAccess(t *testing.T) {
+// TestInternalOrgStatus_TokenUnsetFailsClosed verifies that when
+// LLMSAFESPACES_INTERNAL_TOKEN is unset, the endpoint FAILS CLOSED with 403
+// (F5). Pre-fix the endpoint was fully unauthenticated in this state, letting
+// any routable pod enumerate which orgs are suspended. The chart sets the
+// token on both the API and the controller so this is a deployment
+// misconfiguration signal, not a legitimate caller being blocked.
+func TestInternalOrgStatus_TokenUnsetFailsClosed(t *testing.T) {
 	os.Unsetenv("LLMSAFESPACES_INTERNAL_TOKEN")
-	store := &fakeInternalOrgStatusStore{org: &types.Organization{ID: "o1", Status: types.OrgStatusActive}}
+	store := &fakeInternalOrgStatusStore{org: &types.Organization{ID: "o1", Status: types.OrgStatusSuspended}}
 	r, _ := setupInternalStatusRouter(t, store, false)
 
 	req := httptest.NewRequest("GET", "/api/v1/internal/orgs/o1/status", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200 with token unset, got %d", w.Code)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 (fail-closed) with token unset, got %d: %s", w.Code, w.Body.String())
 	}
 }

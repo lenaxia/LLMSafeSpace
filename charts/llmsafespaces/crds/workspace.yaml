@@ -52,7 +52,7 @@ spec:
                   properties:
                     size:
                       type: string
-                      pattern: "^[0-9]+(Gi|Mi)$"
+                      pattern: "^[1-9][0-9]*(Gi|Mi)$"
                     storageClassName:
                       type: string
                     accessMode:
@@ -276,10 +276,6 @@ spec:
                         type: integer
                         format: int64
                         description: "LLM prompt tokens consumed by this session in the last completed step."
-                      estimatedMemoryMB:
-                        type: integer
-                        format: int64
-                        description: "Approximate per-session memory estimate from agentd (US-44.6)."
                 diskUsedBytes:
                   type: integer
                   format: int64

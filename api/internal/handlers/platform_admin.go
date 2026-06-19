@@ -20,7 +20,9 @@ import (
 type platformAdminOrgStore interface {
 	UpdateOrgStatus(ctx context.Context, orgID string, status *types.OrgStatus, subStatus *types.OrgSubscriptionStatus, planID *types.OrgPlan) error
 	LogAuditEvent(ctx context.Context, domain, actorID, action, targetID string, orgID *string, metadata map[string]any) error
-	OrgsWhereUserIsLastActiveAdmin(ctx context.Context, userID string) ([]types.LastAdminOrg, error)
+	// SuspendUserGuardedByLastAdmin performs the last-admin check and the
+	// status update atomically (F7). The sole mutation path for user suspend.
+	SuspendUserGuardedByLastAdmin(ctx context.Context, userID string, force bool) (*types.LastAdminOrg, error)
 	ListAllOrgs(ctx context.Context, limit, offset int, statusFilter *string) ([]types.OrgSummary, *types.PaginationMetadata, error)
 }
 
@@ -31,6 +33,15 @@ type platformAdminUserStore interface {
 	ListAllUsers(ctx context.Context, limit, offset int, statusFilter *string) ([]types.UserListEntry, *types.PaginationMetadata, error)
 }
 
+// platformUserRevoker revokes a user's live JWTs/API keys the instant they are
+// suspended (F4, US-43.19). *auth.Service satisfies it. When nil (e.g. minimal
+// test setups) the handler skips the fast-path revocation; the per-request
+// GetUser check (fail-closed, F3) remains the authoritative enforcement.
+type platformUserRevoker interface {
+	MarkUserSuspended(ctx context.Context, userID string) error
+	ClearUserSuspended(ctx context.Context, userID string) error
+}
+
 // PlatformAdminHandler implements the platform-admin org/user suspension
 // endpoints (D19, US-43.19). All routes are mounted behind AuthMiddleware +
 // AdminGuard (users.role='admin'), so every method here runs in a
@@ -39,14 +50,16 @@ type PlatformAdminHandler struct {
 	orgStore  platformAdminOrgStore
 	userStore platformAdminUserStore
 	authSvc   orgAuthService
+	revoker   platformUserRevoker
 	logger    policyLogger
 }
 
-// NewPlatformAdminHandler constructs the handler. logger surfaces audit-write
-// failures (audit is best-effort: a failed audit log never blocks the
-// mutation, matching the existing policy/audit pattern).
-func NewPlatformAdminHandler(orgs platformAdminOrgStore, users platformAdminUserStore, authSvc orgAuthService, logger policyLogger) *PlatformAdminHandler {
-	return &PlatformAdminHandler{orgStore: orgs, userStore: users, authSvc: authSvc, logger: logger}
+// NewPlatformAdminHandler constructs the handler. revoker wires the F4 token
+// revocation primitive (pass nil only in tests that do not exercise it). logger
+// surfaces audit-write failures (audit is best-effort: a failed audit log never
+// blocks the mutation, matching the existing policy/audit pattern).
+func NewPlatformAdminHandler(orgs platformAdminOrgStore, users platformAdminUserStore, authSvc orgAuthService, revoker platformUserRevoker, logger policyLogger) *PlatformAdminHandler {
+	return &PlatformAdminHandler{orgStore: orgs, userStore: users, authSvc: authSvc, revoker: revoker, logger: logger}
 }
 
 // SuspendOrg handles POST /api/v1/admin/orgs/:id/suspend.
@@ -96,10 +109,11 @@ func (h *PlatformAdminHandler) UnsuspendOrg(c *gin.Context) {
 
 // SuspendUser handles POST /api/v1/admin/users/:id/suspend.
 //
-// Sets users.status='suspended' — the auth middleware then blocks the user
-// across ALL contexts (every org + personal) on the next authenticated
-// request. ?force=true bypasses the last-admin deadlock check for security
-// emergencies (the org becomes unmanageable until remediated).
+// Atomically refuses when the user is the sole active admin of any org (unless
+// ?force=true), then sets users.status='suspended' and revokes the user's live
+// tokens. The check + update run in one transaction (F7) so concurrent admin
+// operations cannot orphan an org; the revocation marker (F4) makes the
+// suspension take effect immediately, even during a DB blip.
 func (h *PlatformAdminHandler) SuspendUser(c *gin.Context) {
 	userID := c.Param("id")
 	if userID == "" {
@@ -110,26 +124,30 @@ func (h *PlatformAdminHandler) SuspendUser(c *gin.Context) {
 	ctx := c.Request.Context()
 	force := strings.ToLower(c.Query("force")) == "true"
 
-	if !force {
-		lastAdminOrgs, err := h.orgStore.OrgsWhereUserIsLastActiveAdmin(ctx, userID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check last-admin status"})
-			return
-		}
-		if len(lastAdminOrgs) > 0 {
-			org := lastAdminOrgs[0]
-			c.JSON(http.StatusConflict, gin.H{
-				"error": "cannot suspend last admin of org " + org.OrgName + " — promote another member first (use ?force=true to override)",
-				"orgId": org.OrgID,
-			})
-			return
-		}
-	}
-
-	if err := h.userStore.SetUserStatus(ctx, userID, types.UserStatusSuspended); err != nil {
+	conflict, err := h.orgStore.SuspendUserGuardedByLastAdmin(ctx, userID, force)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to suspend user"})
 		return
 	}
+	if conflict != nil {
+		c.JSON(http.StatusConflict, gin.H{
+			"error": "cannot suspend last admin of org " + conflict.OrgName + " — promote another member first (use ?force=true to override)",
+			"orgId": conflict.OrgID,
+		})
+		return
+	}
+
+	// F4: revoke live tokens immediately. Best-effort relative to the status
+	// flip — the user is already suspended in the DB, so the per-request
+	// GetUser gate (fail-closed, F3) enforces regardless. A Redis blip must not
+	// roll back the admin action or surface a misleading 500.
+	if h.revoker != nil {
+		if rerr := h.revoker.MarkUserSuspended(ctx, userID); rerr != nil && h.logger != nil {
+			h.logger.Warn("failed to revoke suspended user's tokens; DB status still enforces access",
+				"userID", userID, "err", rerr)
+		}
+	}
+
 	meta := map[string]any{}
 	if force {
 		meta["force"] = true
@@ -151,6 +169,14 @@ func (h *PlatformAdminHandler) UnsuspendUser(c *gin.Context) {
 	if err := h.userStore.SetUserStatus(ctx, userID, types.UserStatusActive); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to unsuspend user"})
 		return
+	}
+	// F4: clear the revocation marker so the user's existing tokens work again
+	// immediately rather than waiting for the marker TTL.
+	if h.revoker != nil {
+		if rerr := h.revoker.ClearUserSuspended(ctx, userID); rerr != nil && h.logger != nil {
+			h.logger.Warn("failed to clear suspended user's revocation marker",
+				"userID", userID, "err", rerr)
+		}
 	}
 	h.emitAudit(ctx, "admin", "user.unsuspend", userID, nil, actorID, nil)
 	c.JSON(http.StatusOK, gin.H{"status": string(types.UserStatusActive)})

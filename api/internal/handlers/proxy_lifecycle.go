@@ -4,7 +4,6 @@
 package handlers
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -36,7 +35,7 @@ func (h *ProxyHandler) Start() error {
 		}
 
 		h.sseTracker = sse.NewTracker(h.httpClient, h.logger, h.onSessionIdle)
-		h.sseTracker.SetPasswordGetter(h.getPassword)
+		h.sseTracker.SetPasswordGetter(h)
 		h.sseTracker.SetPodIPResolver(h.getPodIPForSSE)
 		h.sseTracker.SetOnSessionActive(h.onSessionActive)
 		h.sseTracker.SetOnRawEvent(h.onRawEvent)
@@ -85,8 +84,8 @@ func (h *ProxyHandler) GetSSETracker() *sse.Tracker {
 	return h.sseTracker
 }
 
-func (h *ProxyHandler) GetPasswordGetter() func(ctx context.Context, workspaceID string) (string, error) {
-	return h.getPassword
+func (h *ProxyHandler) GetPasswordGetter() interfaces.WorkspacePasswordProvider {
+	return h
 }
 
 func (h *ProxyHandler) SetAgentStateChecker(c AgentStateChecker) {

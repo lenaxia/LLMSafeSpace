@@ -33,7 +33,7 @@ func (platformListOrgStore) UpdateOrgStatus(context.Context, string, *types.OrgS
 func (platformListOrgStore) LogAuditEvent(context.Context, string, string, string, string, *string, map[string]any) error {
 	return nil
 }
-func (platformListOrgStore) OrgsWhereUserIsLastActiveAdmin(context.Context, string) ([]types.LastAdminOrg, error) {
+func (platformListOrgStore) SuspendUserGuardedByLastAdmin(context.Context, string, bool) (*types.LastAdminOrg, error) {
 	return nil, nil
 }
 func (platformListOrgStore) ListAllOrgs(_ context.Context, limit, offset int, _ *string) ([]types.OrgSummary, *types.PaginationMetadata, error) {
@@ -78,7 +78,7 @@ func newPlatformListRouter(t *testing.T, role string) *gin.Engine {
 	cfg := RouterConfig{
 		Debug: false,
 		PlatformAdminHandler: handlers.NewPlatformAdminHandler(
-			platformListOrgStore{}, platformListUserStore{}, nil, nil,
+			platformListOrgStore{}, platformListUserStore{}, nil, nil, nil,
 		),
 	}
 	return NewRouter(svc, log, nil, cfg)

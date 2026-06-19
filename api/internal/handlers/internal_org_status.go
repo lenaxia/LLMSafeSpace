@@ -5,6 +5,7 @@ package handlers
 
 import (
 	"context"
+	"crypto/subtle"
 	"net/http"
 	"os"
 
@@ -24,11 +25,14 @@ type internalOrgStatusReader interface {
 // cache) to drive org-suspension of workspaces (D20, US-43.19).
 //
 // This endpoint is intentionally NOT behind AuthMiddleware: the controller has
-// no user identity. Defense-in-depth is provided by an optional shared-secret
-// header (X-Internal-Token) read from LLMSAFESPACES_INTERNAL_TOKEN. When the env
-// var is unset the endpoint is open — the cluster NetworkPolicy is the primary
-// boundary (same opt-in model as /metrics). It MUST only ever return org
-// status, never secrets.
+// no user identity. The PRIMARY boundary is a mandatory shared-secret header
+// (X-Internal-Token) read from LLMSAFESPACES_INTERNAL_TOKEN (F5, US-43.19).
+// When the env var is unset the endpoint FAILS CLOSED with 403: serving it
+// unauthenticated would let any pod that can route to the API enumerate which
+// orgs are suspended. The chart sets the token on BOTH the API and the
+// controller so a single mounted Secret configures both sides. The comparison
+// is constant-time to avoid a timing leak of the shared secret. It MUST only
+// ever return org status, never secrets.
 type InternalOrgStatusHandler struct {
 	store internalOrgStatusReader
 }
@@ -45,11 +49,20 @@ func NewInternalOrgStatusHandler(store internalOrgStatusReader) *InternalOrgStat
 // D20, an unwarranted suspension (deleting a running pod) is more disruptive
 // than leaving it active during an anomaly.
 func (h *InternalOrgStatusHandler) GetOrgStatus(c *gin.Context) {
-	if expected := os.Getenv("LLMSAFESPACES_INTERNAL_TOKEN"); expected != "" {
-		if c.GetHeader("X-Internal-Token") != expected {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-			return
-		}
+	expected := os.Getenv("LLMSAFESPACES_INTERNAL_TOKEN")
+	if expected == "" {
+		// F5: fail closed. No shared secret configured → refuse rather than
+		// serve unauthenticated. The controller cannot legitimately call this
+		// endpoint without the token either, so 403 here means the chart has
+		// not wired LLMSAFESPACES_INTERNAL_TOKEN (a deployment misconfiguration),
+		// not a legitimate caller being blocked.
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "internal endpoint not configured"})
+		return
+	}
+	// Constant-time compare to avoid leaking the shared secret via timing.
+	if subtle.ConstantTimeCompare([]byte(c.GetHeader("X-Internal-Token")), []byte(expected)) != 1 {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
 	}
 
 	orgID := c.Param("orgID")

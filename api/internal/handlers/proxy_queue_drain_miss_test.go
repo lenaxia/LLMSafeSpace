@@ -139,9 +139,7 @@ func TestDrainMiss_SSEDownWhenSessionGoesIdle(t *testing.T) {
 	tracker := ssetracker.NewTracker(httpClient, &testLogger{}, func(workspaceID, sessionID string) {
 		handler.onSessionIdle(workspaceID, sessionID)
 	})
-	tracker.SetPasswordGetter(func(_ context.Context, _ string) (string, error) {
-		return "test-pw", nil
-	})
+	tracker.SetPasswordGetter(fakePWProvider{pw: "test-pw"})
 	tracker.SetPodIPResolver(func(_ string) string { return podAddr })
 	tracker.SetOnSessionActive(func(workspaceID, sessionID string) {
 		handler.onSessionActive(workspaceID, sessionID)
@@ -264,9 +262,7 @@ func TestDrainMiss_SSEIdleTimeoutCausesReconnect(t *testing.T) {
 			drainCallCount.Add(1)
 		},
 	)
-	tracker.SetPasswordGetter(func(_ context.Context, _ string) (string, error) {
-		return "test-pw", nil
-	})
+	tracker.SetPasswordGetter(fakePWProvider{pw: "test-pw"})
 	// Return the IP only — tracker appends :4096, transport rewrites to test server.
 	tracker.SetPodIPResolver(func(_ string) string { return "127.0.0.1" })
 
@@ -416,9 +412,7 @@ func TestDrainMiss_QueueNotDrainedAfterReconnectWithNoNewIdleEvent(t *testing.T)
 	tracker := ssetracker.NewTracker(httpClient, &testLogger{}, func(workspaceID, sessionID string) {
 		handler.onSessionIdle(workspaceID, sessionID)
 	})
-	tracker.SetPasswordGetter(func(_ context.Context, _ string) (string, error) {
-		return "test-pw", nil
-	})
+	tracker.SetPasswordGetter(fakePWProvider{pw: "test-pw"})
 	tracker.SetPodIPResolver(func(_ string) string { return "127.0.0.1" })
 	tracker.SetOnSessionActive(func(workspaceID, sessionID string) {
 		handler.onSessionActive(workspaceID, sessionID)

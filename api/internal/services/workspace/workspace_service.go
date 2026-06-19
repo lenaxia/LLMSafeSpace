@@ -1155,20 +1155,28 @@ func (s *Service) ActivateWorkspace(ctx context.Context, userID, workspaceID str
 	// LastActivityAt is written to the metadata annotation (not Status)
 	// so it uses a separate optimistic-concurrency lane from
 	// Status().Update, eliminating the cross-writer race.
-	suspendFalse := false
-	crd.Spec.Suspend = &suspendFalse
-	if crd.Annotations == nil {
-		crd.Annotations = make(map[string]string)
+	//
+	// M13-a: wrapped in RetryOnConflict to handle concurrent spec/annotation
+	// writes. The re-get inside the closure re-applies both Spec.Suspend=false
+	// and the annotation so the retry doesn't clobber a concurrent spec change.
+	wsClient, wErr := s.workspaceCRDClient()
+	if wErr != nil {
+		return nil, apierrors.NewInternalError("workspace_resume_failed", wErr)
 	}
-	now := metav1.Now()
-	v1.SetLastActivityAtAnnotation(crd.Annotations, now)
-	if _, err := func() (*v1.Workspace, error) {
-		wsClient, wErr := s.workspaceCRDClient()
-		if wErr != nil {
-			return nil, wErr
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current, err := wsClient.Get(ctx, crd.Name, metav1.GetOptions{})
+		if err != nil {
+			return err
 		}
-		return wsClient.Update(ctx, crd)
-	}(); err != nil {
+		suspendFalse := false
+		current.Spec.Suspend = &suspendFalse
+		if current.Annotations == nil {
+			current.Annotations = make(map[string]string)
+		}
+		v1.SetLastActivityAtAnnotation(current.Annotations, metav1.Now())
+		_, err = wsClient.Update(ctx, current)
+		return err
+	}); err != nil {
 		s.logger.Error("Failed to set Spec.Suspend=false", err, "workspaceID", workspaceID)
 		return nil, apierrors.NewInternalError("workspace_resume_failed", err)
 	}

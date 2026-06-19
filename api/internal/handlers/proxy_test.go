@@ -189,6 +189,16 @@ func (e *testEnv) doRequestWithT(t *testing.T, method, path string, body io.Read
 	return w
 }
 
+// fakePWProvider implements interfaces.WorkspacePasswordProvider for tests.
+type fakePWProvider struct {
+	pw  string
+	err error
+}
+
+func (f fakePWProvider) WorkspacePassword(_ context.Context, _ string) (string, error) {
+	return f.pw, f.err
+}
+
 func TestProxy_ProxiesGETRequest(t *testing.T) {
 	env := newTestEnv(t)
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
@@ -1029,7 +1039,7 @@ func TestProxy_E2E_SSEDrivenSessionLifecycle(t *testing.T) {
 	)
 
 	handler.sseTracker = sse.NewTracker(httpClient, &testLogger{}, handler.onSessionIdle)
-	handler.sseTracker.SetPasswordGetter(handler.getPassword)
+	handler.sseTracker.SetPasswordGetter(handler)
 	handler.sseTracker.SetPodIPResolver(handler.getPodIPForSSE)
 	handler.sseTracker.SetOnSessionActive(handler.onSessionActive)
 
@@ -1210,9 +1220,7 @@ func TestProxy_OnPhaseChange_SuspendingStopsSSE(t *testing.T) {
 		&testLogger{},
 		func(workspaceID, sessionID string) {},
 	)
-	handler.sseTracker.SetPasswordGetter(func(ctx context.Context, workspaceID string) (string, error) {
-		return "pw", nil
-	})
+	handler.sseTracker.SetPasswordGetter(fakePWProvider{pw: "pw"})
 	handler.sseTracker.SetPodIPResolver(func(workspaceID string) string { return "10.0.0.1" })
 
 	handler.sseTracker.EnsureWatching("ws-1")
@@ -1236,9 +1244,7 @@ func TestProxy_OnPhaseChange_RunningKeepsSSE(t *testing.T) {
 		&testLogger{},
 		func(workspaceID, sessionID string) {},
 	)
-	handler.sseTracker.SetPasswordGetter(func(ctx context.Context, workspaceID string) (string, error) {
-		return "pw", nil
-	})
+	handler.sseTracker.SetPasswordGetter(fakePWProvider{pw: "pw"})
 	handler.sseTracker.SetPodIPResolver(func(workspaceID string) string { return "10.0.0.1" })
 
 	handler.sseTracker.EnsureWatching("ws-1")
@@ -1272,9 +1278,7 @@ func TestProxy_OnPhaseChange_CreatingToActive_ResetsSSETracker(t *testing.T) {
 		&testLogger{},
 		func(workspaceID, sessionID string) {},
 	)
-	handler.sseTracker.SetPasswordGetter(func(ctx context.Context, workspaceID string) (string, error) {
-		return "pw", nil
-	})
+	handler.sseTracker.SetPasswordGetter(fakePWProvider{pw: "pw"})
 	handler.sseTracker.SetPodIPResolver(func(workspaceID string) string { return "10.0.0.1" })
 
 	// Simulate the scenario: subscription is already running (started while
@@ -1309,9 +1313,7 @@ func TestProxy_OnPhaseChange_ActiveToActive_NoReset(t *testing.T) {
 		&testLogger{},
 		func(workspaceID, sessionID string) {},
 	)
-	handler.sseTracker.SetPasswordGetter(func(ctx context.Context, workspaceID string) (string, error) {
-		return "pw", nil
-	})
+	handler.sseTracker.SetPasswordGetter(fakePWProvider{pw: "pw"})
 	handler.sseTracker.SetPodIPResolver(func(workspaceID string) string { return "10.0.0.1" })
 
 	handler.sseTracker.EnsureWatching("ws-1")
@@ -1385,9 +1387,7 @@ func TestProxy_OnPhaseChange_SeedCallActive_StartsSSETracker(t *testing.T) {
 		&testLogger{},
 		func(workspaceID, sessionID string) {},
 	)
-	handler.sseTracker.SetPasswordGetter(func(ctx context.Context, workspaceID string) (string, error) {
-		return "pw", nil
-	})
+	handler.sseTracker.SetPasswordGetter(fakePWProvider{pw: "pw"})
 	handler.sseTracker.SetPodIPResolver(func(workspaceID string) string { return "10.0.0.1" })
 
 	// No prior phase set — this is the seed call path.

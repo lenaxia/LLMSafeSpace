@@ -12,6 +12,11 @@ import (
 	"github.com/lenaxia/llmsafespaces/api/internal/services/wsstate"
 )
 
+// WorkspacePassword implements interfaces.WorkspacePasswordProvider (US-46.11).
+func (h *ProxyHandler) WorkspacePassword(ctx context.Context, workspaceID string) (string, error) {
+	return h.getPassword(ctx, workspaceID)
+}
+
 func (h *ProxyHandler) getPassword(ctx context.Context, workspaceID string) (string, error) {
 	// Cache-only lookup against the state store; the K8s Secret fetch
 	// fallback stays local so the store remains pure-state with no I/O

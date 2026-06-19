@@ -40,6 +40,15 @@ func signRS256(t *testing.T, priv *rsa.PrivateKey, iss, aud, clientID string, ex
 	for k, v := range extra {
 		claims[k] = v
 	}
+	// Default email_verified=true (F8): a well-configured IdP verifies email
+	// before asserting it. Production sso.Service REQUIRES the claim to be true
+	// before binding an email to an account; tests that exercise the rejection
+	// path pass email_verified=false explicitly in `extra`.
+	if _, ok := claims["email_verified"]; !ok {
+		if _, hasEmail := claims["email"]; hasEmail {
+			claims["email_verified"] = true
+		}
+	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	tok.Header["kid"] = "handler-kid-1"
 	return tok.SignedString(priv)

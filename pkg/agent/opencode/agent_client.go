@@ -6,6 +6,8 @@ package opencode
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -39,35 +41,78 @@ type AgentClient interface {
 	StageCredentials(ctx context.Context, userID, workspaceID string, providers []secrets.LLMProviderData) error
 }
 
+// WorkspaceClientOption configures a WorkspaceClient at construction.
+type WorkspaceClientOption func(*WorkspaceClient)
+
+// WithWorkspaceHTTPClient injects a shared *http.Client so connections are
+// pooled across all workspace calls (M11-a). When unset, a tuned default is
+// used (see newTunedHTTPClient). The client must not set a per-request
+// Timeout that would interfere with caller context deadlines.
+func WithWorkspaceHTTPClient(hc *http.Client) WorkspaceClientOption {
+	return func(w *WorkspaceClient) {
+		if hc != nil {
+			w.httpClient = hc
+		}
+	}
+}
+
+// newTunedHTTPClient returns an *http.Client configured for multi-workspace
+// scale. The defaults Go uses (MaxIdleConns=100, MaxIdleConnsPerHost=2) are
+// too low for an API replica talking to hundreds of distinct pod IPs — each
+// workspace pod is a separate host, so MaxIdleConnsPerHost=2 evicts pooled
+// connections almost immediately. Tuning to 500/10 keeps ~50 workspaces'
+// connections warm simultaneously.
+func newTunedHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:        500,
+			MaxIdleConnsPerHost: 10,
+			MaxConnsPerHost:     50,
+			IdleConnTimeout:     90 * time.Second,
+		},
+	}
+}
+
 // WorkspaceClient implements AgentClient by resolving each call to a
 // specific pod IP + password, then delegating to the low-level Client.
 // It is constructed once and shared across handlers; each call resolves
 // the workspace's current podIP + password fresh, so pod migrations and
 // password rotations are transparent to callers.
+//
+// The shared httpClient enables connection pooling across all workspace
+// calls (M11-a). The agentPort field replaces the former package-level
+// var so tests are parallel-safe (M1-a).
 type WorkspaceClient struct {
 	passwordResolver PasswordResolver
 	podIPResolver    PodIPResolver
+	httpClient       *http.Client
+	agentPort        int
 	logger           *zap.Logger
 }
 
 // NewWorkspaceClient creates an AgentClient that resolves workspace →
-// podIP + password on each call.
-func NewWorkspaceClient(pw PasswordResolver, ip PodIPResolver, logger *zap.Logger) *WorkspaceClient {
+// podIP + password on each call. The httpClient is shared across all
+// calls for connection pooling; agentPort defaults to agentd.AgentPort.
+func NewWorkspaceClient(pw PasswordResolver, ip PodIPResolver, logger *zap.Logger, opts ...WorkspaceClientOption) *WorkspaceClient {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	return &WorkspaceClient{
+	w := &WorkspaceClient{
 		passwordResolver: pw,
 		podIPResolver:    ip,
+		httpClient:       newTunedHTTPClient(),
+		agentPort:        agentd.AgentPort,
 		logger:           logger,
 	}
+	for _, opt := range opts {
+		opt(w)
+	}
+	return w
 }
 
-// agentPort is the opencode HTTP port. Package-level so tests can
-// override it to point at a test server.
-var agentPort = agentd.AgentPort
-
 // resolve returns a low-level Client configured for the workspace's pod.
+// The shared httpClient is injected so connections are pooled across calls.
 func (w *WorkspaceClient) resolve(ctx context.Context, userID, workspaceID string) (*Client, error) {
 	podIP, err := w.podIPResolver.GetWorkspacePodIP(ctx, userID, workspaceID)
 	if err != nil {
@@ -80,8 +125,8 @@ func (w *WorkspaceClient) resolve(ctx context.Context, userID, workspaceID strin
 	if err != nil {
 		return nil, fmt.Errorf("resolve password for workspace %s: %w", workspaceID, err)
 	}
-	baseURL := fmt.Sprintf("http://%s:%d", podIP, agentPort)
-	return NewClient(baseURL, password, w.logger), nil
+	baseURL := fmt.Sprintf("http://%s:%d", podIP, w.agentPort)
+	return NewClient(baseURL, password, w.logger, WithHTTPClient(w.httpClient)), nil
 }
 
 func (w *WorkspaceClient) ListModels(ctx context.Context, userID, workspaceID string) ([]byte, error) {

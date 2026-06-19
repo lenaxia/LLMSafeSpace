@@ -912,13 +912,15 @@ func TestUpdateUser_Status(t *testing.T) {
 }
 
 func TestSetUserStatus(t *testing.T) {
+	// F6 (US-43.19): SetUserStatus now mirrors `active` from `status`
+	// (active = (status=='active')) so the two columns cannot drift.
 	t.Run("suspended", func(t *testing.T) {
 		service, mock, cleanup := setupMockDB(t)
 		defer cleanup()
 
 		ctx := context.Background()
-		mock.ExpectExec("UPDATE users SET status = \\$1, updated_at = NOW\\(\\) WHERE id = \\$2").
-			WithArgs(string(types.UserStatusSuspended), "user-1").
+		mock.ExpectExec("UPDATE users SET status = \\$1, active = \\$2, updated_at = NOW\\(\\) WHERE id = \\$3").
+			WithArgs(string(types.UserStatusSuspended), false, "user-1").
 			WillReturnResult(sqlmock.NewResult(0, 1))
 
 		err := service.SetUserStatus(ctx, "user-1", types.UserStatusSuspended)
@@ -931,8 +933,8 @@ func TestSetUserStatus(t *testing.T) {
 		defer cleanup()
 
 		ctx := context.Background()
-		mock.ExpectExec("UPDATE users SET status = \\$1, updated_at = NOW\\(\\) WHERE id = \\$2").
-			WithArgs(string(types.UserStatusActive), "user-1").
+		mock.ExpectExec("UPDATE users SET status = \\$1, active = \\$2, updated_at = NOW\\(\\) WHERE id = \\$3").
+			WithArgs(string(types.UserStatusActive), true, "user-1").
 			WillReturnResult(sqlmock.NewResult(0, 1))
 
 		err := service.SetUserStatus(ctx, "user-1", types.UserStatusActive)
@@ -945,8 +947,8 @@ func TestSetUserStatus(t *testing.T) {
 		defer cleanup()
 
 		ctx := context.Background()
-		mock.ExpectExec("UPDATE users SET status = \\$1, updated_at = NOW\\(\\) WHERE id = \\$2").
-			WithArgs(string(types.UserStatusSuspended), "user-1").
+		mock.ExpectExec("UPDATE users SET status = \\$1, active = \\$2, updated_at = NOW\\(\\) WHERE id = \\$3").
+			WithArgs(string(types.UserStatusSuspended), false, "user-1").
 			WillReturnError(sql.ErrConnDone)
 
 		err := service.SetUserStatus(ctx, "user-1", types.UserStatusSuspended)

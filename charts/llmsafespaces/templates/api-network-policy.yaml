@@ -1,0 +1,54 @@
+{{- if and .Values.networkPolicy.enabled .Values.networkPolicy.apiIngressRestricted }}
+# F5 (worklog 0372): default-deny ingress for the API pod, admitting only known
+# callers. This is DEFENSE-IN-DEPTH on top of the mandatory shared-secret gate
+# (LLMSAFESPACES_INTERNAL_TOKEN, fail-closed) that authenticates the internal
+# org-status endpoint. NetworkPolicy operates at L3/L4 (pod + port), not per
+# path, so it restricts ALL API ingress; enable only after confirming the
+# allowlist below matches your environment (an incomplete list locks users out).
+#
+# Admitted sources:
+#   - Controller pods: internal org-status polls + any future cluster-internal
+#     API calls.
+#   - kube-system: kubelet liveness/readiness probes.
+#   - The configured user-traffic source (frontend / ingress controller) via
+#     networkPolicy.apiIngressSourcePodSelector.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "llmsafespaces.fullname" . }}-api-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmsafespaces.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml .Values.networkPolicy.apiPodLabelSelector | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Controller → API (internal org-status endpoint + any cluster-internal call).
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.controllerPodLabelSelector | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.api.service.port }}
+    # User traffic from the configured source (frontend / ingress controller).
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.apiIngressSourcePodSelector | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.api.service.port }}
+    # kubelet probes (liveness/readiness) from the kube-system namespace.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: TCP
+          port: {{ .Values.api.service.port }}
+{{- end }}

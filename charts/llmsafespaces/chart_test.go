@@ -650,6 +650,153 @@ func TestG2_ControllerArgs_HonorsOperatorOverride(t *testing.T) {
 }
 
 // =============================================================================
+// F1 / F5 — Org-suspension wiring (worklog 0372)
+// =============================================================================
+//
+// D20 org-level workspace suspension is driven by the controller polling an
+// internal API endpoint. Pre-fix the chart did NOT wire --api-service-url nor
+// the shared LLMSAFESPACES_INTERNAL_TOKEN, so the feature was inert in every
+// Helm deployment and the internal endpoint was unauthenticated. These tests
+// lock in:
+//   1. The controller deployment receives --api-service-url (F1).
+//   2. Both API and controller deployments mount LLMSAFESPACES_INTERNAL_TOKEN
+//      from the same Secret key (F1+F5).
+//   3. The credentials Secret carries an auto-generated internal-token (F1).
+//   4. The opt-in API ingress NetworkPolicy is absent by default and present
+//      when networkPolicy.apiIngressRestricted=true (F5).
+
+// containerEnvNames returns the set of env var names declared on the named
+// container in a Deployment doc.
+func containerEnvNames(deploy map[string]any, name string) map[string]bool {
+	out := map[string]bool{}
+	c := containerByName(deploy, name)
+	if c == nil {
+		return out
+	}
+	env, _ := c["env"].([]any)
+	for _, e := range env {
+		em, _ := e.(map[string]any)
+		if n, ok := em["name"].(string); ok {
+			out[n] = true
+		}
+	}
+	return out
+}
+
+// TestF1_ControllerArgs_PassesApiServiceURL asserts the controller deployment
+// receives --api-service-url so org-suspension is functional (D20). Pre-fix the
+// flag was absent and OrgStatusClient was always nil in Helm deployments.
+func TestF1_ControllerArgs_PassesApiServiceURL(t *testing.T) {
+	docs := helmTemplate(t, "")
+	args := findControllerArgs(t, docs)
+	require.NotEmpty(t, args)
+
+	var found string
+	for _, a := range args {
+		if strings.HasPrefix(a, "--api-service-url=") {
+			found = a
+			break
+		}
+	}
+	require.NotEmpty(t, found,
+		"controller deployment must pass --api-service-url so org-suspension is functional (F1)")
+	// Default-derivation: the chart derives the in-cluster API service URL from
+	// the release name + namespace + API port.
+	require.Contains(t, found, "-api.",
+		"--api-service-url must derive the in-cluster API service URL by default, got %q", found)
+	require.Contains(t, found, ":8080",
+		"--api-service-url must target the API service port, got %q", found)
+}
+
+// TestF1_ControllerArgs_ApiServiceURL_HonorsOverride confirms an operator can
+// point the controller at a custom API URL.
+func TestF1_ControllerArgs_ApiServiceURL_HonorsOverride(t *testing.T) {
+	docs := helmTemplate(t, "controller:\n  apiServiceURL: \"http://api.custom.svc:9090\"\n")
+	args := findControllerArgs(t, docs)
+	var found string
+	for _, a := range args {
+		if strings.HasPrefix(a, "--api-service-url=") {
+			found = a
+			break
+		}
+	}
+	require.Equal(t, "--api-service-url=http://api.custom.svc:9090", found,
+		"controller.apiServiceURL override must flow through verbatim (F1)")
+}
+
+// TestF1_InternalTokenEnv_OnBothDeployments asserts both the API and the
+// controller mount LLMSAFESPACES_INTERNAL_TOKEN from the credentials Secret, so
+// the fail-closed internal endpoint is reachable by the controller (F1+F5).
+func TestF1_InternalTokenEnv_OnBothDeployments(t *testing.T) {
+	docs := helmTemplate(t, "")
+
+	apiDeploy := findDeploymentByNameSubstr(docs, "-api")
+	require.NotNil(t, apiDeploy, "API Deployment must be rendered")
+	require.Contains(t, containerEnvNames(apiDeploy, "api"), "LLMSAFESPACES_INTERNAL_TOKEN",
+		"API deployment must mount LLMSAFESPACES_INTERNAL_TOKEN (the internal endpoint fails closed without it; F5)")
+
+	controllerDeploy := findDeploymentByNameSubstr(docs, "-controller")
+	require.NotNil(t, controllerDeploy, "controller Deployment must be rendered")
+	require.Contains(t, containerEnvNames(controllerDeploy, "manager"), "LLMSAFESPACES_INTERNAL_TOKEN",
+		"controller deployment must mount LLMSAFESPACES_INTERNAL_TOKEN so it can authenticate the internal org-status poll (F1)")
+}
+
+// TestF1_SecretIncludesInternalToken asserts the credentials Secret carries an
+// auto-generated internal-token key (so the env mounts resolve on a fresh
+// install with no operator overrides).
+func TestF1_SecretIncludesInternalToken(t *testing.T) {
+	docs := helmTemplate(t, "")
+	var sec map[string]any
+	for _, d := range docs {
+		if d["kind"] == "Secret" {
+			if meta, _ := d["metadata"].(map[string]any); meta != nil {
+				if ns, _ := meta["namespace"].(string); ns == "test-ns" {
+					sec = d
+					break
+				}
+			}
+		}
+	}
+	require.NotNil(t, sec, "platform credentials Secret must be rendered")
+	tok := secretValue(t, sec, "internal-token")
+	require.NotEmpty(t, tok, "Secret must include an auto-generated internal-token key (F1)")
+	require.GreaterOrEqual(t, len(tok), 24,
+		"auto-generated internal-token must be at least 24 chars; got %d", len(tok))
+}
+
+// TestF5_ApiNetworkPolicy_DefaultOff asserts the API ingress NetworkPolicy is
+// NOT rendered by default (it is opt-in: an incomplete allowlist would lock
+// users out, and the internal endpoint is already token-gated).
+func TestF5_ApiNetworkPolicy_DefaultOff(t *testing.T) {
+	docs := helmTemplate(t, "")
+	for _, p := range findByKind(docs, "NetworkPolicy") {
+		require.NotContains(t, metaName(p), "api-ingress",
+			"API ingress NetworkPolicy must be absent by default (opt-in via networkPolicy.apiIngressRestricted; F5)")
+	}
+}
+
+// TestF5_ApiNetworkPolicy_OptIn asserts the policy renders with controller +
+// user-traffic + kube-system allow rules when apiIngressRestricted=true.
+func TestF5_ApiNetworkPolicy_OptIn(t *testing.T) {
+	docs := helmTemplate(t, "networkPolicy:\n  apiIngressRestricted: true\n")
+	var apiPolicy map[string]any
+	for _, p := range findByKind(docs, "NetworkPolicy") {
+		if strings.Contains(metaName(p), "api-ingress") {
+			apiPolicy = p
+			break
+		}
+	}
+	require.NotNil(t, apiPolicy, "API ingress NetworkPolicy must render when apiIngressRestricted=true (F5)")
+
+	spec, _ := apiPolicy["spec"].(map[string]any)
+	policyTypes, _ := spec["policyTypes"].([]any)
+	require.Contains(t, policyTypes, "Ingress", "API NetworkPolicy must declare Ingress in policyTypes")
+	ingress, _ := spec["ingress"].([]any)
+	require.GreaterOrEqual(t, len(ingress), 3,
+		"API NetworkPolicy must admit controller + user-traffic + kube-system (3 ingress rules)")
+}
+
+// =============================================================================
 // G5 / F1.3.x — RBAC tightening (worklog 0107)
 // =============================================================================
 

@@ -10,10 +10,18 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lenaxia/llmsafespaces/pkg/agent/opencode"
 	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
 	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
+
+// ModelClient is the caller-shaped interface ModelsHandler needs from an
+// agent client: fetch the catalog and push config changes. Worklog 0377
+// H2-a: split from the fat AgentClient (5 methods) so the handler depends
+// on exactly the 2 methods it uses, and fakes only need to stub 2.
+type ModelClient interface {
+	ListModels(ctx context.Context, userID, workspaceID string) ([]byte, error)
+	PatchConfig(ctx context.Context, userID, workspaceID string, config map[string]any) error
+}
 
 // RelayStateChecker returns whether the relay injector has completed
 // for the given workspace. Production implementation resolves podIP +
@@ -25,34 +33,45 @@ type RelayStateChecker func(ctx context.Context, userID, workspaceID string) boo
 
 // ModelsHandler handles GET /workspaces/:id/models and
 // PUT /workspaces/:id/model (US-29.5). Extracted from SecretsHandler
-// to enforce single responsibility. Consumes AgentClient (US-29.1)
-// for all opencode HTTP communication — the handler never resolves
-// podIP or password directly for opencode calls.
+// to enforce single responsibility. Consumes ModelClient (H2-a) for
+// opencode HTTP communication and ModelCatalogParser (H1-a′) to decode
+// the catalog response into a typed Catalog.
 type ModelsHandler struct {
-	agentClient     opencode.AgentClient
+	agentClient     ModelClient
+	catalogParser   ModelCatalogParser
 	wsUpdater       ModelStore
 	policyChecker   OrgPolicyChecker
 	metricsRecorder ModelSelectionRecorder
 	manifestWriter  SecretsManifestWriter
+	modelCache      ModelCache
 	relayActive     bool
 	relayChecker    RelayStateChecker
 	logger          pkginterfaces.LoggerInterface
 }
 
-// NewModelsHandler creates a ModelsHandler with the required AgentClient.
-// Optional dependencies are set via the Set methods.
-func NewModelsHandler(agentClient opencode.AgentClient) *ModelsHandler {
-	return &ModelsHandler{agentClient: agentClient}
+// NewModelsHandler creates a ModelsHandler with the required ModelClient.
+// The parser defaults to opencodeProviderParser; override via SetCatalogParser
+// for tests or a future agent variant. Optional deps via the Set methods.
+func NewModelsHandler(agentClient ModelClient) *ModelsHandler {
+	return &ModelsHandler{
+		agentClient:   agentClient,
+		catalogParser: NewOpencodeProviderParser(),
+		modelCache:    newInMemoryModelCache(),
+	}
 }
 
-func (h *ModelsHandler) SetAgentClient(ac opencode.AgentClient)      { h.agentClient = ac }
-func (h *ModelsHandler) SetModelStore(s ModelStore)                  { h.wsUpdater = s }
-func (h *ModelsHandler) SetPolicyChecker(p OrgPolicyChecker)         { h.policyChecker = p }
-func (h *ModelsHandler) SetMetricsRecorder(r ModelSelectionRecorder) { h.metricsRecorder = r }
-func (h *ModelsHandler) SetManifestWriter(w SecretsManifestWriter)   { h.manifestWriter = w }
-func (h *ModelsHandler) SetRelayActive(active bool)                  { h.relayActive = active }
-func (h *ModelsHandler) SetRelayChecker(rc RelayStateChecker)        { h.relayChecker = rc }
-func (h *ModelsHandler) SetLogger(l pkginterfaces.LoggerInterface)   { h.logger = l }
+func (h *ModelsHandler) SetAgentClient(ac ModelClient)         { h.agentClient = ac }
+func (h *ModelsHandler) SetCatalogParser(p ModelCatalogParser) { h.catalogParser = p }
+func (h *ModelsHandler) SetModelStore(s ModelStore)            { h.wsUpdater = s }
+func (h *ModelsHandler) SetPolicyChecker(p OrgPolicyChecker)   { h.policyChecker = p }
+func (h *ModelsHandler) SetMetricsRecorder(r ModelSelectionRecorder) {
+	h.metricsRecorder = r
+}
+func (h *ModelsHandler) SetManifestWriter(w SecretsManifestWriter) { h.manifestWriter = w }
+func (h *ModelsHandler) SetModelCache(c ModelCache)                { h.modelCache = c }
+func (h *ModelsHandler) SetRelayActive(active bool)                { h.relayActive = active }
+func (h *ModelsHandler) SetRelayChecker(rc RelayStateChecker)      { h.relayChecker = rc }
+func (h *ModelsHandler) SetLogger(l pkginterfaces.LoggerInterface) { h.logger = l }
 
 func (h *ModelsHandler) warn(msg string, fields ...interface{}) {
 	if h.logger != nil {
@@ -77,16 +96,16 @@ func (h *ModelsHandler) ListModels(c *gin.Context) {
 	// Check cache first (5s TTL).
 	var annotated []annotatedModel
 	var relayInjected bool
-	if cached := defaultModelCache.Get(workspaceID); cached != nil {
+	if cached := h.modelCache.Get(workspaceID); cached != nil {
 		var payload modelCachePayload
-		if err := json.Unmarshal(cached, &payload); err == nil {
+		if json.Unmarshal(cached, &payload) == nil {
 			annotated = payload.Models
 			relayInjected = payload.RelayInjected
 		}
 	}
 
 	if annotated == nil {
-		// Fetch model catalog via AgentClient (resolves podIP + password internally).
+		// Fetch model catalog via ModelClient (resolves podIP + password internally).
 		body, err := h.agentClient.ListModels(c.Request.Context(), userID, workspaceID)
 		if err != nil {
 			if strings.Contains(err.Error(), "no running pod") {
@@ -102,12 +121,15 @@ func (h *ModelsHandler) ListModels(c *gin.Context) {
 			relayInjected = h.relayChecker(c.Request.Context(), userID, workspaceID)
 		}
 
-		annotated, err = annotateModels(body, h.relayActive, relayInjected)
-		if err != nil {
+		// Parse the catalog via the injected parser (H1-a′).
+		catalog, parseErr := h.catalogParser.Parse(body)
+		if parseErr != nil {
 			annotated = []annotatedModel{}
+		} else {
+			annotated = annotateModels(catalog, h.relayActive, relayInjected)
 		}
 		if serialized, serErr := json.Marshal(modelCachePayload{Models: annotated, RelayInjected: relayInjected}); serErr == nil {
-			defaultModelCache.Set(workspaceID, serialized)
+			h.modelCache.Set(workspaceID, serialized)
 		}
 	}
 
@@ -165,13 +187,17 @@ func (h *ModelsHandler) SetModel(c *gin.Context) {
 		return
 	}
 
-	// Validate model exists in the live catalog (if pod is running).
-	catalog, catErr := h.agentClient.ListModels(c.Request.Context(), userID, workspaceID)
-	if catErr == nil && len(catalog) > 0 {
-		if !modelExistsInRawCatalog(catalog, req.Model) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "model not found in workspace catalog"})
-			return
+	// Fetch and parse the catalog (if pod is running) to validate + resolve.
+	var catalog *Catalog
+	catalogBytes, catErr := h.agentClient.ListModels(c.Request.Context(), userID, workspaceID)
+	if catErr == nil && len(catalogBytes) > 0 {
+		if parsed, parseErr := h.catalogParser.Parse(catalogBytes); parseErr == nil {
+			catalog = parsed
 		}
+	}
+	if catalog != nil && !catalog.modelExists(req.Model) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "model not found in workspace catalog"})
+		return
 	}
 	// If pod not running, skip validation (store optimistically).
 
@@ -183,7 +209,7 @@ func (h *ModelsHandler) SetModel(c *gin.Context) {
 		return
 	}
 
-	defaultModelCache.Evict(workspaceID)
+	h.modelCache.Evict(workspaceID)
 
 	// Persist to K8s Secret for pod-boot durability.
 	if h.manifestWriter != nil {
@@ -195,17 +221,26 @@ func (h *ModelsHandler) SetModel(c *gin.Context) {
 		}
 	}
 
-	// Push model selection to running agent via AgentClient.
+	// Push model selection to running agent. Only attempt when the catalog
+	// fetch succeeded (M8-a: a down pod can't receive the patch anyway, and
+	// the model is already persisted to the CRD for next boot).
 	applied := false
 	var resolvedModel string
-	resolved := resolveModelFromCatalog(catalog, req.Model, h.relayActive, h.relayChecker, c.Request.Context(), userID, workspaceID)
-	if resolved != "" {
-		config := map[string]any{"model": resolved}
-		if patchErr := h.agentClient.PatchConfig(c.Request.Context(), userID, workspaceID, config); patchErr != nil {
-			h.warn("PATCH model to agent failed", "error", patchErr.Error())
-		} else {
-			applied = true
-			resolvedModel = resolved
+	if catalog != nil {
+		// Pre-resolve relay state once (M3-a: pure resolveModel, no I/O inside).
+		relayInjected := false
+		if h.relayActive && h.relayChecker != nil {
+			relayInjected = h.relayChecker(c.Request.Context(), userID, workspaceID)
+		}
+		resolved := catalog.resolveModel(req.Model, h.relayActive, relayInjected)
+		if resolved != "" {
+			config := map[string]any{"model": resolved}
+			if patchErr := h.agentClient.PatchConfig(c.Request.Context(), userID, workspaceID, config); patchErr != nil {
+				h.warn("PATCH model to agent failed", "error", patchErr.Error())
+			} else {
+				applied = true
+				resolvedModel = resolved
+			}
 		}
 	}
 
@@ -267,73 +302,4 @@ func markSelected(models []annotatedModel, modelID string) {
 			models[i].Selected = true
 		}
 	}
-}
-
-// modelExistsInRawCatalog checks if a model ID exists in the raw /provider JSON.
-func modelExistsInRawCatalog(rawCatalog []byte, model string) bool {
-	var provResp providerListResponse
-	if json.Unmarshal(rawCatalog, &provResp) != nil {
-		return true // fail open on parse error
-	}
-	connectedSet := make(map[string]bool, len(provResp.Connected))
-	for _, id := range provResp.Connected {
-		connectedSet[id] = true
-	}
-	for _, p := range provResp.All {
-		if !connectedSet[p.ID] {
-			continue
-		}
-		for modelKey, m := range p.Models {
-			id := m.ID
-			if id == "" {
-				id = modelKey
-			}
-			if id == model {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// resolveModelFromCatalog resolves a flat model ID to providerID/modelID form.
-// Applies relay remapping when relay is active and injected.
-func resolveModelFromCatalog(
-	rawCatalog []byte,
-	model string,
-	relayActive bool,
-	relayChecker RelayStateChecker,
-	ctx context.Context,
-	userID, workspaceID string,
-) string {
-	var provResp providerListResponse
-	if json.Unmarshal(rawCatalog, &provResp) != nil {
-		return model
-	}
-	connectedSet := make(map[string]bool, len(provResp.Connected))
-	for _, id := range provResp.Connected {
-		connectedSet[id] = true
-	}
-	for _, p := range provResp.All {
-		if !connectedSet[p.ID] {
-			continue
-		}
-		for modelKey, m := range p.Models {
-			id := m.ID
-			if id == "" {
-				id = modelKey
-			}
-			if id != model {
-				continue
-			}
-			providerID := p.ID
-			if relayActive && isZeroCostOpencode(providerID, m.Cost) {
-				if relayChecker != nil && relayChecker(ctx, userID, workspaceID) {
-					providerID = "opencode-relay"
-				}
-			}
-			return providerID + "/" + id
-		}
-	}
-	return model
 }

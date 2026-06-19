@@ -239,10 +239,18 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		secretService = secrets.NewSecretService(keyService, asyncAudit)
 		auditStore = asyncAudit
 
+		// M2-a: shared model cache between SecretsHandler (evicts on bind) and
+		// ModelsHandler (reads on ListModels). One cache, two consumers.
+		sharedModelCache := handlers.NewInMemoryModelCache()
+
 		secretsHandler = handlers.NewSecretsHandler(secretService)
+		secretsHandler.SetModelCache(sharedModelCache)
 		// US-29.5: ModelsHandler extracted from SecretsHandler. AgentClient
-		// is set later after proxyHandler is constructed.
+		// is set later after proxyHandler is constructed (it depends on the
+		// runtime password getter). Parser + cache are wired now so the
+		// handler is functional for construction-time validation.
 		modelsHandler = handlers.NewModelsHandler(nil) // agentClient wired below
+		modelsHandler.SetModelCache(sharedModelCache)
 
 		// Wire billing/metering metrics recorder.
 		if metricsSvc, ok := svc.GetMetrics().(*metrics.Service); ok {
@@ -356,9 +364,11 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		}
 
 		// US-43.19: platform-admin suspension handlers. orgStore provides
-		// UpdateOrgStatus + audit + last-admin check; dbSvc provides
-		// SetUserStatus. log surfaces best-effort audit-write failures.
-		platformAdminHandler = handlers.NewPlatformAdminHandler(pgOrgStore, dbSvc, svc.GetAuth(), log)
+		// UpdateOrgStatus + audit + the atomic last-admin-guarded suspend;
+		// dbSvc provides SetUserStatus. svc.GetAuth() wires the F4 token
+		// revocation primitive (MarkUserSuspended/ClearUserSuspended). log
+		// surfaces best-effort audit-write + revocation-write failures.
+		platformAdminHandler = handlers.NewPlatformAdminHandler(pgOrgStore, dbSvc, svc.GetAuth(), svc.GetAuth(), log)
 		internalOrgStatusHandler = handlers.NewInternalOrgStatusHandler(pgOrgStore)
 
 		if rkp != nil {
@@ -473,21 +483,23 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// is nil until proxyHandler.Start() runs. Wire password getter + metrics here
 	// (these are available at construction time).
 	if agentReloadHandler != nil {
-		if pwGetter := proxyHandler.GetPasswordGetter(); pwGetter != nil {
-			agentReloadHandler.SetPasswordGetter(pwGetter)
-			bulkReloadHandler.SetPasswordGetter(pwGetter)
-			// US-29.5: construct ModelsHandler with AgentClient now that
-			// the password getter is available.
-			if modelsHandler != nil {
-				ipResolver := newSecretsPodIPResolver(
-					&k8sWorkspaceGetterAdapter{client: k8sClient, namespace: cfg.Kubernetes.Namespace},
-					dbSvc, log,
-				)
-				agentClient := agentoc.NewWorkspaceClient(pwGetter, ipResolver, log.ZapLogger())
-				modelsHandler.SetAgentClient(agentClient)
-				if relayURL := cfg.Server.InferenceRelayURL; relayURL != "" {
-					modelsHandler.SetRelayChecker(buildRelayChecker(ipResolver, pwGetter))
-				}
+		pwGetter := proxyHandler.GetPasswordGetter()
+		agentReloadHandler.SetPasswordGetter(pwGetter)
+		bulkReloadHandler.SetPasswordGetter(pwGetter)
+		// US-29.5: construct ModelsHandler with AgentClient now that
+		// the password getter is available.
+		if modelsHandler != nil {
+			ipResolver := newSecretsPodIPResolver(
+				&k8sWorkspaceGetterAdapter{client: k8sClient, namespace: cfg.Kubernetes.Namespace},
+				dbSvc, log,
+			)
+			pwAdapter := func(ctx context.Context, wsID string) (string, error) {
+				return pwGetter.WorkspacePassword(ctx, wsID)
+			}
+			agentClient := agentoc.NewWorkspaceClient(pwAdapter, ipResolver, log.ZapLogger())
+			modelsHandler.SetAgentClient(agentClient)
+			if relayURL := cfg.Server.InferenceRelayURL; relayURL != "" {
+				modelsHandler.SetRelayChecker(buildRelayChecker(ipResolver, pwAdapter))
 			}
 		}
 	}

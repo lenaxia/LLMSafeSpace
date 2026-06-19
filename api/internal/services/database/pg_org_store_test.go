@@ -729,3 +729,150 @@ func TestPgOrgStore_ListAllOrgs_QueryShape(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet(),
 		"query must include correlated subqueries for member_count and workspace_count")
 }
+
+// --- F7: SuspendUserGuardedByLastAdmin atomicity (US-43.19) ---
+//
+// These tests lock in the TOCTOU fix: the last-admin check (SELECT … FOR
+// UPDATE) and the status UPDATE run in a single transaction, so the suspend
+// path can no longer orphan an org under concurrent admin operations.
+
+func TestPgOrgStore_SuspendUserGuardedByLastAdmin_NotLast_Suspends(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+
+	mock.ExpectBegin()
+	// Lock the user's admin rows (FOR UPDATE).
+	mock.ExpectQuery(`FOR UPDATE`).
+		WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"org_id"}).AddRow("org-1"))
+	// Re-run the last-admin check inside the tx → no conflict.
+	mock.ExpectQuery(`NOT EXISTS`).
+		WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"org_id", "name"}))
+	// UPDATE mirrors active=false (F6).
+	mock.ExpectExec(`UPDATE users SET status = 'suspended', active = false`).
+		WithArgs("user-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	conflict, err := store.SuspendUserGuardedByLastAdmin(context.Background(), "user-1", false)
+	require.NoError(t, err)
+	require.Nil(t, conflict, "non-last admin must be suspended without conflict")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgOrgStore_SuspendUserGuardedByLastAdmin_LastAdmin_Refuses(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`FOR UPDATE`).
+		WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"org_id"}).AddRow("org-9"))
+	// Last-admin check returns a conflict.
+	mock.ExpectQuery(`NOT EXISTS`).
+		WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"org_id", "name"}).AddRow("org-9", "Acme"))
+	mock.ExpectRollback()
+	// No UPDATE must run — the org is refused.
+
+	conflict, err := store.SuspendUserGuardedByLastAdmin(context.Background(), "user-1", false)
+	require.NoError(t, err)
+	require.NotNil(t, conflict, "last admin must produce a conflict")
+	require.Equal(t, "org-9", conflict.OrgID)
+	require.Equal(t, "Acme", conflict.OrgName)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgOrgStore_SuspendUserGuardedByLastAdmin_Force_SkipsCheck(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+
+	mock.ExpectBegin()
+	// force=true: NO lock query, NO last-admin query — straight to the UPDATE.
+	mock.ExpectExec(`UPDATE users SET status = 'suspended', active = false`).
+		WithArgs("user-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	conflict, err := store.SuspendUserGuardedByLastAdmin(context.Background(), "user-1", true)
+	require.NoError(t, err)
+	require.Nil(t, conflict, "force=true must suspend even the last admin")
+	require.NoError(t, mock.ExpectationsWereMet(), "force path must not run the FOR UPDATE / last-admin queries")
+}
+
+// TestPgOrgStore_SuspendUserGuardedByLastAdmin_LockQueryError_RollsBack proves
+// a failure of the FOR UPDATE lock query aborts the transaction (no UPDATE,
+// no commit) and surfaces the error. Locks in the tx-error path the happy-path
+// tests do not exercise.
+func TestPgOrgStore_SuspendUserGuardedByLastAdmin_LockQueryError_RollsBack(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`FOR UPDATE`).
+		WithArgs("user-1").
+		WillReturnError(errors.New("lock query: deadlock detected"))
+	mock.ExpectRollback()
+	// No last-admin query, no UPDATE, no commit — the tx must abort.
+
+	conflict, err := store.SuspendUserGuardedByLastAdmin(context.Background(), "user-1", false)
+	require.Error(t, err, "lock-query failure must surface an error")
+	require.Nil(t, conflict)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestPgOrgStore_SuspendUserGuardedByLastAdmin_UpdateError_RollsBack proves a
+// failure of the status UPDATE (after the last-admin check passes) rolls back
+// the transaction rather than leaving a half-applied state.
+func TestPgOrgStore_SuspendUserGuardedByLastAdmin_UpdateError_RollsBack(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	store := NewPgOrgStore(db)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`FOR UPDATE`).
+		WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"org_id"}).AddRow("org-1"))
+	mock.ExpectQuery(`NOT EXISTS`).
+		WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"org_id", "name"})) // no conflict
+	mock.ExpectExec(`UPDATE users SET status = 'suspended', active = false`).
+		WithArgs("user-1").
+		WillReturnError(errors.New("update: connection lost"))
+	mock.ExpectRollback()
+
+	conflict, err := store.SuspendUserGuardedByLastAdmin(context.Background(), "user-1", false)
+	require.Error(t, err, "UPDATE failure must surface an error")
+	require.Nil(t, conflict)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgOrgStore_SetUserStatus_MirrorsActive_F6(t *testing.T) {
+	// F6: SetUserStatus must update `active` alongside `status` so the two
+	// columns cannot drift. Suspended ⇒ active=false; active ⇒ active=true.
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	svc := &Service{DB: db}
+
+	mock.ExpectExec(`UPDATE users SET status = \$1, active = \$2, updated_at = NOW\(\) WHERE id = \$3`).
+		WithArgs("suspended", false, "user-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	require.NoError(t, svc.SetUserStatus(context.Background(), "user-1", types.UserStatusSuspended))
+
+	mock.ExpectExec(`UPDATE users SET status = \$1, active = \$2, updated_at = NOW\(\) WHERE id = \$3`).
+		WithArgs("active", true, "user-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	require.NoError(t, svc.SetUserStatus(context.Background(), "user-1", types.UserStatusActive))
+	require.NoError(t, mock.ExpectationsWereMet())
+}

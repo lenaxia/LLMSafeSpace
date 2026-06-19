@@ -490,6 +490,45 @@ func TestSSOHandler_Callback_AutoProvisionOff_RedirectsWithError(t *testing.T) {
 	require.Contains(t, w.Header().Get("Location"), "sso=provisioning_disabled")
 }
 
+// TestSSOHandler_Callback_UnverifiedEmail_RedirectsWithError is the E2E wiring
+// test for the F8 email_unverified error arm: an unverified-email callback must
+// flow Callback → errorReason → frontend redirect with sso=email_unverified.
+// Mirrors the provisioning_disabled test above so every errorReason arm is
+// locked end-to-end (README E2E Wiring Verification requirement).
+func TestSSOHandler_Callback_UnverifiedEmail_RedirectsWithError(t *testing.T) {
+	h, store, _, r := buildSSOHandler(t)
+	idp := newHandlerFakeIdP(t, "cid")
+	defer idp.close()
+	store.slugToOrg["acme"] = &types.Organization{ID: "org-acme", Slug: "acme", Status: types.OrgStatusActive}
+	blob, _ := h.svc.EncryptClientSecret(context.Background(), "secret")
+	store.configs["org-acme"] = &types.OrgSSOConfig{
+		OrgID: "org-acme", DiscoveryURL: idp.issuer(), ClientID: "cid", ClientSecret: blob, AutoProvision: true,
+	}
+	// email_verified=false must trigger the F8 gate BEFORE any account binding.
+	idp.tokenFn = func(string) (map[string]any, error) {
+		return map[string]any{"email": "attacker@acme.com", "name": "Attacker", "email_verified": false}, nil
+	}
+
+	wStart := doRequest(r, "GET", "/api/v1/auth/sso/acme/start", "")
+	startURL, _ := url.Parse(wStart.Header().Get("Location"))
+	state := startURL.Query().Get("state")
+	var cookieVal string
+	for _, c := range wStart.Result().Cookies() {
+		if c.Name == h.svc.CookieName() {
+			cookieVal = c.Value
+		}
+	}
+
+	req := httptest.NewRequest("GET", "/api/v1/auth/sso/acme/callback?code=c&state="+state, nil)
+	req.AddCookie(&http.Cookie{Name: h.svc.CookieName(), Value: cookieVal})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusFound, w.Code, "unverified email must redirect (not 500)")
+	require.Contains(t, w.Header().Get("Location"), "sso=email_unverified",
+		"the email_unverified errorReason arm must be wired through to the redirect URL (F8)")
+}
+
 // stateFromCookie decodes the signed state cookie to read back the embedded
 // state, mirroring what the service stores. It re-derives via the service's
 // verify path so the test asserts against the real value.

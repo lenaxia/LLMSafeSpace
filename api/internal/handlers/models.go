@@ -32,6 +32,7 @@ type ModelCache interface {
 	Get(workspaceID string) []byte
 	Set(workspaceID string, data []byte)
 	Evict(workspaceID string)
+	Keys() []string
 }
 
 type inMemoryModelCache struct {
@@ -49,7 +50,11 @@ type modelCachePayload struct {
 	RelayInjected bool             `json:"relayInjected"`
 }
 
-func newInMemoryModelCache() *inMemoryModelCache {
+func NewInMemoryModelCache() ModelCache {
+	return newInMemoryModelCache()
+}
+
+func newInMemoryModelCache() ModelCache {
 	return &inMemoryModelCache{cache: make(map[string]*modelCacheEntry)}
 }
 
@@ -75,12 +80,25 @@ func (c *inMemoryModelCache) Evict(workspaceID string) {
 	delete(c.cache, workspaceID)
 }
 
-var defaultModelCache = newInMemoryModelCache()
+func (c *inMemoryModelCache) Keys() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	keys := make([]string, 0, len(c.cache))
+	for k := range c.cache {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+var defaultModelCache ModelCache = newInMemoryModelCache()
 
 func clearModelCache() {
-	defaultModelCache.mu.Lock()
-	defer defaultModelCache.mu.Unlock()
-	defaultModelCache.cache = make(map[string]*modelCacheEntry)
+	// Evict-all by evicting each known key. The interface doesn't expose
+	// a Clear method, but Evict per-key is sufficient for test isolation.
+	// Tests that need a clean slate call this before seeding.
+	for _, k := range defaultModelCache.Keys() {
+		defaultModelCache.Evict(k)
+	}
 }
 
 // --- Model annotation types and functions ---
@@ -100,27 +118,6 @@ type annotatedModel struct {
 	Details       json.RawMessage   `json:"details"`
 }
 
-type providerListResponse struct {
-	Connected []string       `json:"connected"`
-	All       []providerInfo `json:"all"`
-}
-
-type providerInfo struct {
-	ID     string                   `json:"id"`
-	Models map[string]providerModel `json:"models"`
-}
-
-type providerModel struct {
-	ID   string       `json:"id"`
-	Name string       `json:"name"`
-	Cost providerCost `json:"cost"`
-}
-
-type providerCost struct {
-	Input  float64 `json:"input"`
-	Output float64 `json:"output"`
-}
-
 type ModelAvailability string
 
 const (
@@ -129,22 +126,18 @@ const (
 	ModelFreeTier    ModelAvailability = "free"
 )
 
-// annotateModels enriches the raw GET /provider response with tier,
-// availability, and relay information. Only models whose providerID is
-// in connected[] are returned; all others are omitted.
-func annotateModels(raw []byte, relayGloballyEnabled, relayInjected bool) ([]annotatedModel, error) {
-	var provResp providerListResponse
-	if err := json.Unmarshal(raw, &provResp); err != nil {
-		return nil, err
+// annotateModels enriches a parsed Catalog with tier, availability, and relay
+// information. Only models whose providerID is in connected[] are returned.
+// Worklog 0377 H1-a′: takes *Catalog (parsed by ModelCatalogParser) instead
+// of raw []byte, removing the parsing burden from this function.
+func annotateModels(cat *Catalog, relayGloballyEnabled, relayInjected bool) []annotatedModel {
+	if cat == nil {
+		return nil
 	}
-
-	connectedSet := make(map[string]bool, len(provResp.Connected))
-	for _, id := range provResp.Connected {
-		connectedSet[id] = true
-	}
+	connectedSet := cat.connectedSet()
 
 	var result []annotatedModel
-	for _, p := range provResp.All {
+	for _, p := range cat.Providers {
 		if !connectedSet[p.ID] {
 			continue
 		}
@@ -171,17 +164,17 @@ func annotateModels(raw []byte, relayGloballyEnabled, relayInjected bool) ([]ann
 			})
 		}
 	}
-	return result, nil
+	return result
 }
 
-func classifyAvailability(providerID string, cost providerCost) ModelAvailability {
+func classifyAvailability(providerID string, cost ProviderModelCost) ModelAvailability {
 	if isZeroCostOpencode(providerID, cost) {
 		return ModelFreeTier
 	}
 	return ModelAvailable
 }
 
-func isZeroCostOpencode(providerID string, cost providerCost) bool {
+func isZeroCostOpencode(providerID string, cost ProviderModelCost) bool {
 	if providerID != "opencode" && providerID != "opencode-relay" {
 		return false
 	}

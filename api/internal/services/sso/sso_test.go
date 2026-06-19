@@ -173,7 +173,13 @@ type fakeIdP struct {
 	exchangeErr error
 	// codes records code_verifier values seen for PKCE assertion.
 	codes map[string]string
-	mu    sync.Mutex
+	// challenge records the S256 code_challenge presented at /authorize. When
+	// non-empty, /token enforces the PKCE binding (SHA256(verifier) == challenge).
+	// Tests that never hit /authorize leave this empty, preserving the legacy
+	// non-validating behavior; the dedicated PKCE test drives /authorize to
+	// opt into enforcement (F10).
+	challenge string
+	mu        sync.Mutex
 }
 
 func newFakeIdP(t *testing.T, clientID string) *fakeIdP {
@@ -190,6 +196,7 @@ func newFakeIdP(t *testing.T, clientID string) *fakeIdP {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", fp.handleDiscovery)
 	mux.HandleFunc("/jwks", fp.handleJWKS)
+	mux.HandleFunc("/authorize", fp.handleAuthorize)
 	mux.HandleFunc("/token", fp.handleToken)
 	fp.server = httptest.NewServer(mux)
 	return fp
@@ -224,6 +231,25 @@ func (f *fakeIdP) handleJWKS(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+// handleAuthorize records the S256 code_challenge so /token can enforce the
+// PKCE binding (F10). A real IdP issues an authorization code here and stores
+// it alongside the challenge; this fake simply records the challenge and
+// redirects to the redirect_uri with a placeholder code so a test that follows
+// the real StartLogin → browser-redirect → /token path exercises the binding.
+func (f *fakeIdP) handleAuthorize(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	f.challenge = r.URL.Query().Get("code_challenge")
+	f.mu.Unlock()
+	redirectURI := r.URL.Query().Get("redirect_uri")
+	state := r.URL.Query().Get("state")
+	if redirectURI == "" {
+		http.Error(w, "missing redirect_uri", http.StatusBadRequest)
+		return
+	}
+	target := redirectURI + "?code=" + url.QueryEscape("issued-code") + "&state=" + url.QueryEscape(state)
+	http.Redirect(w, r, target, http.StatusFound)
+}
+
 func (f *fakeIdP) handleToken(w http.ResponseWriter, r *http.Request) {
 	if f.exchangeErr != nil {
 		http.Error(w, f.exchangeErr.Error(), http.StatusInternalServerError)
@@ -237,7 +263,17 @@ func (f *fakeIdP) handleToken(w http.ResponseWriter, r *http.Request) {
 	verifier := r.FormValue("code_verifier")
 	f.mu.Lock()
 	f.codes[code] = verifier
+	recordedChallenge := f.challenge
 	f.mu.Unlock()
+	// F10: when /authorize recorded a challenge, /token MUST validate the PKCE
+	// binding. A wrong/empty verifier yields 400, exactly as a spec-compliant
+	// IdP would. No recorded challenge ⇒ skip (preserves non-validating tests).
+	if recordedChallenge != "" {
+		if verifier == "" || codeChallenge(verifier) != recordedChallenge {
+			http.Error(w, "invalid pkce code_verifier", http.StatusBadRequest)
+			return
+		}
+	}
 	claims, err := f.tokenFn(code)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -268,6 +304,15 @@ func (f *fakeIdP) signIDToken(claims map[string]any) (string, error) {
 	}
 	for k, v := range claims {
 		mapClaims[k] = v
+	}
+	// Default email_verified=true for a well-configured IdP. Individual tests
+	// override this (email_verified=false) to exercise the unverified-email
+	// rejection path (F8). Absent ⇒ verified matches the OIDC happy path most
+	// real IdPs present; production code still REQUIRES the claim to be true.
+	if _, ok := mapClaims["email_verified"]; !ok {
+		if _, hasEmail := mapClaims["email"]; hasEmail {
+			mapClaims["email_verified"] = true
+		}
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, mapClaims)
 	tok.Header["kid"] = f.kid
@@ -610,4 +655,200 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 	plain, err := svc.decryptSecret(context.Background(), blob)
 	require.NoError(t, err)
 	require.Equal(t, "the-secret", plain)
+}
+
+// --- F8: OIDC email_verified enforcement (US-43.10 / D17) ---
+//
+// Per OIDC spec, the `email` claim MUST NOT be trusted for account-binding
+// decisions (auto-provision or login-match) unless `email_verified == true`.
+// A misconfigured/permissive IdP (self-hosted Keycloak, some Auth0 tenants)
+// that lets a user register victim@example.com without verifying it would
+// otherwise let the attacker SSO into the victim's existing account.
+
+// TestCallback_UnverifiedEmail_Rejected proves the email_verified gate fires
+// BEFORE any user lookup/creation: an unverified email is refused with
+// ErrEmailUnverified regardless of whether the victim account exists.
+func TestCallback_UnverifiedEmail_Rejected(t *testing.T) {
+	svc, _, users, idp, _, cleanup := setupSSO(t, true, nil)
+	defer cleanup()
+
+	// Seed a victim account the unverified email must NOT bind to.
+	users.users["victim@acme.com"] = &types.User{ID: "victim-1", Email: "victim@acme.com", Status: types.UserStatusActive}
+	idp.tokenFn = func(string) (map[string]any, error) {
+		return map[string]any{"email": "victim@acme.com", "name": "Attacker", "email_verified": false}, nil
+	}
+
+	start, err := svc.StartLogin(context.Background(), "acme", idp.issuer()+"/api/v1/auth/sso/acme/callback")
+	require.NoError(t, err)
+	startURL, _ := url.Parse(start.AuthURL)
+
+	_, err = svc.HandleCallback(context.Background(), "acme",
+		idp.issuer()+"/api/v1/auth/sso/acme/callback", "code-unverified", startURL.Query().Get("state"), start.Cookie.Value)
+	require.ErrorIs(t, err, ErrEmailUnverified, "unverified email must be rejected before account binding")
+
+	// No auto-provisioning side effect.
+	_, created := users.users["attacker@acme.com"]
+	require.False(t, created, "unverified email must not provision a new account")
+}
+
+// TestCallback_VerifiedEmailAccepted confirms the gate does not over-fire:
+// an explicitly verified email completes the normal flow.
+func TestCallback_VerifiedEmailAccepted(t *testing.T) {
+	svc, _, users, idp, _, cleanup := setupSSO(t, true, nil)
+	defer cleanup()
+
+	idp.tokenFn = func(string) (map[string]any, error) {
+		return map[string]any{"email": "verified@acme.com", "name": "V", "email_verified": true}, nil
+	}
+	start, err := svc.StartLogin(context.Background(), "acme", idp.issuer()+"/api/v1/auth/sso/acme/callback")
+	require.NoError(t, err)
+	startURL, _ := url.Parse(start.AuthURL)
+
+	result, err := svc.HandleCallback(context.Background(), "acme",
+		idp.issuer()+"/api/v1/auth/sso/acme/callback", "code-v", startURL.Query().Get("state"), start.Cookie.Value)
+	require.NoError(t, err)
+	require.Equal(t, "verified@acme.com", result.Email)
+	_, ok := users.users["verified@acme.com"]
+	require.True(t, ok, "verified email must provision the account")
+}
+
+// --- F9: Azure AD `memberOf` group-claim fallback (US-43.10) ---
+//
+// Azure AD (a major enterprise IdP) emits group membership via the `memberOf`
+// claim instead of `groups`. effectiveGroups merges both so role mapping works
+// regardless of which shape the IdP uses. This previously had zero coverage.
+
+func TestCallback_MemberOfGroups_MappedToRole(t *testing.T) {
+	mapping := map[string]types.OrgRole{"sso-admins": types.OrgRoleAdmin}
+	svc, _, _, idp, org, cleanup := setupSSO(t, true, mapping)
+	defer cleanup()
+
+	// Azure-AD-style token: groups absent, memberOf carries the admin group.
+	idp.tokenFn = func(string) (map[string]any, error) {
+		return map[string]any{
+			"email":    "aad-admin@acme.com",
+			"name":     "AAD Admin",
+			"memberOf": []string{"sso-admins", "some-other-group"},
+		}, nil
+	}
+	start, err := svc.StartLogin(context.Background(), "acme", idp.issuer()+"/api/v1/auth/sso/acme/callback")
+	require.NoError(t, err)
+	startURL, _ := url.Parse(start.AuthURL)
+
+	result, err := svc.HandleCallback(context.Background(), "acme",
+		idp.issuer()+"/api/v1/auth/sso/acme/callback", "code-aad", startURL.Query().Get("state"), start.Cookie.Value)
+	require.NoError(t, err)
+	require.Equal(t, types.OrgRoleAdmin, result.Role, "memberOf claim must drive the admin role mapping (Azure AD fallback)")
+	member, _ := svc.orgs.GetOrgMember(context.Background(), org.ID, result.UserID)
+	require.NotNil(t, member)
+	require.Equal(t, types.OrgRoleAdmin, member.Role)
+}
+
+func TestEffectiveGroups_MergesGroupsAndMemberOf(t *testing.T) {
+	// Pure unit test of the merge helper — locks the union behavior.
+	require.Equal(t, []string{"a", "b"}, oidcClaims{Groups: []string{"a", "b"}}.effectiveGroups())
+	require.Equal(t, []string{"a", "b"}, oidcClaims{MemberOf: []string{"a", "b"}}.effectiveGroups())
+	merged := oidcClaims{Groups: []string{"g"}, MemberOf: []string{"m"}}.effectiveGroups()
+	require.ElementsMatch(t, []string{"g", "m"}, merged)
+}
+
+// TestOIDCClaims_AbsentEmailVerified_DecodesFalse is the security regression
+// guard for F8: the production gate treats an ABSENT email_verified claim as
+// unverified (bool zero value). This is the spec-correct default-deny posture.
+// A future change to EmailVerified *bool with "nil = allow" semantics would
+// re-open the unverified-email takeover for IdPs that omit the claim, and this
+// test would catch it.
+func TestOIDCClaims_AbsentEmailVerified_DecodesFalse(t *testing.T) {
+	var c oidcClaims
+	require.NoError(t, json.Unmarshal([]byte(`{"email":"x@y.com"}`), &c))
+	require.False(t, c.EmailVerified, "absent email_verified claim must decode to false (default-deny, F8)")
+}
+
+// --- F10: PKCE verifier is validated against the challenge (US-43.10) ---
+//
+// The client (sso.go) correctly sends code_challenge at /authorize and
+// code_verifier at /token. The fake IdP previously recorded the verifier but
+// never validated it, so a regression omitting the verifier would not be
+// caught. This test drives the real /authorize → /token binding.
+
+// hitAuthorize performs the browser step the real flow does: GET the auth URL
+// so the IdP records the S256 challenge. It returns the authorization code the
+// IdP redirected with.
+func hitAuthorize(t *testing.T, authURL string) string {
+	t.Helper()
+	// Do not follow redirects — we only need the /authorize side effect (the
+	// IdP records the challenge) and the issued code from the Location header.
+	req, err := http.NewRequest(http.MethodGet, authURL, nil)
+	require.NoError(t, err)
+	transport := &http.Transport{}
+	client := &http.Client{
+		Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("expected 302 from /authorize, got %d", resp.StatusCode)
+	}
+	loc, err := url.Parse(resp.Header.Get("Location"))
+	require.NoError(t, err)
+	return loc.Query().Get("code")
+}
+
+// TestCallback_PKCEBinding_FullFlow proves the end-to-end PKCE binding: the
+// verifier derived from the signed state cookie satisfies the challenge the
+// IdP recorded at /authorize.
+func TestCallback_PKCEBinding_FullFlow(t *testing.T) {
+	svc, _, _, idp, _, cleanup := setupSSO(t, true, nil)
+	defer cleanup()
+
+	idp.tokenFn = func(string) (map[string]any, error) {
+		return map[string]any{"email": "pkce@acme.com", "name": "PKCE"}, nil
+	}
+	start, err := svc.StartLogin(context.Background(), "acme", idp.issuer()+"/api/v1/auth/sso/acme/callback")
+	require.NoError(t, err)
+	startURL, _ := url.Parse(start.AuthURL)
+
+	// Browser step: hit /authorize so the fake IdP records the challenge.
+	issuedCode := hitAuthorize(t, start.AuthURL)
+
+	result, err := svc.HandleCallback(context.Background(), "acme",
+		idp.issuer()+"/api/v1/auth/sso/acme/callback", issuedCode, startURL.Query().Get("state"), start.Cookie.Value)
+	require.NoError(t, err)
+	require.Equal(t, "pkce@acme.com", result.Email)
+}
+
+// TestCallback_PKCEBinding_WrongVerifierRejected proves the IdP side of the
+// binding: a verifier that does not hash to the recorded challenge is refused
+// at /token. This is what catches a client regression that drops or mutates
+// the verifier. Probed directly against the fake IdP's /token so the assertion
+// does not depend on the client's own verifier generation.
+func TestCallback_PKCEBinding_WrongVerifierRejected(t *testing.T) {
+	svc, _, _, idp, _, cleanup := setupSSO(t, true, nil)
+	defer cleanup()
+	_ = svc // no service interaction needed; we exercise the IdP directly.
+
+	// Record a challenge via /authorize (the browser step).
+	authURL := idp.issuer() + "/authorize?response_type=code&client_id=client-xyz" +
+		"&redirect_uri=" + url.QueryEscape(idp.issuer()+"/cb") +
+		"&state=st&code_challenge_method=S256" +
+		"&code_challenge=" + url.QueryEscape(codeChallenge("legit-verifier"))
+	hitAuthorize(t, authURL)
+
+	// /token with a WRONG verifier → 400 (PKCE binding fails).
+	form := url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {"some-code"},
+		"redirect_uri":  {idp.issuer() + "/cb"},
+		"client_id":     {"client-xyz"},
+		"code_verifier": {"wrong-verifier"},
+	}
+	resp, err := http.PostForm(idp.issuer()+"/token", form)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode,
+		"a verifier that does not match the recorded challenge must be rejected (PKCE binding)")
 }
