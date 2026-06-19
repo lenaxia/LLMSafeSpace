@@ -103,16 +103,26 @@ func (s *UserService) GetAll(ctx context.Context, userID string) (map[string]any
 }
 
 // Set validates and persists a user setting value.
+//
+// As with InstanceService.Set, the value is run through Normalize()
+// before Validate() so honest typos in any patterned string settings
+// get auto-corrected. User-tier settings don't currently include
+// resource quantities, but the same path is used for symmetry and
+// future-proofing.
 func (s *UserService) Set(ctx context.Context, userID, key string, value any) error {
 	def, ok := s.index[key]
 	if !ok {
 		return fmt.Errorf("unknown user setting key: %q", key)
 	}
-	if err := Validate(def, value); err != nil {
+	normalized, err := Normalize(def, value)
+	if err != nil {
+		return err
+	}
+	if err := Validate(def, normalized); err != nil {
 		return err
 	}
 
-	raw, err := json.Marshal(value)
+	raw, err := json.Marshal(normalized)
 	if err != nil {
 		return fmt.Errorf("failed to marshal value for key %q: %w", key, err)
 	}
