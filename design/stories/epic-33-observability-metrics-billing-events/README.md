@@ -1,6 +1,6 @@
 # Epic 33: Observability, Metering, and Billing Infrastructure
 
-**Status:** Planning  
+**Status:** Planning — revalidated 2026-06-19 (see Coexistence + WAL Correction sections)
 **Created:** 2026-06-06  
 **Depends On:** Epic 24 (Self-Healing Lifecycle), Epic 26 (Client-Proxied Inference), Epic 28 (Unified Event Stream)  
 **Priority:** High  
@@ -150,9 +150,62 @@ Postgres owns everything that is a record with identity and financial consequenc
 (billing periods, inference sessions, workspace lifecycle events). The gateway fans out
 to both from the same event stream.
 
+### Decision 7: The TSDB is optional; the billing pipeline is standalone
+
+Added 2026-06-19. The original design coupled billing metering to VictoriaMetrics —
+the gateway fanned out to both Postgres (billing) and VM (operational), and US-33.2
+deployed VM as a hard dependency. This is wrong for three reasons:
+
+1. **Billing doesn't need a TSDB.** Billing accuracy depends on Postgres
+   (`usage_events` with exact event timestamps). The TSDB feeds dashboards —
+   operational, not financial. A platform without a TSDB still bills correctly;
+   a platform without Postgres cannot bill at all.
+
+2. **A TSDB is a specialized operational component** that operators may already
+   own (Datadog, New Relic, CloudWatch, their own Prometheus). Forcing a specific
+   product (VictoriaMetrics) as a hard dependency is inconsistent with how the
+   platform handles other stateful infra. Postgres and Redis are required but
+   operator-supplied; the TSDB should follow the same model — or be deployable
+   in-cluster as a convenience.
+
+3. **The existing chart already has the observability wiring.** Dashboards
+   (`operational.json`, `billing.json`), PrometheusRules (18 alerts), and
+   ServiceMonitors (API, controller, agentd) ship today. They work against any
+   Prometheus-compatible TSDB. The chart's `monitoring.enabled` flag controls
+   whether these resources are rendered. Epic 33 should extend this pattern, not
+   replace it with a VictoriaMetrics-specific deployment.
+
+**Resolution:**
+
+- The **billing pipeline** (agentd → WAL → gateway → Postgres) has zero external
+  dependencies beyond Postgres. It is always on. It is the load-bearing path.
+- The **observability fan-out** (gateway → TSDB) is configured via
+  `EVENTS_TSDB_URL` env var on the gateway. When unset, the gateway skips the
+  TSDB write and logs a debug message. When set, the gateway converts resource
+  samples + state events to Prometheus remote_write format and pushes to the
+  configured URL (VictoriaMetrics, Cortex, Mimir, Thanos receive, or any
+  remote_write-compatible backend).
+- The **in-cluster TSDB** (VictoriaMetrics single-node + vmagent) is an optional
+  Helm value (`monitoring.tsdb.deploy: true`, default `false`). When enabled, the
+  chart deploys VictoriaMetrics and vmagent, sets `EVENTS_TSDB_URL` on the gateway
+  automatically, and the existing dashboards/alerts/ServiceMonitors light up.
+  When disabled, operators point their own TSDB at the ServiceMonitors.
+- Resource samples (CPU/memory/disk at 1s) are **only pushed to the TSDB**, never
+  to Postgres. If the TSDB is not configured, resource samples are silently
+  dropped (they have no billing value). Tier 1 + Tier 2 events always go to
+  Postgres regardless of TSDB configuration.
+
 ---
 
 ## Architecture
+
+> **Updated 2026-06-19 (TSDB separation).** The billing pipeline (agentd →
+> gateway → Postgres) has **zero external dependencies** beyond the Postgres
+> the platform already requires. The observability stack (TSDB + Grafana) is
+> **optional** — deployed in-cluster when `monitoring.enabled: true`, or
+> pointed at an operator-supplied Prometheus via the existing ServiceMonitor
+> pattern. The gateway writes to Postgres unconditionally; it writes to the
+> TSDB only when configured. See "Decision 7: TSDB is optional" below.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -169,37 +222,44 @@ to both from the same event stream.
 │  │                                                                  │  │
 │  │  GatewayClient                                                   │  │
 │  │  - single push target                                            │  │
-│  │  - WAL for Tier 1 events (emptyDir /var/lib/agentd/wal/)        │  │
+│  │  - WAL for Tier 1 events (/tmp/agentd-wal/ on PVC)              │  │
 │  │  - batches Tier 2 + resource samples (1s flush)                 │  │
 │  └──────────────────────────────┬───────────────────────────────────┘  │
 │                                 │ POST /ingest (1/second)              │
 └─────────────────────────────────┼───────────────────────────────────── ┘
                                   │
-┌─────────────────────────────────┼─────────────────────────────────────┐
-│ node (kubelet)                  │                                      │
-│  ┌────────────────────┐         │                                      │
-│  │ cAdvisor           │         │                                      │
-│  │ /metrics/cadvisor  │         │                                      │
-│  └─────────┬──────────┘         │                                      │
-└────────────┼───────────────────────────────────────────────────────────┘
-             │ scrape (vmagent, 15s)       │
-             │ node-level fleet metrics    │
-             ▼                            ▼
-      vmagent                    events-gateway (2-3 replicas)
-      (relabels, remote_write)   │
-             │                   ├──→ VictoriaMetrics remote_write
-             │                   │    - pod state gauges
-             ▼                   │    - cpu/memory/disk per workspace (1s)
-      VictoriaMetrics             │    - inference counters
-      (TSDB, 90d retention)      │    - fleet operational counters
-             ▲                   │
-             └───────────────────┘
-                                 │
-                                 └──→ Postgres
-                                      - compute_periods
-                                      - inference_events
-                                      - workspace_events
-                                      - workspace_events_dlq
+                           events-gateway (2-3 replicas)
+                                  │
+                                  ├──→ Postgres (REQUIRED — billing ledger)
+                                  │    - usage_events (compute_seconds, llm_tokens)
+                                  │    - workspace_events
+                                  │    - workspace_events_dlq
+                                  │
+                                  ├──→ TSDB (OPTIONAL — operational dashboards)
+                                  │    - pod state gauges
+                                  │    - cpu/memory/disk per workspace (1s)
+                                  │    - inference counters
+                                  │    Connected only when EVENTS_TSDB_URL is set.
+                                  │    VictoriaMetrics remote_write OR Prometheus
+                                  │    remote_write — gateway is backend-agnostic.
+
+┌──────────────────────────────────────────────────────────────────────┐
+│ OPTIONAL: in-cluster observability (monitoring.enabled: true)        │
+│                                                                      │
+│  vmagent ──scrape──→ cAdvisor (nodes, 15s)                          │
+│     │                API server /metrics                             │
+│     │                Controller /metrics                             │
+│     │                                                                │
+│     ▼                                                                │
+│  VictoriaMetrics ←── remote_write ←── events-gateway (when TSDB on) │
+│  (TSDB, 90d retention)                                              │
+│     │                                                                │
+│     ▼                                                                │
+│  Grafana                                                             │
+│  - operational.json (shipped, 1036 lines, 42+ panels)               │
+│  - billing.json (shipped, 606 lines)                                │
+│  - Postgres datasource (for per-customer SQL panels)                │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -234,8 +294,9 @@ The WAL lives in agentd, not in the gateway.
 
 Fleet-level operational counters unchanged. Existing `controller/internal/metrics`
 package unchanged. Gains one new responsibility: gap detection and closure. Detects
-open `compute_periods` rows where `last_heartbeat_at` has gone stale, verifies the pod
-is actually gone, and closes the period.
+stale compute periods (open `usage_events` `compute_seconds` entries with no recent
+heartbeat) where agentd has gone silent, verifies the pod is actually gone, and closes
+the period by emitting a `compute_seconds` event via the gateway.
 
 ### vmagent
 
@@ -258,6 +319,11 @@ Single-node. 90-day retention. Receives data from two sources:
 ## Data Model
 
 ### `compute_periods` — billing period ledger
+
+> **SUPERSEDED (2026-06-19).** This table is NOT created. The gateway writes to the
+> existing `usage_events` table with `event_type='compute_seconds'` and `source='agentd'`.
+> See the "Coexistence with Epic 12" section. The schema below is retained for historical
+> reference and for the query patterns (which map to `usage_events` queries).
 
 ```sql
 CREATE TABLE compute_periods (
@@ -336,6 +402,11 @@ WHERE tstzrange(cp.started_at, cp.ended_at) && tstzrange(:t1, :t2);
 ---
 
 ### `inference_events` — per-session token ledger
+
+> **SUPERSEDED (2026-06-19).** This table is NOT created. The gateway writes to the
+> existing `usage_events` table with `event_type='llm_tokens'` and `source='agentd'`.
+> See the "Coexistence with Epic 12" section. The schema below is retained for historical
+> reference.
 
 One row per inference session. Upserted as token deltas arrive, closed on session
 completion.
@@ -920,15 +991,14 @@ func (g *Gateway) handleIngest(c *gin.Context) {
         }
     }
 
-    // Resource samples → VictoriaMetrics only (not Postgres)
-    // Non-blocking — failure does not affect billing
-    if len(req.ResourceSamples) > 0 {
-        g.vmWriter.EnqueueSamples(req.ResourceSamples)
-        // update last_heartbeat_at for open compute_periods
-        g.pg.UpdateHeartbeats(req.ResourceSamples)
+    // Resource samples → TSDB only (not Postgres — no billing value).
+    // Skipped entirely when EVENTS_TSDB_URL is unset (TSDB is optional).
+    // Non-blocking — failure does not affect billing.
+    if len(req.ResourceSamples) > 0 && g.tsdbWriter != nil {
+        g.tsdbWriter.EnqueueSamples(req.ResourceSamples)
     }
 
-    // Inference events — async write to inference_events table
+    // Inference events — async write to usage_events (event_type='llm_tokens')
     if len(req.InferenceEvents) > 0 {
         g.asyncWriter.EnqueueInference(req.InferenceEvents)
     }
@@ -992,37 +1062,49 @@ One new reconciliation function. Runs every 60 seconds.
 
 ```go
 func (r *WorkspaceReconciler) reconcileStaleComputePeriods(ctx context.Context) {
-    // Find open periods where agentd has gone silent
-    stale, err := r.db.GetStaleOpenPeriods(ctx, 90*time.Second)
+    // Find workspaces that had a pod_ready event (via usage_events) but no
+    // corresponding pod_terminated/pod_suspended event and no recent resource
+    // sample push (agentd heartbeat). These are "orphaned" compute periods —
+    // agentd crashed or was killed without pushing the close event.
+    //
+    // usage_events is append-only — there is no "open" or "closed" state.
+    // Instead, we detect orphans by querying workspace_events for pod_ready
+    // events that lack a matching pod_terminated/pod_suspended within a
+    // reasonable window AND whose workspace pod is confirmed gone.
+    stale, err := r.db.GetWorkspacesWithOrphanedCompute(ctx, 90*time.Second)
     if err != nil {
-        r.log.Warn("stale period query failed", "error", err)
+        r.log.Warn("orphaned compute query failed", "error", err)
         return
     }
 
-    for _, period := range stale {
+    for _, orphan := range stale {
         // Critical: verify the pod is actually gone before closing.
-        // A slow gateway causing delayed heartbeats must not close an active period.
-        pod, err := r.getPod(ctx, period.WorkspaceID)
+        // A slow gateway causing delayed pushes must not trigger a false close.
+        pod, err := r.getPod(ctx, orphan.WorkspaceID)
         if err == nil && pod.Status.Phase == corev1.PodRunning {
-            r.log.Warn("stale heartbeat but pod still running — gateway may be slow",
-                "workspace_id", period.WorkspaceID,
-                "last_heartbeat", period.LastHeartbeatAt)
+            r.log.Warn("orphaned compute but pod still running — gateway may be slow",
+                "workspace_id", orphan.WorkspaceID,
+                "last_event_time", orphan.LastEventTime)
             continue  // do not close — false positive
         }
 
         // Pod is gone or unresolvable — safe to close
-        endTime := r.getBestEndTime(ctx, period.WorkspaceID, pod)
+        endTime := r.getBestEndTime(ctx, orphan.WorkspaceID, pod)
 
+        // Emit a compute_seconds event for the gap duration via the gateway.
+        // The gateway writes it to usage_events (source='agentd').
         r.eventWriter.Write(ctx, events.WorkspaceEvent{
-            WorkspaceID: &period.WorkspaceID,
-            UserID:      &period.UserID,
+            WorkspaceID: &orphan.WorkspaceID,
+            UserID:      &orphan.UserID,
             EventType:   events.EventPodTerminated,
             Severity:    "info",
             Source:      "controller_gap_close",
             Detail:      json.RawMessage(`{"reason":"stale_heartbeat"}`),
             OccurredAt:  endTime,
         })
-        // Gateway handles the compute_period close via the pod_terminated event
+        // The gateway translates pod_terminated into a final compute_seconds
+        // event in usage_events covering the gap from the last known event
+        // to endTime.
     }
 }
 
@@ -1033,14 +1115,14 @@ func (r *WorkspaceReconciler) getBestEndTime(
 ) time.Time {
     // Preference order:
     // 1. Pod deletion timestamp (most accurate)
-    // 2. Last heartbeat time (best available estimate)
+    // 2. Last usage_events event_time for this workspace (best available estimate)
     // 3. Now (conservative fallback — may slightly overcharge)
     if pod != nil && pod.DeletionTimestamp != nil {
         return pod.DeletionTimestamp.Time
     }
-    stale, err := r.db.GetLastHeartbeat(ctx, workspaceID)
-    if err == nil && !stale.IsZero() {
-        return stale
+    lastEvent, err := r.db.GetLastComputeEventTime(ctx, workspaceID)
+    if err == nil && !lastEvent.IsZero() {
+        return lastEvent
     }
     return time.Now()
 }
@@ -1102,8 +1184,8 @@ Evaluated by vmagent. Alertmanager routing is operator-configured — out of sco
 | `ObservabilityBlind` | `rate(vm_rows_inserted_total[5m]) == 0` | critical |
 | `GatewayDropping` | `rate(llmsafespace_gateway_events_dropped_total[5m]) > 0` | warning |
 | `GatewayBufferPressure` | `llmsafespace_gateway_buffer_occupancy > 0.8` | warning |
-| `WALSizeHigh` | `llmsafespace_agentd_wal_pending_entries > 100` | warning |
-| `ComputePeriodStale` | `time() - llmsafespace_agentd_last_heartbeat_push > 10` | warning |
+| `WALSizeHigh` | `llmsafespaces_agentd_wal_pending_entries > 100` | warning |
+| `ComputePeriodStale` | `time() - llmsafespaces_agentd_last_heartbeat_push > 10` | warning |
 
 All THRESHOLD values configurable via `values.yaml`.
 
@@ -1148,30 +1230,49 @@ metric registrations. No `user_id` on connection gauge.
 
 ---
 
-### US-33.2 — VictoriaMetrics + Grafana deployment
+### US-33.2 — Optional in-cluster TSDB deployment
 
-Single-node VictoriaMetrics with 90-day retention, PVC, cluster-internal NetworkPolicy.
-Grafana with VictoriaMetrics datasource (default) and Postgres datasource (for per-customer
-panels). Admin credentials from existing `secret.yaml` pattern. Grafana ingress at
-`grafana.safespaces.dev`.
+> **Updated 2026-06-19.** The chart already ships Grafana dashboards
+> (`operational.json`, `billing.json`), PrometheusRules (18 alerts), and
+> ServiceMonitors (API, controller, agentd). These work against any
+> Prometheus-compatible TSDB. This story deploys VictoriaMetrics single-node
+> as an **optional convenience** for operators who don't have their own TSDB.
 
-**New chart templates:** `victoria-metrics-*.yaml`, `grafana-*.yaml`  
-**New values sections:** `victoriaMetrics:`, `grafana:`  
+Deploy VictoriaMetrics single-node with PVC and cluster-internal NetworkPolicy
+when `monitoring.tsdb.deploy: true` (default **false**). Wire `EVENTS_TSDB_URL`
+on the events-gateway to point at the in-cluster VictoriaMetrics automatically.
 
-**Definition of done:** Both pods reach Ready. VictoriaMetrics `/health` returns 200.
-Grafana datasources connected. Credentials from K8s Secret.
+The existing Grafana dashboards and PrometheusRules are already deployed by the
+chart when `monitoring.enabled: true` — no new dashboard templates needed. The
+VictoriaMetrics datasource is added to the existing datasource ConfigMap
+alongside the Postgres datasource.
+
+**New chart templates:** `victoria-metrics.yaml` (StatefulSet + Service, gated on `monitoring.tsdb.deploy`)
+**New values:** `monitoring.tsdb.deploy` (bool, default false), `monitoring.tsdb.retention` (default 90d)
+
+**Definition of done:** With `monitoring.tsdb.deploy: true`: VM pod reaches Ready,
+`/health` returns 200, `EVENTS_TSDB_URL` set on gateway, existing dashboards render
+within 15 minutes. With `monitoring.tsdb.deploy: false` (default): no VM resources
+rendered, gateway runs without TSDB, billing pipeline fully functional.
 
 ---
 
-### US-33.3 — vmagent + cAdvisor scrape config
+### US-33.3 — vmagent scrape config (optional, only when TSDB deployed)
+
+> **Updated 2026-06-19.** The chart already deploys ServiceMonitors for API,
+> controller, and agentd. These work with any Prometheus Operator. vmagent is
+> only needed when deploying the in-cluster VictoriaMetrics (US-33.2) to bridge
+> the Prometheus scrape format to VM's remote_write. Operators with their own
+> Prometheus skip this story entirely.
 
 vmagent deployment scraping cAdvisor (node SD, relabeling `workspace_id`/`user_id`
-from pod labels, keeping only billing-relevant metrics), API server, and controller.
-Controller `metricsAddr` changed to `0.0.0.0:8081` with NetworkPolicy restricting to
-vmagent. remote_write to VictoriaMetrics.
+from pod labels), API server, and controller. Controller `metricsAddr` changed to
+`0.0.0.0:8081` with NetworkPolicy restricting to vmagent. remote_write to
+VictoriaMetrics. Gated on `monitoring.tsdb.deploy: true`.
 
-**Definition of done:** All three sources visible in VictoriaMetrics within 30s of
-install. `container_cpu_usage_seconds_total{workspace_id!=""}` returns data.
+**Definition of done:** With `monitoring.tsdb.deploy: true`: all three sources
+visible in VictoriaMetrics within 30s. `container_cpu_usage_seconds_total{workspace_id!=""}`
+returns data. With it false: no vmagent resources rendered.
 
 ---
 
@@ -1189,49 +1290,72 @@ typed constants. Interface has `Write`, `Flush`, `Start`, `Stop`.
 ### US-33.5 — events-gateway service
 
 New `cmd/events-gateway/` binary. HTTP server (Gin). `POST /ingest` endpoint.
-Fan-out to VictoriaMetrics (async, best-effort) and Postgres (Tier 1 sync, Tier 2
-async). Returns 503 if Tier 1 Postgres write fails. Gateway self-metrics. Helm
-templates (2-replica Deployment, Service, NetworkPolicy). Postgres scoped role
-`events_gateway`.
+Fan-out to Postgres (Tier 1 sync, Tier 2 async — **always on**) and TSDB
+(resource samples, state events as gauges — **optional**, active only when
+`EVENTS_TSDB_URL` is set). Returns 503 if Tier 1 Postgres write fails.
+Gateway self-metrics. Helm templates (2-replica Deployment, Service,
+NetworkPolicy). Postgres scoped role `events_gateway`.
+
+The TSDB writer is a `nil`-safe interface — when `EVENTS_TSDB_URL` is unset, the
+gateway skips TSDB writes entirely (no error, no retry, debug log). Resource
+samples are dropped silently in this mode (they have no billing value).
 
 **Definition of done:** `POST /ingest` with Tier 1 event writes to Postgres before
-returning 202. `POST /ingest` returns 503 on Postgres failure. VictoriaMetrics receives
-remote_write data from gateway. `go test ./cmd/events-gateway/...` passes.
+returning 202. `POST /ingest` returns 503 on Postgres failure. With `EVENTS_TSDB_URL`
+set: TSDB receives remote_write data. Without it: gateway runs normally, billing
+fully functional, resource samples dropped. `go test ./cmd/events-gateway/...` passes.
 
 ---
 
-### US-33.6 — Postgres event table migrations
+### US-33.6 — Postgres event table migration
 
-Migration `000018_compute_periods.up.sql` — `compute_periods` table, indexes,
-idempotency constraint.  
-Migration `000019_inference_events.up.sql` — `inference_events` table, indexes,
-session_id unique constraint.  
-Migration `000020_workspace_events.up.sql` — `workspace_events` and
-`workspace_events_dlq` tables, indexes, severity constraint.  
-All three synced to `charts/llmsafespace/migrations/`.
+~~Migration for `compute_periods`~~ — **DROPPED.** The gateway writes to
+the existing `usage_events` table (Epic 12, migration 000024). No `compute_periods`
+table is created.
 
-**Definition of done:** `make migrate-up` and `make migrate-down` clean. All indexes
-and constraints present. Billing queries in data model section execute correctly.
+~~Migration for `inference_events`~~ — **DROPPED.** Same reason —
+inference events go to `usage_events` with `event_type='llm_tokens'`.
+
+Migration `000039_workspace_events.up.sql` — `workspace_events` and
+`workspace_events_dlq` tables, indexes, severity constraint.
+
+Migration `000040_usage_events_source_agentd.up.sql` — ALTER the `usage_events.source`
+CHECK constraint to add `'agentd'` to the permitted values.
+Synced to `charts/llmsafespaces/migrations/`.
+
+**Definition of done:** `make migrate-up` and `make migrate-down` clean. `workspace_events`
+table and indexes present. `usage_events` (already exists) is the billing table the gateway
+writes `compute_seconds` and `llm_tokens` events into with `source='agentd'` — requires a
+CHECK constraint migration to add `'agentd'` to the permitted `source` values.
 
 ---
 
 ### US-33.7 — agentd WAL + GatewayClient with Tier 1 durability
 
-`cmd/workspace-agentd/events/wal.go` — file-per-entry WAL in `/var/lib/agentd/wal/`.
+`cmd/workspace-agentd/events/wal.go` — file-per-entry WAL at `/tmp/agentd-wal/`
+(on the existing PVC `tmp` subPath — NOT a new emptyDir). The PVC persists across
+pod crashes, OOM kills, evictions, and suspend/resume. WAL size is negligible
+(median: 0–4 KB; worst-case 1-hour gateway outage on a chatty workspace: ~84 KB;
+see WAL Correction section for the full analysis).
+
 Atomic rename on write. Immediate delete on confirm. `maxPending` cap with
-`ErrWALFull`. Self-metrics (`llmsafespace_agentd_wal_pending_entries`).
+`ErrWALFull`. Self-metrics (`llmsafespaces_agentd_wal_pending_entries`).
+
+The `workspace-dirs` init container (defined in
+`controller/internal/workspace/pod_builder.go`) creates `/tmp/agentd-wal/` at pod start
+(alongside the existing `workspace/`, `home/`, `tmp/` directories).
 
 Update `GatewayClient` to WAL-protect Tier 1 events: Append → POST → Confirm.
 On gateway 503: WAL entry persists, replayed on next `Start()`. On WAL full: fallback
 to direct POST, log ERROR.
 
-`emptyDir` volume mount at `/var/lib/agentd/` added to pod spec by controller
-(`pod_builder.go`).
+**No new volume mount needed** — `/tmp` is already PVC-mounted
+(`pod_builder.go:132`: `{Name: "workspace", MountPath: "/tmp", SubPath: "tmp"}`).
 
 **Definition of done:** Simulated gateway outage → WAL accumulates entries → gateway
 recovers → WAL replays → entries confirmed → WAL empty. Crash-and-restart test:
-unconfirmed WAL entries replayed on `Start()`. WAL never exceeds `maxPending`.
-`go test ./cmd/workspace-agentd/events/...` passes.
+unconfirmed WAL entries replayed on `Start()` (WAL survives because it's on PVC).
+WAL never exceeds `maxPending`. `go test ./cmd/workspace-agentd/events/...` passes.
 
 ---
 
@@ -1251,9 +1375,10 @@ functions from `cmd/workspace-agentd/main.go`). Calls
 (same pattern as `RELAY_CONFIG_PATH` in `relay_injection.go`).
 
 **Definition of done:** After workspace reaches Active: `pod_ready` event in
-`workspace_events`, open row in `compute_periods`. After workspace suspended:
-`pod_suspended` event, row closed in `compute_periods` with correct `duration_secs`.
-`compute_periods.last_heartbeat_at` updated every second while pod is running.
+`workspace_events`, `compute_seconds` event in `usage_events` (`source='agentd'`).
+After workspace suspended: `pod_suspended` event, `compute_seconds` event in
+`usage_events` with the exact duration. Heartbeat (resource sample push) updates
+`usage_events` continuity every second while pod is running.
 `go test ./cmd/workspace-agentd/...` passes with `RecordingWriter`.
 
 ---
@@ -1265,11 +1390,12 @@ session.updated token delta. Push session_completed event (Tier 1) on
 `session.status = idle`. Push session_interrupted event (Tier 1) on SSE disconnect
 while session was busy.
 
-Gateway routes `InferenceEvent` to `inference_events` upsert (accumulates tokens)
-rather than `workspace_events` insert.
+Gateway routes `InferenceEvent` to `usage_events` insert (`event_type='llm_tokens'`,
+`source='agentd'`) — not `workspace_events`. Token deltas accumulate via
+idempotency-keyed inserts (same pattern as the existing `onInference` callback).
 
-**Definition of done:** After any inference session: row in `inference_events` with
-correct token counts and `duration_secs`. Multiple token deltas accumulate correctly.
+**Definition of done:** After any inference session: `llm_tokens` events in
+`usage_events` with correct token counts. Multiple token deltas accumulate correctly.
 Session interruption produces `session_interrupted` row in `workspace_events`.
 
 ---
@@ -1283,14 +1409,18 @@ Emits `workspace_failed`, `workspace_recovery_exhausted`, `workspace_safe_mode_e
 Tier 2 events. `user_id` resolved from `metadata.labels["llmsafespace.dev/user-id"]`
 — no database lookup.
 
-`reconcileStaleComputePeriods` runs every 60s. Detects open `compute_periods` rows with
-stale `last_heartbeat_at`. Verifies pod is actually gone before closing (prevents false
+`reconcileStaleComputePeriods` runs every 60s. Detects stale compute periods
+(open `usage_events` compute_seconds entries with no recent heartbeat) where agentd
+has gone silent. Verifies pod is actually gone before closing (prevents false
 positives when gateway is slow). Emits `pod_terminated` event via gateway with best
 available end time.
 
 **Definition of done:** Simulated workspace failure → `workspace_failed` in
 `workspace_events`. Simulated agentd crash (kill -9) followed by workspace deletion →
-open `compute_periods` row closed by controller with `source = 'controller_gap_close'`.
+open compute period in `usage_events` closed by controller with
+`source='reconciliation'` (the controller emits a `compute_seconds` event with
+the gap's duration). The original design referenced a `compute_periods` table,
+which has been dropped — see Coexistence section.
 Pod still running with stale heartbeat → controller does NOT close the period.
 `go test ./controller/...` passes with `RecordingWriter`.
 
@@ -1324,28 +1454,37 @@ All configurable thresholds read from `values.yaml`.
 ## Dependency Graph
 
 ```
-US-33.1  (cardinality fixes)       — independent, do first
-US-33.2  (VictoriaMetrics+Grafana) — independent
-US-33.3  (vmagent+cAdvisor)        — requires US-33.2
-US-33.4  (pkg/events)              — independent
-US-33.5  (events-gateway)          — requires US-33.4, US-33.6
-US-33.6  (Postgres migrations)     — independent
-US-33.7  (agentd WAL+client)       — requires US-33.4, US-33.5
-US-33.8  (agentd pod state+sampler)— requires US-33.7
-US-33.9  (agentd inference)        — requires US-33.7
-US-33.10 (controller events+gaps)  — requires US-33.4, US-33.5
-US-33.11 (API server events)       — requires US-33.4, US-33.5
-US-33.12 (dashboards+alerts)       — requires US-33.3, US-33.5
+Billing pipeline (REQUIRED — no TSDB dependency):
+  US-33.4  (pkg/events)              — independent
+  US-33.6  (Postgres migrations)     — independent
+  US-33.5  (events-gateway)          — requires US-33.4, US-33.6
+  US-33.7  (agentd WAL+client)       — requires US-33.4, US-33.5
+  US-33.8  (agentd pod state+sampler)— requires US-33.7
+  US-33.9  (agentd inference)        — requires US-33.7
+  US-33.10 (controller events+gaps)  — requires US-33.4, US-33.5
+  US-33.11 (API server events)       — requires US-33.4, US-33.5
+
+Observability stack (OPTIONAL — only when monitoring.tsdb.deploy: true):
+  US-33.1  (cardinality fixes)       — independent
+  US-33.2  (VictoriaMetrics)         — independent
+  US-33.3  (vmagent)                 — requires US-33.2
+  US-33.12 (dashboards+alerts)       — requires US-33.2 (for VM datasource)
 ```
 
 **Recommended phases:**
 
 ```
-Phase 1 (parallel): US-33.1, US-33.2, US-33.4, US-33.6
-Phase 2 (parallel): US-33.3, US-33.5
-Phase 3 (parallel): US-33.7, US-33.10, US-33.11
-Phase 4 (parallel): US-33.8, US-33.9, US-33.12
+Phase 1 (billing pipeline — parallel): US-33.4, US-33.6
+Phase 2 (billing pipeline — parallel): US-33.5
+Phase 3 (billing pipeline — parallel): US-33.7, US-33.10, US-33.11
+Phase 4 (billing pipeline — parallel): US-33.8, US-33.9
+
+Phase 5 (observability — optional, any time): US-33.1, US-33.2
+Phase 6 (observability — optional): US-33.3, US-33.12
 ```
+
+The billing pipeline ships first and is fully functional without any TSDB.
+The observability stack is added when the operator is ready for dashboards.
 
 ---
 
@@ -1353,7 +1492,7 @@ Phase 4 (parallel): US-33.8, US-33.9, US-33.12
 
 | Weakness | Severity | Mitigation | Status |
 |---|---|---|---|
-| WAL on emptyDir lost on pod deletion | Low | Controller gap-closer closes open periods; best end time from pod DeletionTimestamp | Designed in US-33.10 |
+| ~~WAL on emptyDir lost on pod deletion~~ | ~~Low~~ | **Resolved (see WAL correction below).** WAL moved to PVC `/tmp/agentd-wal/` — survives pod crashes, OOM, eviction, suspend/resume. Only lost on PVC deletion (workspace deletion + retention expiry), at which point billing data is irrelevant. | **Resolved** |
 | Controller gap-closer race (slow gateway → false stale) | Medium | Verify pod is actually gone before closing period | Designed in US-33.10 |
 | Gateway SPOF for per-workspace VM metrics | Low | 2-3 replicas; cAdvisor covers fleet-level fallback | Architectural |
 | Dual-write inconsistency (VM vs. Postgres) | Low | Idempotent operations on both sides; replay-safe | Architectural |
@@ -1361,26 +1500,167 @@ Phase 4 (parallel): US-33.8, US-33.9, US-33.12
 
 ---
 
-## Relationship to Epic 12
+## Coexistence with Epic 12 (Usage Metering & Billing) — **SHIPPED**
 
-Epic 12 (Usage Metering & Billing) designs a generalised `usage_events` table and
-billing provider integration. Epic 33 is the foundation: correct ground-truth metering,
-exact billing period boundaries, per-session inference records. Epic 12 builds on top.
+> **Added 2026-06-19 (design revalidation).** This section supersedes the original
+> "Relationship to Epic 12" section, which was written on 2026-06-06 when Epic 12
+> had not yet shipped. Epic 12 landed on 2026-06-13 (commit `7688a8a2`). The
+> original section spoke in future tense about infrastructure that is now live.
 
-`compute_periods` maps to Epic 12's `compute_seconds` event type.
-`inference_events` maps to Epic 12's `llm_tokens` event type.
-The transition is additive. Epic 33 does not need to be replaced when Epic 12 ships.
+Epic 12 is **built and in production**. It provides:
+
+- `usage_events` table (migration 000024) — append-only, idempotent, owner-aware
+  (`user`/`org`), with `event_type` CHECK covering `compute_seconds`, `llm_tokens`,
+  `llm_request`, `storage_bytes`, `api_call`.
+- `metering.Service` — async batch writer with DLQ, idempotency keys, quota
+  enforcement. Wired into the live request path (`app.go` → proxy middleware +
+  SSE inference callback).
+- `/api/v1/usage` + `/api/v1/admin/billing` endpoints — read from `usage_events`.
+- Stripe export pipeline — `BillingExporter` reads `usage_events` and reports to
+  Stripe Metered Billing via `pkg/billing/stripe_provider.go`.
+- Compute reconciliation — `reconcileComputeTime` runs every 5 minutes in the API
+  server, emitting `compute_seconds` events for Active workspaces based on CRD
+  watch (`workspace.Status.Phase`).
+
+### Why Epic 33 is still needed alongside Epic 12
+
+Epic 12's compute metering is **controller-phase-based** (the API server's CRD
+watch view), not **agentd-based** (the pod's ground-truth Ready state). This
+creates three structural precision gaps that Epic 33 closes:
+
+1. **5-minute reconciliation window.** `reconcileComputeTime` only processes
+   workspaces that are `Active` at reconciliation time. A workspace that starts
+   and stops between two 5-minute ticks produces zero compute events — the
+   `activePhases()` map never includes it. Verified: `reconcileComputeTime`
+   skips `phase != "Active"` (metering.go:823).
+
+2. **15-second bucketing imprecision.** Epic 12 emits `compute_seconds` in
+   15-second aligned buckets (`emitComputeBuckets`). Epic 33's event-boundary
+   design computes `ended_at - started_at` with millisecond precision. A
+   2-minute workspace produces 8 bucket records in Epic 12 vs 2 exact-boundary
+   events in Epic 33.
+
+3. **No agentd-sourced lifecycle events.** The API server learns about phase
+   transitions from the controller's CRD updates, which lag the actual pod
+   state by seconds to minutes. agentd knows the instant the pod is Ready.
+
+### Resolution: Epic 33 replaces Epic 12's compute reconciliation, not its table
+
+The clean coexistence model:
+
+| Concern | Epic 12 (current) | Epic 33 (after) | Migration |
+|---------|-------------------|-----------------|-----------|
+| **Compute billing source** | `reconcileComputeTime` (CRD-watch, 5-min, 15s buckets) → `usage_events` | agentd push → gateway → `usage_events` | **Deprecate `reconcileComputeTime`.** The gateway translates `pod_ready`/`pod_terminated` events into `compute_seconds` events in `usage_events` (same table, same schema, `source='agentd'`). Requires a migration to add `'agentd'` to the `source` CHECK constraint (currently only `('api','controller','cron','reconciliation')`). The `/api/v1/usage` endpoint and Stripe exporter read `usage_events` unchanged. |
+| **Inference billing source** | SSE `onInference` callback → `usage_events` (`llm_tokens`) | agentd `session.updated` → gateway → `usage_events` (`llm_tokens`) | **Move inference emission from API server to agentd.** The gateway writes to the same `usage_events` table. The API server's SSE callback is removed (agentd sees the same stream at the source). |
+| **Billing tables** | `usage_events` (single table) | `usage_events` (unchanged) + `workspace_events` (operational log) | `compute_periods` and `inference_events` **are NOT created.** The gateway writes directly to `usage_events` (`source='agentd'`). `workspace_events` is the new operational event log (not billing-critical). Requires a CHECK constraint migration to add `'agentd'` to `usage_events.source`. |
+| **Stripe export** | `BillingExporter` reads `usage_events` | Unchanged — same table, same exporter | No change. |
+| **DLQ** | `usage_events_dlq` | Unchanged — same table | No change. |
+| **Gap reconciliation** | `reconcileComputeTime` (5-min, CRD-watch) | Controller `reconcileStaleComputePeriods` (60s, pod-liveness) → emits `compute_seconds` to `usage_events` via gateway | Replace the API server's reconciliation with the controller's (more accurate — verifies pod is actually gone). |
+
+**Net effect:** Epic 33 ships the observability stack (VictoriaMetrics, Grafana,
+vmagent), the `pkg/events` package, the events-gateway, and agentd push
+(PodStateTracker, WAL, GatewayClient). The gateway writes to the **existing**
+`usage_events` table — no new billing tables. `compute_periods` and
+`inference_events` from the original design are **dropped** — they duplicated
+`usage_events` with a different shape. The API server's `reconcileComputeTime`
+and SSE `onInference` callback are **deprecated** (replaced by higher-precision
+agentd-sourced events via the gateway).
+
+### What Epic 33 keeps from the original design (unchanged)
+
+- agentd as source of truth for pod state (Decision 1)
+- Event-boundary billing precision (Decision 2)
+- One push target for agentd (Decision 3)
+- Controller as fallback only (Decision 4)
+- The WAL for Tier 1 durability (US-33.7) — **see WAL correction below**
+- The events-gateway service (US-33.5)
+- The `pkg/events` package (US-33.4)
+- VictoriaMetrics + Grafana + vmagent + dashboards + alerts (US-33.1–33.3, 33.12)
+- All 16 alerting rules
+- Cardinality fixes (US-33.1)
+
+---
+
+## WAL Correction: PVC, not emptyDir (2026-06-19 revalidation)
+
+The original design (US-33.7) proposed the WAL on a new emptyDir volume at
+`/var/lib/agentd/wal/`. This was a self-inflicted limitation — the workspace pod
+already has a PVC-backed volume, and `/tmp` is a PVC subPath (`pod_builder.go:132`:
+`{Name: "workspace", MountPath: "/tmp", SubPath: "tmp"}`).
+
+**Correction: the WAL goes at `/tmp/agentd-wal/`** (on the existing PVC `tmp`
+subPath). No new volume mount needed — `/tmp` is already PVC-mounted and persists
+across pod crashes, OOM kills, evictions, and suspend/resume cycles.
+
+**WAL size on PVC is negligible:**
+
+Only Tier 1 events (state transitions + session boundaries) go to the WAL. Tier 2
+events and resource samples are best-effort. The WAL entry types that agentd
+produces are:
+
+- `pod_ready`, `pod_suspended`, `pod_resumed`, `pod_terminated` — one each per
+  pod lifecycle transition
+- `session_completed`, `session_interrupted` — one per inference session
+
+(Controller events — `workspace_failed`, `workspace_oom_killed`, etc. — go directly
+to the gateway; they don't pass through agentd's WAL.)
+
+| Scenario | WAL entries | JSON size | ext4 blocks (4KB each) |
+|----------|-------------|-----------|------------------------|
+| **Median (gateway healthy)** | 0–1 (confirmed within ms) | ~0–250 bytes | ~0–4 KB |
+| **Gateway down 1 hour, idle workspace** | 0–1 (no transitions) | ~0 bytes | ~0 KB |
+| **Gateway down 1 hour, chatty workspace** | ~21 (1 ready + 5–20 session_completed) | ~5 KB | ~84 KB |
+| **maxPending cap (10000)** | 10000 | ~2.5 MB | ~40 MB |
+
+The default PVC is 15 Gi. The worst realistic case (gateway down 1 hour, chatty
+workspace) consumes <100 KB — **0.001% of the PVC**. Even the pathological
+`maxPending` cap (10000 sessions during a single outage) consumes ~40 MB —
+**0.3% of the PVC**. The WAL does not meaningfully consume user space.
+
+**Updated US-33.7:** the WAL directory is `/tmp/agentd-wal/` (PVC `tmp` subPath),
+NOT `/var/lib/agentd/wal/` (new emptyDir). No new volume mount in the pod spec —
+the existing `/tmp` mount already covers it. The `workspace-dirs` init container
+(migration 000036's `pod_builder.go`) creates the PVC subPath directories; it
+should also create `/tmp/agentd-wal/` at pod start.
+
+---
+
+## Revalidation Summary (2026-06-19)
+
+Full design review against the as-built codebase. 8 assumptions traced to root:
+
+| # | Assumption | Verdict |
+|---|-----------|---------|
+| A1 | CRD watch (`workspace.Status.Phase`) is the source of compute metering | **Confirmed** — chain: `reconcileComputeTime` → `activePhases()` → `watcher.knownPhases` → CRD watch event → controller-written `Status.Phase` |
+| A2 | `reconcileComputeTime` misses short-lived workspaces | **Confirmed** — 5-min interval, only processes Active-at-tick workspaces, skips `phase != "Active"` |
+| A3 | API server has full DB credentials, no scoped role | **Confirmed** — single `llmsafespaces` user, no scoped roles in any migration |
+| A4 | WAL on emptyDir loses data on pod deletion | **Corrected** — PVC is available; WAL moved to `/tmp/agentd-wal/` (PVC `tmp` subPath), survives all pod-level failures |
+| A5 | agentd HTTP client connection reuse → single gateway replica | **Confirmed** — Go default Transport + K8s per-connection LB + Postgres row-lock serialization |
+| A6 | Resource samples (CPU/mem/disk) are NOT billing inputs | **Confirmed** — billing uses phase transitions (compute) + SSE token counts (inference) + PVC allocation size (storage) |
+| A7 | Design predates Epic 12 implementation | **Confirmed** — Epic 33: Jun 6; Epic 12: Jun 13. Original "Relationship to Epic 12" section spoke in future tense about shipped code |
+| A8 | `compute_periods`/`inference_events` duplicate `usage_events` | **Confirmed** — gateway now writes to `usage_events` directly; `compute_periods`/`inference_events` tables dropped from the design. Requires a migration to add `'agentd'` to the `usage_events.source` CHECK constraint. |
+
+**Two changes to the original design:**
+
+1. **Coexistence with Epic 12** (above) — `compute_periods` and `inference_events`
+   tables are dropped. The gateway writes to the existing `usage_events` table.
+   `reconcileComputeTime` and the SSE `onInference` callback are deprecated.
+2. **WAL on PVC** (above) — WAL goes at `/tmp/agentd-wal/` on the existing PVC,
+   not a new emptyDir. Eliminates the "Known Weakness" without architecture change.
+
+**Everything else in the original design is correct and unchanged.**
 
 ---
 
 ## Non-Requirements (explicitly out of scope)
 
 - Alertmanager routing and notification channels — operator-configured
-- VictoriaMetrics cluster mode — single-node sufficient to ~100k workspaces
+- ~~VictoriaMetrics cluster mode~~ — single-node sufficient; VM itself is now
+  optional (see Decision 7)
 - Distributed tracing — future epic
 - Log aggregation (Loki/ELK) — separate concern
-- Billing provider integration — Epic 12
-- Quota enforcement — Epic 12
-- Customer-facing usage API endpoints — Epic 12
+- ~~Billing provider integration — Epic 12~~ (Epic 12 has shipped — see Coexistence section)
+- ~~Quota enforcement — Epic 12~~ (Epic 12 has shipped)
+- ~~Customer-facing usage API endpoints — Epic 12~~ (Epic 12 has shipped)
 - Per-second cAdvisor scraping — agentd push covers per-workspace second-granularity;
   cAdvisor at 15s is sufficient for fleet-level operational views

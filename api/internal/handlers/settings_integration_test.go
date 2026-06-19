@@ -15,6 +15,8 @@ import (
 	"github.com/lenaxia/llmsafespaces/api/internal/middleware"
 	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
 	"github.com/lenaxia/llmsafespaces/pkg/settings"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestIntegration_FullSettingsLifecycle exercises the complete flow:
@@ -222,4 +224,87 @@ func setupSettingsRouterWithStore(userID, role string, store *mockSettingsStore)
 	user.PUT("/:key", handler.SetUserSetting)
 
 	return r, store
+}
+
+// TestIntegration_HelmManagedSetting_RejectsWrite verifies that PUT on a
+// helm-managed (read-only) setting returns 409 Conflict, not 200 or 400.
+// This is the US-49.2 contract: helm-managed keys are immutable via the API.
+func TestIntegration_HelmManagedSetting_RejectsWrite(t *testing.T) {
+	_, store := setupSettingsRouter("admin")
+	seedStore := &seedableStore{store: store}
+	if _, err := settings.Seed(context.Background(), seedStore, nil); err != nil {
+		t.Fatalf("seed failed: %v", err)
+	}
+
+	// Re-construct the handler with a helm-managed key to simulate email.enabled=true.
+	gin.SetMode(gin.TestMode)
+	instanceSvc := settings.NewInstanceService(store, &mockSettingsLogger{})
+	instanceSvc.SetHelmOverrides(map[string]any{
+		"email.provider": "ses",
+	})
+	userSvc := settings.NewUserService(store, &mockSettingsLogger{})
+	handler := NewSettingsHandler(instanceSvc, userSvc)
+	r2 := gin.New()
+	r2.Use(func(c *gin.Context) {
+		c.Set("userID", "admin")
+		c.Set("userRole", "admin")
+		c.Next()
+	})
+	admin := r2.Group("/api/v1/admin/settings")
+	admin.Use(middleware.AdminGuard())
+	admin.PUT("/:key", handler.SetAdminSetting)
+
+	// PUT on the helm-managed key must return 409.
+	body := `{"value": "noop"}`
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("PUT", "/api/v1/admin/settings/email.provider", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	r2.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for helm-managed setting, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	assert.Contains(t, resp["error"], "Helm")
+}
+
+// TestIntegration_HelmManagedSetting_SchemaReadOnly verifies the schema
+// endpoint reports readOnly=true for helm-managed keys so the frontend can
+// disable the field.
+func TestIntegration_HelmManagedSetting_SchemaReadOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := newMockSettingsStore()
+	instanceSvc := settings.NewInstanceService(store, &mockSettingsLogger{})
+	instanceSvc.SetHelmOverrides(map[string]any{
+		"email.provider": "ses",
+	})
+	userSvc := settings.NewUserService(store, &mockSettingsLogger{})
+	handler := NewSettingsHandler(instanceSvc, userSvc)
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set("userRole", "admin")
+		c.Next()
+	})
+	admin := r.Group("/api/v1/admin/settings")
+	admin.Use(middleware.AdminGuard())
+	admin.GET("/schema", handler.GetAdminSettingsSchema)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("GET", "/api/v1/admin/settings/schema", nil)
+	r.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		Settings []settings.SettingDef `json:"settings"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	for _, def := range resp.Settings {
+		if def.Key == "email.provider" {
+			assert.True(t, def.ReadOnly, "helm-managed key must be readOnly in schema")
+			return
+		}
+	}
+	t.Fatal("email.provider not found in schema response")
 }

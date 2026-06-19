@@ -11,7 +11,17 @@ package settings
 // pattern on workspace.defaultStorageSize to reject zero-magnitude
 // values. The schema response shape exposed to the admin UI changed,
 // so clients caching the schema need to refresh.
-const SchemaVersion = 3
+//
+// Bumped to 4 (2026-06-19): tightened
+// workspace.defaultResources.cpu Pattern to reject zero-magnitude
+// values ("0m", "0.0", "0.00"). Closes the parallel zero-magnitude
+// gap that the memory and storage tightening in v3 missed.
+// Bumped to 5 (2026-06-19): added ReadOnly field to SettingDef (US-49.2
+// helm-precedence model — helm-managed keys are read-only in the admin UX)
+// and added four email.* instance settings (provider/sesRegion/fromAddress/
+// baseUrl). The schema response shape changed (new field + new keys); clients
+// caching the schema need to refresh.
+const SchemaVersion = 5
 
 // SettingType defines the data type of a setting.
 type SettingType string
@@ -38,6 +48,11 @@ type SettingDef struct {
 	Category    string      `json:"category"`          // UI grouping
 	Label       string      `json:"label"`             // UI display name
 	Description string      `json:"description"`       // UI help text
+	// ReadOnly is set to true when the key is managed by Helm (Tier 1
+	// helm-precedence model, US-49.2). The admin UX must disable edits to
+	// these keys and show a "Managed by Helm" badge. Set() rejects writes
+	// to read-only keys with ErrReadOnly.
+	ReadOnly bool `json:"readOnly,omitempty"`
 }
 
 // intPtr returns a pointer to an int value.
@@ -86,6 +101,17 @@ func InstanceSettings() []SettingDef {
 		// Branding
 		{Key: "instance.name", Tier: 2, Type: TypeString, Default: "LLMSafeSpaces", Pattern: `^.{1,64}$`, Category: "Branding", Label: "Instance Name", Description: "Instance display name"},
 		{Key: "instance.motd", Tier: 2, Type: TypeString, Default: "", Pattern: `^.{0,500}$`, Category: "Branding", Label: "Message of the Day", Description: "Login page message"},
+
+		// Email (US-49.2). When email.enabled=true in helm, these keys are
+		// marked ReadOnly via SetHelmOverrides and their values come from
+		// the helm-rendered config.yaml. When email.enabled=false, they are
+		// admin-mutable and stored in PostgreSQL; the admin must then
+		// restart the API for the new provider to take effect (the provider
+		// is constructed once at boot).
+		{Key: "email.provider", Tier: 2, Type: TypeString, Default: "", Category: "Email", Label: "Provider", Description: "Email provider (empty=noop/dev, ses=AWS SES)"},
+		{Key: "email.sesRegion", Tier: 2, Type: TypeString, Default: "", Category: "Email", Label: "SES Region", Description: "AWS region for SES (e.g. us-east-1)"},
+		{Key: "email.fromAddress", Tier: 2, Type: TypeString, Default: "", Pattern: `^.{0,254}$`, Category: "Email", Label: "From Address", Description: "Verified SES sender address"},
+		{Key: "email.baseUrl", Tier: 2, Type: TypeString, Default: "", Pattern: `^.{0,500}$`, Category: "Email", Label: "Base URL", Description: "Public origin for links in email bodies (e.g. https://app.example.com)"},
 	}
 }
 
