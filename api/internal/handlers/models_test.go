@@ -1132,6 +1132,7 @@ func TestListModels_CurrentModelProviderID_RelayActive(t *testing.T) {
 	handler := newTestModelsHandler(testPassword)
 	handler.SetModelStore(&mockModelReader{model: "glm-5.1-free"})
 	handler.SetRelayActive(true)
+	handler.SetRelayChecker(func(context.Context, string, string) bool { return true })
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) { c.Set("userID", "user-1"); c.Next() })
