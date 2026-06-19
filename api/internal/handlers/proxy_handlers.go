@@ -247,7 +247,10 @@ func (h *ProxyHandler) DeleteSession(c *gin.Context) {
 	h.state().MarkSessionDeleted(workspaceID, sid)
 
 	if h.sessionIndex != nil {
-		if err := h.sessionIndex.DeleteSession(context.Background(), workspaceID, sid); err != nil {
+		// Use context.Background() so a client disconnect after the agent
+		// has already deleted the session doesn't leave the index in an
+		// inconsistent state (agent deleted, index still has it).
+		if err := h.sessionIndex.DeleteSession(context.Background(), workspaceID, sid); err != nil { //nolint:contextcheck
 			h.logger.Error("failed to delete session from index", err, "workspaceID", workspaceID, "sessionID", sid)
 		}
 	}
