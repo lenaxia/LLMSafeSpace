@@ -125,6 +125,15 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			log.With("component", "wsstate"),
 		)
 		proxyHandler.SetStateStore(redisStateStore)
+	} else {
+		// M4 (worklog 371): surface the silent fallback to InMemoryStore.
+		// Without this warning, a future refactor that wraps the cache
+		// service (so the *cache.Service type assertion fails) silently
+		// reintroduces multi-replica drift: each replica keeps its own
+		// activeSess / deletedSessions / pwCache, and the 2026-06-16
+		// stuck-session incident class returns. Single-replica dev/test
+		// deployments intentionally hit this path and can ignore the warning.
+		log.Warn("Redis cache service unavailable — ProxyHandler is using InMemoryStore. Multi-replica deployments will NOT share per-workspace state (active sessions, tombstones, password cache). This is expected for single-replica dev/test; investigate in production.")
 	}
 
 	if svc.Metering != nil {
