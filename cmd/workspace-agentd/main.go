@@ -178,7 +178,7 @@ func maybeStartRelayInjector(rootCtx context.Context, deps serverDeps) {
 		AgentConfigPath:  envOrDefault("LLMSAFESPACES_AGENT_CONFIG_PATH", agentd.AgentConfigPath),
 		AuthJSONPath:     authJSONPath,
 		HealthCheck:      func() bool { snap := deps.healthCache.Snapshot(); return snap.Initialized && snap.Healthy },
-		KillOpenCode:     func() { deps.proc.restart() },
+		KillOpenCode:     func() { deps.proc.restart() }, //nolint:contextcheck // healthProbeAfterRestart intentionally uses context.Background() to outlive the triggering request
 	})
 }
 
