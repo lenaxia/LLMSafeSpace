@@ -1,27 +1,47 @@
 {{- if .Values.namespace.create }}
+{{- /* Resolve the effective PSA profile. The relay-router WireGuard sidecar
+      (US-42.8) needs root + NET_ADMIN/NET_RAW + hostPath /dev/net/tun, and
+      hostNetwork in that mode — all forbidden under the `restricted` profile.
+      When the relay subsystem is enabled, the release namespace MUST use
+      `privileged` or the pod is rejected at admission. The chart's other
+      pods (api, controller, frontend, migration) all harden themselves
+      regardless, so widening the namespace profile does not weaken them —
+      it only permits the one pod that genuinely needs it. Operators who
+      prefer to keep `restricted` must deploy relay-router into a separate
+      privileged namespace out-of-band (then set namespace.create=false
+      here). See worklog 0398 / Epic 42 Layer 2. */ -}}
+{{- $psa := .Values.namespace.podSecurityEnforce -}}
+{{- if and .Values.controller.inferenceRelay.enabled (eq $psa "restricted") -}}
+{{- $psa = "privileged" -}}
+{{- end -}}
 apiVersion: v1
 kind: Namespace
 metadata:
   name: {{ .Release.Namespace }}
   labels:
     {{- include "llmsafespaces.labels" . | nindent 4 }}
-    {{- if .Values.namespace.podSecurityEnforce }}
+    {{- if $psa }}
     # G11 (Epic 17 worklog 0091 RT-6.11): Pod Security Admission
     # labels enforce that every pod in this namespace meets the
-    # configured profile (default `restricted`). The chart's own pod
-    # specs (controller, API, frontend, MCP, migration job) all
-    # comply: runAsNonRoot, NoNewPrivs, capabilities=drop ALL,
+    # configured profile. The chart's own pod specs (controller, API,
+    # frontend, MCP, migration job) all comply with `restricted`:
+    # runAsNonRoot, NoNewPrivs, capabilities=drop ALL,
     # seccompProfile=RuntimeDefault. Workspace pods comply via the
     # controller's pod-spec generator.
+    #
+    # EXCEPTION: when controller.inferenceRelay.enabled is true, the
+    # relay-router's WireGuard sidecar (root + NET_ADMIN + hostPath)
+    # cannot comply with `restricted`, so the profile is widened to
+    # `privileged`. The other pods remain individually hardened.
     #
     # Operators who run additional non-compliant pods in this
     # namespace must override this label or move those workloads
     # elsewhere.
-    pod-security.kubernetes.io/enforce: {{ .Values.namespace.podSecurityEnforce | quote }}
+    pod-security.kubernetes.io/enforce: {{ $psa | quote }}
     pod-security.kubernetes.io/enforce-version: {{ .Values.namespace.podSecurityVersion | default "latest" | quote }}
-    pod-security.kubernetes.io/audit: {{ .Values.namespace.podSecurityEnforce | quote }}
+    pod-security.kubernetes.io/audit: {{ $psa | quote }}
     pod-security.kubernetes.io/audit-version: {{ .Values.namespace.podSecurityVersion | default "latest" | quote }}
-    pod-security.kubernetes.io/warn: {{ .Values.namespace.podSecurityEnforce | quote }}
+    pod-security.kubernetes.io/warn: {{ $psa | quote }}
     pod-security.kubernetes.io/warn-version: {{ .Values.namespace.podSecurityVersion | default "latest" | quote }}
     {{- end }}
 {{- end }}

@@ -2400,3 +2400,68 @@ func TestMonitoring_DashboardConfigMap_NotEmpty(t *testing.T) {
 			"dashboard %q must be non-trivial (>1000 chars); got %d", key, len(content))
 	}
 }
+
+// =============================================================================
+// InferenceRelay — US-42.8 Pod Security Admission (PSA) namespace relaxation
+// =============================================================================
+//
+// The relay-router WireGuard sidecar (root + NET_ADMIN + hostPath /dev/net/tun
+// + hostNetwork in that mode) cannot be admitted under the PSA `restricted`
+// profile. When inferenceRelay is enabled AND the chart creates the namespace,
+// the namespace template auto-widens the profile to `privileged` so the pod
+// actually starts (worklog 0398). These tests guard that contract.
+
+// findNamespace returns the Namespace doc rendered by the chart, or nil.
+func findNamespace(docs []map[string]any) map[string]any {
+	for _, d := range docs {
+		if d["kind"] == "Namespace" {
+			return d
+		}
+	}
+	return nil
+}
+
+// nsPSAEnforce returns the pod-security.kubernetes.io/enforce label value
+// on a Namespace doc, or "" if unset.
+func nsPSAEnforce(ns map[string]any) string {
+	meta, _ := ns["metadata"].(map[string]any)
+	labels, _ := meta["labels"].(map[string]any)
+	v, _ := labels["pod-security.kubernetes.io/enforce"].(string)
+	return v
+}
+
+// TestRelayRouter_PSA_NamespaceStaysRestrictedWhenRelayDisabled asserts the
+// default posture is unchanged when inferenceRelay is off: the chart-created
+// namespace enforces `restricted`.
+func TestRelayRouter_PSA_NamespaceStaysRestrictedWhenRelayDisabled(t *testing.T) {
+	docs := helmTemplate(t, "namespace:\n  create: true\n")
+	ns := findNamespace(docs)
+	require.NotNil(t, ns, "namespace must render when namespace.create=true")
+	require.Equal(t, "restricted", nsPSAEnforce(ns),
+		"namespace PSA must stay `restricted` when inferenceRelay is disabled (default posture)")
+}
+
+// TestRelayRouter_PSA_NamespaceAutoRelaxesWhenRelayEnabled asserts that
+// enabling inferenceRelay widens the chart-created namespace to `privileged`
+// so the WireGuard sidecar can be admitted. This is the load-bearing fix for
+// the "pod never starts" failure mode.
+func TestRelayRouter_PSA_NamespaceAutoRelaxesWhenRelayEnabled(t *testing.T) {
+	docs := helmTemplate(t, "namespace:\n  create: true\ncontroller:\n  inferenceRelay:\n    enabled: true\n")
+	ns := findNamespace(docs)
+	require.NotNil(t, ns)
+	require.Equal(t, "privileged", nsPSAEnforce(ns),
+		"namespace PSA must auto-widen to `privileged` when inferenceRelay.enabled + namespace.create "+
+			"(the WG sidecar needs root + NET_ADMIN + hostPath, all forbidden under `restricted`)")
+}
+
+// TestRelayRouter_PSA_OperatorOverrideRespected asserts that an operator who
+// explicitly sets podSecurityEnforce to something other than `restricted` has
+// their choice honored (the chart does not force-`privileged` an already-
+// relaxed namespace, and does not downgrade a deliberately-empty one).
+func TestRelayRouter_PSA_OperatorOverrideRespected(t *testing.T) {
+	docs := helmTemplate(t, "namespace:\n  create: true\n  podSecurityEnforce: \"baseline\"\ncontroller:\n  inferenceRelay:\n    enabled: true\n")
+	ns := findNamespace(docs)
+	require.NotNil(t, ns)
+	require.Equal(t, "baseline", nsPSAEnforce(ns),
+		"operator-set podSecurityEnforce=baseline must be respected (only `restricted` auto-widens)")
+}
