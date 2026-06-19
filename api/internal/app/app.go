@@ -30,6 +30,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/msgqueue"
 	"github.com/lenaxia/llmsafespace/api/internal/services/policy"
 	"github.com/lenaxia/llmsafespace/api/internal/services/sessionindex"
+	"github.com/lenaxia/llmsafespace/api/internal/services/sso"
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
 	"github.com/lenaxia/llmsafespace/api/internal/services/wsstate"
 	agentoc "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
@@ -167,6 +168,9 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var policySvc *policy.Service
 	var policyHandler *handlers.PolicyHandler
 	var auditHandler *handlers.AuditHandler
+	var platformAdminHandler *handlers.PlatformAdminHandler
+	var internalOrgStatusHandler *handlers.InternalOrgStatusHandler
+	var ssoHandler *handlers.SSOHandler
 	var asyncAudit *secrets.AsyncAuditLogger // populated when secrets are enabled; drained on Shutdown
 	var secretsPool *pgxpool.Pool            // closed on Shutdown
 	var dekCacheClient *redis.Client         // closed on Shutdown
@@ -308,6 +312,37 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		pgOrgStore = database.NewPgOrgStore(dbSvc.DB)
 		orgsHandler = handlers.NewOrgsHandler(pgOrgStore, svc.GetAuth())
 		orgCredsHandler = handlers.NewOrgCredentialsHandler(pgStore, pgStore, deriveServerKey, svc.GetAuth())
+
+		// US-43.10: OIDC SSO. The service reuses the auth service as the JWT
+		// issuer (GenerateToken) and the server KEK (RootKeyProvider) to encrypt
+		// the IdP client secret (D17-S4). A dedicated state-signing key is
+		// derived from the master secret so PKCE cookies are unforgeable.
+		if authSvc, ok := svc.Auth.(*auth.Service); ok {
+			stateKey := deriveServerKey("oidc-state-cookie")
+			if stateKey != nil {
+				ssoSvc, ssoErr := sso.New(pgOrgStore, dbSvc, sso.ServiceConfig{
+					TokenIssuer:         authSvc,
+					KeyProvider:         rkp,
+					StateKey:            stateKey,
+					TokenTTL:            cfg.Auth.TokenDuration,
+					RedirectBaseURL:     cfg.OIDC.RedirectBaseURL,
+					FrontendRedirectURL: cfg.OIDC.FrontendRedirectURL,
+					StateCookieName:     cfg.OIDC.StateCookieName,
+					Logger:              log,
+				})
+				if ssoErr != nil {
+					log.Error("failed to construct sso service", ssoErr)
+				} else {
+					ssoHandler = handlers.NewSSOHandler(ssoSvc, pgOrgStore, svc.GetAuth(), cfg.Auth.CookieName, cfg.OIDC.FrontendRedirectURL, log)
+				}
+			}
+		}
+
+		// US-43.19: platform-admin suspension handlers. orgStore provides
+		// UpdateOrgStatus + audit + last-admin check; dbSvc provides
+		// SetUserStatus. log surfaces best-effort audit-write failures.
+		platformAdminHandler = handlers.NewPlatformAdminHandler(pgOrgStore, dbSvc, svc.GetAuth(), log)
+		internalOrgStatusHandler = handlers.NewInternalOrgStatusHandler(pgOrgStore)
 
 		if rkp != nil {
 			keyService.SetAPIKeyStore(&apiKeyStoreAdapter{db: dbSvc}, rkp)
@@ -581,6 +616,9 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		AuditHandler:                    auditHandler,
 		RelayAdminHandler:               relayAdminHandler,
 		AdminSessionHandler:             adminSessionHandler,
+		PlatformAdminHandler:            platformAdminHandler,
+		InternalOrgStatusHandler:        internalOrgStatusHandler,
+		SSOHandler:                      ssoHandler,
 		CookieName:                      cfg.Auth.CookieName,
 	})
 

@@ -168,3 +168,104 @@ export const orgsApi = {
   listAudit: (id: string) =>
     api.get<{ items: AuditEntry[] }>(`/orgs/${id}/audit`),
 };
+
+export interface AuditListFilters {
+  orgId?: string;
+  actorId?: string;
+  domain?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface AuditListResponse {
+  items: AuditEntry[];
+  pagination?: {
+    total: number;
+    start: number;
+    end: number;
+    limit: number;
+    offset: number;
+  };
+}
+
+export const adminAuditApi = {
+  list: (filters: AuditListFilters = {}) => {
+    const params = new URLSearchParams();
+    if (filters.orgId) params.set("org_id", filters.orgId);
+    if (filters.actorId) params.set("actor_id", filters.actorId);
+    if (filters.domain) params.set("domain", filters.domain);
+    if (filters.limit != null) params.set("limit", String(filters.limit));
+    if (filters.offset != null) params.set("offset", String(filters.offset));
+    const query = params.toString();
+    return api.get<AuditListResponse>(
+      `/admin/audit${query ? `?${query}` : ""}`,
+    );
+  },
+};
+
+// --- US-43.18: Platform admin dashboard ---
+
+export type UserStatus = "active" | "suspended";
+
+export interface OrgSummary extends Organization {
+  memberCount: number;
+  workspaceCount: number;
+}
+
+export interface UserListEntry {
+  id: string;
+  email: string;
+  role: string;
+  status: UserStatus;
+  createdAt: string;
+  orgCount: number;
+  orgId?: string;
+  orgName?: string;
+}
+
+export interface AdminListFilters {
+  limit?: number;
+  offset?: number;
+  status?: OrgStatus | UserStatus;
+}
+
+export interface AdminListResponse<T> {
+  items: T[];
+  pagination?: {
+    total: number;
+    start: number;
+    end: number;
+    limit: number;
+    offset: number;
+  };
+}
+
+function adminListQuery(filters: AdminListFilters): string {
+  const params = new URLSearchParams();
+  if (filters.limit != null) params.set("limit", String(filters.limit));
+  if (filters.offset != null) params.set("offset", String(filters.offset));
+  if (filters.status) params.set("status", filters.status);
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+export const adminPlatformApi = {
+  listOrgs: (filters: AdminListFilters = {}) =>
+    api.get<AdminListResponse<OrgSummary>>(
+      `/admin/orgs${adminListQuery(filters)}`,
+    ),
+  listUsers: (filters: AdminListFilters = {}) =>
+    api.get<AdminListResponse<UserListEntry>>(
+      `/admin/users${adminListQuery(filters)}`,
+    ),
+  suspendOrg: (orgId: string) =>
+    api.post<{ status: string }>(`/admin/orgs/${orgId}/suspend`),
+  unsuspendOrg: (orgId: string) =>
+    api.post<{ status: string }>(`/admin/orgs/${orgId}/unsuspend`),
+  suspendUser: (userId: string, force = false) =>
+    api.post<{ status: string }>(
+      `/admin/users/${userId}/suspend${force ? "?force=true" : ""}`,
+    ),
+  unsuspendUser: (userId: string) =>
+    api.post<{ status: string }>(`/admin/users/${userId}/unsuspend`),
+};

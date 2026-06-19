@@ -716,6 +716,12 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 		return nil, errors.New("invalid email or password")
 	}
 
+	if user.Status == types.UserStatusSuspended {
+		s.recordFailedAttempt(ctx, email)
+		metrics.RecordAuthFailure("account_suspended")
+		return nil, errors.New("account suspended")
+	}
+
 	if !user.Active {
 		s.recordFailedAttempt(ctx, email)
 		metrics.RecordAuthFailure("account_inactive")
@@ -933,8 +939,18 @@ func (s *Service) AuthMiddleware() gin.HandlerFunc {
 		}
 
 		// Load user role into context for AdminGuard and authorization checks.
+		// D19: also enforce user-level suspension here — this is the single
+		// load-bearing gate that blocks a suspended user from EVERY
+		// authenticated endpoint (all orgs + personal). A suspended user's
+		// token/API key is still cryptographically valid; the status check is
+		// what denies access.
 		if s.dbService != nil {
-			if user, err := s.dbService.GetUser(c.Request.Context(), userID); err == nil && user != nil {
+			user, err := s.dbService.GetUser(c.Request.Context(), userID)
+			if err == nil && user != nil {
+				if user.Status == types.UserStatusSuspended {
+					c.AbortWithStatusJSON(401, gin.H{"error": "account suspended"})
+					return
+				}
 				c.Set("userRole", user.Role)
 			}
 		}
@@ -947,21 +963,34 @@ func (s *Service) AuthMiddleware() gin.HandlerFunc {
 // "userID" in the context when a valid JWT/API key is present, and calls
 // c.Next() unconditionally. Handlers that use this middleware must check
 // the userID themselves and handle the unauthenticated case.
+//
+// D19: a suspended user is treated as unauthenticated here — no userID,
+// sessionID, or role is set — so they cannot exercise any authenticated
+// capability. They retain access only to the anonymous surface (the same
+// surface any unauthenticated caller sees). The middleware still does not
+// abort, preserving its contract for public+optional-auth endpoints.
 func (s *Service) OptionalAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tokenString := s.extractToken(c)
 		if tokenString != "" {
 			userID, err := s.ValidateTokenWithClientIP(tokenString, c.ClientIP())
 			if err == nil && userID != "" {
-				c.Set("userID", userID)
-				if jti := utilities.ExtractJTI(tokenString); jti != "" {
-					c.Set("sessionID", jti)
-				} else if utilities.IsAPIKey(tokenString, s.config.Auth.APIKeyPrefix) {
-					c.Set("sessionID", "apikey:"+pkgutil.HashString(tokenString))
-				}
+				suspended := false
 				if s.dbService != nil {
-					if user, err := s.dbService.GetUser(c.Request.Context(), userID); err == nil && user != nil {
-						c.Set("userRole", user.Role)
+					if user, gerr := s.dbService.GetUser(c.Request.Context(), userID); gerr == nil && user != nil {
+						if user.Status == types.UserStatusSuspended {
+							suspended = true
+						} else {
+							c.Set("userRole", user.Role)
+						}
+					}
+				}
+				if !suspended {
+					c.Set("userID", userID)
+					if jti := utilities.ExtractJTI(tokenString); jti != "" {
+						c.Set("sessionID", jti)
+					} else if utilities.IsAPIKey(tokenString, s.config.Auth.APIKeyPrefix) {
+						c.Set("sessionID", "apikey:"+pkgutil.HashString(tokenString))
 					}
 				}
 			}

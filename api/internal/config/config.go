@@ -124,6 +124,18 @@ type Config struct {
 		FromAddress string `mapstructure:"fromAddress"`
 		BaseURL     string `mapstructure:"baseUrl"`
 	} `mapstructure:"email"`
+
+	// OIDC holds SSO login wiring (US-43.10, D17). RedirectBaseURL is the
+	// origin the IdP redirects back to after authentication; the full callback
+	// is {RedirectBaseURL}/api/v1/auth/sso/:orgSlug/callback. When empty the
+	// start endpoint derives it from the incoming request. FrontendRedirectURL
+	// is where the browser lands after a successful or failed SSO callback.
+	OIDC struct {
+		RedirectBaseURL     string `mapstructure:"redirectBaseUrl"`
+		FrontendRedirectURL string `mapstructure:"frontendRedirectUrl"`
+		// StateCookieName is the signed PKCE/state cookie name.
+		StateCookieName string `mapstructure:"stateCookieName"`
+	} `mapstructure:"oidc"`
 }
 
 // Load loads configuration from file and environment variables
@@ -286,6 +298,15 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("LLMSAFESPACE_EMAIL_BASEURL"); v != "" {
 		config.Email.BaseURL = v
+	}
+	if v := os.Getenv("LLMSAFESPACE_OIDC_REDIRECTBASEURL"); v != "" {
+		config.OIDC.RedirectBaseURL = v
+	}
+	if v := os.Getenv("LLMSAFESPACE_OIDC_FRONTENDREDIRECTURL"); v != "" {
+		config.OIDC.FrontendRedirectURL = v
+	}
+	if v := os.Getenv("LLMSAFESPACE_OIDC_STATECOOKIENAME"); v != "" {
+		config.OIDC.StateCookieName = v
 	}
 	for _, envKey := range []string{
 		"LLMSAFESPACE_BILLING_PLANPRICES_TEAM",

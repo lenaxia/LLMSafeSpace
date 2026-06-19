@@ -97,3 +97,12 @@ type AuditEntry struct {
 	Metadata  map[string]any `json:"metadata,omitempty"`
 	CreatedAt time.Time      `json:"createdAt"`
 }
+
+// AuditFilters holds optional filters for cross-org audit queries.
+type AuditFilters struct {
+	OrgID   *string
+	ActorID *string
+	Domain  *string
+	Limit   int
+	Offset  int
+}

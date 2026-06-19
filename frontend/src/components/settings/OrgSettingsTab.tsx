@@ -1,9 +1,25 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { orgsApi, type OrgResponse, type OrgPlan } from "../../api/orgs";
-import { Button } from "../ui/Button";
+import {
+  adminPlatformApi,
+  orgsApi,
+  type AdminListResponse,
+  type OrgPlan,
+  type OrgStatus,
+  type OrgSummary,
+} from "../../api/orgs";
 import { ApiClientError } from "../../api/client";
-import { useAuth } from "../../providers/AuthProvider";
+import { Badge } from "../ui/Badge";
+import { Button } from "../ui/Button";
+
+const PAGE_SIZE = 20;
+
+const STATUS_FILTERS: { value: "" | OrgStatus; label: string }[] = [
+  { value: "", label: "All statuses" },
+  { value: "active", label: "Active" },
+  { value: "suspended", label: "Suspended" },
+  { value: "pending_activation", label: "Pending" },
+];
 
 function slugify(name: string): string {
   return name
@@ -11,6 +27,12 @@ function slugify(name: string): string {
     .replace(/[^a-z0-9-]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
+}
+
+function statusVariant(status: OrgStatus) {
+  if (status === "active") return "success" as const;
+  if (status === "suspended") return "destructive" as const;
+  return "warning" as const;
 }
 
 function CreateOrgForm({
@@ -116,125 +138,211 @@ function CreateOrgForm({
   );
 }
 
-export function OrgCard({
-  org,
-  onDeleted,
-}: {
-  org: OrgResponse;
-  onDeleted: () => void;
-}) {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-
-  const handleDelete = async () => {
-    if (!confirm(`Delete "${org.name}"? This cannot be undone.`)) return;
-    setLoading(true);
-    setError("");
-    try {
-      await orgsApi.delete(org.id);
-      onDeleted();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to delete");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="rounded border border-border p-3 space-y-1">
-      <div className="flex items-center justify-between">
-        <div>
-          <span className="text-sm font-medium">{org.name}</span>
-          <span className="ml-2 text-xs text-muted-foreground">{org.slug}</span>
-        </div>
-        <span className="text-xs rounded-full bg-accent px-2 py-0.5">
-          {org.userRole}
-        </span>
-      </div>
-      <div className="text-xs text-muted-foreground">
-        {org.memberCount} member{org.memberCount !== 1 ? "s" : ""}
-      </div>
-      {error && <p className="text-xs text-red-500">{error}</p>}
-      <div className="flex gap-2 pt-1">
-        <Link
-          to={`/orgs/${org.id}`}
-          className="text-xs text-accent hover:underline"
-        >
-          Manage
-        </Link>
-        {org.userRole === "admin" && (
-          <button
-            onClick={handleDelete}
-            disabled={loading}
-            className="text-xs text-red-500 hover:text-red-400 disabled:opacity-50"
-          >
-            Delete
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
 export function OrgSettingsTab() {
-  const { user } = useAuth();
-  const isPlatformAdmin = user?.role === "admin";
-  const [orgs, setOrgs] = useState<OrgResponse[]>([]);
+  const [orgs, setOrgs] = useState<OrgSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showCreate, setShowCreate] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<"" | OrgStatus>("");
+  const [offset, setOffset] = useState(0);
+  const [total, setTotal] = useState(0);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   const fetchOrgs = useCallback(async () => {
+    setLoading(true);
+    setError("");
     try {
-      const data = await orgsApi.list();
-      setOrgs(data || []);
+      const data = await adminPlatformApi.listOrgs({
+        limit: PAGE_SIZE,
+        offset,
+        status: statusFilter || undefined,
+      });
+      const resp = data as AdminListResponse<OrgSummary>;
+      setOrgs(resp.items || []);
+      setTotal(resp.pagination?.total ?? resp.items.length);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load organisations");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [offset, statusFilter]);
 
   useEffect(() => {
     fetchOrgs();
   }, [fetchOrgs]);
 
-  if (loading) {
-    return <div className="text-sm text-muted-foreground">Loading...</div>;
-  }
+  const applyStatusFilter = (next: "" | OrgStatus) => {
+    setStatusFilter(next);
+    setOffset(0);
+  };
+
+  const handleSuspend = async (orgId: string) => {
+    if (!confirm("Suspend this organisation? All its workspaces will be suspended.")) return;
+    setBusyId(orgId);
+    try {
+      await adminPlatformApi.suspendOrg(orgId);
+      await fetchOrgs();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to suspend organisation");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleUnsuspend = async (orgId: string) => {
+    setBusyId(orgId);
+    try {
+      await adminPlatformApi.unsuspendOrg(orgId);
+      await fetchOrgs();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to unsuspend organisation");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleDelete = async (org: OrgSummary) => {
+    if (!confirm(`Delete "${org.name}"? This cannot be undone.`)) return;
+    setBusyId(org.id);
+    try {
+      await orgsApi.delete(org.id);
+      await fetchOrgs();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete organisation");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const canPrev = offset > 0 && !loading;
+  const canNext = offset + PAGE_SIZE < total && !loading;
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold">Organisations</h3>
-        {isPlatformAdmin && (
+        <div className="flex items-center gap-2">
+          <select
+            value={statusFilter}
+            onChange={(e) => applyStatusFilter(e.target.value as "" | OrgStatus)}
+            className="h-8 rounded border border-border bg-background px-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+          >
+            {STATUS_FILTERS.map((s) => (
+              <option key={s.value} value={s.value}>
+                {s.label}
+              </option>
+            ))}
+          </select>
           <Button size="sm" onClick={() => setShowCreate(true)}>
             New Organisation
           </Button>
-        )}
+        </div>
       </div>
+
+      <p className="text-xs text-muted-foreground">
+        Platform-wide view of every organisation. Suspend to halt operations;
+        workspaces are preserved and can be resumed after unsuspending.
+      </p>
 
       {error && <p className="text-xs text-red-500">{error}</p>}
 
-      {isPlatformAdmin && showCreate && (
+      {showCreate && (
         <CreateOrgForm
           onCreated={() => {
             setShowCreate(false);
+            setOffset(0);
             fetchOrgs();
           }}
           onCancel={() => setShowCreate(false)}
         />
       )}
 
-      {orgs.length === 0 && !(isPlatformAdmin && showCreate) ? (
-        <p className="text-xs text-muted-foreground">
-          You are not a member of any organisations.
-        </p>
+      {loading ? (
+        <p className="text-sm text-muted-foreground">Loading...</p>
+      ) : orgs.length === 0 ? (
+        <p className="text-xs text-muted-foreground">No organisations found.</p>
       ) : (
-        <div className="space-y-2">
-          {orgs.map((org) => (
-            <OrgCard key={org.id} org={org} onDeleted={fetchOrgs} />
-          ))}
+        <div className="rounded border border-border overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="border-b border-border bg-muted/50">
+              <tr>
+                <th className="px-3 py-2 text-left font-medium">Name</th>
+                <th className="px-3 py-2 text-left font-medium">Status</th>
+                <th className="px-3 py-2 text-left font-medium">Plan</th>
+                <th className="px-3 py-2 text-right font-medium">Members</th>
+                <th className="px-3 py-2 text-right font-medium">Workspaces</th>
+                <th className="px-3 py-2 text-left font-medium">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {orgs.map((org) => (
+                <tr key={org.id} className="border-b border-border last:border-0">
+                  <td className="px-3 py-2">
+                    <div className="font-medium">{org.name}</div>
+                    <div className="text-xs text-muted-foreground">{org.slug}</div>
+                  </td>
+                  <td className="px-3 py-2">
+                    <Badge variant={statusVariant(org.status)}>{org.status}</Badge>
+                  </td>
+                  <td className="px-3 py-2 text-muted-foreground">{org.planId}</td>
+                  <td className="px-3 py-2 text-right text-muted-foreground">
+                    {org.memberCount}
+                  </td>
+                  <td className="px-3 py-2 text-right text-muted-foreground">
+                    {org.workspaceCount}
+                  </td>
+                  <td className="px-3 py-2">
+                    <div className="flex flex-wrap gap-2">
+                      <Link
+                        to={`/orgs/${org.id}`}
+                        className="text-xs text-accent hover:underline"
+                      >
+                        Manage
+                      </Link>
+                      {org.status === "suspended" ? (
+                        <button
+                          onClick={() => handleUnsuspend(org.id)}
+                          disabled={busyId === org.id}
+                          className="text-xs text-accent hover:underline disabled:opacity-50"
+                        >
+                          Unsuspend
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleSuspend(org.id)}
+                          disabled={busyId === org.id}
+                          className="text-xs text-yellow-600 hover:underline disabled:opacity-50 dark:text-yellow-400"
+                        >
+                          Suspend
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleDelete(org)}
+                        disabled={busyId === org.id}
+                        className="text-xs text-red-500 hover:underline disabled:opacity-50"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {!loading && total > PAGE_SIZE && (
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="ghost" disabled={!canPrev} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>
+            Previous
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            {offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {total}
+          </span>
+          <Button size="sm" variant="ghost" disabled={!canNext} onClick={() => setOffset(offset + PAGE_SIZE)}>
+            Next
+          </Button>
         </div>
       )}
     </div>
