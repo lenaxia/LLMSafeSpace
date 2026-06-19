@@ -233,10 +233,23 @@ func (h *SSOHandler) OIDCEnabled(ctx context.Context) bool {
 // resolveCallbackURL builds the absolute IdP-registered callback URL for the
 // given org slug. OIDC.RedirectBaseURL wins when set; otherwise it is derived
 // from the incoming request (X-Forwarded-Proto aware).
+//
+// Security note (F11): when RedirectBaseURL is unset, the callback URL is built
+// from X-Forwarded-Proto and the Host header — both attacker-influenceable at a
+// misconfigured reverse proxy. The IdP's registered-redirect-URI check is the
+// primary mitigation (an attacker-controlled URL must match a registered URI at
+// the IdP), but production deployments SHOULD set OIDC.RedirectBaseURL to
+// remove the trust entirely. We log a warning on every fallback so operators
+// see the gap; SSO callbacks are infrequent (once per login) so this is not
+// noisy.
 func (h *SSOHandler) resolveCallbackURL(c *gin.Context, orgSlug string) string {
 	path := "/api/v1/auth/sso/" + orgSlug + "/callback"
 	if base := h.svc.RedirectBaseURL(); base != "" {
 		return strings.TrimRight(base, "/") + path
+	}
+	if h.logger != nil {
+		h.logger.Warn("OIDC redirect URL derived from forwarded headers; set oidc.redirectBaseURL in production to remove header trust",
+			"host", c.Request.Host, "slug", orgSlug)
 	}
 	scheme := "http"
 	if c.Request.TLS != nil {
@@ -288,6 +301,8 @@ func errorReason(err error) string {
 		return "provisioning_disabled"
 	case errors.Is(err, sso.ErrUserSuspended):
 		return "suspended"
+	case errors.Is(err, sso.ErrEmailUnverified):
+		return "email_unverified"
 	case errors.Is(err, sso.ErrStateExpired), errors.Is(err, sso.ErrStateInvalid):
 		return "state_invalid"
 	default:

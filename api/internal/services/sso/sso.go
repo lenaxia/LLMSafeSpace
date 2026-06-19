@@ -44,6 +44,13 @@ var (
 	ErrStateInvalid     = errors.New("invalid SSO state")
 	ErrAutoProvisionOff = apierrors.NewForbiddenError("account provisioning is disabled; contact your administrator", nil)
 	ErrUserSuspended    = apierrors.NewForbiddenError("account suspended", nil)
+	// ErrEmailUnverified fires when the ID token's email claim is not verified
+	// by the IdP. Per OIDC spec the `email` claim MUST NOT be trusted for
+	// account-binding decisions (auto-provision or login-match) without
+	// email_verified==true; otherwise a permissive IdP that lets a user
+	// register victim@example.com unverified would let the attacker SSO into
+	// the victim's existing account (US-43.10 / F8).
+	ErrEmailUnverified = apierrors.NewForbiddenError("identity provider has not verified the email claim", nil)
 )
 
 // orgStore is the org-data subset the SSO service depends on. PgOrgStore
@@ -385,6 +392,15 @@ func (s *Service) HandleCallback(ctx context.Context, orgSlug, redirectURL, code
 	if claims.Email == "" {
 		return nil, errors.New("id token missing email claim")
 	}
+	// F8 (US-43.10 / D17): the OIDC `email` claim is only authoritative for
+	// account binding when the IdP has verified it. An absent or false
+	// email_verified claim is treated as unverified (per spec) so a permissive
+	// IdP cannot be used to take over an existing account by registering its
+	// email without verification. Org admins are responsible for configuring an
+	// IdP that emits a true email_verified claim.
+	if !claims.EmailVerified {
+		return nil, ErrEmailUnverified
+	}
 
 	user, created, err := s.resolveUser(ctx, claims.Email, claims.Name, cfg.AutoProvision)
 	if err != nil {
@@ -566,10 +582,11 @@ func (s *Service) verifyStateCookie(value string) (*cookiePayload, error) {
 // supports both the OIDC `groups` claim and Azure AD's `memberOf` (array of
 // strings) as a compatibility fallback.
 type oidcClaims struct {
-	Email    string   `json:"email"`
-	Name     string   `json:"name"`
-	Groups   []string `json:"groups"`
-	MemberOf []string `json:"memberOf"`
+	Email         string   `json:"email"`
+	EmailVerified bool     `json:"email_verified"`
+	Name          string   `json:"name"`
+	Groups        []string `json:"groups"`
+	MemberOf      []string `json:"memberOf"`
 }
 
 // effectiveGroups returns groups ∪ memberOf for role-mapping evaluation.
