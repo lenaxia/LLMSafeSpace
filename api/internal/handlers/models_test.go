@@ -487,8 +487,8 @@ func TestListModels_WrongPassword_Returns502(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	// opencode returns 401 → handler passes through as error
-	require.NotEqual(t, http.StatusOK, w.Code)
+	// opencode returns 401 (wrong password) → handler returns 502 Bad Gateway
+	require.Equal(t, http.StatusBadGateway, w.Code)
 }
 
 // Ensure unused import doesn't break compilation.
