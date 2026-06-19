@@ -35,6 +35,15 @@ spec:
         {{- if and .Values.monitoring.enabled .Values.monitoring.serviceMonitors.enabled }}
         {{- $metricsAddr = "0.0.0.0:8080" }}
         {{- end }}
+        {{- /* US-43.19 / D20: the in-cluster API service URL the controller
+               polls to drive org-level workspace suspension. When
+               controller.apiServiceURL is empty the chart derives the default
+               from the release name + namespace + API service port so D20 is
+               functional out of the box (worklog 0372 / F1). */ -}}
+        {{- $apiServiceURL := .Values.controller.apiServiceURL }}
+        {{- if not $apiServiceURL }}
+        {{- $apiServiceURL = printf "http://%s-api.%s.svc:%v" (include "llmsafespaces.fullname" .) .Release.Namespace .Values.api.service.port }}
+        {{- end }}
         - name: manager
           image: {{ include "llmsafespaces.controller.image" . }}
           imagePullPolicy: {{ .Values.controller.image.pullPolicy }}
@@ -86,6 +95,11 @@ spec:
             - --enable-inference-relay=true
             - --relay-router-url={{ .Values.controller.inferenceRelay.routerURL | default "http://relay-router:8080" }}
             {{- end }}
+            {{/* F1 (worklog 0372): wire --api-service-url so org-suspension is
+                  functional in Helm deployments. The internal-token env below
+                  authenticates the controller→API call (the endpoint fails
+                  closed without it). */}}
+            - --api-service-url={{ $apiServiceURL }}
           ports:
             - name: metrics
               containerPort: {{ $metricsAddr | regexFind "[0-9]+$" | atoi }}
@@ -106,19 +120,25 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.controller.resources | nindent 12 }}
-          {{- /* Inject inference-relay-secret from the managed K8s Secret so it
-                 does not appear as a plaintext CLI arg in the pod spec. The
-                 controller reads this env var as $(INFERENCE_RELAY_SECRET) in
-                 its --inference-relay-secret arg above. */ -}}
-          {{- if and .Values.inferenceRelayURL (or .Values.externalSecret.create .Values.externalSecret.existingSecret) }}
+          {{/* F1+F5 (worklog 0372): LLMSAFESPACES_INTERNAL_TOKEN authenticates
+                 the controller→API internal org-status call. The API endpoint
+                 FAILS CLOSED without it, so this env var is always wired
+                 (never optional). INFERENCE_RELAY_SECRET remains conditional on
+                 the relay being configured. */}}
           env:
+            - name: LLMSAFESPACES_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "llmsafespaces.secretName" . }}
+                  key: internal-token
+            {{- if and .Values.inferenceRelayURL (or .Values.externalSecret.create .Values.externalSecret.existingSecret) }}
             - name: INFERENCE_RELAY_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ include "llmsafespaces.secretName" . }}
                   key: inference-relay-secret
                   optional: true
-          {{- end }}
+            {{- end }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp

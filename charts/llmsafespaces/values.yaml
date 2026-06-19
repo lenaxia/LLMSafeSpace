@@ -470,6 +470,24 @@ networkPolicy:
     app.kubernetes.io/name: prometheus
   prometheusNamespace: ""
 
+  # F5 (worklog 0372): opt-in default-deny ingress for the API pod itself.
+  # When true, the chart renders an API NetworkPolicy that admits only the
+  # controller (internal org-status polls), kube-system (kubelet probes), and
+  # the pod selector below (typically your ingress controller / frontend).
+  # DEFAULT IS FALSE because the user-traffic source is deployment-specific
+  # (ingress controller labels vary) and a wrong allowlist would lock users
+  # out. The internal org-status endpoint is already authenticated by the
+  # mandatory LLMSAFESPACES_INTERNAL_TOKEN (fail-closed), so this policy is
+  # defense-in-depth, not the primary control. Enable after confirming the
+  # ingress source selector matches your environment.
+  apiIngressRestricted: false
+  # Pod selector (in the release namespace) allowed to send user traffic to
+  # the API when apiIngressRestricted=true. Defaults to the frontend pods;
+  # override to your ingress controller (e.g. {ingress-nginx: controller}).
+  apiIngressSourcePodSelector:
+    app.kubernetes.io/name: llmsafespaces
+    app.kubernetes.io/component: frontend
+
   # DNS policy: where to send port-53 traffic. Default targets the
   # kube-system/kube-dns service which works on most clusters
   # (kube-dns, CoreDNS). Override on clusters with non-standard DNS.
