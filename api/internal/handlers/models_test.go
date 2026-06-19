@@ -1278,7 +1278,6 @@ func TestListModels_RelayActive_PersonalKey_NoRemap(t *testing.T) {
 // model cache so the next ListModels call returns fresh data after a credential
 // bind activates new providers (Gap6 — worklog 0186).
 func TestDoReload_EvictsModelCache(t *testing.T) {
-	clearModelCache()
 	gin.SetMode(gin.TestMode)
 
 	const workspaceID = "ws-evict-test"
@@ -1301,17 +1300,21 @@ func TestDoReload_EvictsModelCache(t *testing.T) {
 	defer agentdSrv.Close()
 
 	// Seed the model cache with stale data for this workspace.
-	defaultModelCache.Set(workspaceID, []byte(`[{"id":"stale-model","providerID":"old"}]`))
-	require.NotNil(t, defaultModelCache.Get(workspaceID), "cache must be seeded before test")
+	// M2-a: SecretsHandler uses an injected cache, not the package global.
+	// Wire a fresh cache into the handler and seed it.
+	testCache := NewInMemoryModelCache()
+	testCache.Set(workspaceID, []byte(`[{"id":"stale-model","providerID":"old"}]`))
+	require.NotNil(t, testCache.Get(workspaceID), "cache must be seeded before test")
 
 	handler := NewSecretsHandler(nil)
 	handler.SetPodIPResolver(&staticPodIPResolver{addr: "127.0.0.1"})
+	handler.SetModelCache(testCache)
 
 	result, err := handler.doReload(t.Context(), "user-1", workspaceID, []byte(`[]`))
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
 	// Cache must be evicted after a successful reload.
-	require.Nil(t, defaultModelCache.Get(workspaceID),
+	require.Nil(t, testCache.Get(workspaceID),
 		"model cache must be evicted after doReload so the next ListModels fetches fresh data")
 }
