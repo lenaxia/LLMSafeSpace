@@ -45,6 +45,12 @@ import (
 	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
+// Compile-time check that *WorkspaceClient satisfies the caller-shaped
+// ModelClient interface (H2-a). If WorkspaceClient.ListModels or
+// .PatchConfig signature drifts, this fails at build time instead of at
+// the SetAgentClient call site.
+var _ handlers.ModelClient = (*agentoc.WorkspaceClient)(nil)
+
 type App struct {
 	config             *config.Config
 	logger             *logger.Logger

@@ -85,16 +85,19 @@ func main() {
 	proc := startManagedProcess(rootCtx, supervise, client)
 
 	startedAt := time.Now()
+	agentConfigPath := envOrDefault("LLMSAFESPACES_AGENT_CONFIG_PATH", agentd.AgentConfigPath)
+	agentConfigWriter := newAgentConfigWriter(agentConfigPath)
 	deps := serverDeps{
-		client:          client,
-		cache:           &providerCache{},
-		sseTracker:      newSessionStatusTracker(),
-		pressureMonitor: newMemoryPressureMonitor(),
-		healthCache:     newHealthzCache(),
-		gr:              newGateRecorder(startedAt, agentdGateDurationSeconds, log),
-		proc:            proc,
-		password:        password,
-		startedAt:       startedAt,
+		client:            client,
+		cache:             &providerCache{},
+		sseTracker:        newSessionStatusTracker(),
+		pressureMonitor:   newMemoryPressureMonitor(),
+		healthCache:       newHealthzCache(),
+		gr:                newGateRecorder(startedAt, agentdGateDurationSeconds, log),
+		proc:              proc,
+		password:          password,
+		startedAt:         startedAt,
+		agentConfigWriter: agentConfigWriter,
 	}
 
 	startBackgroundLoops(bgCtx, &bgWg, deps)
@@ -172,13 +175,14 @@ func maybeStartRelayInjector(rootCtx context.Context, deps serverDeps) {
 		authJSONPath = filepath.Join(xdgData, "opencode", "auth.json")
 	}
 	startRelayInjector(rootCtx, relayInjectorConfig{
-		RelayURL:         relayURL,
-		OpenCodeBaseURL:  getAgentAddr(),
-		OpenCodePassword: deps.password,
-		AgentConfigPath:  envOrDefault("LLMSAFESPACES_AGENT_CONFIG_PATH", agentd.AgentConfigPath),
-		AuthJSONPath:     authJSONPath,
-		HealthCheck:      func() bool { snap := deps.healthCache.Snapshot(); return snap.Initialized && snap.Healthy },
-		KillOpenCode:     func() { deps.proc.restart() }, //nolint:contextcheck // healthProbeAfterRestart intentionally uses context.Background() to outlive the triggering request
+		RelayURL:          relayURL,
+		OpenCodeBaseURL:   getAgentAddr(),
+		OpenCodePassword:  deps.password,
+		AgentConfigPath:   envOrDefault("LLMSAFESPACES_AGENT_CONFIG_PATH", agentd.AgentConfigPath),
+		AuthJSONPath:      authJSONPath,
+		AgentConfigWriter: deps.agentConfigWriter,
+		HealthCheck:       func() bool { snap := deps.healthCache.Snapshot(); return snap.Initialized && snap.Healthy },
+		KillOpenCode:      func() { deps.proc.restart() }, //nolint:contextcheck // healthProbeAfterRestart intentionally uses context.Background() to outlive the triggering request
 	})
 }
 

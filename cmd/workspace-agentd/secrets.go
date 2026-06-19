@@ -540,6 +540,12 @@ type reloadSecretsDeps struct {
 	// logic falls back to immediate-restart-on-empty-tracker).
 	Lister sessionLister
 
+	// AgentConfigWriter is the single writer of agent-config.json. The
+	// reload handler calls SetProviders + Rebuild after formatting the
+	// staged credentials, replacing the old FlushProviders + manual relay
+	// re-merge sequence. Required.
+	AgentConfigWriter *AgentConfigWriter
+
 	// RestartReasonMarkerPath overrides where the restart-reason marker is
 	// written. Empty falls back to the package const RestartReasonMarkerPath
 	// (production). Tests inject a path under t.TempDir() (or a sabotaged
@@ -605,41 +611,38 @@ func reloadSecretsHandler(cfg materializeConfig, deps reloadSecretsDeps) http.Ha
 		reloadHTTPClient := &http.Client{Timeout: 15 * time.Second}
 		m.EnrichProviders(enrichProviderModels(reqCtx, cfg.enricherCacheDir, reloadHTTPClient))
 
-		// Flush staged llm-provider secrets to AgentConfigPath.
-		// This MUST succeed before we notify the agent of config changes.
-		if err := m.FlushProviders(opencode.FormatOpenCodeConfig); err != nil {
+		// Format staged llm-provider secrets and update the AgentConfigWriter.
+		// The writer is the sole writer of agent-config.json — it merges the
+		// new providers with any existing model and relay config, then writes
+		// atomically (temp + rename). This eliminates the four-writer race
+		// that previously required a manual relay re-merge after FlushProviders.
+		formatted, fmtErr := m.FormatProviders(opencode.FormatOpenCodeConfig)
+		if fmtErr != nil {
 			reloadMu.Unlock()
-			log.Error("reload-secrets: flush providers failed", zap.Error(err))
+			log.Error("reload-secrets: format providers failed", zap.Error(fmtErr))
 			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "flush providers: " + err.Error()})
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "format providers: " + fmtErr.Error()})
 			return
 		}
-
-		// Re-merge relay config into the freshly-written agent-config.json.
-		// FlushProviders writes only credential-sourced providers and has no
-		// knowledge of the relay injector's disabled_providers + opencode-relay
-		// block. Without this step, every credential bind permanently removes
-		// the relay config until the next pod restart.
-		//
-		// nil models means: relay injector has not yet run, was skipped (personal
-		// key), or failed. In all three cases we correctly skip re-injection:
-		//   - Not yet run: relay injector fires at ~T+7s (opencode health check
-		//     passes at T+5s, model fetch + config write adds ~2s) and writes its
-		//     own config. Any reload in the T+0..T+7s window leaves the config
-		//     without relay temporarily; the injector corrects it on completion.
-		//   - Skipped: user routes directly; injecting relay would break them.
-		//   - Failed: nothing to inject.
-		if relayURL := os.Getenv("INFERENCE_RELAY_BASEURL"); relayURL != "" {
-			if models := getActiveRelayModels(); models != nil {
-				if cfgBytes, buildErr := buildRelayConfig(cfg.agentConfigPath, relayURL, models); buildErr != nil {
-					log.Warn("reload-secrets: failed to re-merge relay config after flush",
-						zap.Error(buildErr))
-				} else if writeErr := os.WriteFile(cfg.agentConfigPath, cfgBytes, 0o600); writeErr != nil {
-					log.Warn("reload-secrets: failed to write re-merged relay config",
-						zap.Error(writeErr))
-				} else {
-					log.Info("reload-secrets: re-merged relay config after credential flush")
-				}
+		if formatted != nil && deps.AgentConfigWriter != nil {
+			if err := deps.AgentConfigWriter.setProviders(formatted); err != nil {
+				reloadMu.Unlock()
+				log.Error("reload-secrets: setProviders failed", zap.Error(err))
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "set providers: " + err.Error()})
+				return
+			}
+			if rbErr := deps.AgentConfigWriter.rebuild(); rbErr != nil {
+				// C1 regression fix: reset() already deleted agent-config.json.
+				// If rebuild fails (e.g. disk full), the file is ABSENT. Restarting
+				// opencode now would boot with no provider config — silent credential
+				// loss. Abort with 500 (matching the old FlushProviders failure path)
+				// so the running opencode keeps its in-memory config.
+				reloadMu.Unlock()
+				log.Error("reload-secrets: agent-config writer rebuild failed", zap.Error(rbErr))
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "agent-config rebuild: " + rbErr.Error()})
+				return
 			}
 		}
 
