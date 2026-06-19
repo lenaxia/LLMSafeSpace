@@ -19,6 +19,8 @@ jobs:
        startsWith(github.event.comment.body, '/explain') ||
        startsWith(github.event.comment.body, '/triage') ||
        startsWith(github.event.comment.body, '/help') ||
+       startsWith(github.event.comment.body, '/design') ||
+       startsWith(github.event.comment.body, '/merge') ||
        contains(github.event.comment.body, ' /ai') ||
        contains(github.event.comment.body, ' /review') ||
        contains(github.event.comment.body, ' /fix') ||
@@ -28,7 +30,9 @@ jobs:
        contains(github.event.comment.body, ' /security') ||
        contains(github.event.comment.body, ' /explain') ||
        contains(github.event.comment.body, ' /triage') ||
-       contains(github.event.comment.body, ' /help')) &&
+       contains(github.event.comment.body, ' /help') ||
+       contains(github.event.comment.body, ' /design') ||
+       contains(github.event.comment.body, ' /merge')) &&
       (github.event.comment.author_association == 'OWNER' ||
        github.event.comment.author_association == 'MEMBER' ||
        github.event.comment.author_association == 'COLLABORATOR')
@@ -58,10 +62,16 @@ jobs:
       #   /analyze [text]   → analyze.md + optional focus
       #   /explain [text]   → explain.md + required topic
       #   /triage [text]    → triage.md + optional context
+      #   /design [text]    → design.md + code-change-workflow.md + optional focus (HOLDS merge)
+      #   /merge            → merge.md (finalize an approved PR; no code changes)
       #   /help             → help.md (full command reference)
       #   /ai [text]        → original behavior (context-dependent)
       #   /ai on PR         → full re-review (pr-review.md)
       #   /ai on issue      → issue responder (issue-responder.md)
+      #
+      # Routing logic lives in .github/scripts/route-command.sh (sourced) so it
+      # is exercised by tests/gharouter/route_test.go — a regression guard for
+      # command detection, NOTE extraction, --no-merge hold, and prompt assembly.
       - name: Build prompt
         env:
           COMMENT_BODY: ${{ github.event.comment.body }}
@@ -69,127 +79,14 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-
-          CONTEXT_FILE=".github/prompts/context.md"
-          CORE_FILE=".github/prompts/core-rules.md"
-          WORKFLOW_FILE=".github/prompts/code-change-workflow.md"
-          OUT="/tmp/opencode_prompt.txt"
-
-          # Detect which command was used (check start of comment first, then inline).
-          # Each pattern requires the command keyword followed by end-of-string or
-          # a space — this prevents false matches like /testing → /test or /fixing → /fix.
-          COMMAND=""
-          case "$COMMENT_BODY" in
-            /implement\ *|/implement) COMMAND="/implement" ;;
-            /security\ *|/security)   COMMAND="/security" ;;
-            /analyze\ *|/analyze)     COMMAND="/analyze" ;;
-            /review\ *|/review)       COMMAND="/review" ;;
-            /explain\ *|/explain)     COMMAND="/explain" ;;
-            /triage\ *|/triage)       COMMAND="/triage" ;;
-            /test\ *|/test)           COMMAND="/test" ;;
-            /fix\ *|/fix)             COMMAND="/fix" ;;
-            /help\ *|/help)           COMMAND="/help" ;;
-            /ai\ *|/ai)               COMMAND="/ai" ;;
-            *" /implement "*) COMMAND="/implement" ;;
-            *" /security "*)  COMMAND="/security" ;;
-            *" /analyze "*)   COMMAND="/analyze" ;;
-            *" /review "*)    COMMAND="/review" ;;
-            *" /explain "*)   COMMAND="/explain" ;;
-            *" /triage "*)    COMMAND="/triage" ;;
-            *" /test "*)      COMMAND="/test" ;;
-            *" /fix "*)       COMMAND="/fix" ;;
-            *" /help "*)      COMMAND="/help" ;;
-            *" /ai "*)        COMMAND="/ai" ;;
-            *)               COMMAND="/ai" ;;
-          esac
-
-          NOTE="$(printf '%s' "$COMMENT_BODY" | sed "s|.*${COMMAND}||" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')"
-
-          # Write context header + core rules
-          cat "$CONTEXT_FILE" > "$OUT"
-          printf '\n\n---\n\n' >> "$OUT"
-          cat "$CORE_FILE" >> "$OUT"
-          printf '\n\n---\n\n' >> "$OUT"
-
-          # Route to command-specific prompt
-          case "$COMMAND" in
-            /review)
-              cat ".github/prompts/pr-review.md" >> "$OUT"
-              if [ -n "$NOTE" ]; then
-                printf '\n\nAdditional review focus from collaborator:\n\n> %s\n' "$NOTE" >> "$OUT"
-              fi
-              printf '\n\nA collaborator requested an explicit review using `/review`.\n' >> "$OUT"
-              ;;
-            /fix)
-              cat ".github/prompts/fix.md" >> "$OUT"
-              printf '\n\n' >> "$OUT"
-              cat "$WORKFLOW_FILE" >> "$OUT"
-              if [ -n "$NOTE" ]; then
-                printf '\n\nBug or issue to fix:\n\n> %s\n' "$NOTE" >> "$OUT"
-              fi
-              ;;
-            /implement)
-              cat ".github/prompts/implement.md" >> "$OUT"
-              printf '\n\n' >> "$OUT"
-              cat "$WORKFLOW_FILE" >> "$OUT"
-              if [ -n "$NOTE" ]; then
-                printf '\n\nFeature or story to implement:\n\n> %s\n' "$NOTE" >> "$OUT"
-              fi
-              ;;
-            /test)
-              cat ".github/prompts/test.md" >> "$OUT"
-              printf '\n\n' >> "$OUT"
-              cat "$WORKFLOW_FILE" >> "$OUT"
-              if [ -n "$NOTE" ]; then
-                printf '\n\nTarget to write or improve tests for:\n\n> %s\n' "$NOTE" >> "$OUT"
-              fi
-              ;;
-            /security)
-              cat ".github/prompts/security.md" >> "$OUT"
-              printf '\n\n' >> "$OUT"
-              cat "$WORKFLOW_FILE" >> "$OUT"
-              if [ -n "$NOTE" ]; then
-                printf '\n\nSecurity review focus:\n\n> %s\n' "$NOTE" >> "$OUT"
-              fi
-              ;;
-            /analyze)
-              cat ".github/prompts/analyze.md" >> "$OUT"
-              if [ -n "$NOTE" ]; then
-                printf '\n\nAnalysis focus:\n\n> %s\n' "$NOTE" >> "$OUT"
-              fi
-              ;;
-            /explain)
-              cat ".github/prompts/explain.md" >> "$OUT"
-              if [ -n "$NOTE" ]; then
-                printf '\n\nTopic to explain:\n\n> %s\n' "$NOTE" >> "$OUT"
-              fi
-              ;;
-            /triage)
-              cat ".github/prompts/triage.md" >> "$OUT"
-              if [ -n "$NOTE" ]; then
-                printf '\n\nTriage context:\n\n> %s\n' "$NOTE" >> "$OUT"
-              fi
-              ;;
-            /help)
-              cat ".github/prompts/help.md" >> "$OUT"
-              ;;
-            /ai)
-              if [ -n "$NOTE" ]; then
-                printf 'A collaborator has asked:\n\n> %s\n\nAddress this request. For any code changes: create a feature branch, open a PR, never commit to main directly.\n' "$NOTE" >> "$OUT"
-              elif [ -n "$PR_URL" ] || [ "$EVENT_NAME" = "pull_request_review_comment" ]; then
-                cat ".github/prompts/pr-review.md" >> "$OUT"
-                printf '\n\nA collaborator triggered a re-review by posting `/ai`. Re-assess the PR in full, taking into account all commits pushed since the last review. Note what changed since the previous review if one exists.\n' >> "$OUT"
-              else
-                cat ".github/prompts/issue-responder.md" >> "$OUT"
-                printf '\n\nA collaborator triggered you by posting `/ai`. Analyze the full issue thread and take the appropriate action.\n' >> "$OUT"
-              fi
-              ;;
-          esac
+          # shellcheck source=.github/scripts/route-command.sh
+          source .github/scripts/route-command.sh
+          OUT_FILE=/tmp/opencode_prompt.txt route_command
 
           # Export as multiline GITHUB_ENV entry
           {
             echo "OPENCODE_PROMPT<<__PROMPT_EOF__"
-            cat "$OUT"
+            cat "$OUT_FILE"
             echo "__PROMPT_EOF__"
           } >> "$GITHUB_ENV"
 

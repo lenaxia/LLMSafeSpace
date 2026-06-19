@@ -13,6 +13,8 @@ The following commands are available on this issue/PR thread. Reply with one to 
 | `/explain <topic>` | Explain code, architecture, or data flow. Posts explanation as a comment. No code changes. |
 | `/security [text]` | Security-focused review against `design/SECURITY.md`. |
 | `/triage [text]` | Triage this issue — categorize, prioritize, assess impact, suggest labels. |
+| `/design [text]` | Iterate on a design doc under `design/` before implementing/fixing. Opens a PR, iterates through review, then **holds** (never auto-merges). |
+| `/merge` | Explicitly merge an approved PR (squash). Use after `/design` or a `--no-merge` run. |
 | `/help` | Show the full command reference. |
 
-**All commands are available to repository owners, members, and collaborators.** Code-change commands (`/fix`, `/implement`, `/test`, `/security`) follow the branch → PR → review → iterate → merge workflow and never commit to `main` directly.
+**All commands are available to repository owners, members, and collaborators.** Code-change commands (`/fix`, `/implement`, `/test`, `/security`) auto-merge after approval by default — append `--no-merge` to hold for an explicit `/merge`. `/design` always holds. None of these ever commit to `main` directly.
