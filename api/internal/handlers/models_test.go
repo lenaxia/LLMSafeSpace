@@ -249,8 +249,9 @@ func TestSetModel_HappyPath(t *testing.T) {
 	var resp map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	require.Equal(t, "anthropic/claude-sonnet-4-5", resp["model"])
-	// applied is always false — no live push (PATCH /global/config disposed all
-	// instances, which aborts streams; removed per Epic 27a principles)
+	// applied is false because this test uses NewModelsHandler(nil) — no
+	// AgentClient wired, so the live PATCH to opencode cannot execute.
+	// The model IS persisted to workspace metadata (verified below).
 	require.Equal(t, false, resp["applied"])
 
 	// Verify workspace metadata was updated.

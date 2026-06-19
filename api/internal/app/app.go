@@ -430,9 +430,6 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		if pwGetter := proxyHandler.GetPasswordGetter(); pwGetter != nil {
 			agentReloadHandler.SetPasswordGetter(pwGetter)
 			bulkReloadHandler.SetPasswordGetter(pwGetter)
-			if secretsHandler != nil {
-				secretsHandler.SetPasswordGetter(pwGetter)
-			}
 			// US-29.5: construct ModelsHandler with AgentClient now that
 			// the password getter is available.
 			if modelsHandler != nil {

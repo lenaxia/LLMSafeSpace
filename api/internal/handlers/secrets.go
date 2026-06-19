@@ -26,7 +26,6 @@ type SecretsHandler struct {
 	logger           pkginterfaces.LoggerInterface
 	passwordVerifier PasswordVerifier
 	credStateWriter  CredentialStateWriter
-	passwordGetter   func(ctx context.Context, workspaceID string) (string, error)
 }
 
 // OrgPolicyChecker is the minimal interface needed to filter models
@@ -119,13 +118,6 @@ func (h *SecretsHandler) SetSecretsManifestWriter(w SecretsManifestWriter) {
 // is exactly Bug 2 in worklog 0085 — do not leave nil in production).
 func (h *SecretsHandler) SetLogger(l pkginterfaces.LoggerInterface) {
 	h.logger = l
-}
-
-// SetPasswordGetter injects the workspace password getter for authenticated
-// opencode calls (ListModels, SetModel). Without this, model operations
-// that require direct opencode communication will fail with 503.
-func (h *SecretsHandler) SetPasswordGetter(getter func(ctx context.Context, workspaceID string) (string, error)) {
-	h.passwordGetter = getter
 }
 
 // CreateSecret handles POST /api/v1/secrets
