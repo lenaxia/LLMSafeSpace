@@ -150,9 +150,62 @@ Postgres owns everything that is a record with identity and financial consequenc
 (billing periods, inference sessions, workspace lifecycle events). The gateway fans out
 to both from the same event stream.
 
+### Decision 7: The TSDB is optional; the billing pipeline is standalone
+
+Added 2026-06-19. The original design coupled billing metering to VictoriaMetrics —
+the gateway fanned out to both Postgres (billing) and VM (operational), and US-33.2
+deployed VM as a hard dependency. This is wrong for three reasons:
+
+1. **Billing doesn't need a TSDB.** Billing accuracy depends on Postgres
+   (`usage_events` with exact event timestamps). The TSDB feeds dashboards —
+   operational, not financial. A platform without a TSDB still bills correctly;
+   a platform without Postgres cannot bill at all.
+
+2. **A TSDB is a specialized operational component** that operators may already
+   own (Datadog, New Relic, CloudWatch, their own Prometheus). Forcing a specific
+   product (VictoriaMetrics) as a hard dependency is inconsistent with how the
+   platform handles other stateful infra. Postgres and Redis are required but
+   operator-supplied; the TSDB should follow the same model — or be deployable
+   in-cluster as a convenience.
+
+3. **The existing chart already has the observability wiring.** Dashboards
+   (`operational.json`, `billing.json`), PrometheusRules (18 alerts), and
+   ServiceMonitors (API, controller, agentd) ship today. They work against any
+   Prometheus-compatible TSDB. The chart's `monitoring.enabled` flag controls
+   whether these resources are rendered. Epic 33 should extend this pattern, not
+   replace it with a VictoriaMetrics-specific deployment.
+
+**Resolution:**
+
+- The **billing pipeline** (agentd → WAL → gateway → Postgres) has zero external
+  dependencies beyond Postgres. It is always on. It is the load-bearing path.
+- The **observability fan-out** (gateway → TSDB) is configured via
+  `EVENTS_TSDB_URL` env var on the gateway. When unset, the gateway skips the
+  TSDB write and logs a debug message. When set, the gateway converts resource
+  samples + state events to Prometheus remote_write format and pushes to the
+  configured URL (VictoriaMetrics, Cortex, Mimir, Thanos receive, or any
+  remote_write-compatible backend).
+- The **in-cluster TSDB** (VictoriaMetrics single-node + vmagent) is an optional
+  Helm value (`monitoring.tsdb.deploy: true`, default `false`). When enabled, the
+  chart deploys VictoriaMetrics and vmagent, sets `EVENTS_TSDB_URL` on the gateway
+  automatically, and the existing dashboards/alerts/ServiceMonitors light up.
+  When disabled, operators point their own TSDB at the ServiceMonitors.
+- Resource samples (CPU/memory/disk at 1s) are **only pushed to the TSDB**, never
+  to Postgres. If the TSDB is not configured, resource samples are silently
+  dropped (they have no billing value). Tier 1 + Tier 2 events always go to
+  Postgres regardless of TSDB configuration.
+
 ---
 
 ## Architecture
+
+> **Updated 2026-06-19 (TSDB separation).** The billing pipeline (agentd →
+> gateway → Postgres) has **zero external dependencies** beyond the Postgres
+> the platform already requires. The observability stack (TSDB + Grafana) is
+> **optional** — deployed in-cluster when `monitoring.enabled: true`, or
+> pointed at an operator-supplied Prometheus via the existing ServiceMonitor
+> pattern. The gateway writes to Postgres unconditionally; it writes to the
+> TSDB only when configured. See "Decision 7: TSDB is optional" below.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -169,36 +222,44 @@ to both from the same event stream.
 │  │                                                                  │  │
 │  │  GatewayClient                                                   │  │
 │  │  - single push target                                            │  │
-│  │  - WAL for Tier 1 events (emptyDir /var/lib/agentd/wal/)        │  │
+│  │  - WAL for Tier 1 events (/tmp/agentd-wal/ on PVC)              │  │
 │  │  - batches Tier 2 + resource samples (1s flush)                 │  │
 │  └──────────────────────────────┬───────────────────────────────────┘  │
 │                                 │ POST /ingest (1/second)              │
 └─────────────────────────────────┼───────────────────────────────────── ┘
                                   │
-┌─────────────────────────────────┼─────────────────────────────────────┐
-│ node (kubelet)                  │                                      │
-│  ┌────────────────────┐         │                                      │
-│  │ cAdvisor           │         │                                      │
-│  │ /metrics/cadvisor  │         │                                      │
-│  └─────────┬──────────┘         │                                      │
-└────────────┼───────────────────────────────────────────────────────────┘
-             │ scrape (vmagent, 15s)       │
-             │ node-level fleet metrics    │
-             ▼                            ▼
-      vmagent                    events-gateway (2-3 replicas)
-      (relabels, remote_write)   │
-             │                   ├──→ VictoriaMetrics remote_write
-             │                   │    - pod state gauges
-             ▼                   │    - cpu/memory/disk per workspace (1s)
-      VictoriaMetrics             │    - inference counters
-      (TSDB, 90d retention)      │    - fleet operational counters
-             ▲                   │
-             └───────────────────┘
+                           events-gateway (2-3 replicas)
                                   │
-                                  └──→ Postgres
-                                       - usage_events (compute_seconds, llm_tokens)
-                                       - workspace_events
-                                       - workspace_events_dlq
+                                  ├──→ Postgres (REQUIRED — billing ledger)
+                                  │    - usage_events (compute_seconds, llm_tokens)
+                                  │    - workspace_events
+                                  │    - workspace_events_dlq
+                                  │
+                                  ├──→ TSDB (OPTIONAL — operational dashboards)
+                                  │    - pod state gauges
+                                  │    - cpu/memory/disk per workspace (1s)
+                                  │    - inference counters
+                                  │    Connected only when EVENTS_TSDB_URL is set.
+                                  │    VictoriaMetrics remote_write OR Prometheus
+                                  │    remote_write — gateway is backend-agnostic.
+
+┌──────────────────────────────────────────────────────────────────────┐
+│ OPTIONAL: in-cluster observability (monitoring.enabled: true)        │
+│                                                                      │
+│  vmagent ──scrape──→ cAdvisor (nodes, 15s)                          │
+│     │                API server /metrics                             │
+│     │                Controller /metrics                             │
+│     │                                                                │
+│     ▼                                                                │
+│  VictoriaMetrics ←── remote_write ←── events-gateway (when TSDB on) │
+│  (TSDB, 90d retention)                                              │
+│     │                                                                │
+│     ▼                                                                │
+│  Grafana                                                             │
+│  - operational.json (shipped, 1036 lines, 42+ panels)               │
+│  - billing.json (shipped, 606 lines)                                │
+│  - Postgres datasource (for per-customer SQL panels)                │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -930,10 +991,11 @@ func (g *Gateway) handleIngest(c *gin.Context) {
         }
     }
 
-    // Resource samples → VictoriaMetrics only (not Postgres)
-    // Non-blocking — failure does not affect billing
-    if len(req.ResourceSamples) > 0 {
-        g.vmWriter.EnqueueSamples(req.ResourceSamples)
+    // Resource samples → TSDB only (not Postgres — no billing value).
+    // Skipped entirely when EVENTS_TSDB_URL is unset (TSDB is optional).
+    // Non-blocking — failure does not affect billing.
+    if len(req.ResourceSamples) > 0 && g.tsdbWriter != nil {
+        g.tsdbWriter.EnqueueSamples(req.ResourceSamples)
     }
 
     // Inference events — async write to usage_events (event_type='llm_tokens')
@@ -1168,30 +1230,49 @@ metric registrations. No `user_id` on connection gauge.
 
 ---
 
-### US-33.2 — VictoriaMetrics + Grafana deployment
+### US-33.2 — Optional in-cluster TSDB deployment
 
-Single-node VictoriaMetrics with 90-day retention, PVC, cluster-internal NetworkPolicy.
-Grafana with VictoriaMetrics datasource (default) and Postgres datasource (for per-customer
-panels). Admin credentials from existing `secret.yaml` pattern. Grafana ingress at
-`grafana.safespaces.dev`.
+> **Updated 2026-06-19.** The chart already ships Grafana dashboards
+> (`operational.json`, `billing.json`), PrometheusRules (18 alerts), and
+> ServiceMonitors (API, controller, agentd). These work against any
+> Prometheus-compatible TSDB. This story deploys VictoriaMetrics single-node
+> as an **optional convenience** for operators who don't have their own TSDB.
 
-**New chart templates:** `victoria-metrics-*.yaml`, `grafana-*.yaml`  
-**New values sections:** `victoriaMetrics:`, `grafana:`  
+Deploy VictoriaMetrics single-node with PVC and cluster-internal NetworkPolicy
+when `monitoring.tsdb.deploy: true` (default **false**). Wire `EVENTS_TSDB_URL`
+on the events-gateway to point at the in-cluster VictoriaMetrics automatically.
 
-**Definition of done:** Both pods reach Ready. VictoriaMetrics `/health` returns 200.
-Grafana datasources connected. Credentials from K8s Secret.
+The existing Grafana dashboards and PrometheusRules are already deployed by the
+chart when `monitoring.enabled: true` — no new dashboard templates needed. The
+VictoriaMetrics datasource is added to the existing datasource ConfigMap
+alongside the Postgres datasource.
+
+**New chart templates:** `victoria-metrics.yaml` (StatefulSet + Service, gated on `monitoring.tsdb.deploy`)
+**New values:** `monitoring.tsdb.deploy` (bool, default false), `monitoring.tsdb.retention` (default 90d)
+
+**Definition of done:** With `monitoring.tsdb.deploy: true`: VM pod reaches Ready,
+`/health` returns 200, `EVENTS_TSDB_URL` set on gateway, existing dashboards render
+within 15 minutes. With `monitoring.tsdb.deploy: false` (default): no VM resources
+rendered, gateway runs without TSDB, billing pipeline fully functional.
 
 ---
 
-### US-33.3 — vmagent + cAdvisor scrape config
+### US-33.3 — vmagent scrape config (optional, only when TSDB deployed)
+
+> **Updated 2026-06-19.** The chart already deploys ServiceMonitors for API,
+> controller, and agentd. These work with any Prometheus Operator. vmagent is
+> only needed when deploying the in-cluster VictoriaMetrics (US-33.2) to bridge
+> the Prometheus scrape format to VM's remote_write. Operators with their own
+> Prometheus skip this story entirely.
 
 vmagent deployment scraping cAdvisor (node SD, relabeling `workspace_id`/`user_id`
-from pod labels, keeping only billing-relevant metrics), API server, and controller.
-Controller `metricsAddr` changed to `0.0.0.0:8081` with NetworkPolicy restricting to
-vmagent. remote_write to VictoriaMetrics.
+from pod labels), API server, and controller. Controller `metricsAddr` changed to
+`0.0.0.0:8081` with NetworkPolicy restricting to vmagent. remote_write to
+VictoriaMetrics. Gated on `monitoring.tsdb.deploy: true`.
 
-**Definition of done:** All three sources visible in VictoriaMetrics within 30s of
-install. `container_cpu_usage_seconds_total{workspace_id!=""}` returns data.
+**Definition of done:** With `monitoring.tsdb.deploy: true`: all three sources
+visible in VictoriaMetrics within 30s. `container_cpu_usage_seconds_total{workspace_id!=""}`
+returns data. With it false: no vmagent resources rendered.
 
 ---
 
@@ -1209,14 +1290,20 @@ typed constants. Interface has `Write`, `Flush`, `Start`, `Stop`.
 ### US-33.5 — events-gateway service
 
 New `cmd/events-gateway/` binary. HTTP server (Gin). `POST /ingest` endpoint.
-Fan-out to VictoriaMetrics (async, best-effort) and Postgres (Tier 1 sync, Tier 2
-async). Returns 503 if Tier 1 Postgres write fails. Gateway self-metrics. Helm
-templates (2-replica Deployment, Service, NetworkPolicy). Postgres scoped role
-`events_gateway`.
+Fan-out to Postgres (Tier 1 sync, Tier 2 async — **always on**) and TSDB
+(resource samples, state events as gauges — **optional**, active only when
+`EVENTS_TSDB_URL` is set). Returns 503 if Tier 1 Postgres write fails.
+Gateway self-metrics. Helm templates (2-replica Deployment, Service,
+NetworkPolicy). Postgres scoped role `events_gateway`.
+
+The TSDB writer is a `nil`-safe interface — when `EVENTS_TSDB_URL` is unset, the
+gateway skips TSDB writes entirely (no error, no retry, debug log). Resource
+samples are dropped silently in this mode (they have no billing value).
 
 **Definition of done:** `POST /ingest` with Tier 1 event writes to Postgres before
-returning 202. `POST /ingest` returns 503 on Postgres failure. VictoriaMetrics receives
-remote_write data from gateway. `go test ./cmd/events-gateway/...` passes.
+returning 202. `POST /ingest` returns 503 on Postgres failure. With `EVENTS_TSDB_URL`
+set: TSDB receives remote_write data. Without it: gateway runs normally, billing
+fully functional, resource samples dropped. `go test ./cmd/events-gateway/...` passes.
 
 ---
 
@@ -1367,28 +1454,37 @@ All configurable thresholds read from `values.yaml`.
 ## Dependency Graph
 
 ```
-US-33.1  (cardinality fixes)       — independent, do first
-US-33.2  (VictoriaMetrics+Grafana) — independent
-US-33.3  (vmagent+cAdvisor)        — requires US-33.2
-US-33.4  (pkg/events)              — independent
-US-33.5  (events-gateway)          — requires US-33.4, US-33.6
-US-33.6  (Postgres migrations)     — independent
-US-33.7  (agentd WAL+client)       — requires US-33.4, US-33.5
-US-33.8  (agentd pod state+sampler)— requires US-33.7
-US-33.9  (agentd inference)        — requires US-33.7
-US-33.10 (controller events+gaps)  — requires US-33.4, US-33.5
-US-33.11 (API server events)       — requires US-33.4, US-33.5
-US-33.12 (dashboards+alerts)       — requires US-33.3, US-33.5
+Billing pipeline (REQUIRED — no TSDB dependency):
+  US-33.4  (pkg/events)              — independent
+  US-33.6  (Postgres migrations)     — independent
+  US-33.5  (events-gateway)          — requires US-33.4, US-33.6
+  US-33.7  (agentd WAL+client)       — requires US-33.4, US-33.5
+  US-33.8  (agentd pod state+sampler)— requires US-33.7
+  US-33.9  (agentd inference)        — requires US-33.7
+  US-33.10 (controller events+gaps)  — requires US-33.4, US-33.5
+  US-33.11 (API server events)       — requires US-33.4, US-33.5
+
+Observability stack (OPTIONAL — only when monitoring.tsdb.deploy: true):
+  US-33.1  (cardinality fixes)       — independent
+  US-33.2  (VictoriaMetrics)         — independent
+  US-33.3  (vmagent)                 — requires US-33.2
+  US-33.12 (dashboards+alerts)       — requires US-33.2 (for VM datasource)
 ```
 
 **Recommended phases:**
 
 ```
-Phase 1 (parallel): US-33.1, US-33.2, US-33.4, US-33.6
-Phase 2 (parallel): US-33.3, US-33.5
-Phase 3 (parallel): US-33.7, US-33.10, US-33.11
-Phase 4 (parallel): US-33.8, US-33.9, US-33.12
+Phase 1 (billing pipeline — parallel): US-33.4, US-33.6
+Phase 2 (billing pipeline — parallel): US-33.5
+Phase 3 (billing pipeline — parallel): US-33.7, US-33.10, US-33.11
+Phase 4 (billing pipeline — parallel): US-33.8, US-33.9
+
+Phase 5 (observability — optional, any time): US-33.1, US-33.2
+Phase 6 (observability — optional): US-33.3, US-33.12
 ```
+
+The billing pipeline ships first and is fully functional without any TSDB.
+The observability stack is added when the operator is ready for dashboards.
 
 ---
 
@@ -1559,10 +1655,11 @@ Full design review against the as-built codebase. 8 assumptions traced to root:
 ## Non-Requirements (explicitly out of scope)
 
 - Alertmanager routing and notification channels — operator-configured
-- VictoriaMetrics cluster mode — single-node sufficient to ~100k workspaces
+- ~~VictoriaMetrics cluster mode~~ — single-node sufficient; VM itself is now
+  optional (see Decision 7)
 - Distributed tracing — future epic
 - Log aggregation (Loki/ELK) — separate concern
-- ~~Billing provider integration — Epic 12~~ (Epic 12 has shipped — see Coexistence section above)
+- ~~Billing provider integration — Epic 12~~ (Epic 12 has shipped — see Coexistence section)
 - ~~Quota enforcement — Epic 12~~ (Epic 12 has shipped)
 - ~~Customer-facing usage API endpoints — Epic 12~~ (Epic 12 has shipped)
 - Per-second cAdvisor scraping — agentd push covers per-workspace second-granularity;
