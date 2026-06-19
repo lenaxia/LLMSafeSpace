@@ -237,3 +237,41 @@ CiliumNetworkPolicy alongside the chart:
 
 This requires Cilium with FQDN policy enabled. Calico operators
 can use a similar GlobalNetworkPolicy with negative selectors.
+
+{{- if .Values.email.enabled }}
+
+OUTBOUND EMAIL (Epic 49)
+========================
+
+Email is enabled with provider "{{ .Values.email.provider | default "noop" }}".
+
+{{- if eq .Values.email.provider "ses" }}
+
+SES is configured. Prerequisites you MUST verify:
+  - fromAddress "{{ .Values.email.fromAddress }}" (or its domain) is verified in AWS SES
+    region {{ .Values.email.sesRegion }}. Unverified senders are rejected at send time.
+  - The API ServiceAccount has an IRSA annotation granting ses:SendEmail. Check:
+      kubectl -n {{ .Release.Namespace }} get sa {{ include "llmsafespaces.api.serviceAccountName" . }} -o jsonpath='{.metadata.annotations}'
+    If the eks.amazonaws.com/role-arn annotation is missing, emails will fail with
+    a credentials error. Set it via:
+      --set serviceAccount.api.annotations."eks\.amazonaws\.com/role-arn"=arn:aws:iam::<acct>:role/<role>
+  - If SES is in sandbox mode, ALL recipient addresses must be individually verified.
+    Move out of sandbox for production sending.
+  - Publish DKIM/SPF/DMARC DNS records for the sending domain. Without them, mail
+    is likely to be spam-filtered, which worsens scanner-consumption of single-use
+    verification and password-reset links.
+
+  Test that sending works end-to-end:
+    (after the API is Ready)
+    kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "llmsafespaces.fullname" . }}-api 8080:8080 &
+    # then POST /api/v1/admin/email/test with an admin JWT (see US-49.4)
+
+{{- else }}
+
+No SES provider is set (provider="{{ .Values.email.provider }}"). The API will use
+the NoopProvider, which logs emails to stderr but does NOT send them. This is fine
+for development and air-gapped deployments. To send real email, set provider=ses
+along with sesRegion/fromAddress/baseUrl.
+
+{{- end }}
+{{- end }}

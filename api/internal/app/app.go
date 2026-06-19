@@ -27,6 +27,7 @@ import (
 	"github.com/lenaxia/llmsafespaces/api/internal/services/auth"
 	"github.com/lenaxia/llmsafespaces/api/internal/services/cache"
 	"github.com/lenaxia/llmsafespaces/api/internal/services/database"
+	emailsvc "github.com/lenaxia/llmsafespaces/api/internal/services/email"
 	"github.com/lenaxia/llmsafespaces/api/internal/services/metering"
 	"github.com/lenaxia/llmsafespaces/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespaces/api/internal/services/msgqueue"
@@ -69,6 +70,8 @@ type App struct {
 	dekCacheClient     *redis.Client             // redis client for DEK cache; closed on shutdown
 	pendingOrgCleaner  *handlers.PendingOrgCleaner
 	invitationsHandler *handlers.InvitationsHandler
+	emailService       *emailsvc.Service
+	emailHandler       *handlers.EmailHandler
 	shutdownCh         chan struct{}
 	ctx                context.Context
 	cancel             context.CancelFunc
@@ -183,6 +186,8 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var pgOrgStore *database.PgOrgStore
 	var pendingOrgCleaner *handlers.PendingOrgCleaner
 	var invitationsHandler *handlers.InvitationsHandler
+	var emailService *emailsvc.Service
+	var emailHandler *handlers.EmailHandler
 	var orgCredBinder *secrets.PgSecretStore
 	var policySvc *policy.Service
 	var policyHandler *handlers.PolicyHandler
@@ -573,25 +578,34 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			pgOrgStore, checkoutProvider, log, time.Hour, 7*24*time.Hour)
 	}
 
-	// US-43.2: Invitation system. Wire the email provider based on config.
-	if pgOrgStore != nil {
-		var mailer emailpkg.EmailProvider
-		switch strings.ToLower(cfg.Email.Provider) {
-		case "ses":
-			if cfg.Email.FromAddress == "" || cfg.Email.BaseURL == "" {
-				cancel()
-				return nil, fmt.Errorf("email provider 'ses' requires fromAddress and baseUrl to be set")
-			}
-			awsCfg, err := awsconfig.LoadDefaultConfig(context.Background(),
-				awsconfig.WithRegion(cfg.Email.SESRegion))
-			if err != nil {
-				cancel()
-				return nil, fmt.Errorf("init aws config for ses: %w", err)
-			}
-			mailer = emailpkg.NewSESProvider(awsCfg, cfg.Email.FromAddress)
-		default:
-			mailer = &emailpkg.NoopProvider{}
+	// US-43.2 / Epic 49: Resolve the email provider and construct the
+	// EmailService. This is independent of pgOrgStore — the service needs
+	// only the provider + baseURL. SES validation (fromAddress/baseUrl
+	// required) applies at boot regardless of whether the org store is
+	// available, so a misconfigured SES install fails fast rather than
+	// silently degrading to noop when pgOrgStore is nil.
+	var mailer emailpkg.EmailProvider
+	switch strings.ToLower(cfg.Email.Provider) {
+	case "ses":
+		if cfg.Email.FromAddress == "" || cfg.Email.BaseURL == "" {
+			cancel()
+			return nil, fmt.Errorf("email provider 'ses' requires fromAddress and baseUrl to be set")
 		}
+		awsCfg, err := awsconfig.LoadDefaultConfig(context.Background(),
+			awsconfig.WithRegion(cfg.Email.SESRegion))
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("init aws config for ses: %w", err)
+		}
+		mailer = emailpkg.NewSESProvider(awsCfg, cfg.Email.FromAddress)
+	default:
+		mailer = &emailpkg.NoopProvider{}
+	}
+	emailService = emailsvc.NewService(mailer, cfg.Email.BaseURL, cfg.Email.Provider)
+	emailHandler = handlers.NewEmailHandler(emailService, svc.GetRateLimiter(), log)
+
+	// Invitations still needs the raw provider + the org store.
+	if pgOrgStore != nil {
 		invitationsHandler = handlers.NewInvitationsHandler(pgOrgStore, mailer, svc.GetAuth(), cfg.Email.BaseURL, log)
 		if orgCredBinder != nil {
 			invitationsHandler.SetCredentialBinder(orgCredBinder)
@@ -658,6 +672,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		UsageHandler:                    usageHandler,
 		WebhookHandler:                  webhookHandler,
 		InvitationsHandler:              invitationsHandler,
+		EmailHandler:                    emailHandler,
 		PolicyHandler:                   policyHandler,
 		AuditHandler:                    auditHandler,
 		RelayAdminHandler:               relayAdminHandler,
@@ -695,6 +710,8 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		secretsPool:        secretsPool,
 		pendingOrgCleaner:  pendingOrgCleaner,
 		invitationsHandler: invitationsHandler,
+		emailService:       emailService,
+		emailHandler:       emailHandler,
 		dekCacheClient:     dekCacheClient,
 		shutdownCh:         make(chan struct{}),
 		ctx:                ctx,

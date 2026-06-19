@@ -726,3 +726,56 @@ func TestInvitations_List_ReturnsPending(t *testing.T) {
 		t.Errorf("expected 2 invitations for org-1, got %d", len(list))
 	}
 }
+
+// TestInvitations_GetByToken_DoesNotConsume is the scanner-safety invariant
+// regression test (Epic 49 US-49.9). Email-link scanners (Proofpoint,
+// Mimecast, Office ATP) follow links in emails to scan them. If GET
+// /invitations/:token consumed the invitation, the scanner would invalidate
+// it and the real user's later Accept would 404/409.
+//
+// This test asserts:
+//  1. Two consecutive GETs return 200 with the same details (no consumption).
+//  2. The invitation's AcceptedAt/DeclinedAt remain nil after GETs.
+//
+// A future "simplification" that makes GetByToken consume would turn this red.
+func TestInvitations_GetByToken_DoesNotConsume(t *testing.T) {
+	store := newMockInvitationStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1", Name: "Acme", Slug: "acme"}
+	store.members["org-1"] = []*types.OrgMember{{OrgID: "org-1", UserID: "inviter-1", Username: "Alice", Role: types.OrgRoleAdmin}}
+
+	token := "scanner-safe-token"
+	hash := hashToken(token)
+	store.invitations["inv-scanner"] = &types.OrgInvitation{
+		ID: "inv-scanner", OrgID: "org-1", Email: "new@test.com", Role: types.OrgRoleMember,
+		InvitedBy: "inviter-1", TokenHash: hash, ExpiresAt: time.Now().Add(24 * time.Hour),
+	}
+	store.tokenHashIndex[hash] = "inv-scanner"
+
+	router := setupInvitationRouter(t, store, nil)
+
+	// First GET — a scanner following the email link.
+	w1 := doRequest(router, "GET", "/api/v1/invitations/"+token, "")
+	if w1.Code != http.StatusOK {
+		t.Fatalf("first GET: expected 200, got %d: %s", w1.Code, w1.Body.String())
+	}
+
+	// Second GET — the real user clicks the same link. Must still work.
+	w2 := doRequest(router, "GET", "/api/v1/invitations/"+token, "")
+	if w2.Code != http.StatusOK {
+		t.Fatalf("second GET after scanner: expected 200 (GET must not consume), got %d: %s", w2.Code, w2.Body.String())
+	}
+
+	// Both responses must carry identical details (no mutation between calls).
+	if w1.Body.String() != w2.Body.String() {
+		t.Errorf("GET responses differ — GetByToken must be read-only:\nfirst:  %s\nsecond: %s", w1.Body.String(), w2.Body.String())
+	}
+
+	// The invitation row must be untouched (no AcceptedAt, no DeclinedAt).
+	inv := store.invitations["inv-scanner"]
+	if inv.AcceptedAt != nil {
+		t.Errorf("GET must not set AcceptedAt; got %v", *inv.AcceptedAt)
+	}
+	if inv.DeclinedAt != nil {
+		t.Errorf("GET must not set DeclinedAt; got %v", *inv.DeclinedAt)
+	}
+}

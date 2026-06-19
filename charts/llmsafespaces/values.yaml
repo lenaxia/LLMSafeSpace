@@ -840,6 +840,46 @@ inferenceRelaySecret: ""
 # CLOSED (403) when this is unset, so it MUST be set for org-suspension to work.
 internalToken: ""
 
+# ----------------------------------------------------------------------------
+# Outbound email (Epic 49)
+# ----------------------------------------------------------------------------
+# Transactional email is used for org invitations, password reset, and email
+# verification. When disabled (the default), the API uses a NoopProvider
+# that logs emails to stderr — no email is actually sent.
+#
+# To enable SES:
+#   1. Set enabled: true, provider: ses, sesRegion, fromAddress, baseUrl.
+#   2. Configure IRSA: set serviceAccount.api.annotations to add the
+#      EKS role ARN, e.g.:
+#        serviceAccount:
+#          api:
+#            annotations:
+#              eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/llmsafespaces-ses
+#      The IAM role must have ses:SendEmail permission and be trusted by the
+#      cluster's OIDC provider. No static AWS credentials are stored by the
+#      platform — IRSA is the credential path.
+#   3. Verify the fromAddress (or its domain) in AWS SES. In sandbox mode,
+#      recipient addresses must also be verified.
+#   4. Publish DKIM/SPF/DMARC records for the sending domain so mail does
+#      not land in spam (spam filtering worsens scanner-consumption of
+#      single-use verification/reset links).
+#
+# fromAddress: verified SES sender (e.g. noreply@example.com).
+# baseUrl: public origin used to build links in email bodies
+#          (e.g. https://app.example.com). Must match the frontend ingress host.
+#
+# Env vars LLMSAFESPACES_EMAIL_* remain as higher-precedence overrides
+# (Viper applies AutomaticEnv after reading config.yaml), but the
+# helm-rendered config.yaml is now the default configuration path.
+email:
+  enabled: false
+  # Provider: "" (noop) or "ses". "smtp" is a future provider.
+  provider: ""
+  # SES-only fields.
+  sesRegion: ""
+  fromAddress: ""
+  baseUrl: ""
+
 # Cloudflare credentials for automated relay secret management.
 # When set, a post-install/post-upgrade Job pushes inferenceRelaySecret to
 # the CF Worker automatically, keeping the cluster and CF Worker in sync.
