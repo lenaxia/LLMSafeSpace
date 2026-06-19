@@ -67,3 +67,4 @@ This PR is the **dependency root** for the companion db/handler PR (F6/F7), whic
 - `api/internal/interfaces/interfaces.go` — widened `AuthService`.
 - `api/internal/mocks/middleware_mocks.go`, `api/internal/middleware/tests/auth_test.go` — mock methods for the widened interface.
 - `pkg/types/auth.go` — pre-existing gofmt drift fix (struct field alignment) per Rule 5.
+- `charts/llmsafespaces/templates/prometheus-rules.yaml` — pre-existing rename-miss fix: 3 alerts (`SSEBrokerDroppingEvents`, `SafeModeActive`, `StatusUpdateConflicts`) were left singular `LLMSafeSpace*` by the module-rename PR, failing `TestMonitoring_PrometheusRule_ContainsAllAlerts` on main. Completed the rename to `LLMSafeSpaces*` (Rule 5: no pre-existing errors). Bundled here because it blocked this PR's full-test-suite CI gate; also applied to companion PRs #265/#266.
