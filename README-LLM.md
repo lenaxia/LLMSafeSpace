@@ -452,7 +452,7 @@ None of these write paths are atomic with each other. The design relies on:
 
 ### Known design fragilities (documented, not bugs)
 
-1. **Multiple writers of agent-config.json.** The four-writer design is correct given the current boot sequence and `reloadMu` serialisation, but it is fragile. A future change that reorders the boot sequence or adds a new write path could reintroduce relay clobbering. The single-writer `WriteAgentConfig` design (described in previous versions of this section) would eliminate this fragility but requires a non-trivial refactor of `FormatOpenCodeConfig`, the reload handler, and the relay injector. Tracked as a future cleanup item.
+1. **~~Multiple writers of agent-config.json~~ — RESOLVED (US-46.10).** The four-writer design has been replaced by a single `AgentConfigWriter` that owns all writes to `agent-config.json`. The writer holds three sources (providers, model, relay) and `Rebuild()` merges them into a complete config written atomically via temp-file + `os.Rename`. The relay injector and reload handler update their source then call `Rebuild()`. The `atomic.Pointer[[]relayModel]` coordination and the reload handler's manual relay re-merge have been removed — the writer always reflects current state.
 
 2. **One-shot relay injector.** The injector goroutine runs once per pod lifetime. If the opencode credential changes after the injector has run (personal key → public key), the relay is not re-evaluated. The user must restart the pod. A re-triggerable injector (channel-based state machine) would handle this automatically.
 
@@ -464,19 +464,22 @@ None of these write paths are atomic with each other. The design relies on:
 
 ### How the relay config subsystem works (as-built)
 
-The relay config subsystem has four writers of `agent-config.json`. All coordination is via:
-1. `reloadMu sync.Mutex` in `reloadSecretsHandler` — serialises concurrent reload calls
-2. `atomic.Pointer[[]relayModel]` in `relay_injector.go` — the relay injector sets this on success; reloadSecretsHandler reads it to decide whether to re-merge relay after FlushProviders
-3. opencode reads `agent-config.json` once at startup — not hot-reloaded
+The relay config subsystem uses a single `AgentConfigWriter` (`cmd/workspace-agentd/agent_config_writer.go`) that owns all writes to `agent-config.json` within the agentd process. The writer holds three sources:
+1. **Providers** — from `Materializer.FormatProviders()` (llm-provider credentials)
+2. **Model** — from `applyWorkspaceConfig()` (workspace-config.json default model)
+3. **Relay** — from `startRelayInjector()` (opencode-relay provider + disabled_providers)
+
+`Rebuild()` merges all three sources and writes atomically (temp-file + `os.Rename`). Coordination is via the writer's `sync.Mutex`, which serialises concurrent `Rebuild()` calls. opencode reads `agent-config.json` once at startup — not hot-reloaded.
 
 #### Agent-config.json write sequence (boot)
 
-1. `Materializer.reset()` deletes agent-config.json → `FlushProviders()` writes provider credentials → `applyWorkspaceConfig()` adds model key with providerID/modelID
-2. ~T+7s: `startRelayInjector()` fetches free models → merges relay config → writes file → sets `activeRelayModels` → restarts opencode
+1. **Materialize subcommand** (separate process, before agentd): `Materializer.reset()` deletes agent-config.json → `FlushProviders()` writes provider credentials → `applyWorkspaceConfig()` adds model key with providerID/modelID
+2. **agentd starts**: `newAgentConfigWriter()` reads the existing file, captures providers + model as initial sources
+3. **~T+7s**: `startRelayInjector()` fetches free models → `writer.SetRelay(url, models)` + `writer.Rebuild()` writes merged config → updates auth.json → restarts opencode
 
 #### Agent-config.json write sequence (credential reload)
 
-1. `reloadMu.Lock()` → `Materializer.reset()` → `FlushProviders()` rewrites credentials → if relay active: `buildRelayConfig()` re-merges relay block → `reloadMu.Unlock()`
+1. `reloadMu.Lock()` → `Materializer.reset()` → `Materializer.FormatProviders()` formats credentials → `writer.SetProviders(formatted)` + `writer.Rebuild()` merges with existing model + relay sources → `reloadMu.Unlock()`
 2. `proc.restart()` reboots opencode with updated config
 
 #### RelayInjected signal flow
