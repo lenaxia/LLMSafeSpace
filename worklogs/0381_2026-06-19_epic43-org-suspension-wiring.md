@@ -62,8 +62,8 @@ Stale-comment cleanup in `controller/main.go` + `router.go` landed here because 
 ## Files Modified
 
 - `api/internal/handlers/internal_org_status.go`, `internal_org_status_test.go` — F5 fail-closed + constant-time compare.
-- `charts/llmsafespace/values.yaml`, `templates/{controller,api}-deployment.yaml`, `templates/secret.yaml` — F1 wiring + F5 token.
-- `charts/llmsafespace/templates/api-network-policy.yaml` (new) — F5 defense-in-depth.
-- `charts/llmsafespace/chart_test.go` — F1/F5 chart tests.
+- `charts/llmsafespaces/values.yaml`, `templates/{controller,api}-deployment.yaml`, `templates/secret.yaml` — F1 wiring + F5 token.
+- `charts/llmsafespaces/templates/api-network-policy.yaml` (new) — F5 defense-in-depth.
+- `charts/llmsafespaces/chart_test.go` — F1/F5 chart tests.
 - `controller/main.go`, `api/internal/server/router.go` — stale-comment corrections (Rule 5).
 - `pkg/types/auth.go` — pre-existing gofmt drift fix per Rule 5.
