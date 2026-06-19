@@ -81,7 +81,7 @@ func (s *Service) Ping(ctx context.Context) error {
 // GetUser gets a user by ID
 func (s *Service) GetUser(ctx context.Context, userID string) (*types.User, error) {
 	query := `
-        SELECT id, username, email, password_hash, created_at, updated_at, active, role
+        SELECT id, username, email, password_hash, created_at, updated_at, active, role, status
         FROM users 
         WHERE id = $1
     `
@@ -97,6 +97,7 @@ func (s *Service) GetUser(ctx context.Context, userID string) (*types.User, erro
 		&user.UpdatedAt,
 		&user.Active,
 		&user.Role,
+		&user.Status,
 	)
 
 	if err != nil {
@@ -112,7 +113,7 @@ func (s *Service) GetUser(ctx context.Context, userID string) (*types.User, erro
 // GetUserByEmail gets a user by email address
 func (s *Service) GetUserByEmail(ctx context.Context, email string) (*types.User, error) {
 	query := `
-        SELECT id, username, email, password_hash, created_at, updated_at, active, role
+        SELECT id, username, email, password_hash, created_at, updated_at, active, role, status
         FROM users 
         WHERE email = $1
     `
@@ -128,6 +129,7 @@ func (s *Service) GetUserByEmail(ctx context.Context, email string) (*types.User
 		&user.UpdatedAt,
 		&user.Active,
 		&user.Role,
+		&user.Status,
 	)
 
 	if err != nil {
@@ -229,6 +231,11 @@ func (s *Service) UpdateUser(ctx context.Context, userID string, updates types.U
 		query += fmt.Sprintf(", password_hash = $%d", i)
 		args = append(args, *updates.PasswordHash)
 	}
+	if updates.Status != nil {
+		i++
+		query += fmt.Sprintf(", status = $%d", i)
+		args = append(args, string(*updates.Status))
+	}
 
 	if i == 0 {
 		return nil
@@ -247,6 +254,107 @@ func (s *Service) UpdateUser(ctx context.Context, userID string, updates types.U
 	return nil
 }
 
+// SetUserStatus sets the authoritative operational status of a user account
+// (D19). status='suspended' blocks the user across all contexts via the auth
+// middleware; 'active' restores access. The legacy active flag is left
+// untouched so existing readers are unaffected.
+func (s *Service) SetUserStatus(ctx context.Context, userID string, status types.UserStatus) error {
+	_, err := s.DB.ExecContext(ctx,
+		`UPDATE users SET status = $1, updated_at = NOW() WHERE id = $2`,
+		string(status), userID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to set user status: %w", err)
+	}
+	return nil
+}
+
+// ListAllUsers returns every user for the platform-admin dashboard (US-43.18).
+// The optional statusFilter narrows to a single UserStatus; an empty/nil filter
+// returns all users. Each entry carries the user's single org membership
+// (org_id/org_name) resolved via a LEFT JOIN — under single-org enforcement
+// (D8) a user belongs to at most one org, so this adds no row fan-out.
+//
+// Password hashes and other sensitive columns are never selected. limit is
+// clamped to [1, adminListMaxLimit]; offset defaults to 0.
+func (s *Service) ListAllUsers(ctx context.Context, limit, offset int, statusFilter *string) ([]types.UserListEntry, *types.PaginationMetadata, error) {
+	limit = clampAdminLimit(limit)
+	if offset < 0 {
+		offset = 0
+	}
+
+	var (
+		countArgs    []interface{}
+		countWhere   string
+		listWhere    string
+		listArgs     []interface{}
+		statusArgIdx int
+	)
+	if statusFilter != nil && *statusFilter != "" {
+		countArgs = append(countArgs, *statusFilter)
+		countWhere = " WHERE status = $1"
+		listArgs = append(listArgs, *statusFilter)
+		statusArgIdx = 1
+		listWhere = " WHERE u.status = $1"
+	} else {
+		listWhere = ""
+	}
+
+	var total int
+	if err := s.DB.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM users"+countWhere,
+		countArgs...,
+	).Scan(&total); err != nil {
+		return nil, nil, fmt.Errorf("count all users: %w", err)
+	}
+
+	pagination := &types.PaginationMetadata{
+		Total: total, Start: offset, End: offset + limit, Limit: limit, Offset: offset,
+	}
+	if pagination.End > total {
+		pagination.End = total
+	}
+	if total == 0 {
+		return []types.UserListEntry{}, pagination, nil
+	}
+
+	limitIdx := statusArgIdx + 1
+	offsetIdx := statusArgIdx + 2
+	listArgs = append(listArgs, limit, offset)
+	query := fmt.Sprintf( //nolint:gosec // G201: $N placeholder indexes only, no string interpolation of user input
+		`SELECT u.id, u.email, u.role, u.status, u.created_at,
+		        COALESCE(m.org_id, ''), COALESCE(o.name, '')
+		 FROM users u
+		 LEFT JOIN org_memberships m ON m.user_id = u.id
+		 LEFT JOIN organizations o ON o.id = m.org_id AND o.deleted_at IS NULL%s
+		 ORDER BY u.created_at DESC
+		 LIMIT $%d OFFSET $%d`,
+		listWhere, limitIdx, offsetIdx,
+	)
+
+	rows, err := s.DB.QueryContext(ctx, query, listArgs...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("list all users: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]types.UserListEntry, 0)
+	for rows.Next() {
+		var e types.UserListEntry
+		if err := rows.Scan(&e.ID, &e.Email, &e.Role, &e.Status, &e.CreatedAt, &e.OrgID, &e.OrgName); err != nil {
+			return nil, nil, fmt.Errorf("scan user list entry: %w", err)
+		}
+		if e.OrgID != "" {
+			e.OrgCount = 1
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("iterate user list entries: %w", err)
+	}
+	return out, pagination, nil
+}
+
 // DeleteUser deletes a user
 func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 	query := `DELETE FROM users WHERE id = $1`
@@ -262,7 +370,7 @@ func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 // GetUserByAPIKey gets the user associated with an API key
 func (s *Service) GetUserByAPIKey(ctx context.Context, apiKey string) (*types.User, error) {
 	query := `
-        SELECT u.id, u.username, u.email, u.created_at, u.updated_at, u.active, u.role
+        SELECT u.id, u.username, u.email, u.created_at, u.updated_at, u.active, u.role, u.status
         FROM users u
         JOIN api_keys k ON u.id = k.user_id
         WHERE k.key = $1 AND k.active = true
@@ -278,6 +386,7 @@ func (s *Service) GetUserByAPIKey(ctx context.Context, apiKey string) (*types.Us
 		&user.UpdatedAt,
 		&user.Active,
 		&user.Role,
+		&user.Status,
 	)
 
 	if err != nil {

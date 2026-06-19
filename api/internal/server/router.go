@@ -97,7 +97,22 @@ type RouterConfig struct {
 	// workspace pod was deleted/unreachable.
 	AdminSessionHandler *handlers.AdminSessionHandler
 
+	// PlatformAdminHandler handles platform-admin org/user suspension
+	// endpoints (US-43.19, D19/D20). Mounted behind AuthMiddleware + AdminGuard.
+	PlatformAdminHandler *handlers.PlatformAdminHandler
+
+	// InternalOrgStatusHandler, when non-nil, registers the cluster-internal
+	// GET /api/v1/internal/orgs/:orgID/status endpoint that the controller
+	// polls to drive org-suspension of workspaces (D20). It is intentionally
+	// NOT behind AuthMiddleware; access is gated by the X-Internal-Token
+	// header (see InternalOrgStatusHandler) and the cluster NetworkPolicy.
+	InternalOrgStatusHandler *handlers.InternalOrgStatusHandler
+
 	CookieName string
+
+	// SSOHandler handles org-admin SSO config CRUD + the public OIDC login flow
+	// (start/callback) and claimed-domain discovery (US-43.10, D17).
+	SSOHandler *handlers.SSOHandler
 }
 
 // cookieName returns the session cookie name, falling back to "lsp_session" when empty.
@@ -169,7 +184,7 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 
 	// Auth routes (public — no auth middleware)
 	authGroup := router.Group("/api/v1/auth")
-	registerAuthRoutes(authGroup, services, cfg.InstanceSettings, logger, cfg.cookieName())
+	registerAuthRoutes(authGroup, services, cfg.InstanceSettings, logger, cfg.cookieName(), cfg.SSOHandler)
 
 	// Authenticated workspace routes
 	workspaceGroup := router.Group("/api/v1/workspaces")
@@ -329,6 +344,37 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		adminSessions.POST("/:sessionId/force-abort", cfg.AdminSessionHandler.ForceAbortSession)
 	}
 
+	// US-43.20: Cross-org audit view (platform admin only).
+	if cfg.AuditHandler != nil {
+		platformAudit := router.Group("/api/v1/admin/audit")
+		platformAudit.Use(services.GetAuth().AuthMiddleware())
+		platformAudit.Use(middleware.AdminGuard())
+		platformAudit.GET("", cfg.AuditHandler.ListCrossOrg)
+	}
+
+	// US-43.19: Platform-admin org/user suspension (D19/D20). Behind
+	// AuthMiddleware + AdminGuard so only users.role='admin' can call them.
+	// US-43.18: the same group also hosts the dashboard list endpoints
+	// (GET /admin/orgs, GET /admin/users).
+	if cfg.PlatformAdminHandler != nil {
+		suspendGrp := router.Group("/api/v1/admin")
+		suspendGrp.Use(services.GetAuth().AuthMiddleware())
+		suspendGrp.Use(middleware.AdminGuard())
+		suspendGrp.GET("/orgs", cfg.PlatformAdminHandler.ListOrgs)
+		suspendGrp.GET("/users", cfg.PlatformAdminHandler.ListUsers)
+		suspendGrp.POST("/orgs/:id/suspend", cfg.PlatformAdminHandler.SuspendOrg)
+		suspendGrp.POST("/orgs/:id/unsuspend", cfg.PlatformAdminHandler.UnsuspendOrg)
+		suspendGrp.POST("/users/:id/suspend", cfg.PlatformAdminHandler.SuspendUser)
+		suspendGrp.POST("/users/:id/unsuspend", cfg.PlatformAdminHandler.UnsuspendUser)
+	}
+
+	// US-43.19 / D20: cluster-internal org-status endpoint polled by the
+	// workspace controller. NOT behind AuthMiddleware (the controller has no
+	// user identity); gated by the X-Internal-Token header + NetworkPolicy.
+	if cfg.InternalOrgStatusHandler != nil {
+		router.GET("/api/v1/internal/orgs/:orgID/status", cfg.InternalOrgStatusHandler.GetOrgStatus)
+	}
+
 	// Secret management routes (Epic 10)
 	if cfg.SecretsHandler != nil {
 		secretsGroup := router.Group("/api/v1/secrets")
@@ -372,7 +418,7 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 
 	// Org CRUD routes (Epic 11)
 	if cfg.OrgsHandler != nil {
-		registerOrgRoutes(router, services, cfg.OrgsHandler, cfg.OrgCredentialsHandler, cfg.InvitationsHandler, cfg.PolicyHandler, cfg.AuditHandler)
+		registerOrgRoutes(router, services, cfg.OrgsHandler, cfg.OrgCredentialsHandler, cfg.InvitationsHandler, cfg.PolicyHandler, cfg.AuditHandler, cfg.SSOHandler)
 	}
 
 	// Metrics endpoint.
@@ -473,7 +519,7 @@ func setSessionCookie(c *gin.Context, token string, maxAge int, cookieName strin
 }
 
 // API key management routes.
-func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, instanceSettings *settings.InstanceService, logger *apilogger.Logger, cookieName string) {
+func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, instanceSettings *settings.InstanceService, logger *apilogger.Logger, cookieName string, ssoHandler *handlers.SSOHandler) {
 	authSvc := services.GetAuth()
 
 	// Public: feature flag discovery
@@ -492,13 +538,27 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, insta
 				motd = v
 			}
 		}
+		// OIDCEnabled is true when at least one org has configured SSO. Falls
+		// back to false on DB error or when SSO is not wired.
+		oidcEnabled := false
+		if ssoHandler != nil {
+			oidcEnabled = ssoHandler.OIDCEnabled(c.Request.Context())
+		}
 		c.JSON(http.StatusOK, types.AuthConfig{
 			RegistrationEnabled: regEnabled,
-			OIDCEnabled:         false,
+			OIDCEnabled:         oidcEnabled,
 			InstanceName:        instanceName,
 			MOTD:                motd,
 		})
 	})
+
+	// US-43.10: public OIDC SSO endpoints. Start + callback carry the org slug
+	// in the path; domains powers login-page discovery. All three are anonymous.
+	if ssoHandler != nil {
+		rg.GET("/sso/domains", ssoHandler.Domains)
+		rg.GET("/sso/:orgSlug/start", ssoHandler.Start)
+		rg.GET("/sso/:orgSlug/callback", ssoHandler.Callback)
+	}
 
 	rg.POST("/register", func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxAuthBodyBytes)
@@ -1026,7 +1086,7 @@ func getMaxActiveSessions(ctx context.Context, instanceSettings *settings.Instan
 }
 
 // registerOrgRoutes adds all /api/v1/orgs routes.
-func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *handlers.OrgsHandler, credH *handlers.OrgCredentialsHandler, invH *handlers.InvitationsHandler, polH *handlers.PolicyHandler, audH *handlers.AuditHandler) {
+func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *handlers.OrgsHandler, credH *handlers.OrgCredentialsHandler, invH *handlers.InvitationsHandler, polH *handlers.PolicyHandler, audH *handlers.AuditHandler, ssoH *handlers.SSOHandler) {
 	authMW := services.GetAuth().AuthMiddleware()
 
 	orgGroup := router.Group("/api/v1/orgs")
@@ -1082,6 +1142,13 @@ func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *hand
 	if audH != nil {
 		// Audit log access requires Business+ plan (per billing.PlanTiers).
 		orgAdminGroup.GET("/audit", middleware.FeatureGuard(h, "audit"), audH.List)
+	}
+
+	// US-43.10: org-admin SSO config CRUD.
+	if ssoH != nil {
+		orgAdminGroup.GET("/sso", ssoH.Get)
+		orgAdminGroup.PUT("/sso", ssoH.Put)
+		orgAdminGroup.DELETE("/sso", ssoH.Delete)
 	}
 
 	// Public invitation routes (token is the credential).

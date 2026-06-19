@@ -8,6 +8,8 @@ import { AdminProviderCredentialsTab } from "../components/settings/AdminProvide
 import { UserProviderCredentialsTab } from "../components/settings/UserProviderCredentialsTab";
 import { MyOrganisationTab } from "../components/settings/MyOrganisationTab";
 import { OrgSettingsTab } from "../components/settings/OrgSettingsTab";
+import { PlatformAuditTab } from "../components/settings/PlatformAuditTab";
+import { PlatformUsersTab } from "../components/settings/PlatformUsersTab";
 import { RelayTab } from "../components/settings/RelayTab";
 import { useAuth } from "../providers/AuthProvider";
 
@@ -19,6 +21,8 @@ const allTabs = [
   { id: "my-organisation", label: "My Organisation", adminOnly: false },
   { id: "platform-credentials", label: "Platform Credentials", adminOnly: true },
   { id: "admin-orgs", label: "Organisations", adminOnly: true },
+  { id: "admin-users", label: "Users", adminOnly: true },
+  { id: "platform-audit", label: "Platform Audit", adminOnly: true },
   { id: "relay", label: "Relay", adminOnly: true },
   { id: "admin", label: "Admin", adminOnly: true },
 ] as const;
@@ -60,6 +64,8 @@ export function SettingsPage() {
         {activeTab === "my-organisation" && <MyOrganisationTab />}
         {activeTab === "platform-credentials" && isAdmin && <AdminProviderCredentialsTab />}
         {activeTab === "admin-orgs" && isAdmin && <OrgSettingsTab />}
+        {activeTab === "admin-users" && isAdmin && <PlatformUsersTab />}
+        {activeTab === "platform-audit" && isAdmin && <PlatformAuditTab />}
         {activeTab === "relay" && isAdmin && <RelayTab />}
         {activeTab === "admin" && isAdmin && <AdminSettingsPage />}
       </div>

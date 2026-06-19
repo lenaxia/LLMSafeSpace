@@ -14,7 +14,8 @@ type User struct {
 	CreatedAt    time.Time `json:"createdAt" db:"created_at"`
 	UpdatedAt    time.Time `json:"updatedAt" db:"updated_at"`
 	Active       bool      `json:"active" db:"active"`
-	Role         string    `json:"role" db:"role"`
+	Role         string     `json:"role" db:"role"`
+	Status       UserStatus `json:"status" db:"status"`
 }
 
 // RegisterRequest is the request body for user registration.
@@ -79,11 +80,12 @@ type APIKey struct {
 // UserUpdates carries the fields that may be changed on a User record.
 // All fields are pointers — nil means "do not update this field".
 type UserUpdates struct {
-	Username     *string `json:"username,omitempty"`
-	Email        *string `json:"email,omitempty"`
-	Active       *bool   `json:"active,omitempty"`
-	Role         *string `json:"role,omitempty"`
-	PasswordHash *string `json:"-"`
+	Username     *string    `json:"username,omitempty"`
+	Email        *string    `json:"email,omitempty"`
+	Active       *bool      `json:"active,omitempty"`
+	Role         *string    `json:"role,omitempty"`
+	Status       *UserStatus `json:"status,omitempty"`
+	PasswordHash *string    `json:"-"`
 }
 
 // CachedSession is the typed representation of a WebSocket session stored in
@@ -101,4 +103,24 @@ type AuthConfig struct {
 	SSOProviders        []string `json:"ssoProviders,omitempty"`
 	InstanceName        string   `json:"instanceName"`
 	MOTD                string   `json:"motd,omitempty"`
+}
+
+// UserStatus is the authoritative operational status of a user account.
+type UserStatus string
+
+const (
+	UserStatusActive    UserStatus = "active"
+	UserStatusSuspended UserStatus = "suspended"
+)
+
+// UserListEntry is the list DTO for platform admin user listing.
+type UserListEntry struct {
+	ID        string     `json:"id"`
+	Email     string     `json:"email"`
+	Role      string     `json:"role"`
+	Status    UserStatus `json:"status"`
+	CreatedAt time.Time  `json:"createdAt"`
+	OrgCount  int        `json:"orgCount"`
+	OrgID     string     `json:"orgId,omitempty"`
+	OrgName   string     `json:"orgName,omitempty"`
 }

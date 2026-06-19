@@ -18,6 +18,20 @@ const SECRET_TYPES = [
   { value: "api-key", label: "API Keys (legacy)", icon: "🗝️", metaFields: [] as string[], legacyOnly: true },
 ] as const;
 
+// API_KEY_SUNSET_DATE is the fixed date after which new api-key secrets are
+// rejected by the API (US-44.9). Kept as an ISO string to mirror the backend
+// constant pkg/secrets.APIKeySunsetDate; rendered human-readable via
+// formatSunsetDate so the banner reads naturally from a single source of truth.
+const API_KEY_SUNSET_DATE = "2026-12-19";
+
+const SUNSET_MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+function formatSunsetDate(iso: string): string {
+  const parts = iso.split("-");
+  if (parts.length !== 3) return iso;
+  return `${SUNSET_MONTHS[Number(parts[1]) - 1]} ${Number(parts[2])}, ${parts[0]}`;
+}
+
 const FIELD_INFO: Record<string, string> = {
   provider: "LLM provider name (e.g. anthropic, openai, deepseek). Used to configure the agent's API endpoint.",
   apiKey: "API key for the LLM provider (e.g. sk-ant-... for Anthropic).",
@@ -162,7 +176,7 @@ export function SecretsTab() {
               {"legacyOnly" in group && group.legacyOnly && (
                 <div className="border-t border-border px-4 py-2 bg-amber-50 dark:bg-amber-950/20">
                   <p className="text-xs text-amber-700 dark:text-amber-400">
-                    These are legacy <code>api-key</code> secrets. They are materialized as <code>API_KEY_&lt;NAME&gt;</code> environment variables. Consider recreating them as <strong>LLM Providers</strong> or <strong>Environment Variables</strong> for structured support.
+                    ⚠️ <code>api-key</code> secrets are deprecated. Migrate to <code>llm-provider</code> (for LLM APIs) or <code>env-secret</code> (for other APIs). <code>api-key</code> will be removed on {formatSunsetDate(API_KEY_SUNSET_DATE)}.
                   </p>
                 </div>
               )}

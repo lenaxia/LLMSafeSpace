@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/logger"
 	"github.com/lenaxia/llmsafespace/pkg/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Helper function to create a test config
@@ -125,12 +127,13 @@ func TestGetUserByAPIKey(t *testing.T) {
 	expectedUpdatedAt := time.Now()
 	expectedActive := true
 	expectedRole := "user"
+	expectedStatus := types.UserStatusActive
 
 	// Set up expectations for valid API key
-	rows := sqlmock.NewRows([]string{"id", "username", "email", "created_at", "updated_at", "active", "role"}).
-		AddRow(expectedUserID, expectedUsername, expectedEmail, expectedCreatedAt, expectedUpdatedAt, expectedActive, expectedRole)
+	rows := sqlmock.NewRows([]string{"id", "username", "email", "created_at", "updated_at", "active", "role", "status"}).
+		AddRow(expectedUserID, expectedUsername, expectedEmail, expectedCreatedAt, expectedUpdatedAt, expectedActive, expectedRole, expectedStatus)
 
-	mock.ExpectQuery("SELECT u.id, u.username, u.email, u.created_at, u.updated_at, u.active, u.role FROM users u JOIN api_keys k").
+	mock.ExpectQuery("SELECT u.id, u.username, u.email, u.created_at, u.updated_at, u.active, u.role, u.status FROM users u JOIN api_keys k").
 		WithArgs(apiKey).
 		WillReturnRows(rows)
 
@@ -143,10 +146,11 @@ func TestGetUserByAPIKey(t *testing.T) {
 	assert.Equal(t, expectedEmail, user.Email)
 	assert.Equal(t, expectedActive, user.Active)
 	assert.Equal(t, expectedRole, user.Role)
+	assert.Equal(t, expectedStatus, user.Status)
 
 	// Test case: Invalid API key
 	invalidKey := "invalid_key"
-	mock.ExpectQuery("SELECT u.id, u.username, u.email, u.created_at, u.updated_at, u.active, u.role FROM users u JOIN api_keys k").
+	mock.ExpectQuery("SELECT u.id, u.username, u.email, u.created_at, u.updated_at, u.active, u.role, u.status FROM users u JOIN api_keys k").
 		WithArgs(invalidKey).
 		WillReturnError(sql.ErrNoRows)
 
@@ -270,11 +274,12 @@ func TestGetUser(t *testing.T) {
 	updatedAt := time.Now()
 	active := true
 	role := "user"
+	status := types.UserStatusActive
 
 	// Set up expectations
-	rows := sqlmock.NewRows([]string{"id", "username", "email", "password_hash", "created_at", "updated_at", "active", "role"}).
-		AddRow(userID, username, email, "$2a$10$hash", createdAt, updatedAt, active, role)
-	mock.ExpectQuery("SELECT id, username, email, password_hash, created_at, updated_at, active, role FROM users WHERE id = \\$1").
+	rows := sqlmock.NewRows([]string{"id", "username", "email", "password_hash", "created_at", "updated_at", "active", "role", "status"}).
+		AddRow(userID, username, email, "$2a$10$hash", createdAt, updatedAt, active, role, status)
+	mock.ExpectQuery("SELECT id, username, email, password_hash, created_at, updated_at, active, role, status FROM users WHERE id = \\$1").
 		WithArgs(userID).
 		WillReturnRows(rows)
 
@@ -287,9 +292,10 @@ func TestGetUser(t *testing.T) {
 	assert.Equal(t, email, user.Email)
 	assert.Equal(t, active, user.Active)
 	assert.Equal(t, role, user.Role)
+	assert.Equal(t, status, user.Status)
 
 	// Test case: User not found
-	mock.ExpectQuery("SELECT id, username, email, password_hash, created_at, updated_at, active, role FROM users WHERE id = \\$1").
+	mock.ExpectQuery("SELECT id, username, email, password_hash, created_at, updated_at, active, role, status FROM users WHERE id = \\$1").
 		WithArgs("nonexistent").
 		WillReturnError(sql.ErrNoRows)
 
@@ -888,6 +894,68 @@ func TestUpdateUser(t *testing.T) {
 	})
 }
 
+func TestUpdateUser_Status(t *testing.T) {
+	service, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	userID := "user-1"
+	status := types.UserStatusSuspended
+
+	mock.ExpectExec("UPDATE users SET updated_at = NOW\\(\\), status = \\$1 WHERE id = \\$2").
+		WithArgs(string(status), userID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err := service.UpdateUser(ctx, userID, types.UserUpdates{Status: &status})
+	assert.NoError(t, err)
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestSetUserStatus(t *testing.T) {
+	t.Run("suspended", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		mock.ExpectExec("UPDATE users SET status = \\$1, updated_at = NOW\\(\\) WHERE id = \\$2").
+			WithArgs(string(types.UserStatusSuspended), "user-1").
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := service.SetUserStatus(ctx, "user-1", types.UserStatusSuspended)
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("active_restores_access", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		mock.ExpectExec("UPDATE users SET status = \\$1, updated_at = NOW\\(\\) WHERE id = \\$2").
+			WithArgs(string(types.UserStatusActive), "user-1").
+			WillReturnResult(sqlmock.NewResult(0, 1))
+
+		err := service.SetUserStatus(ctx, "user-1", types.UserStatusActive)
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("db_error", func(t *testing.T) {
+		service, mock, cleanup := setupMockDB(t)
+		defer cleanup()
+
+		ctx := context.Background()
+		mock.ExpectExec("UPDATE users SET status = \\$1, updated_at = NOW\\(\\) WHERE id = \\$2").
+			WithArgs(string(types.UserStatusSuspended), "user-1").
+			WillReturnError(sql.ErrConnDone)
+
+		err := service.SetUserStatus(ctx, "user-1", types.UserStatusSuspended)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to set user status")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
 // TestMarkWorkspaceDeleted_PurgesBindings is the regression test for
 // Bug 11 in worklog 0085: deleting a workspace must also purge its
 // user_secret_bindings rows. The bindings table has no FK to
@@ -1396,4 +1464,153 @@ func TestListSessionIndex_IncludesContextUsed(t *testing.T) {
 		assert.NotNil(t, items[0].ContextUsed)
 		assert.Equal(t, int64(0), *items[0].ContextUsed)
 	})
+}
+
+// --- US-43.18: ListAllUsers ---
+
+func userListRows() *sqlmock.Rows {
+	return sqlmock.NewRows([]string{"id", "email", "role", "status", "created_at", "org_id", "org_name"}).
+		AddRow("user-1", "a@example.com", "admin", "active", time.Now(), "org-1", "Acme").
+		AddRow("user-2", "b@example.com", "user", "suspended", time.Now(), "", "")
+}
+
+func TestListAllUsers_NoFilterReturnsAll(t *testing.T) {
+	service, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	mock.ExpectQuery(`COUNT\(\*\) FROM users`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+	mock.ExpectQuery(`SELECT u.id, u.email, u.role, u.status`).
+		WithArgs(50, 0).
+		WillReturnRows(userListRows())
+
+	users, page, err := service.ListAllUsers(context.Background(), 50, 0, nil)
+	require.NoError(t, err)
+	require.NotNil(t, page)
+	assert.Equal(t, 2, page.Total)
+	require.Len(t, users, 2)
+	assert.Equal(t, "user-1", users[0].ID)
+	assert.Equal(t, "a@example.com", users[0].Email)
+	assert.Equal(t, "org-1", users[0].OrgID)
+	assert.Equal(t, "Acme", users[0].OrgName)
+	assert.Equal(t, 1, users[0].OrgCount)
+	assert.Equal(t, "", users[1].OrgID)
+	assert.Equal(t, 0, users[1].OrgCount)
+	assert.Equal(t, types.UserStatusSuspended, users[1].Status)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestListAllUsers_StatusFilterAppendsWhere(t *testing.T) {
+	service, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	mock.ExpectQuery(`COUNT\(\*\) FROM users WHERE status = \$1`).
+		WithArgs("suspended").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`FROM users u.*WHERE u.status = \$1`).
+		WithArgs("suspended", 50, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "role", "status", "created_at", "org_id", "org_name"}).
+			AddRow("user-2", "b@example.com", "user", "suspended", time.Now(), "", ""))
+
+	users, page, err := service.ListAllUsers(context.Background(), 50, 0, strPtr("suspended"))
+	require.NoError(t, err)
+	assert.Equal(t, 1, page.Total)
+	require.Len(t, users, 1)
+	assert.Equal(t, types.UserStatusSuspended, users[0].Status)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestListAllUsers_LimitClampedToDefaultAndMax(t *testing.T) {
+	service, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	// limit <= 0 ⇒ default 50.
+	mock.ExpectQuery(`COUNT\(\*\) FROM users`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT u.id, u.email, u.role, u.status`).
+		WithArgs(50, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "role", "status", "created_at", "org_id", "org_name"}).
+			AddRow("u", "a@example.com", "user", "active", time.Now(), "", ""))
+
+	_, _, err := service.ListAllUsers(context.Background(), 0, 0, nil)
+	require.NoError(t, err)
+
+	// limit > 200 ⇒ clamped to 200.
+	mock.ExpectQuery(`COUNT\(\*\) FROM users`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT u.id, u.email, u.role, u.status`).
+		WithArgs(200, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "role", "status", "created_at", "org_id", "org_name"}).
+			AddRow("u", "a@example.com", "user", "active", time.Now(), "", ""))
+
+	_, _, err = service.ListAllUsers(context.Background(), 9999, 0, nil)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestListAllUsers_EmptyResultSkipsSelect(t *testing.T) {
+	service, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	mock.ExpectQuery(`COUNT\(\*\) FROM users`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	// No SELECT expectation: total == 0 must short-circuit.
+
+	users, page, err := service.ListAllUsers(context.Background(), 50, 0, nil)
+	require.NoError(t, err)
+	require.NotNil(t, page)
+	assert.Equal(t, 0, page.Total)
+	assert.Len(t, users, 0)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestListAllUsers_CountError(t *testing.T) {
+	service, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	mock.ExpectQuery(`COUNT\(\*\) FROM users`).
+		WillReturnError(errors.New("connection refused"))
+
+	users, page, err := service.ListAllUsers(context.Background(), 50, 0, nil)
+	require.Error(t, err)
+	assert.Nil(t, users)
+	assert.Nil(t, page)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestListAllUsers_SelectError(t *testing.T) {
+	service, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	mock.ExpectQuery(`COUNT\(\*\) FROM users`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+	mock.ExpectQuery(`SELECT u.id, u.email, u.role, u.status`).
+		WithArgs(50, 0).
+		WillReturnError(errors.New("select failed"))
+
+	users, page, err := service.ListAllUsers(context.Background(), 50, 0, nil)
+	require.Error(t, err)
+	assert.Nil(t, users)
+	assert.Nil(t, page)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestListAllUsers_QueryShape verifies the LEFT JOIN to org_memberships +
+// organizations is present — a regression guard against an accidental refactor
+// that drops the org-resolution join (the dashboard relies on it).
+func TestListAllUsers_QueryShape(t *testing.T) {
+	service, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	mock.ExpectQuery(`COUNT\(\*\) FROM users`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`LEFT JOIN org_memberships m ON m.user_id = u.id.*LEFT JOIN organizations o ON o.id = m.org_id`).
+		WithArgs(50, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "email", "role", "status", "created_at", "org_id", "org_name"}).
+			AddRow("u", "a@example.com", "user", "active", time.Now(), "", ""))
+
+	_, _, err := service.ListAllUsers(context.Background(), 50, 0, nil)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet(),
+		"query must LEFT JOIN org_memberships + organizations to resolve org fields")
 }

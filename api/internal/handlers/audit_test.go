@@ -17,9 +17,10 @@ import (
 )
 
 type mockAuditStore struct {
-	mu      sync.Mutex
-	entries []*types.AuditEntry
-	err     error
+	mu             sync.Mutex
+	entries        []*types.AuditEntry
+	err            error
+	lastAllFilters types.AuditFilters
 }
 
 func (m *mockAuditStore) ListOrgAudit(_ context.Context, _ string, limit, offset int) ([]*types.AuditEntry, *types.PaginationMetadata, error) {
@@ -41,6 +42,28 @@ func (m *mockAuditStore) ListOrgAudit(_ context.Context, _ string, limit, offset
 		out = []*types.AuditEntry{}
 	}
 	return out, &types.PaginationMetadata{Total: total, Start: offset, End: end, Limit: limit, Offset: offset}, nil
+}
+
+func (m *mockAuditStore) ListAllAudit(_ context.Context, f types.AuditFilters) ([]*types.AuditEntry, *types.PaginationMetadata, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastAllFilters = f
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	total := len(m.entries)
+	end := f.Offset + f.Limit
+	if end > total {
+		end = total
+	}
+	var out []*types.AuditEntry
+	if f.Offset < total && f.Limit > 0 {
+		out = m.entries[f.Offset:end]
+	}
+	if out == nil {
+		out = []*types.AuditEntry{}
+	}
+	return out, &types.PaginationMetadata{Total: total, Start: f.Offset, End: end, Limit: f.Limit, Offset: f.Offset}, nil
 }
 
 func setupAuditRouter(h *AuditHandler) *gin.Engine {
@@ -122,6 +145,135 @@ func TestAuditHandler_List_DBError(t *testing.T) {
 	h := NewAuditHandler(store)
 
 	w := doRequest(setupAuditRouter(h), "GET", "/api/v1/orgs/org-1/audit", "")
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on DB error, got %d", w.Code)
+	}
+}
+
+// --- US-43.20: cross-org audit handler ---
+
+func setupCrossOrgAuditRouter(h *AuditHandler) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/api/v1/admin/audit", h.ListCrossOrg)
+	return r
+}
+
+func TestAuditHandler_ListCrossOrg_Success(t *testing.T) {
+	store := &mockAuditStore{
+		entries: []*types.AuditEntry{
+			{ID: 1, ActorID: "user-1", Domain: "org", Action: "policy.set", OrgID: "org-1", CreatedAt: time.Now()},
+			{ID: 2, ActorID: "user-2", Domain: "admin", Action: "user.suspend", OrgID: "org-2", CreatedAt: time.Now()},
+		},
+	}
+	h := NewAuditHandler(store)
+
+	w := doRequest(setupCrossOrgAuditRouter(h), "GET", "/api/v1/admin/audit", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Items      []*types.AuditEntry       `json:"items"`
+		Pagination *types.PaginationMetadata `json:"pagination"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(resp.Items))
+	}
+	if resp.Items[1].OrgID != "org-2" {
+		t.Errorf("expected second item org-2, got %q", resp.Items[1].OrgID)
+	}
+	if resp.Pagination == nil || resp.Pagination.Total != 2 {
+		t.Errorf("expected pagination total 2, got %+v", resp.Pagination)
+	}
+}
+
+func TestAuditHandler_ListCrossOrg_FiltersPassedThrough(t *testing.T) {
+	store := &mockAuditStore{entries: []*types.AuditEntry{}}
+	h := NewAuditHandler(store)
+
+	w := doRequest(setupCrossOrgAuditRouter(h), "GET",
+		"/api/v1/admin/audit?org_id=org-7&actor_id=user-9&domain=org&limit=25&offset=50", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	f := store.lastAllFilters
+	if f.OrgID == nil || *f.OrgID != "org-7" {
+		t.Errorf("OrgID filter: got %v", f.OrgID)
+	}
+	if f.ActorID == nil || *f.ActorID != "user-9" {
+		t.Errorf("ActorID filter: got %v", f.ActorID)
+	}
+	if f.Domain == nil || *f.Domain != "org" {
+		t.Errorf("Domain filter: got %v", f.Domain)
+	}
+	if f.Limit != 25 {
+		t.Errorf("Limit: got %d, want 25", f.Limit)
+	}
+	if f.Offset != 50 {
+		t.Errorf("Offset: got %d, want 50", f.Offset)
+	}
+}
+
+func TestAuditHandler_ListCrossOrg_LimitClampedToMax(t *testing.T) {
+	store := &mockAuditStore{entries: []*types.AuditEntry{}}
+	h := NewAuditHandler(store)
+
+	w := doRequest(setupCrossOrgAuditRouter(h), "GET", "/api/v1/admin/audit?limit=9999", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if store.lastAllFilters.Limit != 500 {
+		t.Errorf("expected limit clamped to 500, got %d", store.lastAllFilters.Limit)
+	}
+}
+
+func TestAuditHandler_ListCrossOrg_DefaultsApplied(t *testing.T) {
+	store := &mockAuditStore{entries: []*types.AuditEntry{}}
+	h := NewAuditHandler(store)
+
+	w := doRequest(setupCrossOrgAuditRouter(h), "GET", "/api/v1/admin/audit", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if store.lastAllFilters.Limit != 100 {
+		t.Errorf("expected default limit 100, got %d", store.lastAllFilters.Limit)
+	}
+	if store.lastAllFilters.Offset != 0 {
+		t.Errorf("expected default offset 0, got %d", store.lastAllFilters.Offset)
+	}
+	if store.lastAllFilters.OrgID != nil || store.lastAllFilters.ActorID != nil || store.lastAllFilters.Domain != nil {
+		t.Errorf("expected nil filters when no query params, got %+v", store.lastAllFilters)
+	}
+}
+
+func TestAuditHandler_ListCrossOrg_EmptyFilterStringsIgnored(t *testing.T) {
+	store := &mockAuditStore{entries: []*types.AuditEntry{}}
+	h := NewAuditHandler(store)
+
+	w := doRequest(setupCrossOrgAuditRouter(h), "GET", "/api/v1/admin/audit?org_id=&actor_id=&domain=", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if store.lastAllFilters.OrgID != nil {
+		t.Errorf("empty org_id must not set filter, got %v", store.lastAllFilters.OrgID)
+	}
+	if store.lastAllFilters.ActorID != nil {
+		t.Errorf("empty actor_id must not set filter, got %v", store.lastAllFilters.ActorID)
+	}
+	if store.lastAllFilters.Domain != nil {
+		t.Errorf("empty domain must not set filter, got %v", store.lastAllFilters.Domain)
+	}
+}
+
+func TestAuditHandler_ListCrossOrg_DBError(t *testing.T) {
+	store := &mockAuditStore{err: context.DeadlineExceeded}
+	h := NewAuditHandler(store)
+
+	w := doRequest(setupCrossOrgAuditRouter(h), "GET", "/api/v1/admin/audit", "")
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("expected 500 on DB error, got %d", w.Code)
 	}

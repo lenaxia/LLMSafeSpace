@@ -14,6 +14,12 @@ import (
 type SecretType string
 
 const (
+	// APIKeySunsetDate is the fixed date on which new api-key secrets
+	// become uncreatable (US-44.9). Six months after the Epic 44 ship
+	// date. Existing api-key secrets remain functional after this date;
+	// only creation is blocked by the CreateSecret gate.
+	APIKeySunsetDate = "2026-12-19"
+
 	// SecretTypeAPIKey is for generic API-key secrets (legacy).
 	// New code should use SecretTypeLLMProvider for structured provider
 	// credentials. Kept for backward compatibility with existing secrets.
@@ -29,6 +35,15 @@ const (
 	SecretTypeSecretFile    SecretType = "secret-file"
 	SecretTypeEnvSecret     SecretType = "env-secret"
 )
+
+// isAPIKeySunset reports whether the fixed api-key sunset date has
+// passed. It is a function variable so tests can force the post-sunset
+// branch without waiting for the real date; production callers always
+// use the default value, which compares now against 2026-12-19 (the
+// value of APIKeySunsetDate, expressed as a time.Time literal).
+var isAPIKeySunset = func() bool {
+	return time.Now().After(time.Date(2026, 12, 19, 0, 0, 0, 0, time.UTC))
+}
 
 // ValidSecretTypes is the set of allowed secret types.
 var ValidSecretTypes = map[SecretType]bool{

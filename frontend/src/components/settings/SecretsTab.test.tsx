@@ -189,7 +189,7 @@ describe("SecretsTab – legacy api-key type rendering", () => {
     expect(screen.getByText("old-api-key")).toBeInTheDocument();
   });
 
-  it("shows a migration banner in the api-key group", async () => {
+  it("shows the deprecation banner with the sunset date in the api-key group", async () => {
     listMock.mockResolvedValue({
       secrets: [
         {
@@ -206,8 +206,14 @@ describe("SecretsTab – legacy api-key type rendering", () => {
     render(<SecretsTab />);
     await waitFor(() => expect(screen.queryByText("Loading secrets...")).not.toBeInTheDocument());
 
-    // The migration banner text must be present (distinct from the group header)
-    expect(screen.getByText(/These are legacy/i)).toBeInTheDocument();
+    // The banner phrase lives in a single text node within the amber <p>;
+    // anchor on it then verify the full migrated-content via the paragraph.
+    const bannerAnchor = screen.getByText(/secrets are deprecated/i);
+    const banner = bannerAnchor.closest("p");
+    expect(banner?.textContent).toContain("api-key");
+    expect(banner?.textContent).toContain("llm-provider");
+    expect(banner?.textContent).toContain("env-secret");
+    expect(banner?.textContent).toContain("December 19, 2026");
   });
 
   it("does not show the api-key group when no api-key secrets exist", async () => {
