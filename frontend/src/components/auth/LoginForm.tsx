@@ -5,14 +5,21 @@ import { ApiClientError } from "../../api/client";
 
 interface Props {
   onSubmit: (username: string, password: string, rememberMe: boolean) => Promise<void>;
+  /** Fired on every email change so parents (e.g. SSO domain detection) can react. */
+  onEmailChange?: (email: string) => void;
 }
 
-export function LoginForm({ onSubmit }: Props) {
+export function LoginForm({ onSubmit, onEmailChange }: Props) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  const handleEmail = (value: string) => {
+    setUsername(value);
+    onEmailChange?.(value);
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -34,7 +41,7 @@ export function LoginForm({ onSubmit }: Props) {
         type="email"
         placeholder="Email"
         value={username}
-        onChange={(e) => setUsername(e.target.value)}
+        onChange={(e) => handleEmail(e.target.value)}
         required
         autoComplete="email"
       />

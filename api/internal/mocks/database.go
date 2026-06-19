@@ -53,6 +53,10 @@ func (m *MockDatabaseService) DeleteUser(ctx context.Context, userID string) err
 	return m.Called(ctx, userID).Error(0)
 }
 
+func (m *MockDatabaseService) SetUserStatus(ctx context.Context, userID string, status types.UserStatus) error {
+	return m.Called(ctx, userID, status).Error(0)
+}
+
 func (m *MockDatabaseService) GetUserByAPIKey(ctx context.Context, apiKey string) (*types.User, error) {
 	args := m.Called(ctx, apiKey)
 	if args.Get(0) == nil {

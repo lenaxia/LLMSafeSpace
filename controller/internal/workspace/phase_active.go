@@ -40,16 +40,25 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 	// would be permanently lost on re-reconcile (Spec.Suspend already nil).
 	if workspace.Spec.Suspend != nil && *workspace.Spec.Suspend {
 		logger.Info("Spec.Suspend=true; transitioning to Suspending")
-		workspacePhaseTransitions.WithLabelValues(string(v1.WorkspacePhaseActive), string(v1.WorkspacePhaseSuspending)).Inc()
-		workspace.Status.Phase = v1.WorkspacePhaseSuspending
-		if err := r.Status().Update(ctx, workspace); err != nil {
-			recordStatusUpdateConflictOnError("handleActive_suspend", err)
+		if err := r.transitionActiveToSuspending(ctx, workspace); err != nil {
 			return ctrl.Result{}, err
 		}
 		if err := r.clearSuspendRequest(ctx, workspace); err != nil {
 			logger.Error(err, "Failed to clear Spec.Suspend after suspend transition; will retry on next reconcile")
 			return ctrl.Result{Requeue: true}, nil
 		}
+		return ctrl.Result{}, nil
+	}
+
+	// D20 (US-43.19): org-level suspension. If the workspace belongs to a
+	// suspended org, transition to Suspending so the pod is killed (PVC
+	// retained). The controller never auto-resumes. A status-lookup failure
+	// fails open (workspace keeps running); the cached client absorbs
+	// transient API outages. This check runs AFTER the Spec.Suspend path so
+	// an explicit API suspend is always honored and cleared first.
+	if transitioned, err := r.applyOrgSuspension(ctx, workspace); err != nil {
+		return ctrl.Result{}, err
+	} else if transitioned {
 		return ctrl.Result{}, nil
 	}
 

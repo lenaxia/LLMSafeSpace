@@ -89,7 +89,19 @@ func main() {
 	var relayRouterURL string
 	flag.StringVar(&relayRouterURL, "relay-router-url", "http://relay-router:8080",
 		"URL of the in-cluster relay-router for /metrics scraping (Epic 42).")
+	var apiServiceURL string
+	flag.StringVar(&apiServiceURL, "api-service-url", "",
+		"Root URL of the in-cluster API service (e.g. http://llmsafespace-api.llmsafespace.svc:8080) "+
+			"used to poll org status for D20 org-level workspace suspension. "+
+			"Empty disables org-suspension (the controller never org-suspends).")
 	flag.Parse()
+
+	// US-43.19 / D20: the shared secret authenticating controller→API internal
+	// calls. Read from the same env var the API service uses
+	// (LLMSAFESPACE_INTERNAL_TOKEN) so a single mounted Secret configures both
+	// sides. Empty means no X-Internal-Token header is sent (the endpoint is
+	// then reachable only when the API side also has the env unset).
+	apiInternalToken := os.Getenv("LLMSAFESPACE_INTERNAL_TOKEN")
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 	setupLog.Info("starting controller", "version", version, "commit", commitSHA, "built", buildTime)
@@ -167,7 +179,7 @@ func main() {
 	})
 
 	// Set up controllers
-	if err := controller.SetupControllers(mgr, inferenceRelayURL, inferenceRelaySecret); err != nil {
+	if err := controller.SetupControllers(mgr, inferenceRelayURL, inferenceRelaySecret, apiServiceURL, apiInternalToken); err != nil {
 		setupLog.Error(err, "unable to set up controllers")
 		os.Exit(1)
 	}

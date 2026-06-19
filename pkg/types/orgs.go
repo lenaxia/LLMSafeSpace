@@ -156,3 +156,60 @@ type InvitationDetail struct {
 	Role        OrgRole   `json:"role"`
 	ExpiresAt   time.Time `json:"expiresAt"`
 }
+
+// LastAdminOrg identifies an org where a user is the sole active admin.
+type LastAdminOrg struct {
+	OrgID   string `json:"orgId"`
+	OrgName string `json:"orgName"`
+}
+
+// OrgSummary extends Organization with aggregate counts for the platform
+// admin dashboard. The counts are populated by a single SQL query (no N+1).
+type OrgSummary struct {
+	Organization
+	MemberCount    int `json:"memberCount"`
+	WorkspaceCount int `json:"workspaceCount"`
+}
+
+// OrgSSOConfig is the per-org OIDC SSO configuration. ClientSecret is the
+// encrypted blob stored in the DB; it is never serialized to JSON.
+type OrgSSOConfig struct {
+	OrgID            string             `json:"-"`
+	DiscoveryURL     string             `json:"discoveryUrl"`
+	ClientID         string             `json:"clientId"`
+	ClientSecret     []byte             `json:"-"`
+	ClaimedDomains   []string           `json:"claimedDomains"`
+	AutoProvision    bool               `json:"autoProvision"`
+	GroupRoleMapping map[string]OrgRole `json:"groupRoleMapping"`
+	CreatedAt        time.Time          `json:"createdAt"`
+	UpdatedAt        time.Time          `json:"updatedAt"`
+}
+
+// OrgSSOConfigResponse is the API response shape — omits the encrypted secret.
+type OrgSSOConfigResponse struct {
+	OrgID            string             `json:"orgId"`
+	DiscoveryURL     string             `json:"discoveryUrl"`
+	ClientID         string             `json:"clientId"`
+	HasSecret        bool               `json:"hasSecret"`
+	ClaimedDomains   []string           `json:"claimedDomains"`
+	AutoProvision    bool               `json:"autoProvision"`
+	GroupRoleMapping map[string]OrgRole `json:"groupRoleMapping"`
+	UpdatedAt        time.Time          `json:"updatedAt"`
+}
+
+// UpsertSSOConfigRequest is the API request body for creating/updating SSO config.
+type UpsertSSOConfigRequest struct {
+	DiscoveryURL     string             `json:"discoveryUrl"     binding:"required,url"`
+	ClientID         string             `json:"clientId"         binding:"required,min=1"`
+	ClientSecret     string             `json:"clientSecret"     binding:"omitempty"`
+	ClaimedDomains   []string           `json:"claimedDomains"`
+	AutoProvision    *bool              `json:"autoProvision"`
+	GroupRoleMapping map[string]OrgRole `json:"groupRoleMapping"`
+}
+
+// SSODomain is a single entry in the domain discovery response.
+type SSODomain struct {
+	Domain  string `json:"domain"`
+	OrgSlug string `json:"orgSlug"`
+	OrgName string `json:"orgName"`
+}

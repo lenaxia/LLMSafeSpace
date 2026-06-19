@@ -55,6 +55,9 @@ type DatabaseService interface {
 	UpdateUser(ctx context.Context, userID string, updates types.UserUpdates) error
 	DeleteUser(ctx context.Context, userID string) error
 	CountUsers(ctx context.Context) (int, error)
+	// SetUserStatus sets the authoritative operational status of a user
+	// (D19): 'suspended' blocks across all contexts, 'active' restores.
+	SetUserStatus(ctx context.Context, userID string, status types.UserStatus) error
 	GetUserByAPIKey(ctx context.Context, apiKey string) (*types.User, error)
 	CreateAPIKey(ctx context.Context, apiKey *types.APIKey) error
 	ListAPIKeys(ctx context.Context, userID string) ([]*types.APIKey, error)
