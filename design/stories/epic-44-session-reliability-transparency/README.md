@@ -291,11 +291,11 @@ To deliver the user-facing goal ("Frontend shows ⚠️ Agent was terminated"), 
 **Files:** `cmd/workspace-agentd/main.go` (extend existing memory reading at lines 577-594)  
 *(opencode is third-party and cannot be modified — agentd handles all monitoring; the file paths under `packages/opencode/src/` referenced in earlier drafts are NOT in this repo)*  
 **Acceptance:**
-- [ ] agentd checks `/sys/fs/cgroup/memory.current` against `/sys/fs/cgroup/memory.max` every 60s
-- [ ] When >85% of cgroup limit: emit warning via existing SSE channel (changed from 75% per user requirement)
-- [ ] User sees: "⚠️ Memory usage high (1.7 GiB / 2 GiB). Consider reducing concurrent sessions or increasing workspace memory limit."
-- [ ] Use cgroup v2 paths exclusively (this codebase uses cgroup v2; never references v1 `memory.limit_in_bytes`)
-- [ ] Config: `MEMORY_WARNING_THRESHOLD=0.85`, `MEMORY_CHECK_INTERVAL_MS=60000`
+- [x] agentd checks `/sys/fs/cgroup/memory.current` against `/sys/fs/cgroup/memory.max` every 60s *(shipped via #247: `memoryPressureMonitor` with configurable `MEMORY_CHECK_INTERVAL_MS`; separate ticker from ops gauges via #247)*
+- [x] When >=85% of cgroup limit: emit warning *(scope refinement: design's "existing SSE channel" doesn't exist in agentd — delivered via CRD status: controller sets `WorkspaceConditionMemoryPressure` from statusz; frontend renders a non-dismissible banner from `MemoryUsedBytes`/`MemoryTotalBytes` already propagated by `enrichAgentStatus`. agentd also logs Warn + increments `workspace_memory_warnings_total` Prometheus counter)*
+- [x] User sees: "⚠️ Memory usage high (X / Y). Consider reducing concurrent sessions or increasing workspace memory limit." *(non-dismissible banner in ChatPage)*
+- [x] Use cgroup v2 paths exclusively (this codebase uses cgroup v2; never references v1 `memory.limit_in_bytes`)
+- [x] Config: `MEMORY_WARNING_THRESHOLD=0.85`, `MEMORY_CHECK_INTERVAL_MS=60000` *(threshold range-validated: ≤0 or >1 falls back to default)*
 
 **Note:** Implemented in agentd since opencode cannot be modified. agentd has full visibility into pod-level cgroup metrics and can emit warnings via the existing SSE channel.
 
@@ -307,11 +307,11 @@ To deliver the user-facing goal ("Frontend shows ⚠️ Agent was terminated"), 
 **Files:** `cmd/workspace-agentd/main.go` (extend statusz with per-session memory estimate), `api/internal/handlers/history.go`  
 *(opencode is third-party and cannot be modified — `packages/opencode/src/session-manager.ts` referenced in earlier drafts is NOT in this repo. agentd computes the estimate from contextTokens already available via the `/session` endpoint)*  
 **Acceptance:**
-- [ ] `estimatedMemoryMB` computed per session in agentd: `(contextTokens × 2 bytes) + (historyTurns × 10KB overhead)`
-- [ ] Included in agentd `/v1/statusz` response (extends existing SessionInfo)
-- [ ] API `GET /sessions/:id` exposes the estimate
-- [ ] Terminal UI shows memory usage in session list
-- [ ] Helps users identify memory-heavy sessions
+- [x] `estimatedMemoryMB` computed per session in agentd: `(contextTokens × 2 bytes) + (historyTurns × 10KB overhead)` *(shipped via #247)*
+- [x] Included in agentd `/v1/statusz` response (extends existing SessionInfo) *(shipped via #247)*
+- [x] API `GET /sessions/:id` exposes the estimate *(shipped via #247)*
+- [x] Terminal UI shows memory usage in session list *(shipped via #247)*
+- [x] Helps users identify memory-heavy sessions *(shipped via #247)*
 
 ---
 
@@ -349,16 +349,16 @@ To deliver the user-facing goal ("Frontend shows ⚠️ Agent was terminated"), 
 #### US-44.9: Aggressive api-key Deprecation
 **Problem:** `api-key` secret type is legacy, superseded by `llm-provider` (hot-reloadable) and `env-secret`  
 **Solution:** Deprecate aggressively with 6-month sunset timeline, provide migration guide  
-**Files:** `frontend/src/`, `api/internal/handlers/secrets.go`, `docs/` (multiple files)  
+**Files:** `frontend/src/components/settings/SecretsTab.tsx`, `frontend/src/components/workspace/WorkspaceSettingsDrawer.tsx`, `pkg/secrets/types.go`, `pkg/secrets/secret_service.go`, `docs/migration/api-key-to-llm-provider.md`  
 **Acceptance:**
-- [ ] UI banner on api-key secrets: "⚠️ api-key secrets are deprecated. Migrate to llm-provider (for LLM APIs) or env-secret (for other APIs). api-key will be removed on [SUNSET_DATE]."
-- [ ] Migration guide published: `/docs/migration/api-key-to-llm-provider.md`
+- [x] UI banner on api-key secrets: "⚠️ api-key secrets are deprecated. Migrate to llm-provider (for LLM APIs) or env-secret (for other APIs). api-key will be removed on [SUNSET_DATE]." *(shipped via #253; sunset date 2026-12-19)*
+- [x] Migration guide published: `/docs/migration/api-key-to-llm-provider.md` *(shipped via #253)*
   - For LLM APIs: Use `llm-provider` secret type (hot-reloadable, no restart)
   - For other APIs: Use `env-secret` type (requires restart, but session-aware in Epic 44)
-- [ ] Set sunset date: 6 months from Epic 44 ship date
-- [ ] After sunset: Prevent creation of new api-key secrets (return 400 error with migration guide link)
-- [ ] Existing api-key secrets continue to work (no forced migration, just deprecated)
-- [ ] Update secret type dropdown: Remove api-key from list, show only if user has existing api-key secrets
+- [x] Set sunset date: 6 months from Epic 44 ship date *(2026-12-19, shipped via #253)*
+- [x] After sunset: Prevent creation of new api-key secrets (return 400 error with migration guide link) *(shipped via #253: CreateSecret gate in secret_service.go wraps ErrInvalidSecretType → 400)*
+- [x] Existing api-key secrets continue to work (no forced migration, just deprecated) *(UpdateSecret doesn't re-check type; materializer still handles api-key)*
+- [x] Update secret type dropdown: Remove api-key from list, show only if user has existing api-key secrets *(legacyOnly filter at SecretsTab.tsx:485; also fixed WorkspaceSettingsDrawer missing llm-provider / mislabeled api-key per Rule 5)*
 
 **Context:** User confirmed "no api-key secrets currently in use" - can deprecate aggressively. See QUESTIONS-ANSWERED.md.
 
