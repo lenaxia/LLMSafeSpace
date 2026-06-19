@@ -75,7 +75,7 @@ spec:
               Authentication failures are occurring at {{ `{{ $value | humanize }}` }}/s.
               Check for credential rotation issues or brute-force attempts.
 
-        - alert: LLMSafeSpaceSSEBrokerDroppingEvents
+        - alert: LLMSafeSpacesSSEBrokerDroppingEvents
           expr: |
             sum(rate(llmsafespaces_sse_broker_dropped_events_total{job=~"{{ $apiJob }}"}[5m])) > 0
           for: 2m
@@ -146,7 +146,7 @@ spec:
               Recovery backoff p99 is {{ `{{ $value | humanizeDuration }}` }}. Workspaces
               are taking a long time to recover from failures.
 
-        - alert: LLMSafeSpaceSafeModeActive
+        - alert: LLMSafeSpacesSafeModeActive
           expr: |
             llmsafespaces_workspace_safe_mode_active{job=~"{{ $ctrlJob }}"} > 0
           for: 5m
@@ -172,7 +172,7 @@ spec:
               Maximum consecutive failures is {{ `{{ $value }}` }}. One or more workspaces
               are stuck in a failure loop. Immediate investigation required.
 
-        - alert: LLMSafeSpaceStatusUpdateConflicts
+        - alert: LLMSafeSpacesStatusUpdateConflicts
           expr: |
             sum(rate(llmsafespaces_workspace_status_update_conflicts_total{job=~"{{ $ctrlJob }}"}[5m])) > 0.1
           for: 10m
