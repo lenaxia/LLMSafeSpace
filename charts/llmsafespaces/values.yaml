@@ -232,7 +232,63 @@ controller:
       tolerations: []
       affinity: {}
 
-  resources:
+      # WireGuard sidecar + network-agnostic ingress (US-42.8, Epic 42 Layer 2
+      # redesign). The sidecar brings up wg0 (10.42.42.1/24) in
+      # the router pod's network namespace so the router main container can
+      # dial relay VMs at 10.42.42.x:8080. The chart NEVER installs MetalLB or
+      # any other LB controller — that is an operator responsibility, like
+      # Postgres and Redis.
+      wireGuard:
+        # WireGuard sidecar image. Must provide `wg`, `wg-quick`, `ip`
+        # (wireguard-tools + iproute2), `jq` (to parse the peers ConfigMap),
+        # and access to /dev/net/tun. Default follows the project ghcr image
+        # convention; the project publishes a purpose-built image, but any
+        # image with the listed tools works (e.g. linuxserver/wireguard + jq).
+        image:
+          repository: ghcr.io/lenaxia/llmsafespaces/relay-wireguard
+          tag: ""
+          pullPolicy: IfNotPresent
+        # WireGuard mesh addressing. Router is .1, OCI relay .2, AWS .4.
+        # (.3 reserved for optional GCP.) Must match the controller's
+        # wgIPForProvider contract (controller/internal/relay).
+        address: "10.42.42.1/24"
+        listenPort: 51820
+        # How often (seconds) the sidecar re-renders wg0.conf from the mounted
+        # Secret + ConfigMap and applies peer changes via `wg syncconf`. This
+        # is what lets the pod pick up relay VMs provisioned AFTER the pod
+        # started (the controller never restarts the router on topology
+        # changes) without an extra restart mechanism.
+        syncIntervalSeconds: 5
+        resources:
+          requests:
+            cpu: 50m
+            memory: 32Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        # Network-agnostic WireGuard ingress. The CRD's spec.wireGuard.
+        # routerEndpoint is ALWAYS the operator's authoritative public
+        # host:port; this only controls what (if any) Service/ pod scheduling
+        # the chart creates to expose UDP 51820.
+        ingress:
+          # external | loadBalancer | nodePort | hostNetwork
+          # Default `external`: the chart creates NO WG ingress resources —
+          # the operator wires UDP 51820 themselves (cloud LB, MetalLB, kube-
+          # vip, DNAT, …). This guarantees `helm install` succeeds on any K8s
+          # distribution, including ones with no LB controller.
+          mode: external
+          # mode=loadBalancer: optional pinned VIP / LB class / annotations.
+          # Works with ANY controller that satisfies LoadBalancer Services
+          # (cloud LB, MetalLB, kube-vip, Cilium L2) — the chart does NOT
+          # assume or install MetalLB.
+          loadBalancerIP: ""
+          loadBalancerClass: ""
+          annotations: {}
+          # mode=nodePort: pinned UDP port for stable DNS.
+          nodePort: 31820
+          # mode=hostNetwork: the operator must label the chosen node, e.g.
+          #   kubectl label node <name> llmsafespaces.dev/relay-router=true
+          hostNetworkNodeSelectorLabel: "llmsafespaces.dev/relay-router"
     requests:
       cpu: 100m
       memory: 256Mi

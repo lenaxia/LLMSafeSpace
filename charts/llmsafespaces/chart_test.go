@@ -1683,6 +1683,344 @@ func TestRelay_APIInferenceRelayClusterRole_RendersWhenEnabled(t *testing.T) {
 }
 
 // =============================================================================
+// InferenceRelay — US-42.8 router WireGuard sidecar + network-agnostic ingress
+// =============================================================================
+//
+// These tests guard the US-42.8 chart implementation (worklog 0362 redesign):
+// the relay-router Deployment gains a WireGuard sidecar that brings up wg0
+// (10.42.42.1/24), and a second Service template renders the WireGuard UDP
+// endpoint in one of four operator-selectable ingress modes. The chart NEVER
+// installs MetalLB. Default mode is `external` (no WG Service at all).
+
+// relayEnabledValues is the minimal values that enable the relay-router
+// subsystem (it is disabled by default).
+const relayEnabledValues = "controller:\n  inferenceRelay:\n    enabled: true\n"
+
+// podSpecMap returns the .spec.template.spec (PodSpec) of a Deployment doc.
+func podSpecMap(deploy map[string]any) map[string]any {
+	spec, _ := deploy["spec"].(map[string]any)
+	tmpl, _ := spec["template"].(map[string]any)
+	ps, _ := tmpl["spec"].(map[string]any)
+	return ps
+}
+
+// capSet returns the capabilities.add list (as a string slice) of a container.
+func capSet(c map[string]any) []string {
+	sc, _ := c["securityContext"].(map[string]any)
+	caps, _ := sc["capabilities"].(map[string]any)
+	add, _ := caps["add"].([]any)
+	out := make([]string, 0, len(add))
+	for _, a := range add {
+		if s, ok := a.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// toInt coerces a YAML-decoded number to int. sigs.k8s.io/yaml unmarshals
+// numeric scalars as float64 (via encoding/json), so a bare .(int) assertion
+// silently returns 0 — this helper handles int / int64 / float64.
+func toInt(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	}
+	return 0
+}
+
+// hasWGUDPPort reports whether a Service doc exposes a UDP port on 51820
+// (the WireGuard endpoint). This is what distinguishes the WG Service from
+// the always-present TCP 8080 ClusterIP Service.
+func hasWGUDPPort(svc map[string]any) bool {
+	spec, _ := svc["spec"].(map[string]any)
+	ports, _ := spec["ports"].([]any)
+	for _, p := range ports {
+		pm, _ := p.(map[string]any)
+		port := toInt(pm["port"])
+		proto, _ := pm["protocol"].(string)
+		if port == 51820 && (proto == "UDP" || proto == "") {
+			return true
+		}
+	}
+	return false
+}
+
+// svcType returns spec.type of a Service doc.
+func svcType(svc map[string]any) string {
+	spec, _ := svc["spec"].(map[string]any)
+	t, _ := spec["type"].(string)
+	return t
+}
+
+// TestRelayRouter_WGSidecar_HiddenWhenInferenceRelayDisabled asserts the
+// relay-router Deployment (and thus its WG sidecar) does NOT render when
+// controller.inferenceRelay.enabled is false (the chart default). Preserves
+// the existing gated behavior from worklog 0299.
+func TestRelayRouter_WGSidecar_HiddenWhenInferenceRelayDisabled(t *testing.T) {
+	docs := helmTemplate(t, "")
+	require.Nil(t, findDeploymentByNameSubstr(docs, "relay-router"),
+		"relay-router Deployment must NOT render when controller.inferenceRelay.enabled is false (default)")
+}
+
+// TestRelayRouter_WGSidecar_RendersWhenInferenceRelayEnabled asserts the
+// relay-router Deployment renders with a WireGuard sidecar container when
+// the relay subsystem is enabled. The sidecar must carry NET_ADMIN + NET_RAW
+// (the minimum to create/manage the wg0 interface) and mount the
+// controller-managed relay-router-wg Secret (router private key).
+func TestRelayRouter_WGSidecar_RendersWhenInferenceRelayEnabled(t *testing.T) {
+	docs := helmTemplate(t, relayEnabledValues)
+
+	deploy := findDeploymentByNameSubstr(docs, "relay-router")
+	require.NotNil(t, deploy, "relay-router Deployment must render when inferenceRelay is enabled")
+
+	wg := containerByName(deploy, "wireguard")
+	require.NotNil(t, wg, "relay-router pod must have a 'wireguard' sidecar container")
+	require.Contains(t, capSet(wg), "NET_ADMIN",
+		"wireguard sidecar needs NET_ADMIN to create/manage wg0")
+	require.Contains(t, capSet(wg), "NET_RAW",
+		"wireguard sidecar needs NET_RAW for raw-socket operations")
+
+	// The router private key lives in the controller-managed relay-router-wg
+	// Secret (controller/internal/relay/reconciler.go ensureRouterWGKey). The
+	// sidecar must mount it.
+	mounts, _ := wg["volumeMounts"].([]any)
+	var mountedSecret bool
+	for _, m := range mounts {
+		mm, _ := m.(map[string]any)
+		if mm["mountPath"] == "/etc/wireguard/secret" {
+			mountedSecret = true
+		}
+	}
+	require.True(t, mountedSecret,
+		"wireguard sidecar must mount the relay-router-wg Secret at /etc/wireguard/secret")
+
+	// The main router container must remain non-root with ALL caps dropped —
+	// the WG sidecar absorbs the privileged work, the router does not.
+	router := containerByName(deploy, "relay-router")
+	require.NotNil(t, router, "relay-router pod must keep its 'relay-router' main container")
+	require.Empty(t, capSet(router),
+		"relay-router main container must drop ALL capabilities (WG sidecar owns net admin)")
+
+	// The pod-level securityContext must not force runAsNonRoot, otherwise the
+	// root WG sidecar (runAsUser: 0) is rejected by the kubelet. Non-root is
+	// enforced at the router container instead.
+	psc := podSecCtx(deploy)
+	if _, ok := psc["runAsNonRoot"]; ok {
+		require.False(t, psc["runAsNonRoot"].(bool),
+			"pod-level runAsNonRoot must be false so the root WG sidecar can start; the router container enforces non-root itself")
+	}
+}
+
+// TestRelayRouter_WGIngress_ExternalMode_RendersNoUDPService asserts that the
+// default ingress mode (`external`) renders NO WireGuard Service — the
+// operator wires UDP 51820 to the router pod out-of-band. Only the existing
+// TCP 8080 ClusterIP Service should be present. This guarantees `helm
+// install` succeeds on any K8s distribution, including ones with no LB
+// controller.
+func TestRelayRouter_WGIngress_ExternalMode_RendersNoUDPService(t *testing.T) {
+	docs := helmTemplate(t, relayEnabledValues)
+
+	for _, d := range findByKind(docs, "Service") {
+		if strings.Contains(metaName(d), "relay-router") {
+			require.False(t, hasWGUDPPort(d),
+				"mode=external must render no WG UDP Service (found UDP 51820 on %s)", metaName(d))
+		}
+	}
+}
+
+// TestRelayRouter_WGIngress_LoadBalancerMode_RendersLBService asserts that
+// mode=loadBalancer renders exactly one Service of type LoadBalancer on UDP
+// 51820, and that loadBalancerIP / loadBalancerClass / annotations are
+// propagated when set.
+func TestRelayRouter_WGIngress_LoadBalancerMode_RendersLBService(t *testing.T) {
+	vals := `controller:
+  inferenceRelay:
+    enabled: true
+    router:
+      wireGuard:
+        ingress:
+          mode: loadBalancer
+          loadBalancerIP: "203.0.113.10"
+          loadBalancerClass: "metallb"
+          annotations:
+            metallb.io/address-pool: "relay-pool"
+`
+	docs := helmTemplate(t, vals)
+
+	var wgSvc map[string]any
+	for _, d := range findByKind(docs, "Service") {
+		if strings.Contains(metaName(d), "relay-router") && hasWGUDPPort(d) {
+			wgSvc = d
+			break
+		}
+	}
+	require.NotNil(t, wgSvc, "mode=loadBalancer must render a WG Service")
+	require.Equal(t, "LoadBalancer", svcType(wgSvc),
+		"mode=loadBalancer WG Service must be type LoadBalancer")
+
+	spec, _ := wgSvc["spec"].(map[string]any)
+	require.Equal(t, "203.0.113.10", spec["loadBalancerIP"],
+		"loadBalancerIP must propagate to the WG Service")
+	require.Equal(t, "metallb", spec["loadBalancerClass"],
+		"loadBalancerClass must propagate to the WG Service")
+
+	meta, _ := wgSvc["metadata"].(map[string]any)
+	ann, _ := meta["annotations"].(map[string]any)
+	require.Equal(t, "relay-pool", ann["metallb.io/address-pool"],
+		"WG Service annotations must propagate")
+
+	// Exactly one WG Service (the LB), in addition to the TCP 8080 ClusterIP.
+	count := 0
+	for _, d := range findByKind(docs, "Service") {
+		if strings.Contains(metaName(d), "relay-router") && hasWGUDPPort(d) {
+			count++
+		}
+	}
+	require.Equal(t, 1, count, "exactly one WG UDP Service expected in loadBalancer mode")
+}
+
+// TestRelayRouter_WGIngress_NodePortMode_RendersNodePortService asserts that
+// mode=nodePort renders a Service of type NodePort on UDP 51820 with the
+// pinned nodePort.
+func TestRelayRouter_WGIngress_NodePortMode_RendersNodePortService(t *testing.T) {
+	vals := `controller:
+  inferenceRelay:
+    enabled: true
+    router:
+      wireGuard:
+        ingress:
+          mode: nodePort
+          nodePort: 31820
+`
+	docs := helmTemplate(t, vals)
+
+	var wgSvc map[string]any
+	for _, d := range findByKind(docs, "Service") {
+		if strings.Contains(metaName(d), "relay-router") && hasWGUDPPort(d) {
+			wgSvc = d
+			break
+		}
+	}
+	require.NotNil(t, wgSvc, "mode=nodePort must render a WG Service")
+	require.Equal(t, "NodePort", svcType(wgSvc),
+		"mode=nodePort WG Service must be type NodePort")
+
+	spec, _ := wgSvc["spec"].(map[string]any)
+	ports, _ := spec["ports"].([]any)
+	var np any
+	for _, p := range ports {
+		pm, _ := p.(map[string]any)
+		if toInt(pm["port"]) == 51820 {
+			np = pm["nodePort"]
+		}
+	}
+	require.Equal(t, 31820, toInt(np),
+		"mode=nodePort WG Service must pin nodePort to 31820 for stable DNS")
+}
+
+// TestRelayRouter_WGIngress_HostNetworkMode_RendersHostNetworkPod asserts
+// that mode=hostNetwork sets pod.spec.hostNetwork: true, applies a
+// nodeSelector keyed on the operator-applied label, and renders NO WG Service
+// (the router is dialed directly by node IP).
+func TestRelayRouter_WGIngress_HostNetworkMode_RendersHostNetworkPod(t *testing.T) {
+	vals := `controller:
+  inferenceRelay:
+    enabled: true
+    router:
+      wireGuard:
+        ingress:
+          mode: hostNetwork
+`
+	docs := helmTemplate(t, vals)
+
+	deploy := findDeploymentByNameSubstr(docs, "relay-router")
+	require.NotNil(t, deploy)
+
+	ps := podSpecMap(deploy)
+	hn, _ := ps["hostNetwork"].(bool)
+	require.True(t, hn,
+		"mode=hostNetwork must set pod.spec.hostNetwork: true")
+
+	sel, _ := ps["nodeSelector"].(map[string]any)
+	require.Equal(t, "true", sel["llmsafespaces.dev/relay-router"],
+		"mode=hostNetwork must select the operator-labeled node via llmsafespaces.dev/relay-router=true")
+
+	for _, d := range findByKind(docs, "Service") {
+		if strings.Contains(metaName(d), "relay-router") {
+			require.False(t, hasWGUDPPort(d),
+				"mode=hostNetwork must render no WG Service (router is on hostNetwork, dialed by node IP)")
+		}
+	}
+}
+
+// TestRelayRouter_NetworkPolicy_RendersWhenEnabled asserts that enabling the
+// relay subsystem renders a NetworkPolicy that (a) selects the relay-router
+// pod, (b) allows TCP 8080 ingress from workspace pods (the proxy path) and
+// the controller pod (metrics scrape), (c) allows UDP 51820 ingress from
+// anywhere (relay VMs dial in from public cloud IPs — WG key-pinning is the
+// auth), and (d) allows unrestricted egress (tunnel + DNS + Zen-direct
+// fallback).
+func TestRelayRouter_NetworkPolicy_RendersWhenEnabled(t *testing.T) {
+	docs := helmTemplate(t, relayEnabledValues)
+
+	var policy map[string]any
+	for _, d := range findByKind(docs, "NetworkPolicy") {
+		if strings.Contains(metaName(d), "relay-router") {
+			policy = d
+			break
+		}
+	}
+	require.NotNil(t, policy, "relay-router NetworkPolicy must render when inferenceRelay is enabled")
+
+	spec, _ := policy["spec"].(map[string]any)
+	sel, _ := spec["podSelector"].(map[string]any)
+	matchLabels, _ := sel["matchLabels"].(map[string]any)
+	require.Equal(t, "relay-router", matchLabels["app.kubernetes.io/component"],
+		"relay-router NetworkPolicy must select relay-router pods")
+
+	types, _ := spec["policyTypes"].([]any)
+	require.Contains(t, types, "Ingress", "policy must govern ingress")
+	require.Contains(t, types, "Egress", "policy must govern egress")
+
+	ingress, _ := spec["ingress"].([]any)
+	var saw8080, saw51820Any bool
+	for _, rule := range ingress {
+		rm, _ := rule.(map[string]any)
+		ports, _ := rm["ports"].([]any)
+		for _, p := range ports {
+			pm, _ := p.(map[string]any)
+			port := toInt(pm["port"])
+			proto, _ := pm["protocol"].(string)
+			if port == 8080 {
+				saw8080 = true
+			}
+			if port == 51820 && proto == "UDP" {
+				// "Allow from anywhere" means the rule has NO `from` key
+				// (an absent/empty from permits all sources). relay VMs
+				// connect from public cloud IPs that are not knowable ahead
+				// of time — WG key-pinning is the auth.
+				_, hasFrom := rm["from"]
+				if !hasFrom {
+					saw51820Any = true
+				}
+			}
+		}
+	}
+	require.True(t, saw8080, "NetworkPolicy must allow TCP 8080 ingress (workspace proxy + controller metrics)")
+	require.True(t, saw51820Any, "NetworkPolicy must allow UDP 51820 ingress from anywhere (relay VMs dial in from public IPs)")
+
+	// Egress must be effectively unrestricted for the router to reach
+	// 10.42.42.x over the tunnel, DNS, and Zen-direct fallback.
+	egress, _ := spec["egress"].([]any)
+	require.NotEmpty(t, egress, "NetworkPolicy must include egress rules")
+}
+
+// =============================================================================
 // Monitoring — Grafana dashboards, PrometheusRule, ServiceMonitor
 // =============================================================================
 

@@ -1,0 +1,50 @@
+{{- if and .Values.controller.enabled .Values.controller.inferenceRelay.enabled }}
+{{- $wg := .Values.controller.inferenceRelay.router.wireGuard }}
+{{- $ingress := $wg.ingress }}
+{{- $mode := $ingress.mode }}
+{{- /* The WireGuard UDP endpoint Service.
+
+       Network-agnostic per the Epic 42 Layer 2 redesign (worklog 0362):
+         mode=external     -> NO Service (operator wires UDP 51820 themselves)
+         mode=loadBalancer -> Service type LoadBalancer on UDP 51820
+         mode=nodePort     -> Service type NodePort on a pinned UDP port
+         mode=hostNetwork  -> NO Service (router is on hostNetwork, dialed by node IP)
+
+       The chart NEVER installs MetalLB or any other LB controller. The CRD's
+       spec.wireGuard.routerEndpoint is always the operator's authoritative
+       public host:port regardless of mode.
+*/ -}}
+{{- if or (eq $mode "loadBalancer") (eq $mode "nodePort") }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: relay-router-wg
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmsafespaces.relayRouter.labels" . | nindent 4 }}
+  {{- with $ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ if eq $mode "loadBalancer" }}LoadBalancer{{ else }}NodePort{{ end }}
+  {{- if eq $mode "loadBalancer" }}
+  {{- with $ingress.loadBalancerIP }}
+  loadBalancerIP: {{ . }}
+  {{- end }}
+  {{- with $ingress.loadBalancerClass }}
+  loadBalancerClass: {{ . }}
+  {{- end }}
+  {{- end }}
+  ports:
+    - name: wg
+      port: {{ $wg.listenPort }}
+      targetPort: wg-udp
+      protocol: UDP
+      {{- if eq $mode "nodePort" }}
+      nodePort: {{ $ingress.nodePort }}
+      {{- end }}
+  selector:
+    {{- include "llmsafespaces.relayRouter.selectorLabels" . | nindent 4 }}
+{{- end }}
+{{- end }}

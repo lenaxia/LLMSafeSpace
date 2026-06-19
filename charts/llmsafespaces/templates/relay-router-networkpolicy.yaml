@@ -1,0 +1,63 @@
+{{- if and .Values.controller.enabled .Values.controller.inferenceRelay.enabled }}
+{{- $wg := .Values.controller.inferenceRelay.router.wireGuard }}
+# US-42.8: NetworkPolicy isolating the relay-router (Epic 42 Layer 2 redesign).
+# Applies once the relay subsystem is enabled. Posture:
+#
+#   - TCP 8080 ingress from workspace pods (the proxy path) and the controller
+#     pod (router /metrics scrape — the controller is NOT in the WG mesh; it
+#     reads fleet health from the router). Workspace pods live in the workspace
+#     namespace (defaults to the release namespace).
+#   - UDP 51820 ingress from ANYWHERE. Relay VMs dial in from public cloud IPs
+#     that are not knowable in advance; WireGuard public-key pinning is the
+#     authentication, so the network layer must let the handshake through.
+#   - Egress is effectively unrestricted: the router dials relays over the WG
+#     tunnel (10.42.42.x:8080), needs DNS, and falls back to Zen-direct when
+#     all relays are down.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: relay-router
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmsafespaces.relayRouter.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "llmsafespaces.relayRouter.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Workspace pods (sandbox) → router HTTP proxy on 8080.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ include "llmsafespaces.workspaceNamespace" . }}
+          podSelector:
+            matchLabels:
+              {{- include "llmsafespaces.workspacePodSelectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Controller pod → router /metrics scrape on 8080 (the controller reads
+    # fleet health from the router; it is not in the WG mesh).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.controllerPodLabelSelector | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Relay VMs → WireGuard UDP 51820 from anywhere. The WG handshake is the
+    # auth; restricting by source IP is impossible (cloud VM public IPs are
+    # not known ahead of time and change on rotation).
+    - ports:
+        - protocol: UDP
+          port: {{ $wg.listenPort }}
+  egress:
+    # All egress: WG tunnel traffic to relay VMs, DNS, and Zen-direct fallback.
+    - {}
+{{- end }}
