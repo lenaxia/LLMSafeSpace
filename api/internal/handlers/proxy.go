@@ -276,7 +276,7 @@ func (h *ProxyHandler) proxyToWorkspaceWithErrBody(
 	podIP := workspace.Status.PodIP
 
 	if h.meteringSvc != nil && workspaceID != "" {
-		if !h.checkProxyQuota(c, workspaceID) {
+		if !h.checkProxyQuota(c, workspace) {
 			return
 		}
 	}
@@ -564,12 +564,15 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 // rejected (quota exceeded — 429 already written to the response).
 // Quota check failures (DB errors) are logged and the request is allowed
 // (fail-open) so a transient DB issue doesn't block all traffic.
-func (h *ProxyHandler) checkProxyQuota(c *gin.Context, workspaceID string) bool {
+func (h *ProxyHandler) checkProxyQuota(c *gin.Context, workspace *v1.Workspace) bool {
 	if h.meteringSvc == nil {
 		return true
 	}
 	userID, _ := extractAuth(c)
 	if userID == "" {
+		return true
+	}
+	if workspace.Labels["llmsafespaces.dev/canary"] == "true" {
 		return true
 	}
 	owner := types.BillingOwner{ID: userID, Type: types.OwnerTypeUser}

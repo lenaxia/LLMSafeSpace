@@ -13,12 +13,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespaces/api/internal/middleware"
-	"github.com/lenaxia/llmsafespaces/api/internal/mocks"
 	logmock "github.com/lenaxia/llmsafespaces/mocks/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -368,26 +367,13 @@ func TestValidation_ValidNestedObject(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code, "valid nested structure should pass")
 }
 
-// nopCloser wraps a string into an io.ReadCloser for httptest.NewRequest.
+// nopCloser wraps a string into an io.ReadCloser for httptest.
 type readCloser struct {
-	data []byte
-	pos  int
+	*strings.Reader
 }
 
-func (r *readCloser) Read(p []byte) (int, error) {
-	if r.pos >= len(r.data) {
-		return 0, fmt.Errorf("EOF")
-	}
-	n := copy(p, r.data[r.pos:])
-	r.pos += n
-	return n, nil
-}
 func (r *readCloser) Close() error { return nil }
 
 func nopCloser(s string) *readCloser {
-	return &readCloser{data: []byte(s)}
+	return &readCloser{Reader: strings.NewReader(s)}
 }
-
-// Ensure unused imports are referenced
-var _ = time.Second
-var _ = new(mocks.MockRateLimiterService)
