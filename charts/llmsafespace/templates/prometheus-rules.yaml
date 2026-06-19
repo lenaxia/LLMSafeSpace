@@ -223,10 +223,10 @@ spec:
 
         {{- /* llmsafespace_agentd_gate_duration_seconds is emitted by
               workspace-agentd (cmd/workspace-agentd/gate_recorder.go).
-              This alert requires operators to configure pod-level scraping
-              of workspace pods (e.g. via PodMonitor or a custom
-              ServiceMonitor), since the chart only ships ServiceMonitors
-              for API and controller. */}}
+              Scraped via the chart's PodMonitor
+              (monitoring.serviceMonitors.agentdPodMonitor, default enabled)
+              which targets workspace pods' agentd-admin port. Disable that
+              PodMonitor and this alert goes dark. */}}
         - alert: LLMSafeSpaceAgentdSlowStartup
           expr: |
             histogram_quantile(0.95,
@@ -245,9 +245,10 @@ spec:
         {{- /* llmsafespace_relay_injector_total is emitted by both
               workspace-agentd (cmd/workspace-agentd/relay_injector.go)
               and the API service (api/internal/services/metrics/metrics.go).
-              Using $apiJob catches API-side recordings. For full coverage,
-              operators should also configure pod-level scraping of
-              workspace pods. */}}
+              Using $apiJob catches API-side recordings. For full coverage
+              of pod-side emissions, the chart's PodMonitor
+              (monitoring.serviceMonitors.agentdPodMonitor) scrapes workspace
+              pods with job=<release>-agentd. */}}
         - alert: LLMSafeSpaceRelayInjectorFailures
           expr: |
             sum(increase(llmsafespace_relay_injector_total{job=~"{{ $apiJob }}",outcome=~"config_write_failed|auth_write_failed|unhealthy_timeout"}[1h])) > 0

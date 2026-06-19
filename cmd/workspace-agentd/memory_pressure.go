@@ -28,6 +28,13 @@ var memoryCheckInterval = 60 * time.Second
 // limit). The statusz endpoint reads the current state to surface it
 // to the controller, which sets the WorkspaceConditionMemoryPressure
 // condition.
+//
+// Worklog 371 H4: cgroup v2 is a documented hard requirement (see
+// charts/llmsafespace/values.yaml workspace.cgroupV2Required). On cgroup v1
+// hosts readCurrent/readMax fail and the monitor silently produces no data.
+// To avoid the silent-degradation failure mode, the first cgroup read
+// failure is logged at Warn so operators can diagnose why
+// workspace_memory_bytes / memory_pressure are empty.
 type memoryPressureMonitor struct {
 	mu        sync.RWMutex
 	pressure  bool  // true when usage > threshold
@@ -37,6 +44,9 @@ type memoryPressureMonitor struct {
 	// uses the package-level readCgroupMemoryCurrent/readCgroupMemoryMax.
 	readCurrent func() (int64, error)
 	readMax     func() (int64, error)
+	// warnOnce ensures the cgroup-v2-unavailable warning is logged exactly
+	// once per monitor lifetime rather than on every 60s poll tick.
+	warnOnce sync.Once
 }
 
 func newMemoryPressureMonitor() *memoryPressureMonitor {
@@ -62,13 +72,32 @@ func (m *memoryPressureMonitor) snapshot() (pressure bool, usedBytes, maxBytes i
 
 // check reads memory via the injected readers and updates the pressure
 // state. Returns true if the state changed (used for logging).
+//
+// H4: a failed read (typical on cgroup v1 hosts) is logged once at Warn
+// so the silent-degradation failure mode (US-44.5 pressure warnings,
+// workspace_memory_bytes gauge, US-44.4 OOM limit all silently dead) is
+// observable. After the first warning the monitor continues to no-op
+// silently — the condition is a deployment misconfiguration that requires
+// a pod redeploy on a cgroup v2 host to fix.
 func (m *memoryPressureMonitor) check() bool {
 	used, err := m.readCurrent()
 	if err != nil {
+		m.warnOnce.Do(func() {
+			log.Warn("memory pressure monitor: cgroup v2 memory.current unreadable — pressure warnings, workspace_memory_bytes gauge, and OOM-limit detection will be unavailable. cgroup v2 is a documented hard requirement (see charts/llmsafespace/values.yaml workspace.cgroupV2Required).",
+				zap.Error(err))
+		})
 		return false
 	}
 	max, err := m.readMax()
 	if err != nil || max <= 0 {
+		m.warnOnce.Do(func() {
+			reason := "cgroup v2 memory.max unreadable"
+			if err == nil {
+				reason = "cgroup v2 memory.max is zero/unlimited"
+			}
+			log.Warn("memory pressure monitor: "+reason+" — pressure threshold detection unavailable. cgroup v2 is a documented hard requirement.",
+				zap.Error(err))
+		})
 		return false
 	}
 
