@@ -31,20 +31,29 @@ type rateCounter interface {
 	Increment(ctx context.Context, key string, value int64, expiration time.Duration) (int64, error)
 }
 
+// emailLogger is the minimal logging surface the email handler needs. Mirrors
+// the invitationLogger shape so the same concrete loggers satisfy both.
+type emailLogger interface {
+	Error(msg string, err error, args ...any)
+}
+
 // EmailHandler exposes admin-only email operations (test-send). It wraps the
 // EmailService which resolves the configured provider (SES/Noop).
 type EmailHandler struct {
 	svc    *emailsvc.Service
 	rl     rateCounter
+	log    emailLogger
 	userID func(*gin.Context) string
 }
 
 // NewEmailHandler constructs an EmailHandler. svc must be non-nil. rl may be
 // nil — when nil, the per-endpoint test-send rate limit is skipped (the
 // global RateLimitMiddleware still applies); this is intended for tests and
-// for deployments that prefer to rely solely on the global limiter.
-func NewEmailHandler(svc *emailsvc.Service, rl rateCounter) *EmailHandler {
-	return &EmailHandler{svc: svc, rl: rl, userID: userIDFromContext}
+// for deployments that prefer to rely solely on the global limiter. log may
+// be nil in tests; when nil, send-failure errors are not logged (the mapped
+// category is still returned to the caller).
+func NewEmailHandler(svc *emailsvc.Service, rl rateCounter, log emailLogger) *EmailHandler {
+	return &EmailHandler{svc: svc, rl: rl, log: log, userID: userIDFromContext}
 }
 
 // TestSend handles POST /api/v1/admin/email/test.
@@ -105,6 +114,9 @@ func (h *EmailHandler) TestSend(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"sent": false, "provider": "noop"})
 			return
 		}
+		if h.log != nil {
+			h.log.Error("email test-send failed", err, "to", addr, "provider", providerName)
+		}
 		c.JSON(http.StatusBadGateway, gin.H{"error": mapSESError(err)})
 		return
 	}
@@ -127,7 +139,8 @@ func userIDFromContext(c *gin.Context) string {
 // verbatim — raw SES errors can contain AWS account IDs, region names, and
 // internal infrastructure details. The mapping is conservative: anything
 // unrecognised falls back to a generic "email send failed" with no detail.
-// The original error is logged server-side by the service.
+// The caller is responsible for logging the original error before mapping;
+// the generic fallback message points the admin to those logs.
 func mapSESError(err error) string {
 	if err == nil {
 		return "email send failed"

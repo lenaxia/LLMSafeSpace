@@ -51,6 +51,20 @@ func (f *fakeRateCounter) Increment(_ context.Context, key string, _ int64, _ ti
 
 func (f *fakeRateCounter) set(key string, n int64) { f.counts[key] = n }
 
+// captureLogger records Error calls so tests can assert the raw error is
+// logged before mapping (PR review finding: no swallowed errors).
+type captureLogger struct {
+	errors []logEntry
+}
+type logEntry struct {
+	msg string
+	err error
+}
+
+func (l *captureLogger) Error(msg string, err error, _ ...any) {
+	l.errors = append(l.errors, logEntry{msg: msg, err: err})
+}
+
 const testUserID = "admin-1"
 
 func setupEmailRouter(h *EmailHandler) *gin.Engine {
@@ -66,7 +80,7 @@ func setupEmailRouter(h *EmailHandler) *gin.Engine {
 func TestEmailHandler_TestSend_SESSuccess(t *testing.T) {
 	fp := &fakeEmailProvider{}
 	svc := emailsvc.NewService(fp, "https://app.test", "ses")
-	h := NewEmailHandler(svc, newFakeRateCounter())
+	h := NewEmailHandler(svc, newFakeRateCounter(), &captureLogger{})
 
 	router := setupEmailRouter(h)
 	w := doRequest(router, http.MethodPost, "/admin/email/test", `{"to":"ops@test.com"}`)
@@ -80,7 +94,7 @@ func TestEmailHandler_TestSend_SESSuccess(t *testing.T) {
 
 func TestEmailHandler_TestSend_NoopReportsNotSent(t *testing.T) {
 	svc := emailsvc.NewService(&email.NoopProvider{}, "https://app.test", "")
-	h := NewEmailHandler(svc, newFakeRateCounter())
+	h := NewEmailHandler(svc, newFakeRateCounter(), &captureLogger{})
 
 	router := setupEmailRouter(h)
 	w := doRequest(router, http.MethodPost, "/admin/email/test", `{"to":"ops@test.com"}`)
@@ -94,7 +108,7 @@ func TestEmailHandler_TestSend_NoopReportsNotSent(t *testing.T) {
 
 func TestEmailHandler_TestSend_MissingTo_Rejected(t *testing.T) {
 	svc := emailsvc.NewService(&fakeEmailProvider{}, "https://app.test", "ses")
-	h := NewEmailHandler(svc, newFakeRateCounter())
+	h := NewEmailHandler(svc, newFakeRateCounter(), &captureLogger{})
 
 	router := setupEmailRouter(h)
 	w := doRequest(router, http.MethodPost, "/admin/email/test", `{}`)
@@ -103,7 +117,7 @@ func TestEmailHandler_TestSend_MissingTo_Rejected(t *testing.T) {
 
 func TestEmailHandler_TestSend_InvalidEmail_Rejected(t *testing.T) {
 	svc := emailsvc.NewService(&fakeEmailProvider{}, "https://app.test", "ses")
-	h := NewEmailHandler(svc, newFakeRateCounter())
+	h := NewEmailHandler(svc, newFakeRateCounter(), &captureLogger{})
 
 	router := setupEmailRouter(h)
 	w := doRequest(router, http.MethodPost, "/admin/email/test", `{"to":"not-an-email"}`)
@@ -114,9 +128,11 @@ func TestEmailHandler_TestSend_SendError_MappedNotLeaked(t *testing.T) {
 	// US-49.4: errors must be mapped to generic categories, not leaked
 	// verbatim. The raw SES message ("Email address is not verified. The PNG
 	// JPEG ...") must NOT appear in the response.
-	fp := &fakeEmailProvider{err: &testSendErr{msg: "Email address is not verified. (AWS account 123456789012) in region us-east-1"}}
+	rawErr := &testSendErr{msg: "Email address is not verified. (AWS account 123456789012) in region us-east-1"}
+	fp := &fakeEmailProvider{err: rawErr}
 	svc := emailsvc.NewService(fp, "https://app.test", "ses")
-	h := NewEmailHandler(svc, newFakeRateCounter())
+	lg := &captureLogger{}
+	h := NewEmailHandler(svc, newFakeRateCounter(), lg)
 
 	router := setupEmailRouter(h)
 	w := doRequest(router, http.MethodPost, "/admin/email/test", `{"to":"unverified@test.com"}`)
@@ -131,12 +147,19 @@ func TestEmailHandler_TestSend_SendError_MappedNotLeaked(t *testing.T) {
 	// NOT leak — that's the whole point of mapping.
 	assert.NotContains(t, errStr, "123456789012",
 		"AWS account ID from the raw SES error must not leak into the response")
+
+	// The raw error MUST be logged server-side before mapping (PR review
+	// finding: no swallowed errors). The admin's "check API server logs"
+	// guidance depends on this.
+	require.Len(t, lg.errors, 1, "the raw send error must be logged exactly once")
+	assert.Equal(t, rawErr, lg.errors[0].err, "the original error must be logged verbatim")
+	assert.Contains(t, lg.errors[0].msg, "test-send")
 }
 
 func TestEmailHandler_TestSend_SendError_UnknownMapsGeneric(t *testing.T) {
 	fp := &fakeEmailProvider{err: &testSendErr{msg: "unexpected internal glitch #42"}}
 	svc := emailsvc.NewService(fp, "https://app.test", "ses")
-	h := NewEmailHandler(svc, newFakeRateCounter())
+	h := NewEmailHandler(svc, newFakeRateCounter(), &captureLogger{})
 
 	router := setupEmailRouter(h)
 	w := doRequest(router, http.MethodPost, "/admin/email/test", `{"to":"ops@test.com"}`)
@@ -155,7 +178,7 @@ func TestEmailHandler_TestSend_NilProvider_ReportsNoop(t *testing.T) {
 	// Defensive path: a Service constructed with a nil provider (email not
 	// configured). The handler must report noop rather than panic.
 	svc := emailsvc.NewService(nil, "https://app.test", "ses")
-	h := NewEmailHandler(svc, newFakeRateCounter())
+	h := NewEmailHandler(svc, newFakeRateCounter(), &captureLogger{})
 
 	router := setupEmailRouter(h)
 	w := doRequest(router, http.MethodPost, "/admin/email/test", `{"to":"ops@test.com"}`)
@@ -171,13 +194,9 @@ func TestEmailHandler_TestSend_RateLimited_AfterFiveCalls(t *testing.T) {
 	fp := &fakeEmailProvider{}
 	svc := emailsvc.NewService(fp, "https://app.test", "ses")
 	rl := newFakeRateCounter()
-	// Pre-seed so the first 5 calls succeed and the 6th trips the limit.
-	// Increment is called on every request; we want the 6th request to see
-	// count=6 > 5. Pre-set count=4 so: req1->5(ok), req2->6(rejected)... we
-	// actually want to test the boundary cleanly: set count=5 so the next
-	// Increment returns 6 which is > 5 → 429.
+	// Pre-seed so the 6th request sees count=6 > 5 → 429.
 	rl.set("email:test-send:"+testUserID, 5)
-	h := NewEmailHandler(svc, rl)
+	h := NewEmailHandler(svc, rl, &captureLogger{})
 
 	router := setupEmailRouter(h)
 	w := doRequest(router, http.MethodPost, "/admin/email/test", `{"to":"ops@test.com"}`)
@@ -195,7 +214,7 @@ func TestEmailHandler_TestSend_RateLimiterNil_StillWorks(t *testing.T) {
 	// applies in production.
 	fp := &fakeEmailProvider{}
 	svc := emailsvc.NewService(fp, "https://app.test", "ses")
-	h := NewEmailHandler(svc, nil)
+	h := NewEmailHandler(svc, nil, &captureLogger{})
 
 	router := setupEmailRouter(h)
 	w := doRequest(router, http.MethodPost, "/admin/email/test", `{"to":"ops@test.com"}`)
@@ -208,7 +227,7 @@ func TestEmailHandler_TestSend_DisplayNameParsed(t *testing.T) {
 	// form, so SES receives a clean address.
 	fp := &fakeEmailProvider{}
 	svc := emailsvc.NewService(fp, "https://app.test", "ses")
-	h := NewEmailHandler(svc, newFakeRateCounter())
+	h := NewEmailHandler(svc, newFakeRateCounter(), &captureLogger{})
 
 	router := setupEmailRouter(h)
 	w := doRequest(router, http.MethodPost, "/admin/email/test", `{"to":"Alice <alice@test.com>"}`)

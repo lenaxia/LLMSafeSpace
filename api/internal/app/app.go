@@ -602,7 +602,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		mailer = &emailpkg.NoopProvider{}
 	}
 	emailService = emailsvc.NewService(mailer, cfg.Email.BaseURL, cfg.Email.Provider)
-	emailHandler = handlers.NewEmailHandler(emailService, svc.GetRateLimiter())
+	emailHandler = handlers.NewEmailHandler(emailService, svc.GetRateLimiter(), log)
 
 	// Invitations still needs the raw provider + the org store.
 	if pgOrgStore != nil {
