@@ -618,20 +618,41 @@ func (m *Materializer) EnrichProviders(fn func([]sec.LLMProviderData) []sec.LLMP
 	m.stagedProviders = fn(m.stagedProviders)
 }
 
-// FlushProviders calls the formatter with all staged LLM provider data and
-// writes the result to AgentConfigPath. Must be called after Materialize
-// returns if llm-provider secrets were in the batch.
+// FormatProviders calls the formatter with all staged LLM provider data and
+// returns the formatted bytes WITHOUT writing to disk. Callers that use an
+// external config writer (e.g. AgentConfigWriter in cmd/workspace-agentd)
+// call this instead of FlushProviders so the writer is the sole disk writer.
+//
+// Returns (nil, nil) when formatter is nil or no providers are staged,
+// matching FlushProviders' no-op semantics. This lets callers unconditionally
+// call FormatProviders → writer.SetProviders without branching.
+func (m *Materializer) FormatProviders(formatter LLMProviderFormatter) ([]byte, error) {
+	if formatter == nil || len(m.stagedProviders) == 0 {
+		return nil, nil
+	}
+	cfg, err := formatter(m.stagedProviders)
+	if err != nil {
+		return nil, fmt.Errorf("llm-provider formatter: %w", err)
+	}
+	return cfg, nil
+}
+
+// FlushProviders calls FormatProviders and writes the result to
+// AgentConfigPath. Used by callers that do NOT have an AgentConfigWriter
+// (e.g. the materialize subcommand, which runs as a separate process
+// before agentd starts). Callers inside the agentd process should use
+// FormatProviders + AgentConfigWriter.Rebuild instead.
 //
 // When formatter is nil, FlushProviders is a no-op (no agent config is
 // written). This allows callers to conditionally skip agent-specific
 // rendering.
 func (m *Materializer) FlushProviders(formatter LLMProviderFormatter) error {
-	if formatter == nil || len(m.stagedProviders) == 0 {
-		return nil
-	}
-	cfg, err := formatter(m.stagedProviders)
+	cfg, err := m.FormatProviders(formatter)
 	if err != nil {
-		return fmt.Errorf("llm-provider formatter: %w", err)
+		return err
+	}
+	if cfg == nil {
+		return nil
 	}
 	return atomicWrite(m.FS, m.Paths.AgentConfigPath, cfg, 0o600)
 }
