@@ -90,6 +90,7 @@ type RouterConfig struct {
 	UsageHandler       *handlers.UsageHandler
 	WebhookHandler     *handlers.StripeWebhookHandler
 	InvitationsHandler *handlers.InvitationsHandler
+	EmailHandler       *handlers.EmailHandler
 	PolicyHandler      *handlers.PolicyHandler
 	AuditHandler       *handlers.AuditHandler
 
@@ -373,6 +374,16 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		suspendGrp.POST("/orgs/:id/unsuspend", cfg.PlatformAdminHandler.UnsuspendOrg)
 		suspendGrp.POST("/users/:id/suspend", cfg.PlatformAdminHandler.SuspendUser)
 		suspendGrp.POST("/users/:id/unsuspend", cfg.PlatformAdminHandler.UnsuspendUser)
+	}
+
+	// Epic 49 US-49.4: Admin email test-send. Registered independently of
+	// settings so it does not silently vanish if SettingsHandler becomes
+	// conditional. Admin-only (AuthMiddleware + AdminGuard).
+	if cfg.EmailHandler != nil {
+		emailAdmin := router.Group("/api/v1/admin/email")
+		emailAdmin.Use(services.GetAuth().AuthMiddleware())
+		emailAdmin.Use(middleware.AdminGuard())
+		emailAdmin.POST("/test", cfg.EmailHandler.TestSend)
 	}
 
 	// US-43.19 / D20: cluster-internal org-status endpoint polled by the

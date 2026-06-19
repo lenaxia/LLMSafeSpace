@@ -21,12 +21,12 @@
 5. **Auth Middleware Additional Tests**
    - Tests for token expiration
    - Tests for different authentication methods (API key, JWT, OAuth)
-   - Tests for role-based access control with complex permission hierarchies
+   - ~~Tests for role-based access control with complex permission hierarchies~~ ✅ **DONE (US-46.12)** — `auth_rbac_test.go` covers RequirePermissions + AuthorizationMiddleware, AdminGuard escalation, org member/admin hierarchy matrix.
 
 6. **Rate Limiting Additional Tests**
    - Tests for distributed rate limiting
-   - Tests for rate limit bursting behavior
-   - Tests for rate limit reset behavior
+   - ~~Tests for rate limit bursting behavior~~ ✅ **DONE (US-46.12)** — `rate_limit_burst_test.go` covers burst allowance, burst exceeded, IP fallback, window reset, custom burst override.
+   - ~~Tests for rate limit reset behavior~~ ✅ **DONE (US-46.12)** — covered by `TestRateLimitBurst_WindowReset`.
 
 ## Integration Tests to Consider
 

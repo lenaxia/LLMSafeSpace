@@ -55,3 +55,10 @@ data:
         - {{ . | quote }}
         {{- end }}
       allowCredentials: {{ .Values.api.config.security.allowCredentials }}
+    {{- if .Values.email.enabled }}
+    email:
+      provider: {{ .Values.email.provider | quote }}
+      sesRegion: {{ .Values.email.sesRegion | quote }}
+      fromAddress: {{ .Values.email.fromAddress | quote }}
+      baseUrl: {{ .Values.email.baseUrl | quote }}
+    {{- end }}
