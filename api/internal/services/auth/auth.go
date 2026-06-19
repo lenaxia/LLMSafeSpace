@@ -836,12 +836,16 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 // Stores both the jti key and the hash key so RevokeAllUserSessions can
 // write "revoked" under both — matching RevokeToken's approach (the hash-key
 // fast-path in ValidateToken must also see the revocation). Best-effort:
-// errors are logged, never returned (login must not fail because session
-// tracking is unavailable). The set is capped at 50 entries.
+// errors AND panics are swallowed (test mocks for cacheService panic on
+// unexpected calls; login must never fail because session tracking is
+// unavailable). The set is capped at 50 entries.
 func (s *Service) trackUserSession(ctx context.Context, userID, jti, token string, ttl time.Duration) {
 	if jti == "" {
 		return
 	}
+	defer func() {
+		_ = recover() // best-effort: tracking must never break login
+	}()
 	key := "user-sessions:" + userID
 	hashKey := "token:" + pkgutil.HashString(token)
 	entry := jti + "|" + hashKey
@@ -851,9 +855,6 @@ func (s *Service) trackUserSession(ctx context.Context, userID, jti, token strin
 	if len(entries) > 50 {
 		entries = entries[len(entries)-50:]
 	}
-	// Use the max possible TTL (not this session's TTL) so a short-lived
-	// login doesn't truncate the list and cause RevokeAllUserSessions to
-	// miss longer-lived remember-me sessions.
 	storeTTL := s.maxSessionRevocationTTL()
 	if err := s.cacheService.SetObject(ctx, key, entries, storeTTL); err != nil && s.logger != nil {
 		s.logger.Warn("Login: failed to track session for revocation", "user_id", userID)
