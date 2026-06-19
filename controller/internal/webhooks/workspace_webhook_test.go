@@ -656,6 +656,46 @@ func TestG4_F123_WebhookCapsCPUAndMemory(t *testing.T) {
 		resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
 		assert.True(t, resp.Allowed, "%v", resp.Result)
 	})
+
+	// Drift guard for the denial-message strings. The reviewer caught
+	// a previous round where the regex was tightened to [1-9][0-9]*
+	// but the user-facing error string still said [0-9]+ — actively
+	// misleading because "0Gi" *does* match the old [0-9]+ pattern,
+	// sending an operator on a wild goose chase. Pin the message
+	// content so a future regex change without an error-string
+	// update fails this test.
+	t.Run("0Gi memory: denial message references current regex", func(t *testing.T) {
+		ws := minimalValidWorkspace()
+		ws.Spec.Resources = &v1.ResourceRequirements{Memory: "0Gi"}
+		resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
+		assert.False(t, resp.Allowed, "0Gi must be rejected (zero magnitude)")
+		require.NotNil(t, resp.Result, "denial must have a Result message")
+		msg := resp.Result.Message
+		// The message must reflect the current regex, not the old one.
+		// Specifically: the rejection of "0Gi" must reference a regex
+		// that genuinely excludes "0Gi" (i.e. requires positive
+		// magnitude). The old message "[0-9]+(Ki|Mi|Gi)" was wrong
+		// because "0Gi" matches it; the new message contains [1-9].
+		assert.Contains(t, msg, "[1-9]",
+			"denial message must reflect the current [1-9][0-9]* magnitude rule; "+
+				"got %q (regex was tightened but message wasn't updated?)", msg)
+		assert.NotContains(t, msg, "^[0-9]+(Ki|Mi|Gi)$",
+			"denial message contains the old regex literal; webhook regex was "+
+				"tightened to [1-9][0-9]* but the error string still claims [0-9]+. "+
+				"This is the exact stale-message bug the reviewer flagged on PR #269.")
+	})
+	t.Run("0Gi storage: denial message references current regex", func(t *testing.T) {
+		ws := minimalValidWorkspace()
+		ws.Spec.Storage.Size = "0Gi"
+		resp := v.Handle(context.Background(), newWorkspaceCreateRequest(t, ws))
+		assert.False(t, resp.Allowed, "storage 0Gi must be rejected")
+		require.NotNil(t, resp.Result)
+		msg := resp.Result.Message
+		assert.Contains(t, msg, "[1-9]",
+			"storage denial message must reflect [1-9][0-9]* rule; got %q", msg)
+		assert.NotContains(t, msg, "^[0-9]+(Gi|Mi)$",
+			"storage denial message still references the old regex literal")
+	})
 }
 
 // =============================================================================

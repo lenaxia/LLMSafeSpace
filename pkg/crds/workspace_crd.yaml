@@ -54,7 +54,7 @@ spec:
                   properties:
                     size:
                       type: string
-                      pattern: "^[0-9]+(Gi|Mi)$"
+                      pattern: "^[1-9][0-9]*(Gi|Mi)$"
                     storageClassName:
                       type: string
                     accessMode:

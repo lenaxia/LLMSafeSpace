@@ -170,6 +170,16 @@ Plus minor:
 
 6. **`TestNormalize_Memory_AmbiguousFallsThrough` swallowed errors silently.** The `if err != nil { continue }` made the test pass vacuously if `Normalize` ever started returning errors. Eliminated by removing the error path entirely (Finding 4 above) — the test now asserts equality directly without an err check.
 
+## Round-2 Review-Feedback Addendum (2026-06-19)
+
+The second review (PR #269 round 2) raised three findings, all addressed:
+
+7. **Stale denial-message strings.** When I tightened the webhook regex from `^[0-9]+(Ki|Mi|Gi)$` to `^[1-9][0-9]*(Ki|Mi|Gi)$`, the user-facing error messages in `parseMemoryMi` and `storageSizeGi` still referenced the old pattern. Actively misleading: a `0Gi` rejection said the value didn't match `^[0-9]+(Ki|Mi|Gi)$`, but `0Gi` *does* match that displayed pattern — the operator would be sent on a wild goose chase. Updated both error strings to reflect the current `[1-9][0-9]*` form.
+
+8. **Comment in `quantity_patterns.go` claimed three-way coverage that didn't exist.** The doc comment said the canonical constants were referenced by the schema, the webhook, AND the CRD kubebuilder annotations — but I never updated the annotations in `pkg/apis/llmsafespaces/v1/workspace_types.go`. The annotations on `Memory`, `MemoryLimit`, and `Size` still used `[0-9]+`. Fixed by updating all three annotations to `[1-9][0-9]*` to match. Also updated the published CRD YAMLs (`pkg/crds/workspace_crd.yaml`, `charts/llmsafespaces/crds/workspace.yaml`) so the apiserver-level OpenAPI validation matches too. Webhook (`failurePolicy=fail`) was already rejecting `0Gi`, so this is documentation/defense-in-depth alignment, not a behavior fix.
+
+9. **No denial-message drift guard.** A test that submits `0Gi` and asserts the denial message reflects the current regex would have caught Finding 7 the first time. Added two subtests under `TestG4_F123_WebhookCapsCPUAndMemory`: `0Gi memory: denial message references current regex` and `0Gi storage: denial message references current regex`. Both use `assert.Contains(msg, "[1-9]")` and `assert.NotContains(msg, "^[0-9]+(...)$")` — so a future tightening of the regex without updating the message text will fire on the first input where the two diverge.
+
 ## Files Modified
 
 | File | Change |
@@ -182,8 +192,11 @@ Plus minor:
 | `pkg/settings/instance_service.go` | `Set()` runs `Normalize()` before `Validate()`; signature follows new `any` return |
 | `pkg/settings/user_service.go` | Same |
 | `pkg/settings/instance_service_edge_test.go` | New: 3 integration tests covering normalization end-to-end |
-| `controller/internal/webhooks/workspace_webhook.go` | `memoryPattern` and `storageSizePattern` tightened to `[1-9][0-9]*` magnitude |
-| `controller/internal/webhooks/workspace_webhook_test.go` | **New (review feedback)**: `TestWebhookRegexAcceptsSameInputsAsSettingsPattern` imports `pkg/settings` and probes both layers' regexes |
+| `controller/internal/webhooks/workspace_webhook.go` | `memoryPattern` and `storageSizePattern` tightened to `[1-9][0-9]*` magnitude; **denial-message strings updated to reference current regex (round-2 finding 7)** |
+| `controller/internal/webhooks/workspace_webhook_test.go` | `TestWebhookRegexAcceptsSameInputsAsSettingsPattern` imports `pkg/settings` and probes both layers' regexes; **two `0Gi` denial-message drift-guard subtests added (round-2 finding 9)** |
+| `pkg/apis/llmsafespaces/v1/workspace_types.go` | **(round-2 finding 8)** kubebuilder annotations on `Memory`, `MemoryLimit`, and `Size` updated from `[0-9]+` to `[1-9][0-9]*` to match canonical constants |
+| `pkg/crds/workspace_crd.yaml` | **(round-2 finding 8)** storage-size pattern updated to `[1-9][0-9]*(Gi|Mi)` |
+| `charts/llmsafespaces/crds/workspace.yaml` | **(round-2 finding 8)** same |
 | `sdks/canary/go/scenarios/s-user-settings/main.go` | `expectedSchemaVersion` 2→3 |
 | `frontend/src/lib/settingsNormalize.ts` | New: TypeScript port of the Go normalizer |
 | `frontend/src/lib/settingsNormalize.test.ts` | New: 11 tests pinning the TS canonicalization rules |

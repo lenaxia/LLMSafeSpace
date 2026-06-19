@@ -155,7 +155,7 @@ func parseCPUMillis(s string) (int64, error) {
 func parseMemoryMi(s string) (int64, error) {
 	m := memoryPattern.FindStringSubmatch(s)
 	if m == nil {
-		return -1, fmt.Errorf("memory %q does not match ^[0-9]+(Ki|Mi|Gi)$", s)
+		return -1, fmt.Errorf("memory %q does not match ^[1-9][0-9]*(Ki|Mi|Gi)$", s)
 	}
 	n, err := strconv.ParseInt(m[1], 10, 64)
 	if err != nil || n < 1 {
@@ -182,7 +182,7 @@ func parseMemoryMi(s string) (int64, error) {
 func storageSizeGi(s string) (int64, error) {
 	m := storageSizePattern.FindStringSubmatch(s)
 	if m == nil {
-		return -1, fmt.Errorf("storage.size %q does not match ^[0-9]+(Gi|Mi)$", s)
+		return -1, fmt.Errorf("storage.size %q does not match ^[1-9][0-9]*(Gi|Mi)$", s)
 	}
 	n, err := strconv.ParseInt(m[1], 10, 64)
 	if err != nil || n < 1 {
