@@ -2692,3 +2692,60 @@ func TestEmail_OperatorOverride_FlowsThrough(t *testing.T) {
 	require.Contains(t, cfg, `fromAddress: "hello@acme.io"`)
 	require.Contains(t, cfg, `baseUrl: "https://chat.acme.io"`)
 }
+
+// TestRelayRouter_UpstreamAuth_MountsSecretWhenConfigured verifies that when
+// upstreamAuth.keySecret.name is set, the router container gets a
+// UPSTREAM_AUTH_KEY env from that Secret (the A23 fix wiring).
+func TestRelayRouter_UpstreamAuth_MountsSecretWhenConfigured(t *testing.T) {
+	vals := `controller:
+  inferenceRelay:
+    enabled: true
+    upstreamAuth:
+      keySecret:
+        name: relay-upstream-key
+        key: key
+      header: x-api-key
+`
+	docs := helmTemplate(t, vals)
+	deploy := findDeploymentByNameSubstr(docs, "relay-router")
+	require.NotNil(t, deploy)
+	router := containerByName(deploy, "relay-router")
+	require.NotNil(t, router)
+	envs, _ := router["env"].([]any)
+	var sawKey, sawHeader bool
+	for _, e := range envs {
+		em, _ := e.(map[string]any)
+		name, _ := em["name"].(string)
+		switch name {
+		case "UPSTREAM_AUTH_KEY":
+			sawKey = true
+			vf, _ := em["valueFrom"].(map[string]any)
+			sr, _ := vf["secretKeyRef"].(map[string]any)
+			require.Equal(t, "relay-upstream-key", sr["name"], "UPSTREAM_AUTH_KEY must reference the configured Secret")
+			require.Equal(t, "key", sr["key"], "UPSTREAM_AUTH_KEY must reference the configured key")
+		case "UPSTREAM_AUTH_HEADER":
+			sawHeader = true
+			require.Equal(t, "x-api-key", em["value"], "UPSTREAM_AUTH_HEADER must propagate")
+		}
+	}
+	require.True(t, sawKey, "UPSTREAM_AUTH_KEY env must render when keySecret.name is set")
+	require.True(t, sawHeader, "UPSTREAM_AUTH_HEADER env must always render")
+}
+
+// TestRelayRouter_UpstreamAuth_OmittedWhenSecretEmpty verifies the default
+// (keySecret.name empty) renders NO UPSTREAM_AUTH_KEY env — the router
+// forwards the client header unchanged (pre-A23 behavior; 401s on Zen, but
+// the install must not require a Secret that doesn't exist).
+func TestRelayRouter_UpstreamAuth_OmittedWhenSecretEmpty(t *testing.T) {
+	docs := helmTemplate(t, relayEnabledValues)
+	deploy := findDeploymentByNameSubstr(docs, "relay-router")
+	require.NotNil(t, deploy)
+	router := containerByName(deploy, "relay-router")
+	envs, _ := router["env"].([]any)
+	for _, e := range envs {
+		em, _ := e.(map[string]any)
+		if name, _ := em["name"].(string); name == "UPSTREAM_AUTH_KEY" {
+			t.Fatalf("UPSTREAM_AUTH_KEY must NOT render when upstreamAuth.keySecret.name is empty (default)")
+		}
+	}
+}

@@ -629,3 +629,107 @@ func TestE2E_FallbackTransitionsBackToRelay(t *testing.T) {
 	resp2.Body.Close()
 	assert.Equal(t, `{"from":"relay"}`, string(body2), "should use relay once available")
 }
+
+// ---------------------------------------------------------------------------
+// US-42.2/A23 fix: upstream auth-key injection.
+// The client sends Authorization: Bearer public (A23: Zen 401s on inference).
+// The router replaces it with a real upstream key before forwarding, so the
+// relay VM stays a dumb byte-pipe but inference works. Applies to both the
+// relay path and the fallback path.
+// ---------------------------------------------------------------------------
+
+func TestApplyUpstreamAuth_ReplacesBearerPublic(t *testing.T) {
+	h := http.Header{}
+	h.Set("Authorization", "Bearer public")
+	h.Set("Content-Type", "application/json")
+	applyUpstreamAuth(h, upstreamAuth{key: "sk-real-123", header: ""})
+	assert.Equal(t, "Bearer sk-real-123", h.Get("Authorization"),
+		"client's Bearer public must be replaced with the real upstream key")
+	assert.Equal(t, "application/json", h.Get("Content-Type"),
+		"non-auth headers must be preserved")
+}
+
+func TestApplyUpstreamAuth_CustomHeader(t *testing.T) {
+	h := http.Header{}
+	h.Set("Authorization", "Bearer public")
+	applyUpstreamAuth(h, upstreamAuth{key: "sk-real", header: "x-api-key"})
+	assert.Equal(t, "sk-real", h.Get("X-Api-Key"),
+		"custom header name must be used when set")
+	assert.Empty(t, h.Get("Authorization"),
+		"the original Authorization header must be removed when a custom header is configured")
+}
+
+func TestApplyUpstreamAuth_NoOpWhenKeyEmpty(t *testing.T) {
+	h := http.Header{}
+	h.Set("Authorization", "Bearer public")
+	applyUpstreamAuth(h, upstreamAuth{key: "", header: ""})
+	assert.Equal(t, "Bearer public", h.Get("Authorization"),
+		"empty key must be a no-op (preserves current behavior when injection is unconfigured)")
+}
+
+func TestApplyUpstreamAuth_RemovesAllAuthHeaderValues(t *testing.T) {
+	h := http.Header{}
+	h.Add("Authorization", "Bearer public")
+	h.Add("Authorization", "Bearer other")
+	applyUpstreamAuth(h, upstreamAuth{key: "sk-real", header: ""})
+	assert.Equal(t, []string{"Bearer sk-real"}, h.Values("Authorization"),
+		"all existing Authorization values must be replaced by exactly one")
+}
+
+// TestRouterProxy_InjectsUpstreamAuthOnRelayPath is the integration test: the
+// forwarded request that reaches the relay VM must carry the real key, not the
+// client's Bearer public.
+func TestRouterProxy_InjectsUpstreamAuthOnRelayPath(t *testing.T) {
+	var seenAuth string
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		seenAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(relay.Close)
+
+	fleet := newRelayFleet(3, 5*time.Minute)
+	port := extractPort(relay.URL)
+	fleet.UpdatePeers([]PeerEntry{
+		{ID: "r1", WgIP: extractHost(relay.URL), Provider: "oci", State: "healthy"},
+	})
+	fb, _ := newFallbackProxy("https://upstream.example.com", 0.5, 1)
+	proxy := newRouterProxy(fleet, newDetector429(fleet, 0.5, port), newRouterMetrics(), port, fb).
+		withUpstreamAuth(upstreamAuth{key: "sk-real-xyz", header: ""})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"x"}`))
+	req.Header.Set("Authorization", "Bearer public")
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "relay should accept the request")
+	assert.Equal(t, "Bearer sk-real-xyz", seenAuth,
+		"relay VM must receive the injected real key, not the client's Bearer public")
+}
+
+// TestFallbackProxy_InjectsUpstreamAuth verifies the same injection on the
+// direct-fallback path (no relays healthy).
+func TestFallbackProxy_InjectsUpstreamAuth(t *testing.T) {
+	var seenAuth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(upstream.Close)
+
+	fp, err := newFallbackProxy(upstream.URL, 1000.0, 5)
+	require.NoError(t, err)
+	fp.withUpstreamAuth(upstreamAuth{key: "sk-real-fb", header: ""})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer public")
+	rec := httptest.NewRecorder()
+	fp.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "Bearer sk-real-fb", seenAuth,
+		"direct fallback to upstream must carry the injected real key")
+}

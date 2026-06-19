@@ -57,6 +57,22 @@ spec:
           env:
             - name: LISTEN_ADDR
               value: ":8080"
+            - name: UPSTREAM_URL
+              value: {{ .Values.controller.inferenceRelay.upstreamURL | quote }}
+            {{- with .Values.controller.inferenceRelay.upstreamAuth }}
+            {{- with .keySecret }}
+            {{- if .name }}
+            - name: UPSTREAM_AUTH_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name | quote }}
+                  key: {{ .key | quote }}
+                  optional: false
+            {{- end }}
+            {{- end }}
+            - name: UPSTREAM_AUTH_HEADER
+              value: {{ $.Values.controller.inferenceRelay.upstreamAuth.header | quote }}
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /metrics

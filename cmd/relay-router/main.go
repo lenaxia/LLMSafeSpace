@@ -34,6 +34,7 @@ const (
 type routerConfig struct {
 	listenAddr       string
 	upstreamURL      string
+	upstreamAuth     upstreamAuth
 	peerConfigPath   string
 	peerPollInterval time.Duration
 	healthInterval   time.Duration
@@ -49,8 +50,12 @@ type routerConfig struct {
 
 func loadRouterConfig() routerConfig {
 	return routerConfig{
-		listenAddr:       getEnv("LISTEN_ADDR", defaultRouterListen),
-		upstreamURL:      getEnv("UPSTREAM_URL", defaultRouterUpstream),
+		listenAddr:  getEnv("LISTEN_ADDR", defaultRouterListen),
+		upstreamURL: getEnv("UPSTREAM_URL", defaultRouterUpstream),
+		upstreamAuth: upstreamAuth{
+			key:    os.Getenv("UPSTREAM_AUTH_KEY"),
+			header: getEnv("UPSTREAM_AUTH_HEADER", ""),
+		},
 		peerConfigPath:   getEnv("PEER_CONFIG_PATH", defaultPeerConfigPath),
 		peerPollInterval: getEnvDuration("PEER_POLL_INTERVAL", defaultPeerPollInterval),
 		healthInterval:   getEnvDuration("HEALTH_INTERVAL", defaultHealthInterval),
@@ -76,8 +81,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("relay-router: fallback init: %v", err)
 	}
+	fallback.withUpstreamAuth(cfg.upstreamAuth)
 
-	proxy := newRouterProxy(fleet, detector, metrics, cfg.relayPort, fallback)
+	proxy := newRouterProxy(fleet, detector, metrics, cfg.relayPort, fallback).withUpstreamAuth(cfg.upstreamAuth)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
