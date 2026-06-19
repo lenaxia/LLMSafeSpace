@@ -119,6 +119,43 @@ type CredentialResp struct {
 	Type string `json:"type"`
 }
 
+// --- Request/response body types (US-46.9: typed request structs) ---
+
+// questionEventResult is the structured result returned when a question event
+// is detected during SSE streaming.
+type questionEventResult struct {
+	Type    string          `json:"type"`
+	Request json.RawMessage `json:"request"`
+}
+
+// questionReplyRequest is the body for POST /question/:id/reply.
+type questionReplyRequest struct {
+	Answers [][]string `json:"answers"`
+}
+
+// permissionReplyRequest is the body for POST /permission/:id/reply.
+type permissionReplyRequest struct {
+	Reply   string `json:"reply"`
+	Message string `json:"message,omitempty"`
+}
+
+// credentialProviderValue is the JSON-encoded "value" field of a credential
+// secret for LLM provider credentials.
+type credentialProviderValue struct {
+	Provider string `json:"provider"`
+	APIKey   string `json:"apiKey"`
+	BaseURL  string `json:"baseURL,omitempty"`
+	Default  string `json:"default,omitempty"`
+}
+
+// createSecretRequest is the body for POST /api/v1/secrets.
+type createSecretRequest struct {
+	Name     string            `json:"name"`
+	Type     string            `json:"type"`
+	Value    string            `json:"value"`
+	Metadata map[string]string `json:"metadata"`
+}
+
 // HTTPClient implements APIClient using HTTP calls to the LLMSafeSpace API.
 // It resolves workspace → sandbox internally for session/message operations.
 type HTTPClient struct {
@@ -298,9 +335,9 @@ func (c *HTTPClient) SendMessage(ctx context.Context, workspaceID, sessionID, me
 					}
 					if json.Unmarshal(event.Data, &qData) == nil && qData.SessionID == sessionID {
 						// Return structured question result
-						result := map[string]interface{}{
-							"type":    "question",
-							"request": json.RawMessage(event.Data),
+						result := questionEventResult{
+							Type:    "question",
+							Request: json.RawMessage(event.Data),
 						}
 						out, _ := json.Marshal(result)
 						return string(out), nil
@@ -355,7 +392,7 @@ func (c *HTTPClient) QuestionReply(ctx context.Context, workspaceID, requestID s
 	if !validQuestionID.MatchString(requestID) {
 		return fmt.Errorf("invalid question request ID: %s", requestID)
 	}
-	body := map[string]interface{}{"answers": answers}
+	body := questionReplyRequest{Answers: answers}
 	path := fmt.Sprintf("/api/v1/workspaces/%s/question/%s/reply", workspaceID, requestID)
 	return c.doJSON(ctx, http.MethodPost, path, body, nil)
 }
@@ -376,10 +413,7 @@ func (c *HTTPClient) PermissionReply(ctx context.Context, workspaceID, requestID
 	if !validReplies[reply] {
 		return fmt.Errorf("reply must be 'once', 'always', or 'reject'")
 	}
-	body := map[string]interface{}{"reply": reply}
-	if message != "" {
-		body["message"] = message
-	}
+	body := permissionReplyRequest{Reply: reply, Message: message}
 	path := fmt.Sprintf("/api/v1/workspaces/%s/permission/%s/reply", workspaceID, requestID)
 	return c.doJSON(ctx, http.MethodPost, path, body, nil)
 }
@@ -387,12 +421,11 @@ func (c *HTTPClient) PermissionReply(ctx context.Context, workspaceID, requestID
 // --- Credential management ---
 
 func (c *HTTPClient) CreateCredential(ctx context.Context, req CreateCredentialReq) (*CredentialResp, error) {
-	providerData := map[string]any{"provider": req.Provider, "apiKey": req.APIKey}
-	if req.BaseURL != "" {
-		providerData["baseURL"] = req.BaseURL
-	}
-	if req.Default != "" {
-		providerData["default"] = req.Default
+	providerData := credentialProviderValue{
+		Provider: req.Provider,
+		APIKey:   req.APIKey,
+		BaseURL:  req.BaseURL,
+		Default:  req.Default,
 	}
 	valueJSON, _ := json.Marshal(providerData)
 
@@ -401,11 +434,11 @@ func (c *HTTPClient) CreateCredential(ctx context.Context, req CreateCredentialR
 		name = req.Provider
 	}
 
-	body := map[string]any{
-		"name":     name,
-		"type":     "llm-provider",
-		"value":    string(valueJSON),
-		"metadata": map[string]string{},
+	body := createSecretRequest{
+		Name:     name,
+		Type:     "llm-provider",
+		Value:    string(valueJSON),
+		Metadata: map[string]string{},
 	}
 
 	var resp CredentialResp
