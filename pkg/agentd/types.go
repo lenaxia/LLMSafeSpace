@@ -65,6 +65,10 @@ type SessionInfo struct {
 	Tokens      *SessionTokens `json:"tokens,omitempty"`
 	Model       string         `json:"model,omitempty"` // model ID, e.g. "claude-sonnet-4-20250514"
 	ContextUsed int64          `json:"contextUsed"`
+	// EstimatedMemoryMB is an approximate per-session memory estimate
+	// computed by agentd (US-44.6). Formula: (contextTokens × 2 bytes) / 1MiB.
+	// Helps users identify which session to drop when memory pressure is high.
+	EstimatedMemoryMB int64 `json:"estimatedMemoryMB,omitempty"`
 }
 
 // CPUUsage reports cumulative CPU consumption from cgroup v2 cpu.stat.
@@ -112,4 +116,9 @@ type StatuszResponse struct {
 	Memory              *MemoryUsage  `json:"memory,omitempty"`
 	CPU                 *CPUUsage     `json:"cpu,omitempty"`
 	Context             *ContextUsage `json:"context,omitempty"`
+	// MemoryPressure is true when memory usage exceeds the warning
+	// threshold (85% of cgroup limit). Set by agentd's periodic memory
+	// check (US-44.5). The controller reads this to set the
+	// WorkspaceConditionMemoryPressure condition.
+	MemoryPressure bool `json:"memory_pressure,omitempty"`
 }

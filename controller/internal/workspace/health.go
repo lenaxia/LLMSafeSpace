@@ -257,7 +257,7 @@ func (r *WorkspaceReconciler) enrichAgentStatus(ctx context.Context, ws *v1.Work
 	if len(status.Sessions) > 0 {
 		sessions := make([]v1.AgentSessionStatus, len(status.Sessions))
 		for i, s := range status.Sessions {
-			sessions[i] = v1.AgentSessionStatus{ID: s.ID, Title: s.Title, Status: s.Status, ContextUsed: s.ContextUsed}
+			sessions[i] = v1.AgentSessionStatus{ID: s.ID, Title: s.Title, Status: s.Status, ContextUsed: s.ContextUsed, EstimatedMemoryMB: s.EstimatedMemoryMB}
 		}
 		ws.Status.Sessions = sessions
 	} else {
@@ -296,6 +296,21 @@ func (r *WorkspaceReconciler) enrichAgentStatus(ctx context.Context, ws *v1.Work
 		metrics.WorkspaceMemoryUsedBytesSecondsTotal.WithLabelValues(ws.Name, userID).Add(byteSecs)
 		metrics.UserMemoryBytesSecondsTotal.WithLabelValues(userID).Add(byteSecs)
 		metrics.WorkspaceMemoryUsedBytes.WithLabelValues(ws.Name, userID).Set(float64(status.Memory.UsedBytes))
+	}
+	// US-44.5: surface memory pressure condition from agentd's cgroup
+	// monitoring. agentd checks every 60s; the condition auto-clears
+	// when pressure drops below the 85% threshold. Never restarts the
+	// pod — this is a degraded signal, not a recoverable failure.
+	if status.MemoryPressure {
+		usedPct := 0.0
+		if status.Memory != nil && status.Memory.TotalBytes > 0 {
+			usedPct = float64(status.Memory.UsedBytes) / float64(status.Memory.TotalBytes) * 100
+		}
+		r.setCondition(ws, v1.WorkspaceConditionMemoryPressure, "True",
+			v1.ReasonMemoryPressure,
+			fmt.Sprintf("memory usage high (%.0f%%). Consider reducing concurrent sessions or increasing workspace memory limit.", usedPct))
+	} else {
+		r.removeCondition(ws, v1.WorkspaceConditionMemoryPressure)
 	}
 	if status.CPU != nil && status.CPU.UsageMicros > 0 {
 		if ws.Status.CpuUsageMicros > 0 && status.CPU.UsageMicros >= ws.Status.CpuUsageMicros {

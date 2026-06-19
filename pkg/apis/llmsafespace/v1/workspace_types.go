@@ -230,6 +230,7 @@ const (
 	WorkspaceConditionAgentHealthy         WorkspaceConditionType = "AgentHealthy"
 	WorkspaceConditionProviderReady        WorkspaceConditionType = "ProviderReady"
 	WorkspaceConditionDiskPressure         WorkspaceConditionType = "DiskPressure"
+	WorkspaceConditionMemoryPressure       WorkspaceConditionType = "MemoryPressure"
 )
 
 const (
@@ -249,6 +250,7 @@ const (
 	ReasonProvidersReady        = "ProvidersReady"
 	ReasonProvidersNotConnected = "ProvidersNotConnected"
 	ReasonDiskPressure          = "DiskPressure"
+	ReasonMemoryPressure        = "MemoryPressure"
 )
 
 // WorkspaceCondition describes a condition of a Workspace.
@@ -267,6 +269,9 @@ type AgentSessionStatus struct {
 	Title       string `json:"title,omitempty"`
 	Status      string `json:"status"` // "idle" | "busy"
 	ContextUsed int64  `json:"contextUsed"`
+	// EstimatedMemoryMB is agentd's approximate per-session memory
+	// estimate (US-44.6). Helps users identify heavy sessions.
+	EstimatedMemoryMB int64 `json:"estimatedMemoryMB,omitempty"`
 }
 
 // WorkspaceStatus defines the observed state of a Workspace.
