@@ -72,7 +72,6 @@ jobs:
 
           CONTEXT_FILE=".github/prompts/context.md"
           CORE_FILE=".github/prompts/core-rules.md"
-          FOOTER_FILE=".github/prompts/commands-footer.md"
           WORKFLOW_FILE=".github/prompts/code-change-workflow.md"
           OUT="/tmp/opencode_prompt.txt"
 
@@ -187,10 +186,6 @@ jobs:
               ;;
           esac
 
-          # Append command reference footer to all responses
-          printf '\n\n' >> "$OUT"
-          cat "$FOOTER_FILE" >> "$OUT"
-
           # Export as multiline GITHUB_ENV entry
           {
             echo "OPENCODE_PROMPT<<__PROMPT_EOF__"
@@ -211,3 +206,32 @@ jobs:
           share: "false"
           mentions: /ai
           prompt: ${{ env.OPENCODE_PROMPT }}
+
+      # Post the AI command reference as its own comment, exactly once per thread.
+      # Deduplicated by a hidden marker so repeat triggers (/ai, re-pushes, re-reviews)
+      # never produce a second copy. The footer is intentionally NOT part of the prompt:
+      # OPENCODE_PROMPT is the userPrompt (model input), and the model is never told to
+      # echo it back — so it never reached posted comments. See worklog 0219 + this fix.
+      - name: Post AI command reference (once per thread)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+          MARKER: '<!-- ai-commands-footer -->'
+        run: |
+          set -euo pipefail
+          if [ -z "${ISSUE_NUMBER:-}" ]; then
+            echo "No issue/PR number resolved; skipping command-reference comment."
+            exit 0
+          fi
+          # Post at most once per thread: scan existing issue comments for the marker.
+          if gh api "repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/comments" \
+               --paginate -q '.[].body' | grep -qF "$MARKER"; then
+            echo "Command reference already present in thread #${ISSUE_NUMBER}; skipping."
+            exit 0
+          fi
+          {
+            printf '%s\n\n' "$MARKER"
+            cat .github/prompts/commands-footer.md
+          } > /tmp/commands-footer-comment.md
+          gh issue comment "$ISSUE_NUMBER" --body-file /tmp/commands-footer-comment.md
+          echo "Posted AI command reference to thread #${ISSUE_NUMBER}."
