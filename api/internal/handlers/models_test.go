@@ -249,8 +249,8 @@ func TestSetModel_HappyPath(t *testing.T) {
 	var resp map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	require.Equal(t, "anthropic/claude-sonnet-4-5", resp["model"])
-	// applied is false because this test uses NewModelsHandler(nil) — no
-	// AgentClient wired, so the live PATCH to opencode cannot execute.
+	// applied is false because the AgentClient resolves to an empty pod IP
+	// (no pod running), so the live PATCH to opencode fails.
 	// The model IS persisted to workspace metadata (verified below).
 	require.Equal(t, false, resp["applied"])
 
@@ -302,6 +302,33 @@ func TestSetModel_NoUpdater(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+// TestSetModel_NilAgentClient_Returns503 is a regression test for the
+// nil-agentClient panic found in review. When agentClient is nil (e.g.
+// agentReloadHandler was nil so AgentClient was never wired), SetModel
+// must return 503, not panic.
+func TestSetModel_NilAgentClient_Returns503(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	handler := NewModelsHandler(nil)
+	handler.SetModelStore(&mockWSUpdater{}) // updater is set, but agentClient is nil
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", "user-1")
+		c.Next()
+	})
+	router.PUT("/api/v1/workspaces/:id/model", handler.SetModel)
+
+	body, _ := json.Marshal(map[string]string{"model": "test/model"})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/workspaces/ws-1/model", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	require.Contains(t, w.Body.String(), "agent client")
 }
 
 func TestSetModel_NoPod_AppliedFalse(t *testing.T) {
