@@ -255,7 +255,6 @@ func TestAllCollectorsGatherableAfterRegisterWith(t *testing.T) {
 	// bucket; conflict-iteration coverage is asserted in
 	// controller/internal/workspace/status_update_retry_test.go.
 	expected := []string{
-		"llmsafespace_workspace_consecutive_failures_max",
 		"llmsafespace_api_key_legacy_total",
 		"llmsafespace_workspace_init_container_duration_seconds",
 	}

@@ -251,9 +251,16 @@ type authPayload struct {
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
+// providerCatalogReadLimit bounds the /provider response read. opencode
+// returns every provider from models.dev (139+ providers × many models),
+// which is ~5 MB in practice. 32 MiB leaves headroom for growth without
+// allowing an unbounded read. Worklog 0372 (C2): the limit was regressed
+// to 1 MiB during the US-29.5 extraction and silently truncated the catalog.
+const providerCatalogReadLimit = 32 << 20
+
 // ListModels calls GET /provider on opencode and returns the raw JSON body.
 // The caller is responsible for parsing the response shape (it varies by
-// opencode version). The body is size-limited to 1 MiB.
+// opencode version). The body is size-limited to providerCatalogReadLimit.
 func (c *Client) ListModels(ctx context.Context) ([]byte, error) {
 	url := c.baseURL + "/provider"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -271,7 +278,7 @@ func (c *Client) ListModels(ctx context.Context) ([]byte, error) {
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return nil, fmt.Errorf("GET /provider returned %d: %s", resp.StatusCode, string(errBody))
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return io.ReadAll(io.LimitReader(resp.Body, providerCatalogReadLimit))
 }
 
 // PatchConfig calls PATCH /global/config on opencode with the given config
