@@ -239,10 +239,18 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		secretService = secrets.NewSecretService(keyService, asyncAudit)
 		auditStore = asyncAudit
 
+		// M2-a: shared model cache between SecretsHandler (evicts on bind) and
+		// ModelsHandler (reads on ListModels). One cache, two consumers.
+		sharedModelCache := handlers.NewInMemoryModelCache()
+
 		secretsHandler = handlers.NewSecretsHandler(secretService)
+		secretsHandler.SetModelCache(sharedModelCache)
 		// US-29.5: ModelsHandler extracted from SecretsHandler. AgentClient
-		// is set later after proxyHandler is constructed.
+		// is set later after proxyHandler is constructed (it depends on the
+		// runtime password getter). Parser + cache are wired now so the
+		// handler is functional for construction-time validation.
 		modelsHandler = handlers.NewModelsHandler(nil) // agentClient wired below
+		modelsHandler.SetModelCache(sharedModelCache)
 
 		// Wire billing/metering metrics recorder.
 		if metricsSvc, ok := svc.GetMetrics().(*metrics.Service); ok {
