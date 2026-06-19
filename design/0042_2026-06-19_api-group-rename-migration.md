@@ -3,7 +3,7 @@
 **Date:** 2026-06-19
 **Status:** Proposed
 **Authors:** mikekao
-**Worklog reference:** 0397 (the deploy-blocker incident that surfaced this)
+**Worklog reference:** 0463 (the deploy-blocker incident that surfaced this)
 
 ---
 
@@ -344,7 +344,7 @@ drop to zero unless the file is updated.
 ## Appendix C: why not other approaches
 
 **Why not just re-apply the old singular CRD with the new schema?** That's
-what worklog 0397 did as an emergency fix, and it works for keeping the
+what worklog 0463 did as an emergency fix, and it works for keeping the
 existing binary running. But it doesn't get us to the new (plural-group)
 binary, which is where ongoing development is happening. We need a path
 forward, not a stationary fix.

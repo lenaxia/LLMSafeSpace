@@ -1061,7 +1061,7 @@ func TestActivateWorkspace_K8sUpdateFails(t *testing.T) {
 }
 
 // TestActivateWorkspace_SpecSuspendPruned reproduces the failure mode from
-// worklog 0397 (2026-06-19) where a deployed CRD missing spec.suspend
+// worklog 0463 (2026-06-19) where a deployed CRD missing spec.suspend
 // caused the apiserver to silently prune the field on Update. The Update
 // returned 200, the API logged "Workspace activated", but the persisted
 // object had Spec.Suspend=nil so the controller never observed a transition

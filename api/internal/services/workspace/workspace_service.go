@@ -1197,7 +1197,7 @@ func (s *Service) ActivateWorkspace(ctx context.Context, userID, workspaceID str
 	// fields not declared in the CRD's OpenAPI schema (default behavior
 	// when x-kubernetes-preserve-unknown-fields is unset), so a successful
 	// Update can still leave Spec.Suspend=nil if the deployed CRD is older
-	// than the binary. This produced the worklog 0397 incident: every
+	// than the binary. This produced the worklog 0463 incident: every
 	// resume request returned 200 OK with {"resumed":...} but the controller
 	// never observed a transition because the field was dropped before
 	// persistence, leaving the workspace stuck Suspended.

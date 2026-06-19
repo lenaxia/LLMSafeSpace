@@ -196,7 +196,7 @@ helm-deploy:
 	@echo "== helm-deploy: waiting for rollout =="
 	@kubectl -n $(RELEASE_NS) rollout status deploy/$(RELEASE_NAME)-api --timeout=120s || true
 	@kubectl -n $(RELEASE_NS) rollout status deploy/$(RELEASE_NAME)-controller --timeout=120s || true
-	@echo "== helm-deploy: verifying cluster CRDs match chart (worklog 0397) =="
+	@echo "== helm-deploy: verifying cluster CRDs match chart (worklog 0463) =="
 	@$(MAKE) repolint-build >/dev/null
 	@./bin/repolint -cluster-drift || { \
 	  echo "ERROR: deployed CRDs drift from chart YAMLs after kubectl apply."; \
