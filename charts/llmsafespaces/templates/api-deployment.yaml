@@ -65,6 +65,15 @@ spec:
                 secretKeyRef:
                   name: {{ include "llmsafespaces.secretName" . }}
                   key: master-secret
+            {{/* F5 (worklog 0372): shared secret the controller presents as
+                   X-Internal-Token to authenticate internal org-status polls.
+                   The endpoint FAILS CLOSED without it, so it is always wired
+                   (same non-optional posture as jwt/master secrets). */}}
+            - name: LLMSAFESPACES_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "llmsafespaces.secretName" . }}
+                  key: internal-token
             - name: LLMSAFESPACES_KUBERNETES_PODNAME
               valueFrom:
                 fieldRef:

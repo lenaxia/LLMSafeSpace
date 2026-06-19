@@ -173,6 +173,14 @@ controller:
   leaderElection:
     enabled: true
 
+  # US-43.19 / D20: in-cluster root URL of the API service the controller polls
+  # (every 30s, cached) to drive org-level workspace suspension. Empty ("")
+  # derives the default in-cluster API service URL from the release name +
+  # namespace. The controller's --api-service-url flag is wired from this value;
+  # org-suspension is disabled (inert) only if you explicitly set this to "" AND
+  # clear internalToken — by default both are wired so D20 is functional.
+  apiServiceURL: ""
+
   # F1.4.3 (Epic 17): pre-fix the controller bound /metrics on
   # 0.0.0.0:8080, reachable from any pod with route to the controller
   # IP. The default now binds to loopback so only same-pod sidecars
@@ -470,6 +478,24 @@ networkPolicy:
     app.kubernetes.io/name: prometheus
   prometheusNamespace: ""
 
+  # F5 (worklog 0372): opt-in default-deny ingress for the API pod itself.
+  # When true, the chart renders an API NetworkPolicy that admits only the
+  # controller (internal org-status polls), kube-system (kubelet probes), and
+  # the pod selector below (typically your ingress controller / frontend).
+  # DEFAULT IS FALSE because the user-traffic source is deployment-specific
+  # (ingress controller labels vary) and a wrong allowlist would lock users
+  # out. The internal org-status endpoint is already authenticated by the
+  # mandatory LLMSAFESPACES_INTERNAL_TOKEN (fail-closed), so this policy is
+  # defense-in-depth, not the primary control. Enable after confirming the
+  # ingress source selector matches your environment.
+  apiIngressRestricted: false
+  # Pod selector (in the release namespace) allowed to send user traffic to
+  # the API when apiIngressRestricted=true. Defaults to the frontend pods;
+  # override to your ingress controller (e.g. {ingress-nginx: controller}).
+  apiIngressSourcePodSelector:
+    app.kubernetes.io/name: llmsafespaces
+    app.kubernetes.io/component: frontend
+
   # DNS policy: where to send port-53 traffic. Default targets the
   # kube-system/kube-dns service which works on most clusters
   # (kube-dns, CoreDNS). Override on clusters with non-standard DNS.
@@ -730,6 +756,16 @@ inferenceRelayURL: "https://relay.safespaces.dev"
 # and pushed to the CF Worker automatically if cloudflare credentials are set.
 # Only set this manually if you need to force a specific value.
 inferenceRelaySecret: ""
+
+# US-43.19 / D20: shared secret authenticating the controller→API internal
+# org-status calls (the endpoint the workspace reconciler polls to drive
+# org-level suspension). Leave empty ("") to have the chart auto-generate a
+# random secret on first install and preserve it across upgrades (same model
+# as jwtSecret). The value is stored as the `internal-token` key in the
+# llmsafespaces-credentials Secret and mounted as LLMSAFESPACES_INTERNAL_TOKEN on
+# BOTH the API and the controller. The internal org-status endpoint FAILS
+# CLOSED (403) when this is unset, so it MUST be set for org-suspension to work.
+internalToken: ""
 
 # Cloudflare credentials for automated relay secret management.
 # When set, a post-install/post-upgrade Job pushes inferenceRelaySecret to
