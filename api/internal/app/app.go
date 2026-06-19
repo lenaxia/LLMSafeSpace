@@ -221,7 +221,9 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var invitationsHandler *handlers.InvitationsHandler
 	var emailService *emailsvc.Service
 	var emailHandler *handlers.EmailHandler
+	var passwordResetHandler *handlers.PasswordResetHandler
 	var orgCredBinder *secrets.PgSecretStore
+	var keyService *secrets.KeyService
 	var policySvc *policy.Service
 	var policyHandler *handlers.PolicyHandler
 	var auditHandler *handlers.AuditHandler
@@ -254,7 +256,6 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		var pgxErr error
 		secretsPool, pgxErr = pgxpool.New(context.Background(), pgxDSN)
 
-		var keyService *secrets.KeyService
 		var secretService *secrets.SecretService
 		var auditStore secrets.SecretStore
 		if pgxErr != nil {
@@ -611,22 +612,19 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			pgOrgStore, checkoutProvider, log, time.Hour, 7*24*time.Hour)
 	}
 
-	// US-43.2 / Epic 49: Resolve the email provider and construct the
-	// EmailService. This is independent of pgOrgStore — the service needs
-	// only the provider + baseURL. SES validation (fromAddress/baseUrl
-	// required) applies at boot regardless of whether the org store is
-	// available, so a misconfigured SES install fails fast rather than
-	// silently degrading to noop when pgOrgStore is nil.
-	mailer, err := newEmailMailer(cfg)
-	if err != nil {
+	// Epic 49: email + password-reset wiring. Extracted into a helper to
+	// keep New() under the funlen limit. The helper constructs the email
+	// provider, EmailService, EmailHandler, and PasswordResetHandler.
+	var emailInitErr error
+	emailService, emailHandler, passwordResetHandler, emailInitErr = initEmailStack(cfg, svc, dbSvc, keyService, log)
+	if emailInitErr != nil {
 		cancel()
-		return nil, err
+		return nil, emailInitErr
 	}
-	emailService = emailsvc.NewService(mailer, cfg.Email.BaseURL, cfg.Email.Provider)
-	emailHandler = handlers.NewEmailHandler(emailService, svc.GetRateLimiter(), log)
 
 	// Invitations still needs the raw provider + the org store.
 	if pgOrgStore != nil {
+		mailer, _ := newEmailMailer(cfg)
 		invitationsHandler = handlers.NewInvitationsHandler(pgOrgStore, mailer, svc.GetAuth(), cfg.Email.BaseURL, log)
 		if orgCredBinder != nil {
 			invitationsHandler.SetCredentialBinder(orgCredBinder)
@@ -694,6 +692,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		WebhookHandler:                  webhookHandler,
 		InvitationsHandler:              invitationsHandler,
 		EmailHandler:                    emailHandler,
+		PasswordResetHandler:            passwordResetHandler,
 		PolicyHandler:                   policyHandler,
 		AuditHandler:                    auditHandler,
 		RelayAdminHandler:               relayAdminHandler,
@@ -1021,4 +1020,42 @@ func newRelayChecker(
 		}
 		return readyz.RelayInjected
 	}
+}
+
+// initEmailStack constructs the EmailService, EmailHandler, and
+// PasswordResetHandler. Extracted from New() to keep it under the funlen
+// limit. Returns an error if the email provider is misconfigured (SES
+// requires fromAddress + baseUrl); the caller must propagate it to fail
+// fast at boot.
+func initEmailStack(
+	cfg *config.Config,
+	svc *services.Services,
+	dbSvc *database.Service,
+	keyService *secrets.KeyService,
+	log *logger.Logger,
+) (*emailsvc.Service, *handlers.EmailHandler, *handlers.PasswordResetHandler, error) {
+	mailer, err := newEmailMailer(cfg)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	emailService := emailsvc.NewService(mailer, cfg.Email.BaseURL, cfg.Email.Provider)
+	emailHandler := handlers.NewEmailHandler(emailService, svc.GetRateLimiter(), log)
+
+	emailTokenStore := database.NewPgEmailTokenStore(dbSvc.DB)
+	var sessionRevoker interface {
+		RevokeAllUserSessions(userID string) error
+	}
+	if authSvc, ok := svc.GetAuth().(*auth.Service); ok {
+		sessionRevoker = authSvc
+	}
+	passwordResetHandler := handlers.NewPasswordResetHandler(
+		emailTokenStore,
+		svc.Database,
+		keyService,
+		&bcryptPasswordUpdater{db: svc.Database},
+		sessionRevoker,
+		emailService,
+		log,
+	)
+	return emailService, emailHandler, passwordResetHandler, nil
 }

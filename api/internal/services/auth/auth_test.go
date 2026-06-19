@@ -279,6 +279,104 @@ func TestRevokeToken(t *testing.T) {
 	mockCacheService.AssertExpectations(t)
 }
 
+// TestRevokeAllUserSessions_RevokesAllTrackedSessions verifies that
+// RevokeAllUserSessions reads the tracked session entries and writes
+// "revoked" under both the jti key and the hash key for each entry.
+// This is the OWASP-mandated session-invalidation primitive for
+// password-reset (US-49.5).
+func TestRevokeAllUserSessions_RevokesAllTrackedSessions(t *testing.T) {
+	log, _ := logger.New(true, "debug", "console")
+	cfg := &config.Config{}
+	cfg.Auth.JWTSecret = "test-secret"
+	cfg.Auth.TokenDuration = 24 * time.Hour
+
+	mockDbService := new(mocks.MockDatabaseService)
+	mockCacheService := new(mocks.MockCacheService)
+
+	service, err := New(cfg, log, mockDbService, mockCacheService)
+	require.NoError(t, err)
+
+	userID := "user-reset-1"
+	// Simulate two tracked sessions: jti1|hashKey1 and jti2|hashKey2
+	entries := []string{"jti-aaa|token:hashaaa", "jti-bbb|token:hashbbb"}
+	mockCacheService.On("GetObject", mock.Anything, "user-sessions:"+userID, mock.Anything).
+		Run(func(args mock.Arguments) {
+			dst := args.Get(2).(*[]string)
+			*dst = entries
+		}).Return(nil)
+	// Each entry → 2 Set calls (jti key + hash key) + 1 Delete at the end
+	mockCacheService.On("Set", mock.Anything, "token:jti-aaa", "revoked", mock.Anything).Return(nil)
+	mockCacheService.On("Set", mock.Anything, "token:hashaaa", "revoked", mock.Anything).Return(nil)
+	mockCacheService.On("Set", mock.Anything, "token:jti-bbb", "revoked", mock.Anything).Return(nil)
+	mockCacheService.On("Set", mock.Anything, "token:hashbbb", "revoked", mock.Anything).Return(nil)
+	mockCacheService.On("Delete", mock.Anything, "user-sessions:"+userID).Return(nil)
+
+	err = service.RevokeAllUserSessions(userID)
+	require.NoError(t, err)
+	mockCacheService.AssertExpectations(t)
+}
+
+// TestRevokeAllUserSessions_NoTrackedSessions_Noop verifies the method
+// is safe when no sessions are tracked (empty or missing key).
+func TestRevokeAllUserSessions_NoTrackedSessions_Noop(t *testing.T) {
+	log, _ := logger.New(true, "debug", "console")
+	cfg := &config.Config{}
+	cfg.Auth.JWTSecret = "test-secret"
+	cfg.Auth.TokenDuration = 24 * time.Hour
+
+	mockDbService := new(mocks.MockDatabaseService)
+	mockCacheService := new(mocks.MockCacheService)
+
+	service, err := New(cfg, log, mockDbService, mockCacheService)
+	require.NoError(t, err)
+
+	// GetObject returns error (key not found) → no sessions to revoke
+	mockCacheService.On("GetObject", mock.Anything, "user-sessions:ghost", mock.Anything).
+		Return(errors.New("redis: nil"))
+
+	err = service.RevokeAllUserSessions("ghost")
+	require.NoError(t, err, "must be nil-safe when no sessions tracked")
+	// No Set/Delete calls expected
+	mockCacheService.AssertNotCalled(t, "Set", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	mockCacheService.AssertNotCalled(t, "Delete", mock.Anything, mock.Anything)
+}
+
+// TestRevokeAllUserSessions_UsesMaxTTL verifies the revocation TTL covers
+// remember-me tokens (30d), not just the default tokenDuration (24h).
+func TestRevokeAllUserSessions_UsesMaxTTL(t *testing.T) {
+	log, _ := logger.New(true, "debug", "console")
+	cfg := &config.Config{}
+	cfg.Auth.JWTSecret = "test-secret"
+	cfg.Auth.TokenDuration = 24 * time.Hour
+	cfg.Auth.RememberMeDuration = 30 * 24 * time.Hour // 720h
+
+	mockDbService := new(mocks.MockDatabaseService)
+	mockCacheService := new(mocks.MockCacheService)
+
+	service, err := New(cfg, log, mockDbService, mockCacheService)
+	require.NoError(t, err)
+
+	userID := "user-ttl-1"
+	entries := []string{"jti-x|token:hashx"}
+	mockCacheService.On("GetObject", mock.Anything, "user-sessions:"+userID, mock.Anything).
+		Run(func(args mock.Arguments) {
+			dst := args.Get(2).(*[]string)
+			*dst = entries
+		}).Return(nil)
+	// Assert the TTL passed to Set is >= 720h (remember-me), not 24h
+	mockCacheService.On("Set", mock.Anything, "token:jti-x", "revoked", mock.MatchedBy(func(d time.Duration) bool {
+		return d >= 30*24*time.Hour
+	})).Return(nil)
+	mockCacheService.On("Set", mock.Anything, "token:hashx", "revoked", mock.MatchedBy(func(d time.Duration) bool {
+		return d >= 30*24*time.Hour
+	})).Return(nil)
+	mockCacheService.On("Delete", mock.Anything, "user-sessions:"+userID).Return(nil)
+
+	err = service.RevokeAllUserSessions(userID)
+	require.NoError(t, err)
+	mockCacheService.AssertExpectations(t)
+}
+
 func TestCheckResourceAccess(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")

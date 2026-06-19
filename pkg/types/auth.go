@@ -7,15 +7,16 @@ import "time"
 
 // User represents a user
 type User struct {
-	ID           string     `json:"id" db:"id"`
-	Username     string     `json:"username" db:"username"`
-	Email        string     `json:"email" db:"email"`
-	PasswordHash string     `json:"-" db:"password_hash"`
-	CreatedAt    time.Time  `json:"createdAt" db:"created_at"`
-	UpdatedAt    time.Time  `json:"updatedAt" db:"updated_at"`
-	Active       bool       `json:"active" db:"active"`
-	Role         string     `json:"role" db:"role"`
-	Status       UserStatus `json:"status" db:"status"`
+	ID            string     `json:"id" db:"id"`
+	Username      string     `json:"username" db:"username"`
+	Email         string     `json:"email" db:"email"`
+	PasswordHash  string     `json:"-" db:"password_hash"`
+	CreatedAt     time.Time  `json:"createdAt" db:"created_at"`
+	UpdatedAt     time.Time  `json:"updatedAt" db:"updated_at"`
+	Active        bool       `json:"active" db:"active"`
+	Role          string     `json:"role" db:"role"`
+	Status        UserStatus `json:"status" db:"status"`
+	EmailVerified bool       `json:"emailVerified" db:"email_verified"`
 }
 
 // RegisterRequest is the request body for user registration.

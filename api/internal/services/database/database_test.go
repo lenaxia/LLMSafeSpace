@@ -130,10 +130,10 @@ func TestGetUserByAPIKey(t *testing.T) {
 	expectedStatus := types.UserStatusActive
 
 	// Set up expectations for valid API key
-	rows := sqlmock.NewRows([]string{"id", "username", "email", "created_at", "updated_at", "active", "role", "status"}).
-		AddRow(expectedUserID, expectedUsername, expectedEmail, expectedCreatedAt, expectedUpdatedAt, expectedActive, expectedRole, expectedStatus)
+	rows := sqlmock.NewRows([]string{"id", "username", "email", "created_at", "updated_at", "active", "role", "status", "email_verified"}).
+		AddRow(expectedUserID, expectedUsername, expectedEmail, expectedCreatedAt, expectedUpdatedAt, expectedActive, expectedRole, expectedStatus, true)
 
-	mock.ExpectQuery("SELECT u.id, u.username, u.email, u.created_at, u.updated_at, u.active, u.role, u.status FROM users u JOIN api_keys k").
+	mock.ExpectQuery("SELECT u.id, u.username, u.email, u.created_at, u.updated_at, u.active, u.role, u.status, u.email_verified FROM users u JOIN api_keys k").
 		WithArgs(apiKey).
 		WillReturnRows(rows)
 
@@ -150,7 +150,7 @@ func TestGetUserByAPIKey(t *testing.T) {
 
 	// Test case: Invalid API key
 	invalidKey := "invalid_key"
-	mock.ExpectQuery("SELECT u.id, u.username, u.email, u.created_at, u.updated_at, u.active, u.role, u.status FROM users u JOIN api_keys k").
+	mock.ExpectQuery("SELECT u.id, u.username, u.email, u.created_at, u.updated_at, u.active, u.role, u.status, u.email_verified FROM users u JOIN api_keys k").
 		WithArgs(invalidKey).
 		WillReturnError(sql.ErrNoRows)
 
@@ -277,9 +277,9 @@ func TestGetUser(t *testing.T) {
 	status := types.UserStatusActive
 
 	// Set up expectations
-	rows := sqlmock.NewRows([]string{"id", "username", "email", "password_hash", "created_at", "updated_at", "active", "role", "status"}).
-		AddRow(userID, username, email, "$2a$10$hash", createdAt, updatedAt, active, role, status)
-	mock.ExpectQuery("SELECT id, username, email, password_hash, created_at, updated_at, active, role, status FROM users WHERE id = \\$1").
+	rows := sqlmock.NewRows([]string{"id", "username", "email", "password_hash", "created_at", "updated_at", "active", "role", "status", "email_verified"}).
+		AddRow(userID, username, email, "$2a$10$hash", createdAt, updatedAt, active, role, status, true)
+	mock.ExpectQuery("SELECT id, username, email, password_hash, created_at, updated_at, active, role, status, email_verified FROM users WHERE id = \\$1").
 		WithArgs(userID).
 		WillReturnRows(rows)
 
@@ -295,7 +295,7 @@ func TestGetUser(t *testing.T) {
 	assert.Equal(t, status, user.Status)
 
 	// Test case: User not found
-	mock.ExpectQuery("SELECT id, username, email, password_hash, created_at, updated_at, active, role, status FROM users WHERE id = \\$1").
+	mock.ExpectQuery("SELECT id, username, email, password_hash, created_at, updated_at, active, role, status, email_verified FROM users WHERE id = \\$1").
 		WithArgs("nonexistent").
 		WillReturnError(sql.ErrNoRows)
 
