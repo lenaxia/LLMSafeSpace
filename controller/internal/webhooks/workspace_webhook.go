@@ -100,15 +100,22 @@ func runtimeRefHasTraversal(s string) bool {
 }
 
 // storageSizePattern is a stricter form of the CRD pattern. The CRD
-// allows any number of digits; we additionally enforce an upper bound
-// in storageSizeGi.
-var storageSizePattern = regexp.MustCompile(`^([0-9]+)(Gi|Mi)$`)
+// allows any number of digits; we additionally enforce magnitude > 0
+// (matching settings.StorageQuantityPattern) and an upper bound in
+// storageSizeGi. The accept-set must equal settings.StorageQuantityPattern;
+// drift is caught by TestWebhookRegexAcceptsSameInputsAsSettingsPattern.
+var storageSizePattern = regexp.MustCompile(`^([1-9][0-9]*)(Gi|Mi)$`)
 
-// cpuPattern matches the CRD's spec.resources.cpu pattern.
+// cpuPattern matches the CRD's spec.resources.cpu pattern. Accept-set
+// equals settings.CPUQuantityPattern (the parser-side capture groups
+// here are an implementation detail; the inputs accepted are
+// identical).
 var cpuPattern = regexp.MustCompile(`^([0-9]+)m$|^([0-9]+\.[0-9]+)$`)
 
-// memoryPattern matches the CRD's spec.resources.memory pattern (Ki|Mi|Gi).
-var memoryPattern = regexp.MustCompile(`^([0-9]+)(Ki|Mi|Gi)$`)
+// memoryPattern matches the CRD's spec.resources.memory pattern
+// (Ki|Mi|Gi) with magnitude > 0. Accept-set equals
+// settings.MemoryQuantityPattern.
+var memoryPattern = regexp.MustCompile(`^([1-9][0-9]*)(Ki|Mi|Gi)$`)
 
 // parseCPUMillis converts a CPU string ("500m" or "1.5") to integer
 // millicores. Returns (-1, err) on malformed input.
@@ -148,7 +155,7 @@ func parseCPUMillis(s string) (int64, error) {
 func parseMemoryMi(s string) (int64, error) {
 	m := memoryPattern.FindStringSubmatch(s)
 	if m == nil {
-		return -1, fmt.Errorf("memory %q does not match ^[0-9]+(Ki|Mi|Gi)$", s)
+		return -1, fmt.Errorf("memory %q does not match ^[1-9][0-9]*(Ki|Mi|Gi)$", s)
 	}
 	n, err := strconv.ParseInt(m[1], 10, 64)
 	if err != nil || n < 1 {
@@ -175,7 +182,7 @@ func parseMemoryMi(s string) (int64, error) {
 func storageSizeGi(s string) (int64, error) {
 	m := storageSizePattern.FindStringSubmatch(s)
 	if m == nil {
-		return -1, fmt.Errorf("storage.size %q does not match ^[0-9]+(Gi|Mi)$", s)
+		return -1, fmt.Errorf("storage.size %q does not match ^[1-9][0-9]*(Gi|Mi)$", s)
 	}
 	n, err := strconv.ParseInt(m[1], 10, 64)
 	if err != nil || n < 1 {

@@ -5,7 +5,13 @@ package settings
 
 // SchemaVersion is incremented on any schema change (add/remove/modify keys).
 // Used by the seed job to detect orphaned keys and by the frontend to cache-bust.
-const SchemaVersion = 2
+//
+// Bumped to 3 (2026-06-18): added Pattern + magnitude constraints to
+// workspace.defaultResources.{cpu,memory}; tightened the existing
+// pattern on workspace.defaultStorageSize to reject zero-magnitude
+// values. The schema response shape exposed to the admin UI changed,
+// so clients caching the schema need to refresh.
+const SchemaVersion = 3
 
 // SettingType defines the data type of a setting.
 type SettingType string
@@ -55,12 +61,12 @@ func InstanceSettings() []SettingDef {
 
 		// Workspace
 		{Key: "workspace.defaultImage", Tier: 2, Type: TypeString, Default: "ghcr.io/lenaxia/llmsafespaces/base:latest", Category: "Workspace", Label: "Default Image", Description: "Image for new workspaces"},
-		{Key: "workspace.defaultStorageSize", Tier: 2, Type: TypeString, Default: "15Gi", Pattern: `^[0-9]+(Gi|Mi)$`, Category: "Workspace", Label: "Default Storage", Description: "Default PVC size"},
+		{Key: "workspace.defaultStorageSize", Tier: 2, Type: TypeString, Default: "15Gi", Pattern: StorageQuantityPattern, Category: "Workspace", Label: "Default Storage", Description: "Default PVC size"},
 		{Key: "workspace.defaultStorageClass", Tier: 2, Type: TypeString, Default: "", Category: "Workspace", Label: "Storage Class", Description: "K8s StorageClass (empty = cluster default)"},
 		{Key: "workspace.maxActiveWorkspacesPerUser", Tier: 2, Type: TypeInt, Default: 10, Min: intPtr(1), Max: intPtr(50), Category: "Workspace", Label: "Max Active Workspaces", Description: "Max running pods per user; oldest auto-suspended"},
 		{Key: "workspace.defaultMaxActiveSessions", Tier: 2, Type: TypeInt, Default: 5, Min: intPtr(1), Max: intPtr(20), Category: "Workspace", Label: "Max Sessions", Description: "Concurrent sessions per workspace"},
-		{Key: "workspace.defaultResources.cpu", Tier: 2, Type: TypeString, Default: "500m", Category: "Workspace", Label: "Default CPU", Description: "Default CPU limit"},
-		{Key: "workspace.defaultResources.memory", Tier: 2, Type: TypeString, Default: "1Gi", Category: "Workspace", Label: "Default Memory", Description: "Default memory limit"},
+		{Key: "workspace.defaultResources.cpu", Tier: 2, Type: TypeString, Default: "500m", Pattern: CPUQuantityPattern, Category: "Workspace", Label: "Default CPU", Description: "Default CPU limit (e.g. 500m, 1.0)"},
+		{Key: "workspace.defaultResources.memory", Tier: 2, Type: TypeString, Default: "1Gi", Pattern: MemoryQuantityPattern, Category: "Workspace", Label: "Default Memory", Description: "Default memory limit (e.g. 512Mi, 1Gi). Suffix is case-sensitive; must be > 0."},
 
 		// Auto-Suspend
 		{Key: "workspace.autoSuspend.enabled", Tier: 2, Type: TypeBool, Default: true, Category: "Auto-Suspend", Label: "Auto-Suspend", Description: "Global auto-suspend"},

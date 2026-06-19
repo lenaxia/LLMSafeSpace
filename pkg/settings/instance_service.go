@@ -141,16 +141,22 @@ func (s *InstanceService) GetAll(ctx context.Context) (map[string]any, error) {
 }
 
 // Set validates and persists a setting value, then invalidates the cache.
+//
+// The value is run through Normalize() before Validate(), so honest
+// typos like "8gi" (lowercase unit) get auto-corrected to "8Gi"
+// instead of being rejected. See pkg/settings/normalize.go for the
+// rules and the production failure that motivated this.
 func (s *InstanceService) Set(ctx context.Context, key string, value any) error {
 	def, ok := s.index[key]
 	if !ok {
 		return fmt.Errorf("unknown instance setting key: %q", key)
 	}
-	if err := Validate(def, value); err != nil {
+	normalized := Normalize(def, value)
+	if err := Validate(def, normalized); err != nil {
 		return err
 	}
 
-	raw, err := json.Marshal(value)
+	raw, err := json.Marshal(normalized)
 	if err != nil {
 		return fmt.Errorf("failed to marshal value for key %q: %w", key, err)
 	}

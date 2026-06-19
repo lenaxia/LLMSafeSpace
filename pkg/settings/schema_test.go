@@ -285,3 +285,201 @@ func TestValidate_UnknownType(t *testing.T) {
 		t.Error("expected error for unknown type")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Resource-quantity validation (regression tests for the "8gi" bug)
+// ---------------------------------------------------------------------------
+//
+// Background: an admin saved `workspace.defaultResources.memory = "8gi"`
+// (lowercase "gi") via the admin settings UI. The setting had no Pattern,
+// so the value was accepted into the database. On the next workspace
+// creation, the API service piped the lowercase value into the
+// Workspace CRD's spec.resources.memory, which the validating webhook
+// rejected with the cryptic message:
+//
+//   spec.resources.memory "8gi": memory "8gi" does not match ^[0-9]+(Ki|Mi|Gi)$
+//
+// User-visible: the "Create workspace" button stopped working for
+// every user, with an internal_error toast that didn't say what was
+// wrong. Diagnosis required tracing all the way to the webhook.
+//
+// Root cause: the schema in pkg/settings/schema.go declared the
+// `workspace.defaultResources.{cpu,memory}` settings with no Pattern,
+// so any string the admin typed was accepted at save time. The
+// constraint was discovered eight code paths downstream.
+//
+// Fix: every setting that ends up as a Kubernetes Quantity-shaped
+// field on the Workspace CRD must declare a Pattern that matches the
+// CRD/webhook regex. These tests pin that contract.
+
+// Pattern source-of-truth verification. The canonical patterns live
+// in pkg/settings/quantity_patterns.go and are referenced by:
+//
+//   - The settings schema (pkg/settings/schema.go) — verified here.
+//   - The validating webhook (controller/internal/webhooks/workspace_webhook.go)
+//     — verified by TestWebhookRegexAcceptsSameInputsAsSettingsPattern
+//     in that package, which imports this package's constants and
+//     probes both regexes with the same inputs.
+//
+// Together they ensure that anything the admin can save through the
+// settings UI will also pass the webhook. The original bug ("8gi"
+// passes settings, fails webhook) cannot recur as long as both tests
+// pass.
+
+// resourceQuantitySettings are the keys that end up on a CRD as a
+// Kubernetes Quantity. Each MUST declare a Pattern sourced from the
+// canonical pkg/settings constants. If you add a new resource setting
+// (e.g. workspace.defaultResources.ephemeralStorage) add it here so
+// the contract is enforced.
+var resourceQuantitySettings = map[string]string{
+	"workspace.defaultResources.memory": MemoryQuantityPattern,
+	"workspace.defaultResources.cpu":    CPUQuantityPattern,
+	"workspace.defaultStorageSize":      StorageQuantityPattern,
+}
+
+func TestInstanceSettings_ResourceQuantitiesHavePatterns(t *testing.T) {
+	idx := InstanceSettingIndex()
+	for key, expected := range resourceQuantitySettings {
+		def, ok := idx[key]
+		if !ok {
+			t.Errorf("setting %q in resourceQuantitySettings but not in InstanceSettings", key)
+			continue
+		}
+		if def.Pattern == "" {
+			t.Errorf("setting %q has no Pattern; admins can save invalid values "+
+				"that the validating webhook will reject at workspace-create time. "+
+				"Expected pattern %q.", key, expected)
+		}
+	}
+}
+
+func TestInstanceSettings_ResourcePatternsUseCanonicalConstants(t *testing.T) {
+	// Drift guard A (schema ↔ canonical): the schema must reference
+	// the constants from quantity_patterns.go, not literal strings.
+	// If a developer changes either the canonical constant or the
+	// schema pattern in isolation, this test fires.
+	//
+	// Drift guard B (canonical ↔ webhook) is enforced in the
+	// webhook's own test file by importing this package's constants
+	// and asserting the webhook's regex variables accept the same
+	// set of inputs.
+	idx := InstanceSettingIndex()
+	for key, expected := range resourceQuantitySettings {
+		def, ok := idx[key]
+		if !ok {
+			continue // covered by TestInstanceSettings_ResourceQuantitiesHavePatterns
+		}
+		if def.Pattern != expected {
+			t.Errorf("setting %q pattern %q does not equal canonical constant %q. "+
+				"Use the constant from pkg/settings/quantity_patterns.go directly so the "+
+				"webhook, schema, and frontend all share one source of truth.",
+				key, def.Pattern, expected)
+		}
+	}
+}
+
+func TestValidate_Memory_RejectsLowercaseUnit(t *testing.T) {
+	// Direct regression test for the "8gi" bug. The setting Validate
+	// path must reject lowercase unit suffixes — they're not valid
+	// Kubernetes Quantity strings and the apiserver/webhook rejects
+	// them downstream.
+	idx := InstanceSettingIndex()
+	def, ok := idx["workspace.defaultResources.memory"]
+	if !ok {
+		t.Fatal("workspace.defaultResources.memory missing from InstanceSettings")
+	}
+	if def.Pattern == "" {
+		t.Fatal("workspace.defaultResources.memory has no Pattern (covered by " +
+			"TestInstanceSettings_ResourceQuantitiesHavePatterns; " +
+			"this test cannot proceed without the fix)")
+	}
+
+	rejected := []string{
+		"8gi",    // the actual bug
+		"8GB",    // common mistake; not a k8s suffix
+		"8 Gi",   // whitespace
+		"8.5Gi",  // floating point not allowed by k8s memory suffixes
+		"8gib",   // lowercase, full word
+		"banana", // anything goes when there's no pattern
+		"",       // empty string accepted by no-pattern; should not be saved as a default
+		"-1Gi",   // negative
+		"8",      // bare number, no unit
+		// Zero-magnitude values are rejected by the webhook's
+		// parseMemoryMi (which requires n >= 1) but a naive regex
+		// `^[0-9]+(Ki|Mi|Gi)$` accepts them. Same failure class as
+		// the original "8gi" bug: passes settings, breaks workspace
+		// creation. The schema pattern must reject them too.
+		"0Gi",
+		"0Mi",
+		"0Ki",
+		"00Gi", // leading zeros — "[1-9][0-9]*" rejects
+	}
+	for _, v := range rejected {
+		if err := Validate(def, v); err == nil {
+			t.Errorf("Validate accepted invalid memory value %q; webhook will reject "+
+				"it later, breaking workspace creation for every user", v)
+		}
+	}
+
+	accepted := []string{"512Mi", "1Gi", "8Gi", "16Gi", "1024Ki"}
+	for _, v := range accepted {
+		if err := Validate(def, v); err != nil {
+			t.Errorf("Validate rejected valid memory value %q: %v", v, err)
+		}
+	}
+}
+
+func TestValidate_CPU_RejectsBogusValues(t *testing.T) {
+	idx := InstanceSettingIndex()
+	def, ok := idx["workspace.defaultResources.cpu"]
+	if !ok {
+		t.Fatal("workspace.defaultResources.cpu missing from InstanceSettings")
+	}
+	if def.Pattern == "" {
+		t.Fatal("workspace.defaultResources.cpu has no Pattern")
+	}
+
+	rejected := []string{
+		"banana",
+		"1 core",
+		"1000M", // capital M is not millicores
+		"",
+		"-500m",
+		"100%",
+	}
+	for _, v := range rejected {
+		if err := Validate(def, v); err == nil {
+			t.Errorf("Validate accepted invalid CPU value %q", v)
+		}
+	}
+
+	accepted := []string{"500m", "1000m", "1.0", "0.5", "16.0"}
+	for _, v := range accepted {
+		if err := Validate(def, v); err != nil {
+			t.Errorf("Validate rejected valid CPU value %q: %v", v, err)
+		}
+	}
+}
+
+func TestValidate_StorageSize_RejectsBogusValues(t *testing.T) {
+	idx := InstanceSettingIndex()
+	def, ok := idx["workspace.defaultStorageSize"]
+	if !ok {
+		t.Fatal("workspace.defaultStorageSize missing from InstanceSettings")
+	}
+	// Pattern was already present pre-fix; treat this as a drift guard.
+	// Zero-magnitude values added because the webhook's storageSizeGi
+	// rejects n < 1.
+	rejected := []string{"15gi", "15Ti", "15GB", "banana", "", "-1Gi", "0Gi", "0Mi"}
+	for _, v := range rejected {
+		if err := Validate(def, v); err == nil {
+			t.Errorf("Validate accepted invalid storage value %q", v)
+		}
+	}
+	accepted := []string{"15Gi", "100Gi", "1024Mi"}
+	for _, v := range accepted {
+		if err := Validate(def, v); err != nil {
+			t.Errorf("Validate rejected valid storage value %q: %v", v, err)
+		}
+	}
+}

@@ -34,7 +34,7 @@ const (
 
 // WorkspaceStorageConfig defines PVC configuration for a Workspace.
 type WorkspaceStorageConfig struct {
-	// +kubebuilder:validation:Pattern=^[0-9]+(Gi|Mi)$
+	// +kubebuilder:validation:Pattern=^[1-9][0-9]*(Gi|Mi)$
 	Size             string `json:"size"`
 	StorageClassName string `json:"storageClassName,omitempty"`
 	// +kubebuilder:validation:Enum=ReadWriteOnce;ReadWriteMany
@@ -91,13 +91,13 @@ type ResourceRequirements struct {
 	// +kubebuilder:validation:Pattern=^([0-9]+m|[0-9]+\.[0-9]+)$
 	// +kubebuilder:default="500m"
 	CPU string `json:"cpu,omitempty"`
-	// +kubebuilder:validation:Pattern=^[0-9]+(Ki|Mi|Gi)$
+	// +kubebuilder:validation:Pattern=^[1-9][0-9]*(Ki|Mi|Gi)$
 	// +kubebuilder:default="512Mi"
 	Memory     string `json:"memory,omitempty"`
 	CPUPinning bool   `json:"cpuPinning,omitempty"`
 	// +kubebuilder:validation:Pattern=^([0-9]+m|[0-9]+\.[0-9]+)$
 	CPULimit string `json:"cpuLimit,omitempty"`
-	// +kubebuilder:validation:Pattern=^[0-9]+(Ki|Mi|Gi)$
+	// +kubebuilder:validation:Pattern=^[1-9][0-9]*(Ki|Mi|Gi)$
 	MemoryLimit string `json:"memoryLimit,omitempty"`
 }
 
