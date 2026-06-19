@@ -304,6 +304,8 @@ controller:
           # mode=hostNetwork: the operator must label the chosen node, e.g.
           #   kubectl label node <name> llmsafespaces.dev/relay-router=true
           hostNetworkNodeSelectorLabel: "llmsafespaces.dev/relay-router"
+
+  resources:
     requests:
       cpu: 100m
       memory: 256Mi
