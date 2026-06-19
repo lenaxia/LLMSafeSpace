@@ -739,21 +739,23 @@ func extractAuth(c *gin.Context) (userID, sessionID string) {
 
 // handleSecretError maps domain errors to HTTP responses. US-46.4: the
 // secrets-package sentinels are now *pkgerrors.StatusError values that
-// carry their own HTTP status code and user-facing message. This function
-// delegates to respondWithError for the generic path (StatusError duck-type
-// fallback), keeping only the audit-logging side-effects that must fire
-// before the response is written.
+// carry their own HTTP status code and user-facing message.
 //
-// RevealSecret audit logging (ErrCiphertextDecryptFailed, ErrDEKUnavailable,
-// ErrSecretNotFound, ErrUserKeysMissing) is handled in the RevealSecret
-// handler itself BEFORE this function is called — see lines 278-292.
+// For security-sensitive errors (404/403/409/412), the StatusError.Message
+// is the exact user-facing text — wrapping detail from fmt.Errorf must not
+// leak internal paths or secret names to the client.
+//
+// For validation errors (400), the wrapped err.Error() is returned instead
+// because it includes per-call detail the caller needs to fix the input
+// (e.g. "ssh-key requires metadata with key_type field").
 func handleSecretError(c *gin.Context, err error) {
-	// StatusError values carry their own status code AND user-facing message.
-	// Use the Message field (not err.Error()) so wrapping detail from
-	// fmt.Errorf doesn't leak internal paths or secret names to the client.
 	var se *pkgerrors.StatusError
 	if errors.As(err, &se) {
-		c.JSON(se.StatusCode(), gin.H{"error": se.Message})
+		msg := se.Message
+		if se.Status == http.StatusBadRequest {
+			msg = err.Error()
+		}
+		c.JSON(se.StatusCode(), gin.H{"error": msg})
 		return
 	}
 	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
