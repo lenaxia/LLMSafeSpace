@@ -9,7 +9,7 @@
       it only permits the one pod that genuinely needs it. Operators who
       prefer to keep `restricted` must deploy relay-router into a separate
       privileged namespace out-of-band (then set namespace.create=false
-      here). See worklog 0398 / Epic 42 Layer 2. */ -}}
+      here). See worklog 0399 / Epic 42 Layer 2. */ -}}
 {{- $psa := .Values.namespace.podSecurityEnforce -}}
 {{- if and .Values.controller.inferenceRelay.enabled (eq $psa "restricted") -}}
 {{- $psa = "privileged" -}}

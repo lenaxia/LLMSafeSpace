@@ -95,7 +95,7 @@ spec:
               # chart-created namespace to `privileged` when inferenceRelay is
               # enabled (see namespace.yaml); for namespace.create=false,
               # NOTES.txt prints the operator kubectl label command. See
-              # worklog 0398.
+              # worklog 0399.
               drop:
                 - ALL
               add:

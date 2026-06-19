@@ -2410,7 +2410,7 @@ func TestMonitoring_DashboardConfigMap_NotEmpty(t *testing.T) {
 // + hostNetwork in that mode) cannot be admitted under the PSA `restricted`
 // profile. When inferenceRelay is enabled AND the chart creates the namespace,
 // the namespace template auto-widens the profile to `privileged` so the pod
-// actually starts (worklog 0398). These tests guard that contract.
+// actually starts (worklog 0399). These tests guard that contract.
 
 // findNamespace returns the Namespace doc rendered by the chart, or nil.
 func findNamespace(docs []map[string]any) map[string]any {
@@ -2523,7 +2523,7 @@ func TestRelayRouter_PSA_EmptyStringOmitsAllLabels(t *testing.T) {
 // shell function (shipped in the relay-router-wg-scripts ConfigMap) by
 // extracting it from the rendered chart and invoking it under controlled
 // fakes. Validates the three branches the Talos/kernel compatibility depends
-// on (worklog 0398, A-IMG-TALOS): in-kernel WG → unset userspace env;
+// on (worklog 0399, A-IMG-TALOS): in-kernel WG → unset userspace env;
 // userspace-only → set WG_QUICK_USERSPACE_IMPLEMENTATION=wireguard-go; neither
 // → non-zero exit. This is the TDD coverage the PR-287 review flagged as
 // missing — `sh -n` only checks parse-ability, not behavior.

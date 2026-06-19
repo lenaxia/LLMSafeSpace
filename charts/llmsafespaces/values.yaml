@@ -251,7 +251,7 @@ controller:
       # (enforce/audit/warn) from `restricted` to `privileged` when this
       # subsystem is enabled. The chart's other pods (API, controller,
       # frontend, migration) remain individually hardened regardless, so the
-      # wider profile only admits the relay-router sidecar. See worklog 0398.
+      # wider profile only admits the relay-router sidecar. See worklog 0399.
       #
       # Operators who set namespace.create=false (pre-existing namespace) must
       # relax that namespace themselves — NOTES.txt prints the exact kubectl
