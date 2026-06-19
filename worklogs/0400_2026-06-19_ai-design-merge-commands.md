@@ -93,4 +93,4 @@ None.
 - `.github/prompts/help.md` (modified — new commands + `--no-merge`)
 - `.github/prompts/commands-footer.md` (modified — new commands)  *(also changed by #288)*
 - `.github/workflows/ai-comment.yml` (modified — triggers, routing, `--no-merge`)  *(also changed by #288)*
-- `worklogs/0391_2026-06-19_ai-design-merge-commands.md` (new — this file)
+- `worklogs/0400_2026-06-19_ai-design-merge-commands.md` (new — this file)
