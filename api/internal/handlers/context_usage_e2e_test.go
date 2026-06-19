@@ -12,9 +12,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/lenaxia/llmsafespaces/api/internal/services/eventbroker"
-	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 type contextUsedSessionIndex struct {

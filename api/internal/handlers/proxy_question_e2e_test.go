@@ -20,9 +20,9 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/lenaxia/llmsafespaces/api/internal/services/eventbroker"
-	agentoc "github.com/lenaxia/llmsafespaces/pkg/agent/opencode"
-	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
+	agentoc "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
 // readNextSSEDataLineOfType reads SSE lines until it finds a data line whose

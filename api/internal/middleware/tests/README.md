@@ -1,6 +1,6 @@
 # Middleware Tests
 
-This directory contains comprehensive tests for all middleware components in the LLMSafeSpaces API.
+This directory contains comprehensive tests for all middleware components in the LLMSafeSpace API.
 
 ## Test Structure
 

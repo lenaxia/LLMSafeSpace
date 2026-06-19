@@ -11,7 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // fakeOrgBilling is a controllable OrgBilling for billing endpoint tests.

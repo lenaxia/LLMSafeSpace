@@ -16,8 +16,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // recordingSessionIndex captures UpsertParent calls so backfill behavior

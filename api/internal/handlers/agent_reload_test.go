@@ -17,8 +17,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	apierrors "github.com/lenaxia/llmsafespaces/api/internal/errors"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // --- mocks ---

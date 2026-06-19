@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 func TestSessionsActive_ReturnsActiveSessions(t *testing.T) {

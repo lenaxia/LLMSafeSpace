@@ -78,16 +78,6 @@ type Store interface {
 	// Called by InvalidateAll on phase transitions.
 	ClearActiveSessions(workspaceID string)
 
-	// TouchActiveSessions refreshes the TTL of the workspace's active
-	// session set without adding or removing any session. Called on SSE
-	// activity (worklog 371 C3) so that a multi-hour agentic turn — which
-	// emits session.status=busy once at turn start and no further session
-	// events until completion — does not let the 30-minute TTL expire and
-	// admit a concurrent turn that would corrupt opencode's SQLite session
-	// history. For InMemoryStore this is a no-op (no TTL); for RedisStore
-	// it runs EXPIRE on the active-set key.
-	TouchActiveSessions(workspaceID string)
-
 	// --- Deleted-session tombstones (formerly deletedSessions) ---
 
 	// MarkSessionDeleted records that sessionID in workspaceID was

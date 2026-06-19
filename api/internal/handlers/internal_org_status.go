@@ -10,7 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // internalOrgStatusReader is the minimal store surface the internal org-status
@@ -25,7 +25,7 @@ type internalOrgStatusReader interface {
 //
 // This endpoint is intentionally NOT behind AuthMiddleware: the controller has
 // no user identity. Defense-in-depth is provided by an optional shared-secret
-// header (X-Internal-Token) read from LLMSAFESPACES_INTERNAL_TOKEN. When the env
+// header (X-Internal-Token) read from LLMSAFESPACE_INTERNAL_TOKEN. When the env
 // var is unset the endpoint is open — the cluster NetworkPolicy is the primary
 // boundary (same opt-in model as /metrics). It MUST only ever return org
 // status, never secrets.
@@ -45,7 +45,7 @@ func NewInternalOrgStatusHandler(store internalOrgStatusReader) *InternalOrgStat
 // D20, an unwarranted suspension (deleting a running pod) is more disruptive
 // than leaving it active during an anomaly.
 func (h *InternalOrgStatusHandler) GetOrgStatus(c *gin.Context) {
-	if expected := os.Getenv("LLMSAFESPACES_INTERNAL_TOKEN"); expected != "" {
+	if expected := os.Getenv("LLMSAFESPACE_INTERNAL_TOKEN"); expected != "" {
 		if c.GetHeader("X-Internal-Token") != expected {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 			return

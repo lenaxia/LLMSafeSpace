@@ -8,13 +8,13 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lenaxia/llmsafespaces/api/internal/errors"
-	apiinterfaces "github.com/lenaxia/llmsafespaces/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/metrics"
-	"github.com/lenaxia/llmsafespaces/api/internal/utilities"
-	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
-	pkgutil "github.com/lenaxia/llmsafespaces/pkg/utilities"
+	"github.com/lenaxia/llmsafespace/api/internal/errors"
+	apiinterfaces "github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
+	"github.com/lenaxia/llmsafespace/api/internal/utilities"
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	"github.com/lenaxia/llmsafespace/pkg/types"
+	pkgutil "github.com/lenaxia/llmsafespace/pkg/utilities"
 )
 
 // AuthConfig defines configuration for the authentication middleware

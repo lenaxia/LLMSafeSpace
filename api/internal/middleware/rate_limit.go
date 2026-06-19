@@ -11,11 +11,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lenaxia/llmsafespaces/api/internal/errors"
-	"github.com/lenaxia/llmsafespaces/api/internal/interfaces"
-	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
-	"github.com/lenaxia/llmsafespaces/pkg/settings"
-	"github.com/lenaxia/llmsafespaces/pkg/utilities"
+	"github.com/lenaxia/llmsafespace/api/internal/errors"
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	"github.com/lenaxia/llmsafespace/pkg/settings"
+	"github.com/lenaxia/llmsafespace/pkg/utilities"
 )
 
 type RateLimitConfig struct {

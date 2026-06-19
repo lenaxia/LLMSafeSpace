@@ -11,8 +11,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
-	"github.com/lenaxia/llmsafespaces/pkg/secrets"
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	"github.com/lenaxia/llmsafespace/pkg/secrets"
 )
 
 // WorkspaceEnvService is the caller-shaped subset of SecretService methods

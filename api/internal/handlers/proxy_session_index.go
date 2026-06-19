@@ -12,8 +12,8 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/lenaxia/llmsafespaces/api/internal/interfaces"
-	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
 func (h *ProxyHandler) SetSessionIndex(si interfaces.SessionIndexService) {
@@ -24,7 +24,7 @@ func (h *ProxyHandler) fetchAndPersistTitle(workspaceID, sessionID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	v1Client, err := h.k8sClient.LlmsafespacesV1()
+	v1Client, err := h.k8sClient.LlmsafespaceV1()
 	if err != nil {
 		return
 	}
@@ -86,7 +86,7 @@ func (h *ProxyHandler) runParentBackfill(workspaceID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	v1Client, v1Err := h.k8sClient.LlmsafespacesV1()
+	v1Client, v1Err := h.k8sClient.LlmsafespaceV1()
 	workspace, err := func() (*v1.Workspace, error) {
 		if v1Err != nil {
 			return nil, v1Err

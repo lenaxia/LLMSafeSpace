@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/msgqueue"
-	k8sinterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	"github.com/lenaxia/llmsafespace/api/internal/services/msgqueue"
+	k8sinterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 type SessionManager interface {
@@ -213,6 +213,22 @@ type WorkspaceMetadataStore interface {
 	UpdateWorkspace(ctx context.Context, workspaceID string, updates types.WorkspaceUpdates) error
 }
 
+// WorkspacePasswordProvider retrieves the opencode workspace password for
+// Basic auth. Replaces the prior function-typed injection (US-46.11).
+// Lived in interfaces/ (not handlers/) so both handlers and services/sse
+// can import it without a cycle.
+type WorkspacePasswordProvider interface {
+	WorkspacePassword(ctx context.Context, workspaceID string) (string, error)
+}
+
+// PasswordFunc adapts a plain function to WorkspacePasswordProvider.
+// Tests use this to wrap inline closures for SetPasswordGetter.
+type PasswordFunc func(ctx context.Context, workspaceID string) (string, error)
+
+func (f PasswordFunc) WorkspacePassword(ctx context.Context, workspaceID string) (string, error) {
+	return f(ctx, workspaceID)
+}
+
 type Services interface {
 	GetAuth() AuthService
 	GetDatabase() DatabaseService
@@ -224,6 +240,6 @@ type Services interface {
 }
 
 type KubernetesClient = k8sinterfaces.KubernetesClient
-type LLMSafespacesV1Interface = k8sinterfaces.LLMSafespacesV1Interface
+type LLMSafespaceV1Interface = k8sinterfaces.LLMSafespaceV1Interface
 type RuntimeEnvironmentInterface = k8sinterfaces.RuntimeEnvironmentInterface
 type WorkspaceInterface = k8sinterfaces.WorkspaceInterface

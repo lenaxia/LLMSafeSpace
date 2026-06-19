@@ -14,8 +14,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lenaxia/llmsafespaces/pkg/agentd"
-	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespace/pkg/agentd"
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
 
 const sseIdleTimeout = 5 * time.Minute
@@ -76,7 +77,7 @@ type Tracker struct {
 	sessionMetrics   SessionMetricsRecorder
 	subscriptions    map[string]context.CancelFunc
 	subMu            sync.Mutex
-	passwordGetter   func(ctx context.Context, workspaceID string) (string, error)
+	passwordGetter   interfaces.WorkspacePasswordProvider
 	podIPResolver    func(workspaceID string) string
 	drainMu          sync.Mutex
 	drainSubs        map[string]map[uint64]*drainSub
@@ -105,8 +106,8 @@ func NewTracker(
 	}
 }
 
-func (t *Tracker) SetPasswordGetter(getter func(ctx context.Context, workspaceID string) (string, error)) {
-	t.passwordGetter = getter
+func (t *Tracker) SetPasswordGetter(provider interfaces.WorkspacePasswordProvider) {
+	t.passwordGetter = provider
 }
 
 func (t *Tracker) SetPodIPResolver(resolver func(workspaceID string) string) {
@@ -255,7 +256,7 @@ func (t *Tracker) connectAndRead(ctx context.Context, workspaceID string) error 
 		return fmt.Errorf("no pod IP for workspace %s", workspaceID)
 	}
 
-	password, err := t.passwordGetter(ctx, workspaceID)
+	password, err := t.passwordGetter.WorkspacePassword(ctx, workspaceID)
 	if err != nil {
 		return fmt.Errorf("getting password for SSE: %w", err)
 	}

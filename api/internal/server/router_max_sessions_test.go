@@ -10,9 +10,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	lmocks "github.com/lenaxia/llmsafespaces/mocks/logger"
-	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
-	"github.com/lenaxia/llmsafespaces/pkg/settings"
+	lmocks "github.com/lenaxia/llmsafespace/mocks/logger"
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	"github.com/lenaxia/llmsafespace/pkg/settings"
 )
 
 type stubSettingsStore struct {

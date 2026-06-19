@@ -19,30 +19,30 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/lenaxia/llmsafespaces/api/internal/config"
-	"github.com/lenaxia/llmsafespaces/api/internal/handlers"
-	"github.com/lenaxia/llmsafespaces/api/internal/logger"
-	"github.com/lenaxia/llmsafespaces/api/internal/server"
-	"github.com/lenaxia/llmsafespaces/api/internal/services"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/auth"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/cache"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/database"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/metering"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/metrics"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/msgqueue"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/policy"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/sessionindex"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/sso"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/workspace"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/wsstate"
-	agentoc "github.com/lenaxia/llmsafespaces/pkg/agent/opencode"
-	"github.com/lenaxia/llmsafespaces/pkg/agentd"
-	"github.com/lenaxia/llmsafespaces/pkg/billing"
-	emailpkg "github.com/lenaxia/llmsafespaces/pkg/email"
-	"github.com/lenaxia/llmsafespaces/pkg/kubernetes"
-	"github.com/lenaxia/llmsafespaces/pkg/secrets"
-	"github.com/lenaxia/llmsafespaces/pkg/settings"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	"github.com/lenaxia/llmsafespace/api/internal/config"
+	"github.com/lenaxia/llmsafespace/api/internal/handlers"
+	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/server"
+	"github.com/lenaxia/llmsafespace/api/internal/services"
+	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
+	"github.com/lenaxia/llmsafespace/api/internal/services/cache"
+	"github.com/lenaxia/llmsafespace/api/internal/services/database"
+	"github.com/lenaxia/llmsafespace/api/internal/services/metering"
+	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
+	"github.com/lenaxia/llmsafespace/api/internal/services/msgqueue"
+	"github.com/lenaxia/llmsafespace/api/internal/services/policy"
+	"github.com/lenaxia/llmsafespace/api/internal/services/sessionindex"
+	"github.com/lenaxia/llmsafespace/api/internal/services/sso"
+	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
+	"github.com/lenaxia/llmsafespace/api/internal/services/wsstate"
+	agentoc "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
+	"github.com/lenaxia/llmsafespace/pkg/agentd"
+	"github.com/lenaxia/llmsafespace/pkg/billing"
+	emailpkg "github.com/lenaxia/llmsafespace/pkg/email"
+	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
+	"github.com/lenaxia/llmsafespace/pkg/secrets"
+	"github.com/lenaxia/llmsafespace/pkg/settings"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 type App struct {
@@ -125,15 +125,6 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			log.With("component", "wsstate"),
 		)
 		proxyHandler.SetStateStore(redisStateStore)
-	} else {
-		// M4 (worklog 371): surface the silent fallback to InMemoryStore.
-		// Without this warning, a future refactor that wraps the cache
-		// service (so the *cache.Service type assertion fails) silently
-		// reintroduces multi-replica drift: each replica keeps its own
-		// activeSess / deletedSessions / pwCache, and the 2026-06-16
-		// stuck-session incident class returns. Single-replica dev/test
-		// deployments intentionally hit this path and can ignore the warning.
-		log.Warn("Redis cache service unavailable — ProxyHandler is using InMemoryStore. Multi-replica deployments will NOT share per-workspace state (active sessions, tombstones, password cache). This is expected for single-replica dev/test; investigate in production.")
 	}
 
 	if svc.Metering != nil {
@@ -483,10 +474,13 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 					&k8sWorkspaceGetterAdapter{client: k8sClient, namespace: cfg.Kubernetes.Namespace},
 					dbSvc, log,
 				)
-				agentClient := agentoc.NewWorkspaceClient(pwGetter, ipResolver, log.ZapLogger())
+				pwAdapter := func(ctx context.Context, wsID string) (string, error) {
+					return pwGetter.WorkspacePassword(ctx, wsID)
+				}
+				agentClient := agentoc.NewWorkspaceClient(pwAdapter, ipResolver, log.ZapLogger())
 				modelsHandler.SetAgentClient(agentClient)
 				if relayURL := cfg.Server.InferenceRelayURL; relayURL != "" {
-					modelsHandler.SetRelayChecker(buildRelayChecker(ipResolver, pwGetter))
+					modelsHandler.SetRelayChecker(buildRelayChecker(ipResolver, pwAdapter))
 				}
 			}
 		}
@@ -600,12 +594,12 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	if relayRouterSvcURL == "" {
 		relayRouterSvcURL = "http://relay-router." + cfg.Kubernetes.Namespace + ".svc.cluster.local:8080"
 	}
-	routerNamespace := os.Getenv("LLMSAFESPACES_KUBERNETES_PODNAMESPACE")
+	routerNamespace := os.Getenv("LLMSAFESPACE_KUBERNETES_PODNAMESPACE")
 	if routerNamespace == "" {
 		routerNamespace = cfg.Kubernetes.Namespace
 	}
 	var relayAdminHandler *handlers.RelayAdminHandler
-	if llmClient, err := k8sClient.LlmsafespacesV1(); err == nil {
+	if llmClient, err := k8sClient.LlmsafespaceV1(); err == nil {
 		relayAdminHandler = handlers.NewRelayAdminHandler(
 			k8sClient.Clientset(),
 			llmClient,
@@ -614,7 +608,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			relayRouterSvcURL,
 		)
 	} else {
-		log.Warn("failed to construct LlmsafespacesV1 client, relay admin routes will not be available", "error", err.Error())
+		log.Warn("failed to construct LlmsafespaceV1 client, relay admin routes will not be available", "error", err.Error())
 	}
 
 	router := server.NewRouter(svc, log, proxyHandler, server.RouterConfig{
@@ -866,7 +860,7 @@ func (a *App) Shutdown() error {
 	return nil
 }
 
-// validateMasterSecret verifies LLMSAFESPACES_MASTER_SECRET is present and
+// validateMasterSecret verifies LLMSAFESPACE_MASTER_SECRET is present and
 // decodes to at least 32 bytes (the AES-256-GCM key size minimum).
 //
 // Returns nil on success. Logs a structured Warn when the secret is present
@@ -877,13 +871,13 @@ func (a *App) Shutdown() error {
 // deriveServerKey a pure, side-effect-free function compatible with the
 // secrets.AdminKeyDeriver type (func(string) []byte).
 func validateMasterSecret(log *logger.Logger) error {
-	masterRaw := os.Getenv("LLMSAFESPACES_MASTER_SECRET")
+	masterRaw := os.Getenv("LLMSAFESPACE_MASTER_SECRET")
 	if masterRaw == "" {
-		masterRaw = os.Getenv("LLMSAFESPACES_DEK_MASTER_KEY")
+		masterRaw = os.Getenv("LLMSAFESPACE_DEK_MASTER_KEY")
 	}
 	if masterRaw == "" {
 		return errors.New(
-			"LLMSAFESPACES_MASTER_SECRET is required but not set; " +
+			"LLMSAFESPACE_MASTER_SECRET is required but not set; " +
 				"refusing to start without DEK encryption at rest in Redis. " +
 				"Generate one with: openssl rand -hex 32")
 	}
@@ -896,11 +890,11 @@ func validateMasterSecret(log *logger.Logger) error {
 	}
 
 	if len(master) < 32 {
-		log.Warn("LLMSAFESPACES_MASTER_SECRET is set but too short for AES-256-GCM",
+		log.Warn("LLMSAFESPACE_MASTER_SECRET is set but too short for AES-256-GCM",
 			"decoded_bytes", len(master), "required_bytes", 32)
 		// masterRaw is intentionally NOT included in the error message or log.
 		return fmt.Errorf(
-			"LLMSAFESPACES_MASTER_SECRET decodes to %d bytes; minimum is 32 (AES-256-GCM key size). "+
+			"LLMSAFESPACE_MASTER_SECRET decodes to %d bytes; minimum is 32 (AES-256-GCM key size). "+
 				"Use at least 32 bytes (e.g. 64 hex chars, or 32+ alphanumeric chars)",
 			len(master))
 	}

@@ -7,19 +7,19 @@ import (
 	"github.com/swaggo/swag"
 )
 
-// @title LLMSafeSpaces API
+// @title LLMSafeSpace API
 // @version 1.0
 // @description API for secure code execution in isolated environments.
-// @termsOfService https://llmsafespaces.dev/terms/
+// @termsOfService https://llmsafespace.dev/terms/
 
 // @contact.name API Support
-// @contact.url https://llmsafespaces.dev/support
-// @contact.email support@llmsafespaces.dev
+// @contact.url https://llmsafespace.dev/support
+// @contact.email support@llmsafespace.dev
 
 // @license.name AGPL-3.0-or-later
 // @license.url https://www.gnu.org/licenses/agpl-3.0.html
 
-// @host api.llmsafespaces.dev
+// @host api.llmsafespace.dev
 // @BasePath /api/v1
 // @schemes https
 
@@ -29,7 +29,7 @@ import (
 // @description API key authentication. Format: "Bearer {api_key}"
 
 // @securityDefinitions.oauth2.implicit OAuth2
-// @authorizationUrl https://llmsafespaces.dev/oauth/authorize
+// @authorizationUrl https://llmsafespace.dev/oauth/authorize
 // @scope.read Grants read access
 // @scope.write Grants write access
 // @scope.admin Grants admin access
@@ -49,10 +49,10 @@ import (
 // SwaggerInfo holds the API information used by the swagger specification
 var SwaggerInfo = &swag.Spec{
 	Version:          "1.0",
-	Host:             "api.llmsafespaces.dev",
+	Host:             "api.llmsafespace.dev",
 	BasePath:         "/api/v1",
 	Schemes:          []string{"https"},
-	Title:            "LLMSafeSpaces API",
+	Title:            "LLMSafeSpace API",
 	Description:      "API for secure code execution in isolated environments.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
@@ -63,11 +63,11 @@ const docTemplate = `{
     "info": {
         "description": "{{.Description}}",
         "title": "{{.Title}}",
-        "termsOfService": "https://llmsafespaces.dev/terms/",
+        "termsOfService": "https://llmsafespace.dev/terms/",
         "contact": {
             "name": "API Support",
-            "url": "https://llmsafespaces.dev/support",
-            "email": "support@llmsafespaces.dev"
+            "url": "https://llmsafespace.dev/support",
+            "email": "support@llmsafespace.dev"
         },
         "license": {
             "name": "AGPL-3.0-or-later",

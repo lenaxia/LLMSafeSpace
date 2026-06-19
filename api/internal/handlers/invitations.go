@@ -17,8 +17,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"github.com/lenaxia/llmsafespaces/pkg/email"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	"github.com/lenaxia/llmsafespace/pkg/email"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 const (
@@ -388,7 +388,7 @@ func (h *InvitationsHandler) sendInvitationEmail(ctx context.Context, addr, toke
 		orgName = org.Name
 	}
 	link := fmt.Sprintf("%s/invitations/%s", strings.TrimRight(h.baseURL, "/"), token)
-	subject := fmt.Sprintf("[%s] Invitation to join on LLMSafeSpaces", orgName)
+	subject := fmt.Sprintf("[%s] Invitation to join on LLMSafeSpace", orgName)
 	escapedOrgName := html.EscapeString(orgName)
 	textBody := fmt.Sprintf("You've been invited to join %s as a %s.\n\nClick here to accept: %s\n\nThis invitation expires in 7 days.", orgName, role, link)
 	htmlBody := fmt.Sprintf("<p>You've been invited to join <strong>%s</strong> as a <strong>%s</strong>.</p><p><a href=\"%s\">Click here to accept</a></p><p>This invitation expires in 7 days.</p>", escapedOrgName, role, link)

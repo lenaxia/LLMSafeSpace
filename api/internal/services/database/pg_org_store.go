@@ -13,7 +13,7 @@ import (
 
 	"github.com/lib/pq"
 
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // PendingOrgCleanup describes a pending_activation org eligible for the cleanup

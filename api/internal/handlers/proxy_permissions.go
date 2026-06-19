@@ -12,8 +12,8 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/lenaxia/llmsafespaces/api/internal/services/wsstate"
-	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+	"github.com/lenaxia/llmsafespace/api/internal/services/wsstate"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
 func (h *ProxyHandler) shouldAutoApprovePermissions(workspaceID string) bool {
@@ -21,7 +21,7 @@ func (h *ProxyHandler) shouldAutoApprovePermissions(workspaceID string) bool {
 		return cfg.AutoApprovePermissions
 	}
 
-	v1Client, err := h.k8sClient.LlmsafespacesV1()
+	v1Client, err := h.k8sClient.LlmsafespaceV1()
 	if err != nil {
 		return false
 	}
@@ -42,7 +42,7 @@ func (h *ProxyHandler) autoApprovePermission(workspaceID, requestID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	v1Client, v1Err := h.k8sClient.LlmsafespacesV1()
+	v1Client, v1Err := h.k8sClient.LlmsafespaceV1()
 	workspace, err := func() (*v1.Workspace, error) {
 		if v1Err != nil {
 			return nil, v1Err

@@ -17,7 +17,7 @@ import (
 	stripe "github.com/stripe/stripe-go/v76"
 	"github.com/stripe/stripe-go/v76/webhook"
 
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // testLogger is shared with proxy_test.go (same package).

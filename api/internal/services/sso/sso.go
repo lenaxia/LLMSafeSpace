@@ -31,10 +31,10 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 
-	apierrors "github.com/lenaxia/llmsafespaces/api/internal/errors"
-	"github.com/lenaxia/llmsafespaces/api/internal/logger"
-	"github.com/lenaxia/llmsafespaces/pkg/secrets"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
+	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/pkg/secrets"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // Sentinel errors surfaced to handlers. Handlers map these to HTTP codes.

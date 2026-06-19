@@ -14,14 +14,14 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/lenaxia/llmsafespaces/api/internal/config"
-	"github.com/lenaxia/llmsafespaces/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespaces/api/internal/logger"
-	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
-	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
-	"github.com/lenaxia/llmsafespaces/pkg/kubernetes"
-	"github.com/lenaxia/llmsafespaces/pkg/secrets"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	"github.com/lenaxia/llmsafespace/api/internal/config"
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
+	"github.com/lenaxia/llmsafespace/pkg/secrets"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -452,7 +452,7 @@ func dekMasterKey() []byte {
 	return deriveServerKey("dek-cache")
 }
 
-// deriveServerKey derives a 32-byte purpose-scoped key from LLMSAFESPACES_MASTER_SECRET
+// deriveServerKey derives a 32-byte purpose-scoped key from LLMSAFESPACE_MASTER_SECRET
 // using HKDF-SHA256. Each purpose string produces an independent key.
 //
 // Accepted input formats (auto-detected):
@@ -469,10 +469,10 @@ func dekMasterKey() []byte {
 // by reference as secrets.AdminKeyDeriver; callers that need diagnostics must
 // inspect the env var independently (see validateMasterSecret in app.go).
 func deriveServerKey(purpose string) []byte {
-	masterRaw := os.Getenv("LLMSAFESPACES_MASTER_SECRET")
+	masterRaw := os.Getenv("LLMSAFESPACE_MASTER_SECRET")
 	if masterRaw == "" {
 		// Fallback: check legacy env var
-		masterRaw = os.Getenv("LLMSAFESPACES_DEK_MASTER_KEY")
+		masterRaw = os.Getenv("LLMSAFESPACE_DEK_MASTER_KEY")
 	}
 	if masterRaw == "" {
 		return nil
@@ -489,7 +489,7 @@ func deriveServerKey(purpose string) []byte {
 		return nil
 	}
 
-	key, err := secrets.DeriveKEKFromKey(master, []byte("llmsafespaces-server"), purpose)
+	key, err := secrets.DeriveKEKFromKey(master, []byte("llmsafespace-server"), purpose)
 	if err != nil {
 		return nil
 	}
@@ -503,9 +503,9 @@ type k8sWorkspaceGetterAdapter struct {
 }
 
 func (a *k8sWorkspaceGetterAdapter) GetWorkspace(id string) (*v1.Workspace, error) {
-	v1Client, err := a.client.LlmsafespacesV1()
+	v1Client, err := a.client.LlmsafespaceV1()
 	if err != nil {
-		return nil, fmt.Errorf("initialize LLMSafespacesV1 client: %w", err)
+		return nil, fmt.Errorf("initialize LLMSafespaceV1 client: %w", err)
 	}
 	return v1Client.Workspaces(a.namespace).Get(context.Background(), id, metav1.GetOptions{})
 }
@@ -627,7 +627,7 @@ type credentialSeeder interface {
 func ensureFreeTierCredential(ctx context.Context, seeder credentialSeeder, logger pkginterfaces.LoggerInterface) error {
 	kek := deriveServerKey("provider-credentials")
 	if kek == nil {
-		return fmt.Errorf("LLMSAFESPACES_MASTER_SECRET not set; skipping free-tier credential seed")
+		return fmt.Errorf("LLMSAFESPACE_MASTER_SECRET not set; skipping free-tier credential seed")
 	}
 	plaintext := []byte(`{"provider":"opencode","apiKey":"public"}`)
 	ciphertext, err := secrets.EncryptSecret(kek, plaintext)

@@ -10,8 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/lenaxia/llmsafespaces/pkg/billing"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	"github.com/lenaxia/llmsafespace/pkg/billing"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // OrgBilling creates Checkout/Portal sessions for org subscription management

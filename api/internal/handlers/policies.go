@@ -10,8 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/lenaxia/llmsafespaces/api/internal/services/policy"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	"github.com/lenaxia/llmsafespace/api/internal/services/policy"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // policyStore is the data-access surface for the policy CRUD endpoints.

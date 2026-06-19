@@ -17,9 +17,9 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	apilogger "github.com/lenaxia/llmsafespaces/api/internal/logger"
-	imocks "github.com/lenaxia/llmsafespaces/api/internal/mocks"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	apilogger "github.com/lenaxia/llmsafespace/api/internal/logger"
+	imocks "github.com/lenaxia/llmsafespace/api/internal/mocks"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // --- GET /api/v1/auth/config ---

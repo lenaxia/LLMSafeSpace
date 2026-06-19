@@ -12,9 +12,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 
-	"github.com/lenaxia/llmsafespaces/api/internal/services/metrics"
-	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
-	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
+	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
 
 type PhaseChangeCallback func(workspace *v1.Workspace)
@@ -173,9 +173,9 @@ func (w *Watcher) runWatchLoop() {
 // For workspaces already Active with a non-empty imageTag, the version sync
 // callback is also invoked immediately so the DB reflects the current image tag.
 func (w *Watcher) seedResourceVersion() error {
-	v1Client, err := w.k8sClient.LlmsafespacesV1()
+	v1Client, err := w.k8sClient.LlmsafespaceV1()
 	if err != nil {
-		return fmt.Errorf("initialize LLMSafespacesV1 client: %w", err)
+		return fmt.Errorf("initialize LLMSafespaceV1 client: %w", err)
 	}
 	list, err := v1Client.Workspaces(w.namespace).List(context.Background(), metav1.ListOptions{})
 	if err != nil {
@@ -245,9 +245,9 @@ func (w *Watcher) watchOnce() (bool, error) {
 	}
 
 	startedAt := time.Now()
-	v1Client, err := w.k8sClient.LlmsafespacesV1()
+	v1Client, err := w.k8sClient.LlmsafespaceV1()
 	if err != nil {
-		return false, fmt.Errorf("initialize LLMSafespacesV1 client: %w", err)
+		return false, fmt.Errorf("initialize LLMSafespaceV1 client: %w", err)
 	}
 	watcher, err := v1Client.Workspaces(w.namespace).Watch(context.Background(), opts)
 	if err != nil {

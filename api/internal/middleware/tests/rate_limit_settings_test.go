@@ -14,10 +14,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/lenaxia/llmsafespaces/api/internal/middleware"
-	lmocks "github.com/lenaxia/llmsafespaces/mocks/logger"
-	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
-	"github.com/lenaxia/llmsafespaces/pkg/settings"
+	"github.com/lenaxia/llmsafespace/api/internal/middleware"
+	lmocks "github.com/lenaxia/llmsafespace/mocks/logger"
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	"github.com/lenaxia/llmsafespace/pkg/settings"
 )
 
 type stubStore struct {

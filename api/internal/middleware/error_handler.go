@@ -13,10 +13,10 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	apiErrors "github.com/lenaxia/llmsafespaces/api/internal/errors"
-	httputil "github.com/lenaxia/llmsafespaces/pkg/http"
-	"github.com/lenaxia/llmsafespaces/pkg/interfaces"
-	"github.com/lenaxia/llmsafespaces/pkg/utilities"
+	apiErrors "github.com/lenaxia/llmsafespace/api/internal/errors"
+	httputil "github.com/lenaxia/llmsafespace/pkg/http"
+	"github.com/lenaxia/llmsafespace/pkg/interfaces"
+	"github.com/lenaxia/llmsafespace/pkg/utilities"
 )
 
 // ErrorHandlerConfig defines configuration for the error handler middleware

@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/lenaxia/llmsafespaces/pkg/secrets"
+	"github.com/lenaxia/llmsafespace/pkg/secrets"
 )
 
 // credentialKeyResolver returns the encryption key for a credential owner

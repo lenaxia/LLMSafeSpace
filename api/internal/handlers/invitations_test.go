@@ -16,8 +16,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 
-	"github.com/lenaxia/llmsafespaces/pkg/email"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	"github.com/lenaxia/llmsafespace/pkg/email"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 type mockInvitationStore struct {

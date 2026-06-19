@@ -14,11 +14,11 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/lenaxia/llmsafespaces/api/internal/services/msgqueue"
-	apitypes "github.com/lenaxia/llmsafespaces/api/internal/types"
-	"github.com/lenaxia/llmsafespaces/pkg/agentd"
-	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	"github.com/lenaxia/llmsafespace/api/internal/services/msgqueue"
+	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
+	"github.com/lenaxia/llmsafespace/pkg/agentd"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
@@ -173,15 +173,6 @@ func (h *ProxyHandler) onSessionActive(workspaceID, sessionID string) {
 }
 
 func (h *ProxyHandler) onRawEvent(workspaceID, eventType, rawData string) {
-	// C3 (worklog 371): refresh the active-session TTL on every SSE event.
-	// A multi-hour agentic turn emits session.status=busy once at turn
-	// start and no further session.status events until completion; without
-	// this touch, the 30-minute activeSess TTL expires mid-turn and a
-	// concurrent POST is admitted, corrupting opencode's SQLite session
-	// history. EXPIRE on a non-existent key is a no-op, so this is safe to
-	// call unconditionally. For InMemoryStore it is a no-op (no TTL).
-	h.state().TouchActiveSessions(workspaceID)
-
 	if h.userBroker != nil {
 		var parsed interface{}
 		_ = json.Unmarshal([]byte(rawData), &parsed)
@@ -212,19 +203,6 @@ func (h *ProxyHandler) onAgentDied(workspaceID string) {
 			WorkspaceID: workspaceID,
 			Data:        map[string]string{"reason": "unknown"},
 		})
-		// M2 (worklog 371): also publish via the user channel (which has a
-		// replay buffer) so a frontend that reconnects AFTER the agent died
-		// still receives the event. publishWorkspaceEvent → PublishToWorkspace
-		// has no replay buffer; without this dual-publish (mirroring
-		// onSessionIdle/onSessionActive), a reconnecting user sees no warning
-		// and believes the workspace is healthy.
-		if userID := h.userBroker.WorkspaceOwner(workspaceID); userID != "" {
-			h.userBroker.PublishToUser(userID, apitypes.WorkspaceSSEEvent{
-				Type:        "agent_died",
-				WorkspaceID: workspaceID,
-				Data:        map[string]string{"reason": "unknown"},
-			})
-		}
 	}
 }
 
@@ -369,7 +347,7 @@ func (h *ProxyHandler) persistContextFromEvent(workspaceID, rawData string) {
 }
 
 func (h *ProxyHandler) getPodIPForSSE(workspaceID string) string {
-	v1Client, err := h.k8sClient.LlmsafespacesV1()
+	v1Client, err := h.k8sClient.LlmsafespaceV1()
 	if err != nil {
 		return ""
 	}

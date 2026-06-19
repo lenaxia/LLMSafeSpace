@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lenaxia/llmsafespaces/pkg/secrets"
+	"github.com/lenaxia/llmsafespace/pkg/secrets"
 )
 
 func setupUnauthRouter(t *testing.T) *gin.Engine {

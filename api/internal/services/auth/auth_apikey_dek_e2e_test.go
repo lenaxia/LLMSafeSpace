@@ -15,11 +15,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/lenaxia/llmsafespaces/api/internal/handlers"
-	"github.com/lenaxia/llmsafespaces/api/internal/utilities"
-	"github.com/lenaxia/llmsafespaces/pkg/secrets"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
-	pkgutil "github.com/lenaxia/llmsafespaces/pkg/utilities"
+	"github.com/lenaxia/llmsafespace/api/internal/handlers"
+	"github.com/lenaxia/llmsafespace/api/internal/utilities"
+	"github.com/lenaxia/llmsafespace/pkg/secrets"
+	"github.com/lenaxia/llmsafespace/pkg/types"
+	pkgutil "github.com/lenaxia/llmsafespace/pkg/utilities"
 )
 
 func setupDEKRegressionRouter(t *testing.T) (

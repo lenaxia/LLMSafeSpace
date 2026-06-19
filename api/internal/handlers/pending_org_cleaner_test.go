@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lenaxia/llmsafespaces/api/internal/services/database"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	"github.com/lenaxia/llmsafespace/api/internal/services/database"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 type fakePendingStore struct {

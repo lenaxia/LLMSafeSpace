@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
 // opencodeMessageResponse mirrors the shape opencode returns for

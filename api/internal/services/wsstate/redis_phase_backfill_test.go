@@ -74,22 +74,15 @@ func TestRedisStore_PriorPhase_TTL24Hours(t *testing.T) {
 	assert.Greater(t, ttl, 23*time.Hour, "priorPhase TTL must be ~24 hours")
 }
 
-func TestRedisStore_GetPriorPhase_RedisDown_AssumesActiveToAvoidCacheWipe(t *testing.T) {
-	// C4 (worklog 371): GetPriorPhase on Redis error returns ("Active", true)
-	// — NOT ("", false). The pre-fix ("", false) caused onPhaseChange to
-	// treat the error as first-invocation and call invalidateCaches, wiping
-	// activeSess + deletedSessions + pwCache + wsConfig across all replicas
-	// on a transient Redis blip. Assuming Active→Active (the steady-state
-	// common case) limits the damage to InvalidateWorkspaceConfig.
+func TestRedisStore_GetPriorPhase_RedisDown_ReturnsFalse(t *testing.T) {
 	mr, err := miniredis.Run()
 	require.NoError(t, err)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	store := NewRedisStore(client, testActiveSessTTL)
 	store.SetPriorPhase("ws-1", "Active")
 	mr.Close()
-	phase, ok := store.GetPriorPhase("ws-1")
-	assert.True(t, ok, "Redis-down must assume hadPrior=true (Active→Active) to avoid mass cache wipe")
-	assert.Equal(t, "Active", phase, "Redis-down must assume prior phase is Active (the common case)")
+	_, ok := store.GetPriorPhase("ws-1")
+	assert.False(t, ok)
 	_ = client.Close()
 }
 

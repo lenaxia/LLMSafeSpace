@@ -12,7 +12,7 @@ import (
 
 	"github.com/spf13/viper"
 
-	k8sconfig "github.com/lenaxia/llmsafespaces/pkg/config"
+	k8sconfig "github.com/lenaxia/llmsafespace/pkg/config"
 )
 
 // Config represents the application configuration
@@ -61,7 +61,7 @@ type Config struct {
 		//      expire (TokenDuration), at which point the entry can
 		//      be removed.
 		// Closes F1.7.5 (Epic 17). Set via env
-		// LLMSAFESPACES_AUTH_JWTPREVIOUSSECRETS as a comma-separated
+		// LLMSAFESPACE_AUTH_JWTPREVIOUSSECRETS as a comma-separated
 		// list, OR via the YAML key `jwtPreviousSecrets: [...]`.
 		JWTPreviousSecrets  []string      `mapstructure:"jwtPreviousSecrets"`
 		TokenDuration       time.Duration `mapstructure:"tokenDuration"`
@@ -162,16 +162,16 @@ func Load(path string) (*Config, error) {
 	}
 
 	// Set up environment variable overrides.
-	// Replace underscores with dots so LLMSAFESPACES_KUBERNETES_INCLUSTER maps
+	// Replace underscores with dots so LLMSAFESPACE_KUBERNETES_INCLUSTER maps
 	// to the nested viper key kubernetes.incluster (matches struct tag inCluster).
-	v.SetEnvPrefix("LLMSAFESPACES")
+	v.SetEnvPrefix("LLMSAFESPACE")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 	// Explicit bindings for nested keys that AutomaticEnv misses because
 	// viper only replaces dots→underscores in env names, not the reverse.
-	_ = v.BindEnv("kubernetes.inCluster", "LLMSAFESPACES_KUBERNETES_INCLUSTER")
-	_ = v.BindEnv("kubernetes.configPath", "LLMSAFESPACES_KUBERNETES_CONFIGPATH")
-	_ = v.BindEnv("server.inferenceRelayURL", "LLMSAFESPACES_SERVER_INFERENCERELAYURL")
+	_ = v.BindEnv("kubernetes.inCluster", "LLMSAFESPACE_KUBERNETES_INCLUSTER")
+	_ = v.BindEnv("kubernetes.configPath", "LLMSAFESPACE_KUBERNETES_CONFIGPATH")
+	_ = v.BindEnv("server.inferenceRelayURL", "LLMSAFESPACE_SERVER_INFERENCERELAYURL")
 
 	// Unmarshal config
 	if err := v.Unmarshal(&config); err != nil {
@@ -179,21 +179,21 @@ func Load(path string) (*Config, error) {
 	}
 
 	// Override with environment variables for sensitive data
-	if envDBPassword := os.Getenv("LLMSAFESPACES_DATABASE_PASSWORD"); envDBPassword != "" {
+	if envDBPassword := os.Getenv("LLMSAFESPACE_DATABASE_PASSWORD"); envDBPassword != "" {
 		config.Database.Password = envDBPassword
 	}
 
-	if envRedisPassword := os.Getenv("LLMSAFESPACES_REDIS_PASSWORD"); envRedisPassword != "" {
+	if envRedisPassword := os.Getenv("LLMSAFESPACE_REDIS_PASSWORD"); envRedisPassword != "" {
 		config.Redis.Password = envRedisPassword
 	}
 
-	if envJWTSecret := os.Getenv("LLMSAFESPACES_AUTH_JWTSECRET"); envJWTSecret != "" {
+	if envJWTSecret := os.Getenv("LLMSAFESPACE_AUTH_JWTSECRET"); envJWTSecret != "" {
 		config.Auth.JWTSecret = envJWTSecret
 	}
 
 	// F1.7.5: comma-separated list of previous JWT secrets for
 	// rotation-during-grace-period validation.
-	if envPrev := os.Getenv("LLMSAFESPACES_AUTH_JWTPREVIOUSSECRETS"); envPrev != "" {
+	if envPrev := os.Getenv("LLMSAFESPACE_AUTH_JWTPREVIOUSSECRETS"); envPrev != "" {
 		var out []string
 		for _, p := range strings.Split(envPrev, ",") {
 			p = strings.TrimSpace(p)
@@ -206,116 +206,116 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
-	if v := os.Getenv("LLMSAFESPACES_AUTH_LOCKOUTENABLED"); v == "true" {
+	if v := os.Getenv("LLMSAFESPACE_AUTH_LOCKOUTENABLED"); v == "true" {
 		config.Auth.LockoutEnabled = true
 	}
-	if v := os.Getenv("LLMSAFESPACES_AUTH_LOCKOUTATTEMPTS"); v != "" {
+	if v := os.Getenv("LLMSAFESPACE_AUTH_LOCKOUTATTEMPTS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			config.Auth.LockoutAttempts = n
 		}
 	}
-	if v := os.Getenv("LLMSAFESPACES_AUTH_LOCKOUTDURATION"); v != "" {
+	if v := os.Getenv("LLMSAFESPACE_AUTH_LOCKOUTDURATION"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			config.Auth.LockoutDuration = d
 		}
 	}
 
-	if v := os.Getenv("LLMSAFESPACES_AUTH_REMEMBEREDURATION"); v != "" {
+	if v := os.Getenv("LLMSAFESPACE_AUTH_REMEMBEREDURATION"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
 			config.Auth.RememberMeDuration = d
 		}
 	}
 
-	if v := os.Getenv("LLMSAFESPACES_SECURITY_ALLOWEDORIGINS"); v != "" {
+	if v := os.Getenv("LLMSAFESPACE_SECURITY_ALLOWEDORIGINS"); v != "" {
 		config.Security.AllowedOrigins = strings.Split(v, ",")
 	}
-	if v := os.Getenv("LLMSAFESPACES_SECURITY_ALLOWCREDENTIALS"); v == "true" {
+	if v := os.Getenv("LLMSAFESPACE_SECURITY_ALLOWCREDENTIALS"); v == "true" {
 		config.Security.AllowCredentials = true
 	}
-	if v := os.Getenv("LLMSAFESPACES_SECURITY_ROOTKEYPROVIDER"); v != "" {
+	if v := os.Getenv("LLMSAFESPACE_SECURITY_ROOTKEYPROVIDER"); v != "" {
 		config.Security.RootKeyProvider = v
 	}
-	if v := os.Getenv("LLMSAFESPACES_SECURITY_SEALEDKEYPATH"); v != "" {
+	if v := os.Getenv("LLMSAFESPACE_SECURITY_SEALEDKEYPATH"); v != "" {
 		config.Security.SealedKeyPath = v
 	}
-	if v := os.Getenv("LLMSAFESPACES_SECURITY_PASSPHRASEPATH"); v != "" {
+	if v := os.Getenv("LLMSAFESPACE_SECURITY_PASSPHRASEPATH"); v != "" {
 		config.Security.PassphrasePath = v
 	}
 
-	if v := os.Getenv("LLMSAFESPACES_RATELIMITING_ENABLED"); v == "true" {
+	if v := os.Getenv("LLMSAFESPACE_RATELIMITING_ENABLED"); v == "true" {
 		config.RateLimiting.Enabled = true
 	}
-	if v := os.Getenv("LLMSAFESPACES_RATELIMITING_DEFAULTLIMIT"); v != "" {
+	if v := os.Getenv("LLMSAFESPACE_RATELIMITING_DEFAULTLIMIT"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			config.RateLimiting.DefaultLimit = n
 		}
 	}
-	if v := os.Getenv("LLMSAFESPACES_RATELIMITING_DEFAULTWINDOW"); v != "" {
+	if v := os.Getenv("LLMSAFESPACE_RATELIMITING_DEFAULTWINDOW"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			config.RateLimiting.DefaultWindow = d
 		}
 	}
-	if v := os.Getenv("LLMSAFESPACES_RATELIMITING_BURSTSIZE"); v != "" {
+	if v := os.Getenv("LLMSAFESPACE_RATELIMITING_BURSTSIZE"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			config.RateLimiting.BurstSize = n
 		}
 	}
 
-	if v := os.Getenv("LLMSAFESPACES_PROXY_REQUESTBUFFERSIZEPERWORKSPACE"); v != "" {
+	if v := os.Getenv("LLMSAFESPACE_PROXY_REQUESTBUFFERSIZEPERWORKSPACE"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			config.Proxy.RequestBufferSizePerWorkspace = n
 		}
 	}
-	if v := os.Getenv("LLMSAFESPACES_PROXY_REQUESTBUFFERTIMEOUTSECONDS"); v != "" {
+	if v := os.Getenv("LLMSAFESPACE_PROXY_REQUESTBUFFERTIMEOUTSECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			config.Proxy.RequestBufferTimeoutSeconds = n
 		}
 	}
 
-	if v := os.Getenv("LLMSAFESPACES_BILLING_SECRETKEY"); v != "" {
+	if v := os.Getenv("LLMSAFESPACE_BILLING_SECRETKEY"); v != "" {
 		config.Billing.SecretKey = v
 	}
-	if v := os.Getenv("LLMSAFESPACES_BILLING_WEBHOOKSECRET"); v != "" {
+	if v := os.Getenv("LLMSAFESPACE_BILLING_WEBHOOKSECRET"); v != "" {
 		config.Billing.WebhookSecret = v
 	}
-	if v := os.Getenv("LLMSAFESPACES_BILLING_CHECKOUTSUCCESSURL"); v != "" {
+	if v := os.Getenv("LLMSAFESPACE_BILLING_CHECKOUTSUCCESSURL"); v != "" {
 		config.Billing.CheckoutSuccessURL = v
 	}
-	if v := os.Getenv("LLMSAFESPACES_BILLING_CHECKOUTCANCELURL"); v != "" {
+	if v := os.Getenv("LLMSAFESPACE_BILLING_CHECKOUTCANCELURL"); v != "" {
 		config.Billing.CheckoutCancelURL = v
 	}
-	if v := os.Getenv("LLMSAFESPACES_BILLING_PORTALRETURNURL"); v != "" {
+	if v := os.Getenv("LLMSAFESPACE_BILLING_PORTALRETURNURL"); v != "" {
 		config.Billing.PortalReturnURL = v
 	}
-	if v := os.Getenv("LLMSAFESPACES_EMAIL_PROVIDER"); v != "" {
+	if v := os.Getenv("LLMSAFESPACE_EMAIL_PROVIDER"); v != "" {
 		config.Email.Provider = v
 	}
-	if v := os.Getenv("LLMSAFESPACES_EMAIL_SESREGION"); v != "" {
+	if v := os.Getenv("LLMSAFESPACE_EMAIL_SESREGION"); v != "" {
 		config.Email.SESRegion = v
 	}
-	if v := os.Getenv("LLMSAFESPACES_EMAIL_FROMADDRESS"); v != "" {
+	if v := os.Getenv("LLMSAFESPACE_EMAIL_FROMADDRESS"); v != "" {
 		config.Email.FromAddress = v
 	}
-	if v := os.Getenv("LLMSAFESPACES_EMAIL_BASEURL"); v != "" {
+	if v := os.Getenv("LLMSAFESPACE_EMAIL_BASEURL"); v != "" {
 		config.Email.BaseURL = v
 	}
-	if v := os.Getenv("LLMSAFESPACES_OIDC_REDIRECTBASEURL"); v != "" {
+	if v := os.Getenv("LLMSAFESPACE_OIDC_REDIRECTBASEURL"); v != "" {
 		config.OIDC.RedirectBaseURL = v
 	}
-	if v := os.Getenv("LLMSAFESPACES_OIDC_FRONTENDREDIRECTURL"); v != "" {
+	if v := os.Getenv("LLMSAFESPACE_OIDC_FRONTENDREDIRECTURL"); v != "" {
 		config.OIDC.FrontendRedirectURL = v
 	}
-	if v := os.Getenv("LLMSAFESPACES_OIDC_STATECOOKIENAME"); v != "" {
+	if v := os.Getenv("LLMSAFESPACE_OIDC_STATECOOKIENAME"); v != "" {
 		config.OIDC.StateCookieName = v
 	}
 	for _, envKey := range []string{
-		"LLMSAFESPACES_BILLING_PLANPRICES_TEAM",
-		"LLMSAFESPACES_BILLING_PLANPRICES_BUSINESS",
-		"LLMSAFESPACES_BILLING_PLANPRICES_ENTERPRISE",
-		"LLMSAFESPACES_BILLING_PLANPRICES_PRO",
+		"LLMSAFESPACE_BILLING_PLANPRICES_TEAM",
+		"LLMSAFESPACE_BILLING_PLANPRICES_BUSINESS",
+		"LLMSAFESPACE_BILLING_PLANPRICES_ENTERPRISE",
+		"LLMSAFESPACE_BILLING_PLANPRICES_PRO",
 	} {
 		if v := os.Getenv(envKey); v != "" {
-			plan := strings.ToLower(strings.TrimPrefix(envKey, "LLMSAFESPACES_BILLING_PLANPRICES_"))
+			plan := strings.ToLower(strings.TrimPrefix(envKey, "LLMSAFESPACE_BILLING_PLANPRICES_"))
 			if config.Billing.PlanPrices == nil {
 				config.Billing.PlanPrices = make(map[string]string)
 			}
@@ -323,11 +323,11 @@ func Load(path string) (*Config, error) {
 		}
 	}
 	for _, envKey := range []string{
-		"LLMSAFESPACES_BILLING_METERS_LLM_TOKENS",
-		"LLMSAFESPACES_BILLING_METERS_COMPUTE_SECONDS",
+		"LLMSAFESPACE_BILLING_METERS_LLM_TOKENS",
+		"LLMSAFESPACE_BILLING_METERS_COMPUTE_SECONDS",
 	} {
 		if v := os.Getenv(envKey); v != "" {
-			meter := strings.ToLower(strings.TrimPrefix(envKey, "LLMSAFESPACES_BILLING_METERS_"))
+			meter := strings.ToLower(strings.TrimPrefix(envKey, "LLMSAFESPACE_BILLING_METERS_"))
 			if config.Billing.Meters == nil {
 				config.Billing.Meters = make(map[string]string)
 			}
@@ -336,9 +336,9 @@ func Load(path string) (*Config, error) {
 	}
 
 	// Pod identity for leader election. Set via the Downward API in the
-	// chart (metadata.name → LLMSAFESPACES_KUBERNETES_PODNAME). Without
+	// chart (metadata.name → LLMSAFESPACE_KUBERNETES_PODNAME). Without
 	// this, leader election panics with "Lock identity is empty".
-	if envPodName := os.Getenv("LLMSAFESPACES_KUBERNETES_PODNAME"); envPodName != "" {
+	if envPodName := os.Getenv("LLMSAFESPACE_KUBERNETES_PODNAME"); envPodName != "" {
 		config.Kubernetes.PodName = envPodName
 	}
 

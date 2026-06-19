@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 const (

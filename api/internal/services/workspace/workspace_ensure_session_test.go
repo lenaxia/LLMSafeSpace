@@ -21,11 +21,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 
-	imocks "github.com/lenaxia/llmsafespaces/api/internal/mocks"
-	kmocks "github.com/lenaxia/llmsafespaces/mocks/kubernetes"
-	lmocks "github.com/lenaxia/llmsafespaces/mocks/logger"
-	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	imocks "github.com/lenaxia/llmsafespace/api/internal/mocks"
+	kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
+	lmocks "github.com/lenaxia/llmsafespace/mocks/logger"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 type ensureFixture struct {
@@ -46,7 +46,7 @@ func newEnsureFixture(t *testing.T) *ensureFixture {
 	log.On("With", mock.Anything).Return(log).Maybe()
 
 	k8s := kmocks.NewMockKubernetesClient()
-	v1i := kmocks.NewMockLLMSafespacesV1Interface()
+	v1i := kmocks.NewMockLLMSafespaceV1Interface()
 	ws := kmocks.NewMockWorkspaceInterface()
 	db := &imocks.MockDatabaseService{}
 	cache := &imocks.MockCacheService{}
@@ -54,7 +54,7 @@ func newEnsureFixture(t *testing.T) *ensureFixture {
 
 	met.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
 
-	k8s.On("LlmsafespacesV1").Return(v1i, nil)
+	k8s.On("LlmsafespaceV1").Return(v1i, nil)
 	v1i.On("Workspaces", "default").Return(ws)
 
 	clientset := k8sfake.NewSimpleClientset()

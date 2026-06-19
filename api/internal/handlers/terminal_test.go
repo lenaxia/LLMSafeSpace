@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -107,7 +107,7 @@ func TestHandleTicket_Success(t *testing.T) {
 		},
 	}
 
-	h := NewTerminalHandler(cache, wsGetter, "llmsafespaces", nil)
+	h := NewTerminalHandler(cache, wsGetter, "llmsafespace", nil)
 	r := setupTerminalRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-1/terminal/ticket", nil)
@@ -126,7 +126,7 @@ func TestHandleTicket_WorkspaceNotFound(t *testing.T) {
 	cache := newMockTerminalCache()
 	wsGetter := &mockWorkspaceGetter{workspaces: map[string]*v1.Workspace{}}
 
-	h := NewTerminalHandler(cache, wsGetter, "llmsafespaces", nil)
+	h := NewTerminalHandler(cache, wsGetter, "llmsafespace", nil)
 	r := setupTerminalRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/nonexistent/terminal/ticket", nil)
@@ -152,7 +152,7 @@ func TestHandleTicket_WorkspaceNotActive(t *testing.T) {
 		},
 	}
 
-	h := NewTerminalHandler(cache, wsGetter, "llmsafespaces", nil)
+	h := NewTerminalHandler(cache, wsGetter, "llmsafespace", nil)
 	r := setupTerminalRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-1/terminal/ticket", nil)
@@ -188,7 +188,7 @@ func TestHandleTicket_TrustsMiddlewareForOwnership(t *testing.T) {
 		},
 	}
 
-	h := NewTerminalHandler(cache, wsGetter, "llmsafespaces", nil)
+	h := NewTerminalHandler(cache, wsGetter, "llmsafespace", nil)
 	r := setupTerminalRouter(h)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-1/terminal/ticket", nil)
@@ -206,7 +206,7 @@ func TestHandleTerminal_InvalidTicket(t *testing.T) {
 	cache := newMockTerminalCache()
 	wsGetter := &mockWorkspaceGetter{workspaces: map[string]*v1.Workspace{}}
 
-	h := NewTerminalHandler(cache, wsGetter, "llmsafespaces", nil)
+	h := NewTerminalHandler(cache, wsGetter, "llmsafespace", nil)
 	r := setupTerminalRouter(h)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/terminal?ticket=invalid", nil)
@@ -220,7 +220,7 @@ func TestHandleTerminal_MissingTicket(t *testing.T) {
 	cache := newMockTerminalCache()
 	wsGetter := &mockWorkspaceGetter{workspaces: map[string]*v1.Workspace{}}
 
-	h := NewTerminalHandler(cache, wsGetter, "llmsafespaces", nil)
+	h := NewTerminalHandler(cache, wsGetter, "llmsafespace", nil)
 	r := setupTerminalRouter(h)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/terminal", nil)
@@ -238,7 +238,7 @@ func TestHandleTerminal_TicketWorkspaceMismatch(t *testing.T) {
 
 	wsGetter := &mockWorkspaceGetter{workspaces: map[string]*v1.Workspace{}}
 
-	h := NewTerminalHandler(cache, wsGetter, "llmsafespaces", nil)
+	h := NewTerminalHandler(cache, wsGetter, "llmsafespace", nil)
 	r := setupTerminalRouter(h)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/terminal?ticket=tkt_abc123", nil)

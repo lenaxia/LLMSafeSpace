@@ -9,8 +9,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	apierrors "github.com/lenaxia/llmsafespaces/api/internal/errors"
-	apitypes "github.com/lenaxia/llmsafespaces/api/internal/types"
+	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
+	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
 )
 
 const (
@@ -34,7 +34,7 @@ var ErrTooManySubscribers = &apierrors.APIError{
 
 var brokerDroppedEvents = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
-		Name: "llmsafespaces_sse_broker_dropped_events_total",
+		Name: "llmsafespace_sse_broker_dropped_events_total",
 		Help: "Events dropped because subscriber channel was full",
 	},
 	[]string{"broker", "event_type"},

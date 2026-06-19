@@ -14,8 +14,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 
-	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
-	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 )
 
 const flushInterval = 60 * time.Second
@@ -139,9 +139,9 @@ func (t *ActivityTracker) flushOne(ctx context.Context, workspaceID string, acti
 	patch := fmt.Sprintf(`{"metadata":{"annotations":{"%s":"%s"}}}`,
 		v1.AnnotationLastActivityAt, activityTime.Format(time.RFC3339))
 	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-		v1Client, err := t.k8sClient.LlmsafespacesV1()
+		v1Client, err := t.k8sClient.LlmsafespaceV1()
 		if err != nil {
-			return fmt.Errorf("initialize LLMSafespacesV1 client: %w", err)
+			return fmt.Errorf("initialize LLMSafespaceV1 client: %w", err)
 		}
 		_, err = v1Client.Workspaces(t.namespace).Patch(
 			ctx, workspaceID, types.MergePatchType, []byte(patch), metav1.PatchOptions{})

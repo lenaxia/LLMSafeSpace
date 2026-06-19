@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"sort"
 
-	apierrors "github.com/lenaxia/llmsafespaces/api/internal/errors"
+	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
 
-	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
-	"github.com/lenaxia/llmsafespaces/pkg/settings"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	"github.com/lenaxia/llmsafespace/pkg/settings"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // SetInstanceSettings injects the instance settings service for enforcement.

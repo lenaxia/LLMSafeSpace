@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	apilogger "github.com/lenaxia/llmsafespaces/api/internal/logger"
+	apilogger "github.com/lenaxia/llmsafespace/api/internal/logger"
 )
 
 func testLogger(t *testing.T) *apilogger.Logger {

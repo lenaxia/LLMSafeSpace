@@ -10,9 +10,9 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lenaxia/llmsafespaces/pkg/agent/opencode"
-	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	"github.com/lenaxia/llmsafespace/pkg/agent/opencode"
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // RelayStateChecker returns whether the relay injector has completed

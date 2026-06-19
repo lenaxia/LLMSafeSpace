@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lenaxia/llmsafespaces/api/internal/config"
-	"github.com/lenaxia/llmsafespaces/api/internal/logger"
-	"github.com/lenaxia/llmsafespaces/api/internal/mocks"
-	"github.com/lenaxia/llmsafespaces/pkg/secrets"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
-	pkgutil "github.com/lenaxia/llmsafespaces/pkg/utilities"
+	"github.com/lenaxia/llmsafespace/api/internal/config"
+	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/mocks"
+	"github.com/lenaxia/llmsafespace/pkg/secrets"
+	"github.com/lenaxia/llmsafespace/pkg/types"
+	pkgutil "github.com/lenaxia/llmsafespace/pkg/utilities"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -297,7 +297,7 @@ func TestCreateAPIKey_DEKRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 
 	rawKey := apiKey.Key
-	apiKEK, err := secrets.DeriveKEKFromKey([]byte(rawKey), storedKey.KekSalt, "llmsafespaces-apikey-kek")
+	apiKEK, err := secrets.DeriveKEKFromKey([]byte(rawKey), storedKey.KekSalt, "llmsafespace-apikey-kek")
 	require.NoError(t, err)
 
 	recoveredDEK, err := secrets.DecryptSecret(apiKEK, storedKey.WrappedDEK)
@@ -463,7 +463,7 @@ func TestValidateAPIKey_DEKNotSynced_SkipsUnwrap(t *testing.T) {
 
 	kekSalt := make([]byte, 32)
 	rand.Read(kekSalt)
-	apiKEK, _ := secrets.DeriveKEKFromKey([]byte(rawKey), kekSalt, "llmsafespaces-apikey-kek")
+	apiKEK, _ := secrets.DeriveKEKFromKey([]byte(rawKey), kekSalt, "llmsafespace-apikey-kek")
 	wrappedDEK, _ := secrets.EncryptSecret(apiKEK, originalDEK)
 
 	keyRecord := &types.APIKey{

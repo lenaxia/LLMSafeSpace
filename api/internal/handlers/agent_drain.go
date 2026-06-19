@@ -9,8 +9,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/lenaxia/llmsafespaces/api/internal/services/sse"
-	opencode "github.com/lenaxia/llmsafespaces/pkg/agent/opencode"
+	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
+	opencode "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
 )
 
 // ErrDrainTimeout is returned by WaitUntilIdle when the deadline elapses

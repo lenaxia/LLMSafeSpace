@@ -18,10 +18,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 
-	apierrors "github.com/lenaxia/llmsafespaces/api/internal/errors"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/sse"
-	opencode "github.com/lenaxia/llmsafespaces/pkg/agent/opencode"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
+	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
+	opencode "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // --- E2E mocks that simulate the full workspace lifecycle ---
@@ -328,9 +328,7 @@ func TestE2E_DrainMode_AlreadyIdle(t *testing.T) {
 
 	handler := NewAgentReloadHandler(wsSvc, agentDB, pods, &http.Client{Timeout: 100 * time.Millisecond}, nil)
 	handler.SetSSETracker(tracker)
-	handler.SetPasswordGetter(func(_ context.Context, _ string) (string, error) {
-		return "test-pw", nil
-	})
+	handler.SetPasswordGetter(fakePWProvider{pw: "test-pw"})
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {

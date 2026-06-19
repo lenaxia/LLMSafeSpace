@@ -4,7 +4,7 @@
 package database
 
 import (
-	"github.com/lenaxia/llmsafespaces/pkg/settings"
+	"github.com/lenaxia/llmsafespace/pkg/settings"
 )
 
 // Compile-time interface satisfaction checks.

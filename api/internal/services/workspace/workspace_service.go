@@ -17,13 +17,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
 
-	apierrors "github.com/lenaxia/llmsafespaces/api/internal/errors"
-	apiinterfaces "github.com/lenaxia/llmsafespaces/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespaces/pkg/agent/opencode"
-	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
-	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
-	"github.com/lenaxia/llmsafespaces/pkg/settings"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
+	apiinterfaces "github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespace/pkg/agent/opencode"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
+	"github.com/lenaxia/llmsafespace/pkg/settings"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 
 	"github.com/google/uuid"
 )
@@ -86,9 +86,9 @@ func (s *Service) SetCredentialProvisioner(cp CredentialProvisioner) {
 }
 
 func (s *Service) workspaceCRDClient() (pkginterfaces.WorkspaceInterface, error) {
-	v1Client, err := s.k8sClient.LlmsafespacesV1()
+	v1Client, err := s.k8sClient.LlmsafespaceV1()
 	if err != nil {
-		return nil, fmt.Errorf("initialize LLMSafespacesV1 client: %w", err)
+		return nil, fmt.Errorf("initialize LLMSafespaceV1 client: %w", err)
 	}
 	return v1Client.Workspaces(s.config.Namespace), nil
 }
@@ -849,7 +849,7 @@ func (s *Service) verifyOwner(ctx context.Context, userID, workspaceID string) e
 // buildWorkspaceCRD constructs a v1.Workspace CRD from an API request.
 func buildWorkspaceCRD(workspaceID, userID string, req types.CreateWorkspaceRequest, namespace string) *v1.Workspace {
 	labels := map[string]string{
-		"app":     "llmsafespaces",
+		"app":     "llmsafespace",
 		"user-id": userID,
 	}
 	for k, v := range req.Labels {
@@ -871,14 +871,14 @@ func buildWorkspaceCRD(workspaceID, userID string, req types.CreateWorkspaceRequ
 	}
 
 	return &v1.Workspace{
-		TypeMeta: metav1.TypeMeta{APIVersion: "llmsafespaces.dev/v1", Kind: "Workspace"},
+		TypeMeta: metav1.TypeMeta{APIVersion: "llmsafespace.dev/v1", Kind: "Workspace"},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      workspaceID,
 			Namespace: namespace,
 			Labels:    labels,
 			Annotations: map[string]string{
-				"llmsafespaces.dev/created-by": userID,
-				"llmsafespaces.dev/name":       req.Name,
+				"llmsafespace.dev/created-by": userID,
+				"llmsafespace.dev/name":       req.Name,
 				// AnnotationRequestedAt records the exact moment the API
 				// received the create request. The controller reads this to
 				// anchor WorkspaceCreateDurationSeconds from the user's
@@ -1442,9 +1442,9 @@ func (s *Service) EnsureSecretsManifest(ctx context.Context, workspaceID string,
 	secretClient := clientset.CoreV1().Secrets(s.config.Namespace)
 
 	labels := map[string]string{
-		"app":                         "llmsafespaces",
-		"llmsafespaces.dev/workspace": workspaceID,
-		"llmsafespaces.dev/ephemeral": "true",
+		"app":                        "llmsafespace",
+		"llmsafespace.dev/workspace": workspaceID,
+		"llmsafespace.dev/ephemeral": "true",
 	}
 
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -1521,9 +1521,9 @@ func (s *Service) MergeSecretsManifest(ctx context.Context, workspaceID string, 
 	secretClient := clientset.CoreV1().Secrets(s.config.Namespace)
 
 	labels := map[string]string{
-		"app":                         "llmsafespaces",
-		"llmsafespaces.dev/workspace": workspaceID,
-		"llmsafespaces.dev/ephemeral": "true",
+		"app":                        "llmsafespace",
+		"llmsafespace.dev/workspace": workspaceID,
+		"llmsafespace.dev/ephemeral": "true",
 	}
 
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -1671,9 +1671,9 @@ func (s *Service) EnsureWorkspaceConfig(ctx context.Context, workspaceID string,
 	secretClient := clientset.CoreV1().Secrets(s.config.Namespace)
 
 	labels := map[string]string{
-		"app":                         "llmsafespaces",
-		"llmsafespaces.dev/workspace": workspaceID,
-		"llmsafespaces.dev/ephemeral": "true",
+		"app":                        "llmsafespace",
+		"llmsafespace.dev/workspace": workspaceID,
+		"llmsafespace.dev/ephemeral": "true",
 	}
 
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {

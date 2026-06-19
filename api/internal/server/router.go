@@ -15,15 +15,15 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	apierrors "github.com/lenaxia/llmsafespaces/api/internal/errors"
-	"github.com/lenaxia/llmsafespaces/api/internal/handlers"
-	"github.com/lenaxia/llmsafespaces/api/internal/interfaces"
-	apilogger "github.com/lenaxia/llmsafespaces/api/internal/logger"
-	"github.com/lenaxia/llmsafespaces/api/internal/middleware"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/workspace"
-	"github.com/lenaxia/llmsafespaces/api/internal/utilities"
-	"github.com/lenaxia/llmsafespaces/pkg/settings"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
+	"github.com/lenaxia/llmsafespace/api/internal/handlers"
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	apilogger "github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/middleware"
+	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
+	"github.com/lenaxia/llmsafespace/api/internal/utilities"
+	"github.com/lenaxia/llmsafespace/pkg/settings"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // RouterConfig defines configuration for the router
@@ -436,11 +436,11 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 	// internal counters (request rates per route, error rates, etc.)
 	// to any pod that could route to the API service. We now require
 	// `Authorization: Bearer <token>` if the env var
-	// LLMSAFESPACES_METRICS_TOKEN is set. Operators who want
+	// LLMSAFESPACE_METRICS_TOKEN is set. Operators who want
 	// Prometheus to scrape unauthenticated should leave the env unset
 	// (matching the pre-fix behavior with explicit opt-in).
 	router.GET("/metrics", func(c *gin.Context) {
-		token := os.Getenv("LLMSAFESPACES_METRICS_TOKEN")
+		token := os.Getenv("LLMSAFESPACE_METRICS_TOKEN")
 		if token != "" && c.GetHeader("Authorization") != "Bearer "+token {
 			c.Header("WWW-Authenticate", `Bearer realm="metrics"`)
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
@@ -534,7 +534,7 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, insta
 	// Public: feature flag discovery
 	rg.GET("/config", func(c *gin.Context) {
 		regEnabled := true // default
-		instanceName := "LLMSafeSpaces"
+		instanceName := "LLMSafeSpace"
 		motd := ""
 		if instanceSettings != nil {
 			if v, err := instanceSettings.GetBool(c.Request.Context(), "auth.registrationEnabled"); err == nil {
@@ -766,11 +766,11 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, idGroup *gin.RouterGroup, serv
 		}
 
 		// G32 (Epic 17): per-user workspace quota. When the env var
-		// LLMSAFESPACES_MAX_WORKSPACES_PER_USER is set to a positive
+		// LLMSAFESPACE_MAX_WORKSPACES_PER_USER is set to a positive
 		// integer, count the user's existing non-deleted workspaces
 		// and reject CreateWorkspace if at or above the limit.
 		// Default unset = unbounded (single-tenant deployments).
-		if maxWS := os.Getenv("LLMSAFESPACES_MAX_WORKSPACES_PER_USER"); maxWS != "" {
+		if maxWS := os.Getenv("LLMSAFESPACE_MAX_WORKSPACES_PER_USER"); maxWS != "" {
 			if cap, parseErr := strconv.Atoi(maxWS); parseErr == nil && cap > 0 {
 				_, page, err := services.GetDatabase().ListWorkspaces(c.Request.Context(), userID, 1, 0)
 				if err == nil && page != nil && page.Total >= cap {

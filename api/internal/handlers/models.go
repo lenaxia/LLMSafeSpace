@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // ModelStore provides all database operations needed by model endpoints.

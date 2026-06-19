@@ -15,8 +15,8 @@ import (
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	apitypes "github.com/lenaxia/llmsafespaces/api/internal/types"
-	"github.com/lenaxia/llmsafespaces/pkg/agent"
+	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
+	"github.com/lenaxia/llmsafespace/pkg/agent"
 )
 
 var (
@@ -90,7 +90,7 @@ func (h *ProxyHandler) emitPendingInputRequests(workspaceID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	v1Client, err := h.k8sClient.LlmsafespacesV1()
+	v1Client, err := h.k8sClient.LlmsafespaceV1()
 	if err != nil {
 		return
 	}

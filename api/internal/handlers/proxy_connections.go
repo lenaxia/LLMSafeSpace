@@ -9,8 +9,15 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/lenaxia/llmsafespaces/api/internal/services/wsstate"
+	"github.com/lenaxia/llmsafespace/api/internal/services/wsstate"
 )
+
+// WorkspacePassword implements WorkspacePasswordProvider (US-46.11).
+// Delegates to getPassword so ProxyHandler satisfies the named interface
+// consumed by AgentReloadHandler and sse.Tracker.
+func (h *ProxyHandler) WorkspacePassword(ctx context.Context, workspaceID string) (string, error) {
+	return h.getPassword(ctx, workspaceID)
+}
 
 func (h *ProxyHandler) getPassword(ctx context.Context, workspaceID string) (string, error) {
 	// Cache-only lookup against the state store; the K8s Secret fetch

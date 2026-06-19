@@ -5,7 +5,7 @@ APP_NAME := agent-api
 VERSION := $(shell git describe --tags --always --dirty)
 BUILD_TIME := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME)"
-DOCKER_REPO := llmsafespaces
+DOCKER_REPO := llmsafespace
 
 # Go commands
 build:

@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/lenaxia/llmsafespaces/pkg/secrets"
+	"github.com/lenaxia/llmsafespace/pkg/secrets"
 )
 
 // setupTestRouter creates a Gin router with the secrets handler wired up,

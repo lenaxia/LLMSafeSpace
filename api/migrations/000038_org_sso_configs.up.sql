@@ -2,7 +2,7 @@
 --
 -- Implements D17: one row per org holding the OIDC provider wiring used by
 -- the SSO login flow. The client secret is encrypted at rest with the server
--- KEK derived from LLMSAFESPACES_MASTER_SECRET (D17-S4) — always decryptable,
+-- KEK derived from LLMSAFESPACE_MASTER_SECRET (D17-S4) — always decryptable,
 -- no org DEK cache dependency. claimed_domains drives login-page domain
 -- discovery (D17-S2). group_role_mapping maps OIDC `groups` claims to org
 -- roles applied on every login (D17-S3).

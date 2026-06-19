@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	apierrors "github.com/lenaxia/llmsafespaces/api/internal/errors"
-	apitypes "github.com/lenaxia/llmsafespaces/api/internal/types"
+	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
+	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
 )
 
 func TestNewUserEventBroker(t *testing.T) {

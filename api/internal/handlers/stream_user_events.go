@@ -15,8 +15,8 @@ import (
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/lenaxia/llmsafespaces/api/internal/services/eventbroker"
-	apitypes "github.com/lenaxia/llmsafespaces/api/internal/types"
+	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
+	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
 )
 
 const (
@@ -198,7 +198,7 @@ func (h *ProxyHandler) snapshotUserWorkspaces(ctx context.Context, s *eventbroke
 	}
 	resultCh := make(chan listResult, 1)
 	go func() {
-		v1Client, v1Err := h.k8sClient.LlmsafespacesV1()
+		v1Client, v1Err := h.k8sClient.LlmsafespaceV1()
 		if v1Err != nil {
 			resultCh <- listResult{err: v1Err}
 			return

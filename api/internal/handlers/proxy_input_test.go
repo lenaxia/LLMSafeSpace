@@ -21,12 +21,12 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/lenaxia/llmsafespaces/api/internal/services/eventbroker"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/sse"
-	apitypes "github.com/lenaxia/llmsafespaces/api/internal/types"
-	k8smocks "github.com/lenaxia/llmsafespaces/mocks/kubernetes"
-	agentoc "github.com/lenaxia/llmsafespaces/pkg/agent/opencode"
-	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
+	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
+	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
+	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
+	agentoc "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
 )
 
 func recvWithTimeout(t *testing.T, sub *eventbroker.Subscriber, what string) apitypes.WorkspaceSSEEvent {
@@ -314,9 +314,9 @@ func TestNormalizedEvents_QuestionRejected(t *testing.T) {
 
 func TestNormalizedEvents_PermissionAsked(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 	ws := &v1.Workspace{
 		Spec:   v1.WorkspaceSpec{AutoApprovePermissions: false},
@@ -478,9 +478,9 @@ func makeResolutionEvent(eventType, reqID, sessionID, reply string) string {
 
 func TestNormalizedEvents_E2E_PermissionAsked_ViaProcessEvent(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
-	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 	ws := &v1.Workspace{
 		Spec:   v1.WorkspaceSpec{AutoApprovePermissions: false},
@@ -611,9 +611,9 @@ func (t *urlRewriteTransport) RoundTrip(req *http.Request) (*http.Response, erro
 func TestEpic13_wsConfig_PopulatesMaxActiveSessions(t *testing.T) {
 	k8sMock := k8smocks.NewMockKubernetesClient()
 	wsMock := k8smocks.NewMockWorkspaceInterface()
-	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
+	llmMock := k8smocks.NewMockLLMSafespaceV1Interface()
 
-	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
+	k8sMock.On("LlmsafespaceV1").Return(llmMock, nil)
 	llmMock.On("Workspaces", "default").Return(wsMock)
 
 	// Create a workspace CRD with MaxActiveSessions=10 and AutoApprovePermissions=false

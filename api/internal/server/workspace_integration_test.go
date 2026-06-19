@@ -15,12 +15,12 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/lenaxia/llmsafespaces/api/internal/middleware"
-	imocks "github.com/lenaxia/llmsafespaces/api/internal/mocks"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/workspace"
-	kmocks "github.com/lenaxia/llmsafespaces/mocks/kubernetes"
-	lmocks "github.com/lenaxia/llmsafespaces/mocks/logger"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	"github.com/lenaxia/llmsafespace/api/internal/middleware"
+	imocks "github.com/lenaxia/llmsafespace/api/internal/mocks"
+	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
+	kmocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
+	lmocks "github.com/lenaxia/llmsafespace/mocks/logger"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // integrationOrgStore is a controllable workspace.OrgMembershipChecker for the

@@ -15,7 +15,7 @@
 --      the prefix; legacy rows are indicated with a warning in the response.
 --
 -- Long-term: Once all legacy keys have been rotated (observable via the
--- llmsafespaces_api_key_legacy_total gauge dropping to 0), run
+-- llmsafespace_api_key_legacy_total gauge dropping to 0), run
 -- 000016_api_key_drop_legacy.up.sql to remove key_legacy and enforce
 -- hash-only storage.
 

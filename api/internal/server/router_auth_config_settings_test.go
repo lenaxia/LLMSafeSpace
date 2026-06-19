@@ -15,10 +15,10 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	apilogger "github.com/lenaxia/llmsafespaces/api/internal/logger"
-	imocks "github.com/lenaxia/llmsafespaces/api/internal/mocks"
-	"github.com/lenaxia/llmsafespaces/pkg/settings"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	apilogger "github.com/lenaxia/llmsafespace/api/internal/logger"
+	imocks "github.com/lenaxia/llmsafespace/api/internal/mocks"
+	"github.com/lenaxia/llmsafespace/pkg/settings"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 type settingsStore struct {
@@ -87,7 +87,7 @@ func TestAuthConfig_DefaultInstanceName_WhenNotSet(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	var cfg types.AuthConfig
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &cfg))
-	assert.Equal(t, "LLMSafeSpaces", cfg.InstanceName)
+	assert.Equal(t, "LLMSafeSpace", cfg.InstanceName)
 	assert.Empty(t, cfg.MOTD)
 }
 
@@ -118,5 +118,5 @@ func TestAuthConfig_EmptyInstanceName_FallsBackToDefault(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	var cfg types.AuthConfig
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &cfg))
-	assert.Equal(t, "LLMSafeSpaces", cfg.InstanceName) // falls back to default
+	assert.Equal(t, "LLMSafeSpace", cfg.InstanceName) // falls back to default
 }

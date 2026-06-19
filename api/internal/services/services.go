@@ -6,16 +6,16 @@ package services
 import (
 	"fmt"
 
-	"github.com/lenaxia/llmsafespaces/api/internal/config"
-	"github.com/lenaxia/llmsafespaces/api/internal/interfaces"
-	"github.com/lenaxia/llmsafespaces/api/internal/logger"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/auth"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/cache"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/database"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/metering"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/metrics"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/ratelimit"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/workspace"
+	"github.com/lenaxia/llmsafespace/api/internal/config"
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	"github.com/lenaxia/llmsafespace/api/internal/logger"
+	"github.com/lenaxia/llmsafespace/api/internal/services/auth"
+	"github.com/lenaxia/llmsafespace/api/internal/services/cache"
+	"github.com/lenaxia/llmsafespace/api/internal/services/database"
+	"github.com/lenaxia/llmsafespace/api/internal/services/metering"
+	"github.com/lenaxia/llmsafespace/api/internal/services/metrics"
+	"github.com/lenaxia/llmsafespace/api/internal/services/ratelimit"
+	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
 )
 
 type Services struct {

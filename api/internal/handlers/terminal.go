@@ -16,8 +16,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
-	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
+	v1 "github.com/lenaxia/llmsafespace/pkg/apis/llmsafespace/v1"
+	pkginterfaces "github.com/lenaxia/llmsafespace/pkg/interfaces"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -251,7 +251,7 @@ func (h *TerminalHandler) HandleTerminal(c *gin.Context) {
 // workspace namespace because standard k8s RBAC doesn't support
 // resourceNames/labelSelectors on subresources. Defense-in-depth at
 // the application layer: refuse to exec into a pod whose
-// llmsafespaces.dev/workspace label does not match the workspaceID
+// llmsafespace.dev/workspace label does not match the workspaceID
 // the caller authenticated against. Without this check, a
 // compromised workspace.Status.PodName (mitigated by the F1.2.2
 // webhook) OR a legitimate operator-initiated workload sharing the
@@ -275,7 +275,7 @@ func (h *TerminalHandler) bridgeExec(conn *websocket.Conn, workspaceID, podName,
 			_ = conn.WriteMessage(websocket.TextMessage, data)
 			return
 		}
-		if pod.Labels["llmsafespaces.dev/workspace"] != workspaceID {
+		if pod.Labels["llmsafespace.dev/workspace"] != workspaceID {
 			msg := TerminalMessage{Type: "error", Message: "pod ownership mismatch — refusing exec"}
 			data, _ := json.Marshal(msg)
 			_ = conn.WriteMessage(websocket.TextMessage, data)

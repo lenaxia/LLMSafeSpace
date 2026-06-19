@@ -4,7 +4,6 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,10 +14,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/lenaxia/llmsafespaces/api/internal/services/eventbroker"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/sse"
-	apitypes "github.com/lenaxia/llmsafespaces/api/internal/types"
-	k8smocks "github.com/lenaxia/llmsafespaces/mocks/kubernetes"
+	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
+	"github.com/lenaxia/llmsafespace/api/internal/services/sse"
+	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
+	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
 )
 
 // TestProxy_OnAgentDied_PublishesAgentDiedToBroker verifies the broker-side
@@ -61,81 +60,6 @@ func TestProxy_OnAgentDied_NilBrokerDoesNotPanic(t *testing.T) {
 	handler.userBroker = nil
 
 	assert.NotPanics(t, func() { handler.onAgentDied("ws-x") })
-}
-
-// TestProxy_OnAgentDied_AlsoPublishedToUserChannel (worklog 371 M2) verifies
-// that agent_died is published via PublishToUser (the replay-capable channel),
-// not just PublishToWorkspace. A frontend reconnecting AFTER the agent died
-// must receive the event via replay; without this dual-publish, the
-// reconnecting user sees no warning and believes the workspace is healthy.
-func TestProxy_OnAgentDied_AlsoPublishedToUserChannel(t *testing.T) {
-	k8sMock := k8smocks.NewMockKubernetesClient()
-	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
-	require.NoError(t, err)
-
-	handler.userBroker = eventbroker.NewUserEventBroker()
-	handler.userBroker.RecordWorkspaceOwner("ws-m2", "user-m2")
-
-	// Subscribe to the USER channel (has replay buffer).
-	userSub, subErr := handler.userBroker.SubscribeUser("user-m2")
-	require.NoError(t, subErr)
-	defer handler.userBroker.UnsubscribeUser("user-m2", userSub)
-
-	handler.onAgentDied("ws-m2")
-
-	select {
-	case got := <-userSub.Ch:
-		assert.Equal(t, "agent_died", got.Type)
-		assert.Equal(t, "ws-m2", got.WorkspaceID)
-		raw, mErr := json.Marshal(got.Data)
-		require.NoError(t, mErr)
-		assert.JSONEq(t, `{"reason":"unknown"}`, string(raw))
-	case <-time.After(time.Second):
-		t.Fatal("user-channel subscriber must receive agent_died (M2 dual-publish)")
-	}
-}
-
-// TestProxy_OnAgentDied_UserChannelReplaySurvivesReconnect (worklog 371 M2)
-// verifies the replay capability: subscribe AFTER agent_died fires, then
-// call Replay from the last-known ID. The event must be delivered — this
-// is the exact scenario M2 fixes (frontend reconnects after agent death).
-func TestProxy_OnAgentDied_UserChannelReplaySurvivesReconnect(t *testing.T) {
-	k8sMock := k8smocks.NewMockKubernetesClient()
-	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
-	require.NoError(t, err)
-
-	handler.userBroker = eventbroker.NewUserEventBroker()
-	handler.userBroker.RecordWorkspaceOwner("ws-m2r", "user-m2r")
-
-	// Fire agent_died with NO active user subscriber (simulates: user is
-	// disconnected at the moment of death).
-	handler.onAgentDied("ws-m2r")
-
-	// Now the user "reconnects": subscribe fresh.
-	reconnectedSub, subErr := handler.userBroker.SubscribeUser("user-m2r")
-	require.NoError(t, subErr)
-	defer handler.userBroker.UnsubscribeUser("user-m2r", reconnectedSub)
-
-	// Drain the live channel (the subscriber may receive the event live
-	// since PublishToUser both buffers and delivers to current subs).
-	select {
-	case <-reconnectedSub.Ch:
-	case <-time.After(200 * time.Millisecond):
-	}
-
-	// Replay from ID 0 (everything). The agent_died event must be in the
-	// replay buffer. The bool return from Replay is gapDetected (not "found"),
-	// so assert on len(entries) instead.
-	entries, _ := handler.userBroker.Replay("user-m2r", 0)
-	var sawAgentDied bool
-	for _, e := range entries {
-		if e.Event.Type == "agent_died" {
-			sawAgentDied = true
-			assert.Equal(t, "ws-m2r", e.Event.WorkspaceID)
-		}
-	}
-	assert.True(t, sawAgentDied,
-		"agent_died must be in the user-channel replay buffer so reconnecting frontends receive it (M2)")
 }
 
 // TestProxy_OnAgentDied_EventShapeMatchesFrontendContract is a contract test:
@@ -187,9 +111,7 @@ func TestProxy_TrackerToBroker_AgentDied_E2E(t *testing.T) {
 	defer handler.userBroker.UnsubscribeWorkspace("ws-e2e", sub)
 
 	tracker := sse.NewTracker(httpClient, &testLogger{}, func(workspaceID, sessionID string) {})
-	tracker.SetPasswordGetter(func(ctx context.Context, workspaceID string) (string, error) {
-		return "test-pw", nil
-	})
+	tracker.SetPasswordGetter(fakePWProvider{pw: "test-pw"})
 	tracker.SetPodIPResolver(func(workspaceID string) string { return "10.0.0.1" })
 	tracker.SetOnAgentDied(handler.onAgentDied)
 	t.Cleanup(tracker.Stop)

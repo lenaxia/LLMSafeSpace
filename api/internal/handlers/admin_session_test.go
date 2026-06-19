@@ -16,9 +16,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/lenaxia/llmsafespaces/api/internal/middleware"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/eventbroker"
-	k8smocks "github.com/lenaxia/llmsafespaces/mocks/kubernetes"
+	"github.com/lenaxia/llmsafespace/api/internal/middleware"
+	"github.com/lenaxia/llmsafespace/api/internal/services/eventbroker"
+	k8smocks "github.com/lenaxia/llmsafespace/mocks/kubernetes"
 )
 
 func newAdminSessionHandlerForTest(t *testing.T, proxy *ProxyHandler, db *sql.DB) *AdminSessionHandler {

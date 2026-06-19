@@ -12,10 +12,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
-	"github.com/lenaxia/llmsafespaces/api/internal/interfaces"
-	apilogger "github.com/lenaxia/llmsafespaces/api/internal/logger"
-	imocks "github.com/lenaxia/llmsafespaces/api/internal/mocks"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
+	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
+	apilogger "github.com/lenaxia/llmsafespace/api/internal/logger"
+	imocks "github.com/lenaxia/llmsafespace/api/internal/mocks"
+	"github.com/lenaxia/llmsafespace/pkg/types"
 )
 
 // mockServices is a minimal implementation of interfaces.Services for router tests.
