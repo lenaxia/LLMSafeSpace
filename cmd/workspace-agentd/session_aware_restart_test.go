@@ -294,6 +294,71 @@ func TestSessionAwareRestartDecision_NilTracker_NilLister_RestartsImmediately(t 
 	assert.Equal(t, 1, proc.restartCount())
 }
 
+// TestSessionAwareRestartDecision_FallbackDefaults_ZeroValues_UseDefaults verifies
+// the defensive fallbacks: maxDefer <= 0 and pollInterval <= 0 must fall back to
+// their defaults (defaultMaxDefer / restartIdleCheckInterval) rather than
+// disabling the mechanism or crashing. We cannot observe the 2h maxDefer
+// directly in a test, so we assert the observable contract: a busy session
+// DEFERS (does not immediately restart, which would happen if maxDefer were 0
+// or negative), and once it goes idle the restart fires via the default poll
+// interval (proving pollInterval=0 fell back to 5s, not infinity).
+func TestSessionAwareRestartDecision_FallbackDefaults_ZeroValues_UseDefaults(t *testing.T) {
+	tracker := newSessionStatusTracker()
+	tracker.set("ses_1", "busy")
+
+	proc := &mockManagedProcess{}
+	// maxDefer=0 and pollInterval=0 — both must fall back to their defaults.
+	decided := makeSessionAwareRestartDecision(context.Background(), proc, tracker, 0, 0, nil, nil)
+
+	assert.False(t, decided, "busy session must DEFER even with zero maxDefer/pollInterval (fallbacks active)")
+	assert.Equal(t, 0, proc.restartCount(),
+		"restart must not fire immediately — maxDefer=0 must not mean 'force now'")
+
+	// Session goes idle — restart must fire via the default poll interval (5s),
+	// proving pollInterval=0 fell back. Within 2x the default poll is generous.
+	tracker.set("ses_1", "idle")
+	require.Eventually(t, func() bool {
+		return proc.restartCount() == 1
+	}, 15*time.Second, 10*time.Millisecond,
+		"restart must fire via the default poll interval after idle — pollInterval=0 must fall back to restartIdleCheckInterval")
+}
+
+// TestSessionAwareRestartDecision_C2a_PruneDuringDeferredPollTick verifies the
+// PRIMARY C2a path: a session that is genuinely busy at decision time (so the
+// restart DEFERS), then goes stale (removed from opencode's live session list)
+// WHILE the deferred goroutine is polling. The ticker's pruneFromLister must
+// remove the stale entry so the deferred restart fires instead of waiting
+// forever for a session that no longer exists.
+//
+// Distinct from TestSessionAwareRestartDecision_C2a_PruneClearsStaleBusy, which
+// only exercises the initial prune (before the deferral decision) — that path
+// prunes immediately and never reaches the deferred goroutine's ticker.
+func TestSessionAwareRestartDecision_C2a_PruneDuringDeferredPollTick(t *testing.T) {
+	tracker := newSessionStatusTracker()
+	tracker.set("ses_stale", "busy")
+
+	// listerCalls tracks how many times the lister was invoked. On the first
+	// call (decision-time prune) it reports ses_stale alive so the restart
+	// defers. On subsequent calls (ticker prune) it reports ses_stale gone
+	// (pruned away by opencode respawn), so prune removes it and the restart
+	// fires.
+	var listerCalls atomic.Int32
+	lister := func(ctx context.Context) []string {
+		if listerCalls.Add(1) == 1 {
+			return []string{"ses_stale"} // alive at decision time → defer
+		}
+		return []string{} // gone on poll → prune → restart
+	}
+
+	proc := &mockManagedProcess{}
+	_ = makeSessionAwareRestartDecision(context.Background(), proc, tracker, 15*time.Millisecond, time.Hour, lister, nil)
+
+	require.Eventually(t, func() bool {
+		return proc.restartCount() == 1
+	}, 500*time.Millisecond, 5*time.Millisecond,
+		"stale-busy entry must be pruned on the deferred poll tick so the restart fires")
+}
+
 // ---------------------------------------------------------------------------
 // H1a: deferred-restart goroutine is cancellable via context (shutdown)
 // ---------------------------------------------------------------------------
@@ -385,13 +450,9 @@ func TestSessionAwareRestartDecision_H1c_WaitGroupTracked(t *testing.T) {
 
 type mockManagedProcess struct {
 	restarts atomic.Int32
-	done     chan struct{}
 }
 
 func (m *mockManagedProcess) restart() {
-	if m.done == nil {
-		m.done = make(chan struct{})
-	}
 	m.restarts.Add(1)
 }
 

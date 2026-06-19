@@ -530,6 +530,12 @@ type reloadSecretsDeps struct {
 	// behavior when the tracker is empty (C2b). May be nil (the restart
 	// logic falls back to immediate-restart-on-empty-tracker).
 	Lister sessionLister
+
+	// RestartReasonMarkerPath overrides where the restart-reason marker is
+	// written. Empty falls back to the package const RestartReasonMarkerPath
+	// (production). Tests inject a path under t.TempDir() (or a sabotaged
+	// path) to assert marker-write behavior without polluting /workspace.
+	RestartReasonMarkerPath string
 }
 
 // reloadSecretsHandler returns the HTTP handler for /v1/reload-secrets.
@@ -542,6 +548,10 @@ func reloadSecretsHandler(cfg materializeConfig, deps reloadSecretsDeps) http.Ha
 		bgCtx = context.Background()
 	}
 	lister := deps.Lister
+	markerPath := deps.RestartReasonMarkerPath
+	if markerPath == "" {
+		markerPath = RestartReasonMarkerPath
+	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -656,19 +666,21 @@ func reloadSecretsHandler(cfg materializeConfig, deps reloadSecretsDeps) http.Ha
 		restarted := false
 		if proc != nil && shouldRestart(batch) {
 			if reason, names := classifySecretRestartReason(batch); reason != "" {
-				if err := writeRestartReasonMarker(RestartReasonMarkerPath, reason, names); err != nil {
+				if err := writeRestartReasonMarker(markerPath, reason, names); err != nil {
 					log.Error("failed to write restart-reason marker", zap.Error(err))
 				} else {
 					logRestartReasonAtWrite(reason, names, log.Core())
-					// H2: record the restart in the Prometheus counter so ops
-					// dashboards surface credential-change restarts. Recorded at
-					// decision time (alongside the marker write), not at actual
-					// restart time — the marker and metric both record "a restart
-					// was requested", which is the operationally useful signal.
-					// The reason label is the short metric form (env_secrets /
-					// api_key) matching the help text and the crash/oom reasons.
-					pkgOpsMetrics.RecordRestart(workspaceIDFromEnv(), metricRestartReason(reason))
 				}
+				// H2: record the restart in the Prometheus counter so ops
+				// dashboards surface credential-change restarts. Recorded
+				// UNCONDITIONALLY (after the marker/log block), not gated on
+				// marker-write success — a full/read-only PVC must not suppress
+				// the metric. This matches the crash path (main.go) and the OOM
+				// path (oom_detection.go), which also record the metric
+				// regardless of marker outcome. The reason label is the short
+				// metric form (env_secrets / api_key) matching the help text and
+				// the crash/oom reasons.
+				pkgOpsMetrics.RecordRestart(workspaceIDFromEnv(), metricRestartReason(reason))
 			}
 			restarted = makeSessionAwareRestartDecision(bgCtx, proc, tracker, restartIdleCheckInterval, defaultMaxDefer, lister, deps.BgWg)
 		}

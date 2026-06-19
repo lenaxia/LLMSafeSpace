@@ -1008,3 +1008,54 @@ func TestMetricRestartReason_MapsMarkerReasonToMetricLabel(t *testing.T) {
 	assert.Equal(t, "crash", metricRestartReason("crash"), "unknown reasons pass through unchanged")
 	assert.Equal(t, "oom", metricRestartReason("oom"))
 }
+
+// TestReloadSecretsHandler_H2_MetricRecordedEvenWhenMarkerWriteFails verifies
+// the H2 fix: RecordRestart is called UNCONDITIONALLY (after the marker/log
+// block), not gated on marker-write success. Pre-fix, a full/read-only PVC
+// would suppress workspace_restarts_total for the most common restart type
+// (credential change) even though the restart still proceeded. This test points
+// the marker path at an unwritable location (a path whose parent is a file,
+// not a directory) so writeRestartReasonMarker fails, then asserts the counter
+// still increments.
+func TestReloadSecretsHandler_H2_MetricRecordedEvenWhenMarkerWriteFails(t *testing.T) {
+	dir := t.TempDir()
+	cfg := materializeConfig{
+		secretsBaseDir:  filepath.Join(dir, "secrets"),
+		sshDir:          filepath.Join(dir, ".ssh"),
+		agentConfigPath: filepath.Join(dir, "agent-config.json"),
+		secretsEnvPath:  filepath.Join(dir, "secrets-env"),
+		gitCredsPath:    filepath.Join(dir, ".git-credentials"),
+		home:            dir,
+	}
+
+	t.Setenv("WORKSPACE_ID", "ws-h2-markerfail")
+
+	// Sabotage the marker write: create a regular file, then set the marker
+	// path INSIDE it. writeRestartReasonMarker does MkdirAll(filepath.Dir(path))
+	// which fails because the parent is a file → the marker write errors out.
+	blockingFile := filepath.Join(dir, "blocker")
+	require.NoError(t, os.WriteFile(blockingFile, []byte("x"), 0o600))
+	sabotagedMarkerPath := filepath.Join(blockingFile, "marker")
+
+	tracker := newSessionStatusTracker()
+	tracker.set("ses_idle", "idle")
+	proc := &mockManagedProcess{}
+
+	before := testutil.ToFloat64(pkgOpsMetrics.restartsTotal.WithLabelValues("ws-h2-markerfail", "env_secrets"))
+
+	body := `[{"type":"env-secret","name":"x","metadata":{"var_name":"X"},"plaintext":"v"}]`
+	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	reloadSecretsHandler(cfg, reloadSecretsDeps{
+		Proc:                    proc,
+		Tracker:                 tracker,
+		RestartReasonMarkerPath: sabotagedMarkerPath,
+	})(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	after := testutil.ToFloat64(pkgOpsMetrics.restartsTotal.WithLabelValues("ws-h2-markerfail", "env_secrets"))
+	assert.Equal(t, before+1, after,
+		"workspace_restarts_total must increment even when the marker write fails (H2 unconditional recording)")
+	assert.Equal(t, 1, proc.restartCount(),
+		"the restart must still proceed despite the marker write failure")
+}
