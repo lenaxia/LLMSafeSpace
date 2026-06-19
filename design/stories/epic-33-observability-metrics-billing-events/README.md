@@ -1,6 +1,6 @@
 # Epic 33: Observability, Metering, and Billing Infrastructure
 
-**Status:** Planning  
+**Status:** Planning — revalidated 2026-06-19 (see Coexistence + WAL Correction sections)
 **Created:** 2026-06-06  
 **Depends On:** Epic 24 (Self-Healing Lifecycle), Epic 26 (Client-Proxied Inference), Epic 28 (Unified Event Stream)  
 **Priority:** High  
@@ -1200,38 +1200,50 @@ remote_write data from gateway. `go test ./cmd/events-gateway/...` passes.
 
 ---
 
-### US-33.6 — Postgres event table migrations
+### US-33.6 — Postgres event table migration
 
-Migration `000018_compute_periods.up.sql` — `compute_periods` table, indexes,
-idempotency constraint.  
-Migration `000019_inference_events.up.sql` — `inference_events` table, indexes,
-session_id unique constraint.  
+~~Migration `000018_compute_periods.up.sql`~~ — **DROPPED.** The gateway writes to
+the existing `usage_events` table (Epic 12, migration 000024). No `compute_periods`
+table is created.
+
+~~Migration `000019_inference_events.up.sql`~~ — **DROPPED.** Same reason —
+inference events go to `usage_events` with `event_type='llm_tokens'`.
+
 Migration `000020_workspace_events.up.sql` — `workspace_events` and
-`workspace_events_dlq` tables, indexes, severity constraint.  
-All three synced to `charts/llmsafespace/migrations/`.
+`workspace_events_dlq` tables, indexes, severity constraint.
+Synced to `charts/llmsafespaces/migrations/`.
 
-**Definition of done:** `make migrate-up` and `make migrate-down` clean. All indexes
-and constraints present. Billing queries in data model section execute correctly.
+**Definition of done:** `make migrate-up` and `make migrate-down` clean. `workspace_events`
+table and indexes present. `usage_events` (already exists) is the billing table the gateway
+writes `compute_seconds` and `llm_tokens` events into — no schema change needed there.
 
 ---
 
 ### US-33.7 — agentd WAL + GatewayClient with Tier 1 durability
 
-`cmd/workspace-agentd/events/wal.go` — file-per-entry WAL in `/var/lib/agentd/wal/`.
+`cmd/workspace-agentd/events/wal.go` — file-per-entry WAL at `/tmp/agentd-wal/`
+(on the existing PVC `tmp` subPath — NOT a new emptyDir). The PVC persists across
+pod crashes, OOM kills, evictions, and suspend/resume. WAL size is negligible
+(median: 0–4 KB; worst-case 1-hour gateway outage on a chatty workspace: ~84 KB;
+see WAL Correction section for the full analysis).
+
 Atomic rename on write. Immediate delete on confirm. `maxPending` cap with
-`ErrWALFull`. Self-metrics (`llmsafespace_agentd_wal_pending_entries`).
+`ErrWALFull`. Self-metrics (`llmsafespaces_agentd_wal_pending_entries`).
+
+The `workspace-dirs` init container creates `/tmp/agentd-wal/` at pod start
+(alongside the existing `workspace/`, `home/`, `tmp/` directories).
 
 Update `GatewayClient` to WAL-protect Tier 1 events: Append → POST → Confirm.
 On gateway 503: WAL entry persists, replayed on next `Start()`. On WAL full: fallback
 to direct POST, log ERROR.
 
-`emptyDir` volume mount at `/var/lib/agentd/` added to pod spec by controller
-(`pod_builder.go`).
+**No new volume mount needed** — `/tmp` is already PVC-mounted
+(`pod_builder.go:132`: `{Name: "workspace", MountPath: "/tmp", SubPath: "tmp"}`).
 
 **Definition of done:** Simulated gateway outage → WAL accumulates entries → gateway
 recovers → WAL replays → entries confirmed → WAL empty. Crash-and-restart test:
-unconfirmed WAL entries replayed on `Start()`. WAL never exceeds `maxPending`.
-`go test ./cmd/workspace-agentd/events/...` passes.
+unconfirmed WAL entries replayed on `Start()` (WAL survives because it's on PVC).
+WAL never exceeds `maxPending`. `go test ./cmd/workspace-agentd/events/...` passes.
 
 ---
 
@@ -1353,7 +1365,7 @@ Phase 4 (parallel): US-33.8, US-33.9, US-33.12
 
 | Weakness | Severity | Mitigation | Status |
 |---|---|---|---|
-| WAL on emptyDir lost on pod deletion | Low | Controller gap-closer closes open periods; best end time from pod DeletionTimestamp | Designed in US-33.10 |
+| ~~WAL on emptyDir lost on pod deletion~~ | ~~Low~~ | **Resolved (see WAL correction below).** WAL moved to PVC `/tmp/agentd-wal/` — survives pod crashes, OOM, eviction, suspend/resume. Only lost on PVC deletion (workspace deletion + retention expiry), at which point billing data is irrelevant. | **Resolved** |
 | Controller gap-closer race (slow gateway → false stale) | Medium | Verify pod is actually gone before closing period | Designed in US-33.10 |
 | Gateway SPOF for per-workspace VM metrics | Low | 2-3 replicas; cAdvisor covers fleet-level fallback | Architectural |
 | Dual-write inconsistency (VM vs. Postgres) | Low | Idempotent operations on both sides; replay-safe | Architectural |
@@ -1361,15 +1373,155 @@ Phase 4 (parallel): US-33.8, US-33.9, US-33.12
 
 ---
 
-## Relationship to Epic 12
+## Coexistence with Epic 12 (Usage Metering & Billing) — **SHIPPED**
 
-Epic 12 (Usage Metering & Billing) designs a generalised `usage_events` table and
-billing provider integration. Epic 33 is the foundation: correct ground-truth metering,
-exact billing period boundaries, per-session inference records. Epic 12 builds on top.
+> **Added 2026-06-19 (design revalidation).** This section supersedes the original
+> "Relationship to Epic 12" section, which was written on 2026-06-06 when Epic 12
+> had not yet shipped. Epic 12 landed on 2026-06-13 (commit `7688a8a2`). The
+> original section spoke in future tense about infrastructure that is now live.
 
-`compute_periods` maps to Epic 12's `compute_seconds` event type.
-`inference_events` maps to Epic 12's `llm_tokens` event type.
-The transition is additive. Epic 33 does not need to be replaced when Epic 12 ships.
+Epic 12 is **built and in production**. It provides:
+
+- `usage_events` table (migration 000024) — append-only, idempotent, owner-aware
+  (`user`/`org`), with `event_type` CHECK covering `compute_seconds`, `llm_tokens`,
+  `llm_request`, `storage_bytes`, `api_call`.
+- `metering.Service` — async batch writer with DLQ, idempotency keys, quota
+  enforcement. Wired into the live request path (`app.go` → proxy middleware +
+  SSE inference callback).
+- `/api/v1/usage` + `/api/v1/admin/billing` endpoints — read from `usage_events`.
+- Stripe export pipeline — `BillingExporter` reads `usage_events` and reports to
+  Stripe Metered Billing via `pkg/billing/stripe_provider.go`.
+- Compute reconciliation — `reconcileComputeTime` runs every 5 minutes in the API
+  server, emitting `compute_seconds` events for Active workspaces based on CRD
+  watch (`workspace.Status.Phase`).
+
+### Why Epic 33 is still needed alongside Epic 12
+
+Epic 12's compute metering is **controller-phase-based** (the API server's CRD
+watch view), not **agentd-based** (the pod's ground-truth Ready state). This
+creates three structural precision gaps that Epic 33 closes:
+
+1. **5-minute reconciliation window.** `reconcileComputeTime` only processes
+   workspaces that are `Active` at reconciliation time. A workspace that starts
+   and stops between two 5-minute ticks produces zero compute events — the
+   `activePhases()` map never includes it. Verified: `reconcileComputeTime`
+   skips `phase != "Active"` (metering.go:823).
+
+2. **15-second bucketing imprecision.** Epic 12 emits `compute_seconds` in
+   15-second aligned buckets (`emitComputeBuckets`). Epic 33's event-boundary
+   design computes `ended_at - started_at` with millisecond precision. A
+   2-minute workspace produces 8 bucket records in Epic 12 vs 2 exact-boundary
+   events in Epic 33.
+
+3. **No agentd-sourced lifecycle events.** The API server learns about phase
+   transitions from the controller's CRD updates, which lag the actual pod
+   state by seconds to minutes. agentd knows the instant the pod is Ready.
+
+### Resolution: Epic 33 replaces Epic 12's compute reconciliation, not its table
+
+The clean coexistence model:
+
+| Concern | Epic 12 (current) | Epic 33 (after) | Migration |
+|---------|-------------------|-----------------|-----------|
+| **Compute billing source** | `reconcileComputeTime` (CRD-watch, 5-min, 15s buckets) → `usage_events` | `compute_periods` (agentd push, exact boundaries) | **Deprecate `reconcileComputeTime`.** The gateway translates `pod_ready`/`pod_terminated` events into `compute_seconds` events in `usage_events` (same table, same schema, `source='agentd'`). The `/api/v1/usage` endpoint and Stripe exporter read `usage_events` unchanged. |
+| **Inference billing source** | SSE `onInference` callback → `usage_events` (`llm_tokens`) | agentd `session.updated` → gateway → `usage_events` (`llm_tokens`) | **Move inference emission from API server to agentd.** The gateway writes to the same `usage_events` table. The API server's SSE callback is removed (agentd sees the same stream at the source). |
+| **Billing tables** | `usage_events` (single table) | `usage_events` (unchanged) + `workspace_events` (operational log) | `compute_periods` and `inference_events` **are NOT created.** The gateway writes directly to `usage_events`. `workspace_events` is the new operational event log (not billing-critical). |
+| **Stripe export** | `BillingExporter` reads `usage_events` | Unchanged — same table, same exporter | No change. |
+| **DLQ** | `usage_events_dlq` | Unchanged — same table | No change. |
+| **Gap reconciliation** | `reconcileComputeTime` (5-min, CRD-watch) | Controller `reconcileStaleComputePeriods` (60s, pod-liveness) → emits `compute_seconds` to `usage_events` via gateway | Replace the API server's reconciliation with the controller's (more accurate — verifies pod is actually gone). |
+
+**Net effect:** Epic 33 ships the observability stack (VictoriaMetrics, Grafana,
+vmagent), the `pkg/events` package, the events-gateway, and agentd push
+(PodStateTracker, WAL, GatewayClient). The gateway writes to the **existing**
+`usage_events` table — no new billing tables. `compute_periods` and
+`inference_events` from the original design are **dropped** — they duplicated
+`usage_events` with a different shape. The API server's `reconcileComputeTime`
+and SSE `onInference` callback are **deprecated** (replaced by higher-precision
+agentd-sourced events via the gateway).
+
+### What Epic 33 keeps from the original design (unchanged)
+
+- agentd as source of truth for pod state (Decision 1)
+- Event-boundary billing precision (Decision 2)
+- One push target for agentd (Decision 3)
+- Controller as fallback only (Decision 4)
+- The WAL for Tier 1 durability (US-33.7) — **see WAL correction below**
+- The events-gateway service (US-33.5)
+- The `pkg/events` package (US-33.4)
+- VictoriaMetrics + Grafana + vmagent + dashboards + alerts (US-33.1–33.3, 33.12)
+- All 16 alerting rules
+- Cardinality fixes (US-33.1)
+
+---
+
+## WAL Correction: PVC, not emptyDir (2026-06-19 revalidation)
+
+The original design (US-33.7) proposed the WAL on a new emptyDir volume at
+`/var/lib/agentd/wal/`. This was a self-inflicted limitation — the workspace pod
+already has a PVC-backed volume, and `/tmp` is a PVC subPath (`pod_builder.go:132`:
+`{Name: "workspace", MountPath: "/tmp", SubPath: "tmp"}`).
+
+**Correction: the WAL goes at `/tmp/agentd-wal/`** (on the existing PVC `tmp`
+subPath). No new volume mount needed — `/tmp` is already PVC-mounted and persists
+across pod crashes, OOM kills, evictions, and suspend/resume cycles.
+
+**WAL size on PVC is negligible:**
+
+Only Tier 1 events (state transitions + session boundaries) go to the WAL. Tier 2
+events and resource samples are best-effort. The WAL entry types that agentd
+produces are:
+
+- `pod_ready`, `pod_suspended`, `pod_resumed`, `pod_terminated` — one each per
+  pod lifecycle transition
+- `session_completed`, `session_interrupted` — one per inference session
+
+(Controller events — `workspace_failed`, `workspace_oom_killed`, etc. — go directly
+to the gateway; they don't pass through agentd's WAL.)
+
+| Scenario | WAL entries | JSON size | ext4 blocks (4KB each) |
+|----------|-------------|-----------|------------------------|
+| **Median (gateway healthy)** | 0–1 (confirmed within ms) | ~0–250 bytes | ~0–4 KB |
+| **Gateway down 1 hour, idle workspace** | 0–1 (no transitions) | ~0 bytes | ~0 KB |
+| **Gateway down 1 hour, chatty workspace** | ~21 (1 ready + 5–20 session_completed) | ~5 KB | ~84 KB |
+| **maxPending cap (10000)** | 10000 | ~2.5 MB | ~40 MB |
+
+The default PVC is 15 Gi. The worst realistic case (gateway down 1 hour, chatty
+workspace) consumes <100 KB — **0.001% of the PVC**. Even the pathological
+`maxPending` cap (10000 sessions during a single outage) consumes ~40 MB —
+**0.3% of the PVC**. The WAL does not meaningfully consume user space.
+
+**Updated US-33.7:** the WAL directory is `/tmp/agentd-wal/` (PVC `tmp` subPath),
+NOT `/var/lib/agentd/wal/` (new emptyDir). No new volume mount in the pod spec —
+the existing `/tmp` mount already covers it. The `workspace-dirs` init container
+(migration 000036's `pod_builder.go`) creates the PVC subPath directories; it
+should also create `/tmp/agentd-wal/` at pod start.
+
+---
+
+## Revalidation Summary (2026-06-19)
+
+Full design review against the as-built codebase. 8 assumptions traced to root:
+
+| # | Assumption | Verdict |
+|---|-----------|---------|
+| A1 | CRD watch (`workspace.Status.Phase`) is the source of compute metering | **Confirmed** — chain: `reconcileComputeTime` → `activePhases()` → `watcher.knownPhases` → CRD watch event → controller-written `Status.Phase` |
+| A2 | `reconcileComputeTime` misses short-lived workspaces | **Confirmed** — 5-min interval, only processes Active-at-tick workspaces, skips `phase != "Active"` |
+| A3 | API server has full DB credentials, no scoped role | **Confirmed** — single `llmsafespaces` user, no scoped roles in any migration |
+| A4 | WAL on emptyDir loses data on pod deletion | **Corrected** — PVC is available; WAL moved to `/tmp/agentd-wal/` (PVC `tmp` subPath), survives all pod-level failures |
+| A5 | agentd HTTP client connection reuse → single gateway replica | **Confirmed** — Go default Transport + K8s per-connection LB + Postgres row-lock serialization |
+| A6 | Resource samples (CPU/mem/disk) are NOT billing inputs | **Confirmed** — billing uses phase transitions (compute) + SSE token counts (inference) + PVC allocation size (storage) |
+| A7 | Design predates Epic 12 implementation | **Confirmed** — Epic 33: Jun 6; Epic 12: Jun 13. Original "Relationship to Epic 12" section spoke in future tense about shipped code |
+| A8 | `compute_periods`/`inference_events` duplicate `usage_events` | **Confirmed** — gateway now writes to `usage_events` directly; `compute_periods`/`inference_events` tables dropped from the design |
+
+**Two changes to the original design:**
+
+1. **Coexistence with Epic 12** (above) — `compute_periods` and `inference_events`
+   tables are dropped. The gateway writes to the existing `usage_events` table.
+   `reconcileComputeTime` and the SSE `onInference` callback are deprecated.
+2. **WAL on PVC** (above) — WAL goes at `/tmp/agentd-wal/` on the existing PVC,
+   not a new emptyDir. Eliminates the "Known Weakness" without architecture change.
+
+**Everything else in the original design is correct and unchanged.**
 
 ---
 
@@ -1379,8 +1531,8 @@ The transition is additive. Epic 33 does not need to be replaced when Epic 12 sh
 - VictoriaMetrics cluster mode — single-node sufficient to ~100k workspaces
 - Distributed tracing — future epic
 - Log aggregation (Loki/ELK) — separate concern
-- Billing provider integration — Epic 12
-- Quota enforcement — Epic 12
-- Customer-facing usage API endpoints — Epic 12
+- ~~Billing provider integration — Epic 12~~ (Epic 12 has shipped — see Coexistence section above)
+- ~~Quota enforcement — Epic 12~~ (Epic 12 has shipped)
+- ~~Customer-facing usage API endpoints — Epic 12~~ (Epic 12 has shipped)
 - Per-second cAdvisor scraping — agentd push covers per-workspace second-granularity;
   cAdvisor at 15s is sufficient for fleet-level operational views
