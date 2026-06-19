@@ -299,7 +299,7 @@ func TestSessionAwareRestartDecision_NilTracker_NilLister_RestartsImmediately(t 
 // ---------------------------------------------------------------------------
 
 // TestSessionAwareRestartDecision_H1a_ContextCancel_StopsGoroutine verifies
-// that cancelling the context (agentd shutdown) stops the deferred-restart
+// that canceling the context (agentd shutdown) stops the deferred-restart
 // goroutine. Pre-fix, the goroutine had no context and polled forever.
 func TestSessionAwareRestartDecision_H1a_ContextCancel_StopsGoroutine(t *testing.T) {
 	tracker := newSessionStatusTracker()
@@ -320,7 +320,7 @@ func TestSessionAwareRestartDecision_H1a_ContextCancel_StopsGoroutine(t *testing
 	tracker.set("ses_1", "idle")
 	time.Sleep(80 * time.Millisecond)
 	assert.Equal(t, 0, proc.restartCount(),
-		"cancelled deferred-restart goroutine must not fire a restart after shutdown")
+		"canceled deferred-restart goroutine must not fire a restart after shutdown")
 }
 
 // ---------------------------------------------------------------------------
@@ -378,13 +378,6 @@ func TestSessionAwareRestartDecision_H1c_WaitGroupTracked(t *testing.T) {
 		t.Fatal("bgWg.Wait() did not return after context cancel — goroutine not tracked")
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Helper: test lister variants
-// ---------------------------------------------------------------------------
-
-// unreachableLister is a sessionLister that simulates opencode being down.
-func unreachableLister(ctx context.Context) []string { return nil }
 
 // ---------------------------------------------------------------------------
 // mockManagedProcess — test double for *managedProcess

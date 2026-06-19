@@ -149,7 +149,7 @@ func trackerHasBusyOrUnknown(ctx context.Context, tracker *sessionStatusTracker,
 // (immediately or via a deferred goroutine that has since fired), false if
 // the restart was deferred to a background goroutine.
 //
-// Behaviour:
+// Behavior:
 //
 //   - If proc is nil, returns true without doing anything (test/no-op path).
 //   - If the tracker shows all sessions idle (or opencode is unreachable with
@@ -161,7 +161,7 @@ func trackerHasBusyOrUnknown(ctx context.Context, tracker *sessionStatusTracker,
 //
 //   - Polls every pollInterval, pruning stale entries via lister (C2a) and
 //     re-checking busy state.
-//   - Selects on ctx.Done() so it is cancelled at agentd shutdown (H1a).
+//   - Selects on ctx.Done() so it is canceled at agentd shutdown (H1a).
 //   - Force-restarts after maxDefer (H1b) so credentials eventually apply
 //     even if sessions stay busy forever (stuck tool, infinite loop).
 //   - Is tracked by bgWg (H1c) so shutdown waits for it before proc.stop().
@@ -217,7 +217,7 @@ func makeSessionAwareRestartDecision(
 		for {
 			select {
 			case <-ctx.Done():
-				log.Info("session-aware restart: deferred restart cancelled by shutdown")
+				log.Info("session-aware restart: deferred restart canceled by shutdown")
 				return
 			case <-deadline.C:
 				log.Warn("session-aware restart: max-defer elapsed, force-restarting to apply credential change",
@@ -515,7 +515,7 @@ type reloadSecretsDeps struct {
 	Tracker *sessionStatusTracker
 
 	// BgCtx is the agentd background-goroutine context. The deferred-restart
-	// goroutine selects on it so it is cancelled at shutdown (H1a). When
+	// goroutine selects on it so it is canceled at shutdown (H1a). When
 	// nil, context.Background() is used (goroutine lives until restart fires
 	// or maxDefer elapses — tests only).
 	BgCtx context.Context
@@ -527,7 +527,7 @@ type reloadSecretsDeps struct {
 
 	// Lister probes opencode's /session endpoint for the live session list.
 	// Used to prune stale busy entries (C2a) and to decide cold-start
-	// behaviour when the tracker is empty (C2b). May be nil (the restart
+	// behavior when the tracker is empty (C2b). May be nil (the restart
 	// logic falls back to immediate-restart-on-empty-tracker).
 	Lister sessionLister
 }
@@ -555,6 +555,11 @@ func reloadSecretsHandler(cfg materializeConfig, deps reloadSecretsDeps) http.Ha
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid json: " + err.Error()})
 			return
 		}
+		// Capture the request context once and propagate it explicitly to the
+		// downstream calls that need it. Threading a local ctx (rather than
+		// repeated r.Context() calls) keeps the context lineage obvious to
+		// readers and to the contextcheck linter.
+		reqCtx := r.Context()
 
 		// Serialize the materialize → enrich → flush → re-merge sequence.
 		// Concurrent reloads (from two API replicas or parallel credential binds)
@@ -583,7 +588,7 @@ func reloadSecretsHandler(cfg materializeConfig, deps reloadSecretsDeps) http.Ha
 		// the boot-time materialize path). On reload, any cached model list is
 		// reused so this is typically instant.
 		reloadHTTPClient := &http.Client{Timeout: 15 * time.Second}
-		m.EnrichProviders(enrichProviderModels(r.Context(), cfg.enricherCacheDir, reloadHTTPClient))
+		m.EnrichProviders(enrichProviderModels(reqCtx, cfg.enricherCacheDir, reloadHTTPClient))
 
 		// Flush staged llm-provider secrets to AgentConfigPath.
 		// This MUST succeed before we notify the agent of config changes.
@@ -639,7 +644,7 @@ func reloadSecretsHandler(cfg materializeConfig, deps reloadSecretsDeps) http.Ha
 			staged := m.StagedProviders()
 			if len(staged) > 0 {
 				oc := opencode.NewClient(fmt.Sprintf("http://localhost:%d", agentd.AgentPort), opencodePassword, log)
-				if err := oc.StageCredentials(r.Context(), staged); err != nil {
+				if err := oc.StageCredentials(reqCtx, staged); err != nil {
 					log.Warn("reload-secrets: opencode stage failed; credentials remain in "+
 						"auth.json on disk but in-memory provider state will not pick them up "+
 						"until the next explicit reload or pod restart",

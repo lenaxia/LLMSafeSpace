@@ -1034,7 +1034,7 @@ func main() {
 	// User endpoints — user port.
 	// The session lister probes opencode's /session endpoint to (a) prune
 	// stale busy entries from the tracker when opencode dies mid-busy and
-	// is respawned (C2a), and (b) decide cold-start behaviour when the
+	// is respawned (C2a), and (b) decide cold-start behavior when the
 	// tracker is empty after an agentd restart (C2b). It closes over the
 	// production OpenCodeClient; tests inject a stub.
 	liveSessions := func(ctx context.Context) []string {
