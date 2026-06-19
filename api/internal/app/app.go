@@ -443,6 +443,16 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		usageHandler.SetDB(dbSvc.DB)
 	}
 
+	// US-44.11: admin-only session recovery (force-abort stuck sessions).
+	// Wired with the same *sql.DB handle as the usage handler so the audit
+	// log INSERT shares the connection pool; nil DB is handled gracefully.
+	var adminSessionHandler *handlers.AdminSessionHandler
+	if dbSvc, ok := svc.Database.(*database.Service); ok {
+		adminSessionHandler = handlers.NewAdminSessionHandler(proxyHandler, dbSvc.DB, log)
+	} else {
+		adminSessionHandler = handlers.NewAdminSessionHandler(proxyHandler, nil, log)
+	}
+
 	var checkoutProvider billing.CheckoutProvider
 	var webhookHandler *handlers.StripeWebhookHandler
 	if cfg.Billing.SecretKey != "" {
@@ -570,6 +580,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		PolicyHandler:                   policyHandler,
 		AuditHandler:                    auditHandler,
 		RelayAdminHandler:               relayAdminHandler,
+		AdminSessionHandler:             adminSessionHandler,
 		CookieName:                      cfg.Auth.CookieName,
 	})
 

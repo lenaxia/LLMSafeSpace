@@ -92,6 +92,11 @@ type RouterConfig struct {
 	// RelayAdminHandler handles relay admin setup + status endpoints (optional)
 	RelayAdminHandler *handlers.RelayAdminHandler
 
+	// AdminSessionHandler handles admin-only session recovery endpoints (optional).
+	// US-44.11: force-abort a workspace session stuck in activeSess after the
+	// workspace pod was deleted/unreachable.
+	AdminSessionHandler *handlers.AdminSessionHandler
+
 	CookieName string
 }
 
@@ -314,6 +319,14 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		relayAdmin.POST("/rotate/:id", cfg.RelayAdminHandler.Rotate)
 		relayAdmin.POST("/pause", cfg.RelayAdminHandler.Pause)
 		relayAdmin.POST("/resume", cfg.RelayAdminHandler.Resume)
+	}
+
+	// Admin session recovery routes (US-44.11)
+	if cfg.AdminSessionHandler != nil {
+		adminSessions := router.Group("/api/v1/admin/workspaces/:workspaceId/sessions")
+		adminSessions.Use(services.GetAuth().AuthMiddleware())
+		adminSessions.Use(middleware.AdminGuard())
+		adminSessions.POST("/:sessionId/force-abort", cfg.AdminSessionHandler.ForceAbortSession)
 	}
 
 	// Secret management routes (Epic 10)
