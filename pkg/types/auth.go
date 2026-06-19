@@ -7,13 +7,13 @@ import "time"
 
 // User represents a user
 type User struct {
-	ID           string    `json:"id" db:"id"`
-	Username     string    `json:"username" db:"username"`
-	Email        string    `json:"email" db:"email"`
-	PasswordHash string    `json:"-" db:"password_hash"`
-	CreatedAt    time.Time `json:"createdAt" db:"created_at"`
-	UpdatedAt    time.Time `json:"updatedAt" db:"updated_at"`
-	Active       bool      `json:"active" db:"active"`
+	ID           string     `json:"id" db:"id"`
+	Username     string     `json:"username" db:"username"`
+	Email        string     `json:"email" db:"email"`
+	PasswordHash string     `json:"-" db:"password_hash"`
+	CreatedAt    time.Time  `json:"createdAt" db:"created_at"`
+	UpdatedAt    time.Time  `json:"updatedAt" db:"updated_at"`
+	Active       bool       `json:"active" db:"active"`
 	Role         string     `json:"role" db:"role"`
 	Status       UserStatus `json:"status" db:"status"`
 }
@@ -80,12 +80,12 @@ type APIKey struct {
 // UserUpdates carries the fields that may be changed on a User record.
 // All fields are pointers — nil means "do not update this field".
 type UserUpdates struct {
-	Username     *string    `json:"username,omitempty"`
-	Email        *string    `json:"email,omitempty"`
-	Active       *bool      `json:"active,omitempty"`
-	Role         *string    `json:"role,omitempty"`
+	Username     *string     `json:"username,omitempty"`
+	Email        *string     `json:"email,omitempty"`
+	Active       *bool       `json:"active,omitempty"`
+	Role         *string     `json:"role,omitempty"`
 	Status       *UserStatus `json:"status,omitempty"`
-	PasswordHash *string    `json:"-"`
+	PasswordHash *string     `json:"-"`
 }
 
 // CachedSession is the typed representation of a WebSocket session stored in
