@@ -625,9 +625,24 @@ func reloadSecretsHandler(cfg materializeConfig, deps reloadSecretsDeps) http.Ha
 			return
 		}
 		if formatted != nil && deps.AgentConfigWriter != nil {
-			deps.AgentConfigWriter.setProviders(formatted)
+			if err := deps.AgentConfigWriter.setProviders(formatted); err != nil {
+				reloadMu.Unlock()
+				log.Error("reload-secrets: setProviders failed", zap.Error(err))
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "set providers: " + err.Error()})
+				return
+			}
 			if rbErr := deps.AgentConfigWriter.rebuild(); rbErr != nil {
-				log.Warn("reload-secrets: agent-config writer rebuild failed", zap.Error(rbErr))
+				// C1 regression fix: reset() already deleted agent-config.json.
+				// If rebuild fails (e.g. disk full), the file is ABSENT. Restarting
+				// opencode now would boot with no provider config — silent credential
+				// loss. Abort with 500 (matching the old FlushProviders failure path)
+				// so the running opencode keeps its in-memory config.
+				reloadMu.Unlock()
+				log.Error("reload-secrets: agent-config writer rebuild failed", zap.Error(rbErr))
+				w.WriteHeader(http.StatusInternalServerError)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "agent-config rebuild: " + rbErr.Error()})
+				return
 			}
 		}
 

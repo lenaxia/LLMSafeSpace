@@ -310,21 +310,6 @@ func TestAgentConfigWriter_HasRelay(t *testing.T) {
 	assert.True(t, w.hasRelay(), "relay set after injection")
 }
 
-// TestAgentConfigWriter_GetRelayModels returns the model list for the
-// annotateModels remap logic that checks relay injection state.
-func TestAgentConfigWriter_GetRelayModels(t *testing.T) {
-	dir := t.TempDir()
-	w := newAgentConfigWriter(filepath.Join(dir, "agent-config.json"))
-
-	assert.Nil(t, w.getRelayModels(), "nil before injection")
-
-	models := []relayModel{{ID: "m1", Name: "M1"}, {ID: "m2", Name: "M2"}}
-	w.setRelay("https://relay.example.com/s", models)
-	got := w.getRelayModels()
-	require.NotNil(t, got)
-	assert.Len(t, got, 2)
-}
-
 // TestAgentConfigWriter_ConcurrentRebuild verifies that concurrent
 // Rebuild calls are serialized by the mutex — no data races.
 func TestAgentConfigWriter_ConcurrentRebuild(t *testing.T) {

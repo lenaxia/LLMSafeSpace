@@ -288,6 +288,10 @@ func startRelayInjector(ctx context.Context, cfg relayInjectorConfig) {
 			relayInjectorOutcomes.WithLabelValues("skipped_personal_key").Inc()
 			return
 		}
+		if cfg.AgentConfigWriter == nil {
+			lg.Warn("relay injector: AgentConfigWriter is nil, skipping relay injection")
+			return
+		}
 
 		// Fetch the live free model list from the running opencode.
 		// Retry for up to 30s if the catalog returns no free models — this

@@ -431,22 +431,22 @@ opencode merges config files via recursive deep-merge, last writer wins:
 
 ---
 
-### Writers of agent-config.json (as of 2026-06-08)
+### Writers of agent-config.json (as of 2026-06-19, post-US-46.10)
 
-There are **four** distinct write paths to `agent-config.json`:
+Within the agentd process, there is **one** write path to `agent-config.json`:
 
 | Writer | File | When | Produces |
 |---|---|---|---|
-| `FlushProviders` | `pkg/agentd/secrets/secrets.go:623` | Boot materialize + every `/v1/reload-secrets` | Provider credentials only — no relay config |
-| `applyWorkspaceConfig` | `cmd/workspace-agentd/secrets.go:203` | Boot materialize only (after FlushProviders) | Adds `model` key with `providerID/modelID` form |
-| `startRelayInjector` goroutine | `cmd/workspace-agentd/relay_injector.go:423` | Once per pod lifetime at ~T+7s | Merges `disabled_providers` + `opencode-relay` block |
-| `reloadSecretsHandler` re-merge | `cmd/workspace-agentd/secrets.go:362` | After every FlushProviders in reload handler | Restores relay config after FlushProviders clobbered it |
+| `AgentConfigWriter.Rebuild()` | `cmd/workspace-agentd/agent_config_writer.go` | Every credential reload + relay injection | Complete merged config: providers + model + relay (temp-file + `os.Rename`) |
 
-None of these write paths are atomic with each other. The design relies on:
-1. Boot sequence being strictly ordered (FlushProviders → applyWorkspaceConfig → relay injector fires later)
-2. `reloadMu` mutex in `reloadSecretsHandler` serialising concurrent reload calls
-3. opencode not hot-reloading the config file (so TOCTOU between FlushProviders and re-merge is benign)
-4. `atomic.Pointer[[]relayModel]` in `relay_injector.go` coordinating between the injector goroutine and the reload handler
+The **materialize subcommand** (separate process, runs before agentd) writes directly via `FlushProviders` + `applyWorkspaceConfig`. Once agentd starts, it reads this initial file via `newAgentConfigWriter()` and owns all subsequent writes.
+
+The writer holds three sources, each updated independently:
+- **Providers** — `setProviders()` called after `Materializer.FormatProviders()` on credential reload
+- **Model** — captured from the existing file at boot (set by `applyWorkspaceConfig`)
+- **Relay** — `setRelay()` called by `startRelayInjector` after successful free-model discovery
+
+`Rebuild()` merges all three and writes atomically. The `sync.Mutex` serialises concurrent calls.
 
 ---
 
@@ -489,10 +489,10 @@ so it can correctly annotate the model catalog. The signal flows:
 
 ```
 relay_injector.go:
-  setActiveRelayModels() → atomic.Pointer[[]relayModel] (non-nil after success)
+  writer.SetRelay(url, models) → AgentConfigWriter.relay (non-nil after success)
 
 agentd /v1/readyz:
-  getActiveRelayModels() != nil → ReadyzResponse.RelayInjected = true
+  writer.HasRelay() → ReadyzResponse.RelayInjected = true
   readyz uses: healthCache.Snapshot() (atomic, no I/O)
              + cachedState() (providerCache, 15s TTL; live calls on miss, bounded by 5s)
 

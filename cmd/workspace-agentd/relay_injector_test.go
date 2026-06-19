@@ -219,9 +219,6 @@ func TestStartRelayInjector_WritesConfigAndKills(t *testing.T) {
 
 	// Verify writer has relay state
 	assert.True(t, writer.hasRelay(), "writer must have relay after injection")
-	models := writer.getRelayModels()
-	require.Len(t, models, 1)
-	assert.Equal(t, "free-model", models[0].ID)
 
 	// Verify config file was written by the writer
 	data, err := os.ReadFile(cfgPath)

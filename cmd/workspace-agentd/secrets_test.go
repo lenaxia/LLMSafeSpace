@@ -443,15 +443,15 @@ func TestReloadSecretsHandler_LLMProvider_CallsOpenCodeClient(t *testing.T) {
 	require.Contains(t, string(cfgData), "anthropic")
 }
 
-// TestReloadSecretsHandler_LLMProvider_FormatError_Returns500 verifies
-// that if FormatProviders returns an error (e.g. formatter failure), the
-// handler returns 500 and does NOT attempt to notify opencode.
+// TestReloadSecretsHandler_WriterRebuildFailure_Returns500 verifies
+// that if the AgentConfigWriter.rebuild() fails (e.g. disk full after
+// reset() deleted the old config), the handler returns 500 and does NOT
+// restart opencode with a missing config file.
 //
-// US-46.10: the old FlushProviders write failure (unwritable disk) used to
-// return 500. With the AgentConfigWriter, write failures are graceful (Warn +
-// 200) because credentials are still materialized. Format failures still
-// return 500 because they indicate the staged provider data is invalid.
-func TestReloadSecretsHandler_LLMProvider_FormatError_Returns500(t *testing.T) {
+// C1 regression fix: previously rebuild failure was a Warn + 200, which
+// let opencode restart with no agent-config.json (reset() already deleted
+// it). Now it returns 500 to match the old FlushProviders failure path.
+func TestReloadSecretsHandler_WriterRebuildFailure_Returns500(t *testing.T) {
 	dir := t.TempDir()
 	agentCfg := filepath.Join(dir, "agent-config.json")
 	cfg := materializeConfig{
@@ -474,15 +474,16 @@ func TestReloadSecretsHandler_LLMProvider_FormatError_Returns500(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
-	// Pass a writer pointing at an unwritable path — rebuild will fail but
-	// the handler should still return 200 (graceful degradation).
+	// Pass a writer pointing at an unwritable path — rebuild will fail.
+	// The handler must return 500 (not 200) because reset() already deleted
+	// the config and opencode must not restart with no config on disk.
 	unwritableDir := filepath.Join(dir, "nodir", "subdir")
 	badWriter := newAgentConfigWriter(filepath.Join(unwritableDir, "agent-config.json"))
 
 	reloadSecretsHandler(cfg, reloadSecretsDeps{AgentConfigWriter: badWriter})(rec, req)
 
-	require.Equal(t, http.StatusOK, rec.Code,
-		"writer rebuild failure should be graceful (Warn + 200), not 500")
+	require.Equal(t, http.StatusInternalServerError, rec.Code,
+		"writer rebuild failure must return 500 to prevent restart with no config")
 }
 
 // TestReloadSecretsHandler_MixedBatch_LLMAndEnv verifies that a batch

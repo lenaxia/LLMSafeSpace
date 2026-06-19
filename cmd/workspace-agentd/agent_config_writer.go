@@ -97,14 +97,17 @@ func (w *AgentConfigWriter) loadExisting() {
 // map. The model from the formatter is NOT captured — the model source
 // is owned by applyWorkspaceConfig (set at boot via loadExisting) and
 // must survive credential reloads.
-func (w *AgentConfigWriter) setProviders(formattedConfig []byte) {
+func (w *AgentConfigWriter) setProviders(formattedConfig []byte) error {
 	var cfg struct {
 		Provider json.RawMessage `json:"provider"`
 	}
-	_ = json.Unmarshal(formattedConfig, &cfg)
+	if err := json.Unmarshal(formattedConfig, &cfg); err != nil {
+		return fmt.Errorf("parse formatted providers: %w", err)
+	}
 	w.mu.Lock()
 	w.providerRaw = cfg.Provider
 	w.mu.Unlock()
+	return nil
 }
 
 // setModel updates the model source. Called by applyWorkspaceConfig
@@ -132,18 +135,6 @@ func (w *AgentConfigWriter) hasRelay() bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.relay != nil
-}
-
-// getRelayModels returns the injected relay model list, or nil if the
-// relay injector has not completed. Used by code that needs to know
-// which models are relay-routed (replaces getActiveRelayModels).
-func (w *AgentConfigWriter) getRelayModels() []relayModel {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.relay == nil {
-		return nil
-	}
-	return w.relay.models
 }
 
 // rebuild merges all sources (providers, model, relay) and writes the
