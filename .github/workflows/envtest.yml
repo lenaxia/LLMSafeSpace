@@ -1,0 +1,56 @@
+name: Envtest (CRD defaults)
+
+# M5-a: dedicated envtest workflow that verifies CRD kubebuilder defaults
+# are applied by the real Kubernetes API server's admission webhook. This
+# catches the class of bug from PR #231 that fake-client-based tests miss.
+#
+# NOT required for merge — runs alongside the main CI pipeline like
+# e2e-pr.yml. The fast unit-test seam (SetDefaults_* in defaults_test.go)
+# covers the same defaults in the main test job; envtest verifies the
+# real admission webhook agrees.
+#
+# Downloads kube-apiserver + etcd binaries via setup-envtest (cached).
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pkg/apis/**'
+      - 'charts/llmsafespaces/crds/**'
+      - '.github/workflows/envtest.yml'
+  schedule:
+    # Nightly at 04:00 UTC — catches upstream envtest binary regressions.
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+jobs:
+  envtest:
+    name: CRD defaults (envtest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Install setup-envtest
+        run: go install sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.20
+
+      - name: Download envtest binaries (cached)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/envtest-binaries
+          key: envtest-${{ runner.os }}-${{ hashFiles('go.mod') }}
+        id: cache-envtest
+
+      - name: Setup envtest binaries
+        run: |
+          ASSETS_PATH="$(setup-envtest use 1.31.x -p path)"
+          echo "KUBEBUILDER_ASSETS=$ASSETS_PATH" >> $GITHUB_ENV
+          echo "Using envtest assets at: $ASSETS_PATH"
+
+      - name: Run envtest defaults tests
+        run: go test -timeout 120s -race -tags envtest ./pkg/apis/llmsafespaces/v1/ -run TestEnvtest -v
