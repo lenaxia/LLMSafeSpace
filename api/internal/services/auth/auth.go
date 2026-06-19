@@ -801,9 +801,11 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 		return nil, errors.New("login failed")
 	}
 
+	// Extract jti once — used for both DEK unlock and session tracking.
+	jti := utilities.ExtractJTI(token)
+
 	// Unlock DEK for secret management (Epic 10)
 	if s.keyService != nil {
-		jti := utilities.ExtractJTI(token)
 		if jti != "" {
 			// Auto-initialize keys for pre-Epic 10 users on first login
 			hasKeys, _ := s.keyService.HasKeys(ctx, user.ID)
@@ -818,8 +820,65 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 		}
 	}
 
+	// US-49.5: Track the jti for bulk session invalidation on password
+	// reset. Best-effort: if Redis is unavailable, login still succeeds;
+	// the session just won't be revocable in bulk (the token TTL bounds
+	// the exposure).
+	if jti != "" {
+		s.trackUserSession(ctx, user.ID, jti, tokenDur)
+	}
+
 	user.PasswordHash = ""
 	return &types.AuthResponse{Token: token, User: *user, TokenTTL: tokenDur}, nil
+}
+
+// trackUserSession records a jti in the per-user session set so
+// RevokeAllUserSessions can enumerate and revoke them. Best-effort:
+// errors are logged, never returned (login must not fail because session
+// tracking is unavailable). The set is capped at 50 entries to prevent
+// unbounded growth; the TTL matches the token duration so stale entries
+// self-expire.
+func (s *Service) trackUserSession(ctx context.Context, userID, jti string, ttl time.Duration) {
+	if jti == "" {
+		return
+	}
+	key := "user-sessions:" + userID
+	var jtis []string
+	_ = s.cacheService.GetObject(ctx, key, &jtis)
+	jtis = append(jtis, jti)
+	if len(jtis) > 50 {
+		jtis = jtis[len(jtis)-50:]
+	}
+	if err := s.cacheService.SetObject(ctx, key, jtis, ttl); err != nil && s.logger != nil {
+		s.logger.Warn("Login: failed to track session for revocation", "user_id", userID)
+	}
+}
+
+// RevokeAllUserSessions revokes all outstanding JWTs for a user by writing
+// "revoked" under each tracked jti key (the same mechanism RevokeToken uses,
+// which ValidateToken checks on every request). Used by password-reset
+// confirm (US-49.5) so a stolen JWT stops working after the victim resets
+// their password. Best-effort: errors during individual jti revocation are
+// logged but do not abort the loop; the token TTL bounds any unrevokeable
+// session.
+func (s *Service) RevokeAllUserSessions(userID string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	key := "user-sessions:" + userID
+	var jtis []string
+	if err := s.cacheService.GetObject(ctx, key, &jtis); err != nil || len(jtis) == 0 {
+		return nil
+	}
+
+	for _, jti := range jtis {
+		jtiKey := "token:" + jti
+		if err := s.cacheService.Set(ctx, jtiKey, "revoked", s.tokenDuration); err != nil && s.logger != nil {
+			s.logger.Warn("RevokeAllUserSessions: failed to revoke jti", "jti", jti, "error", err.Error())
+		}
+	}
+	_ = s.cacheService.Delete(ctx, key)
+	return nil
 }
 
 func (s *Service) recordFailedAttempt(ctx context.Context, email string) {

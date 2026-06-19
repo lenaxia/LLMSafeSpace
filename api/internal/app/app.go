@@ -201,7 +201,9 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var invitationsHandler *handlers.InvitationsHandler
 	var emailService *emailsvc.Service
 	var emailHandler *handlers.EmailHandler
+	var passwordResetHandler *handlers.PasswordResetHandler
 	var orgCredBinder *secrets.PgSecretStore
+	var keyService *secrets.KeyService
 	var policySvc *policy.Service
 	var policyHandler *handlers.PolicyHandler
 	var auditHandler *handlers.AuditHandler
@@ -234,7 +236,6 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		var pgxErr error
 		secretsPool, pgxErr = pgxpool.New(context.Background(), pgxDSN)
 
-		var keyService *secrets.KeyService
 		var secretService *secrets.SecretService
 		var auditStore secrets.SecretStore
 		if pgxErr != nil {
@@ -617,6 +618,29 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	emailService = emailsvc.NewService(mailer, cfg.Email.BaseURL, cfg.Email.Provider)
 	emailHandler = handlers.NewEmailHandler(emailService, svc.GetRateLimiter(), log)
 
+	// US-49.5: Password reset via email. Constructs the handler with a PG
+	// token store, the database for user lookups, the key service for DEK
+	// reinitialisation, the bcrypt updater, and the auth service for session
+	// revocation. The auth service must be the concrete *auth.Service to
+	// access RevokeAllUserSessions; if it isn't (test mode), the handler
+	// skips session revocation (best-effort, nil-safe).
+	emailTokenStore := database.NewPgEmailTokenStore(dbSvc.DB)
+	var sessionRevoker interface {
+		RevokeAllUserSessions(userID string) error
+	}
+	if authSvc, ok := svc.GetAuth().(*auth.Service); ok {
+		sessionRevoker = authSvc
+	}
+	passwordResetHandler = handlers.NewPasswordResetHandler(
+		emailTokenStore,
+		svc.Database,
+		keyService,
+		&bcryptPasswordUpdater{db: svc.Database},
+		sessionRevoker,
+		emailService,
+		log,
+	)
+
 	// Invitations still needs the raw provider + the org store.
 	if pgOrgStore != nil {
 		invitationsHandler = handlers.NewInvitationsHandler(pgOrgStore, mailer, svc.GetAuth(), cfg.Email.BaseURL, log)
@@ -686,6 +710,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		WebhookHandler:                  webhookHandler,
 		InvitationsHandler:              invitationsHandler,
 		EmailHandler:                    emailHandler,
+		PasswordResetHandler:            passwordResetHandler,
 		PolicyHandler:                   policyHandler,
 		AuditHandler:                    auditHandler,
 		RelayAdminHandler:               relayAdminHandler,

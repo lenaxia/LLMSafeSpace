@@ -87,12 +87,13 @@ type RouterConfig struct {
 	// BulkReloadHandler handles POST /api/v1/users/me/agents/reload (optional)
 	BulkReloadHandler *handlers.BulkReloadHandler
 
-	UsageHandler       *handlers.UsageHandler
-	WebhookHandler     *handlers.StripeWebhookHandler
-	InvitationsHandler *handlers.InvitationsHandler
-	EmailHandler       *handlers.EmailHandler
-	PolicyHandler      *handlers.PolicyHandler
-	AuditHandler       *handlers.AuditHandler
+	UsageHandler         *handlers.UsageHandler
+	WebhookHandler       *handlers.StripeWebhookHandler
+	InvitationsHandler   *handlers.InvitationsHandler
+	EmailHandler         *handlers.EmailHandler
+	PasswordResetHandler *handlers.PasswordResetHandler
+	PolicyHandler        *handlers.PolicyHandler
+	AuditHandler         *handlers.AuditHandler
 
 	// RelayAdminHandler handles relay admin setup + status endpoints (optional)
 	RelayAdminHandler *handlers.RelayAdminHandler
@@ -193,6 +194,13 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 	// Auth routes (public — no auth middleware)
 	authGroup := router.Group("/api/v1/auth")
 	registerAuthRoutes(authGroup, services, cfg.InstanceSettings, logger, cfg.cookieName(), cfg.SSOHandler)
+
+	// US-49.5: Password reset via email (public — the token IS the credential
+	// for confirm; request is always 202 with no enumeration).
+	if cfg.PasswordResetHandler != nil {
+		authGroup.POST("/password-reset/request", cfg.PasswordResetHandler.Request)
+		authGroup.POST("/password-reset/confirm", cfg.PasswordResetHandler.Confirm)
+	}
 
 	// Authenticated workspace routes
 	workspaceGroup := router.Group("/api/v1/workspaces")
