@@ -58,7 +58,13 @@ DIR_RENAMES=(
 #
 # The replacement appends a case-matched 's': uppercase 'S' if the matched
 # token ends in 'E' (i.e. the ALL_CAPS variant), lowercase 's' otherwise.
-PAT='(?<![sS])(llmsafespace|LLMSAFESPACE|LLMSafeSpace)(?![sS])'
+#
+# NOTE: There are FIVE case variants, not three. The initial rename run
+# only handled three and missed the K8s client-gen naming conventions:
+#   Llmsafespace  (initial-cap: LlmsafespaceV1() accessor methods)
+#   LLMSafespace  (LLM+lower:   LLMSafespaceV1Client type names)
+# These were added after PR #248 review caught the gap.
+PAT='(?<![sS])(llmsafespace|LLMSAFESPACE|LLMSafeSpace|Llmsafespace|LLMSafespace)(?![sS])'
 
 # ---------- Files to skip entirely -------------------------------------------
 SKIP_PATH_RE='(^|/)(\.git|worklogs|design|bin|node_modules)/'

@@ -93,3 +93,50 @@ similar rewrites.
 
 620 files (614 from script + 6 manual fixes for over-blocked alert names).
 Diff stat will appear in PR description.
+
+---
+
+## Review Iterations (PR #248)
+
+### Round 1 — REQUEST CHANGES: Java + Python SDK dirs not renamed
+
+The stale-ref audit checked file contents (`git grep`) but not file
+**paths**. Phase 1 hardcoded 3 known dirs; the stray-file detector
+used a lowercase-only regex, missing CamelCase Java filenames and the
+Python package dir. Java wouldn't compile (package/filename mismatch),
+Python wouldn't import (module name mismatch).
+
+**Fix (commit `3be908d8`):**
+- `git mv sdks/java/.../com/llmsafespace → com/llmsafespaces`
+- `git mv LLMSafeSpaceClient.java → LLMSafeSpacesClient.java` (+ Exception)
+- `git mv sdks/python/llmsafespace → sdks/python/llmsafespaces`
+- Verified: `mvn compile` ✅, `pip install` ✅, `pytest` 23 passed ✅
+
+### Round 2 — REQUEST CHANGES: 2 of 5 case variants missed in Go
+
+The content audit checked only 3 case variants (`llmsafespace`,
+`LLMSAFESPACE`, `LLMSafeSpace`), missing the K8s client-gen naming
+convention which produces two additional variants:
+- `Llmsafespace` (initial-cap) → `LlmsafespaceV1()` accessor methods
+- `LLMSafespace` (LLM + lowercase) → `LLMSafespaceV1Client` type names
+
+~220 stale refs across 41 files survived. The PR body's claim "0 stale
+singular refs across all 3 case variants" was factually correct but
+methodologically incomplete — there are 5 variants, not 3.
+
+**Fix (commit pending):**
+- Extended the rewrite to cover the 2 missing variants.
+- Updated `hack/rename-to-llmsafespaces.sh` PAT to a 5-alternation.
+- Re-verified with case-insensitive audit:
+  `git grep -i -E 'llmsafespace([^s]|$)'` → **0 matches**.
+- `go build`, `go vet`, `go test ./...` all exit 0.
+
+### Root cause + lesson (both rounds)
+
+The same methodology gap caused both misses: **the audit's search
+space was narrower than the codebase's actual token space.** A
+comprehensive rename audit must use case-insensitive search
+(`git grep -i -E 'token([^s]|$)'`), not a hand-enumerated alternation
+of "known" variants. Future bulk renames should start from
+case-insensitive discovery, then derive the case-matched replacement
+rules from what's actually present.
