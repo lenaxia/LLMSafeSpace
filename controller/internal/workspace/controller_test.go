@@ -49,7 +49,7 @@ func reqFor(name, namespace string) ctrl.Request {
 }
 
 func makeWorkspace(name, namespace string, phase v1.WorkspacePhase) *v1.Workspace {
-	return &v1.Workspace{
+	ws := &v1.Workspace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name, Namespace: namespace,
 			UID:               "aaaabbbb-cccc-dddd-eeee-ffffgggghhhh",
@@ -62,6 +62,12 @@ func makeWorkspace(name, namespace string, phase v1.WorkspacePhase) *v1.Workspac
 		},
 		Status: v1.WorkspaceStatus{Phase: phase},
 	}
+	// M5-b: apply kubebuilder defaults so fake-client fixtures mirror what
+	// the real admission webhook would set. Without this, tests see zero
+	// values (e.g. Architecture="") where production sees defaults (e.g.
+	// "amd64") — the class of bug that bit PR #231.
+	v1.SetDefaults_Workspace(ws)
+	return ws
 }
 
 func makeBoundPVC(name, namespace string, ownerUID types.UID) *corev1.PersistentVolumeClaim {
