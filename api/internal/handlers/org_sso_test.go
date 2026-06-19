@@ -546,3 +546,73 @@ func stateFromCookie(t *testing.T, h *SSOHandler, cookieVal string) string {
 	require.NoError(t, json.Unmarshal(decoded, &p))
 	return p.State
 }
+
+// --- F11: redirect URL forwarded-header warning wiring ---
+
+// capturingSSOLogger records Warn calls so a test can assert the F11 warning
+// fires when resolveCallbackURL falls back to forwarded headers (RedirectBaseURL
+// unset). Implements ssoLogger.
+type capturingSSOLogger struct {
+	mu    sync.Mutex
+	warns []string
+}
+
+func (l *capturingSSOLogger) Warn(msg string, _ ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.warns = append(l.warns, msg)
+}
+
+// TestE2E_SSO_ResolveCallbackURL_WarnsOnForwardedHeaderFallback proves the F11
+// warning is wired through resolveCallbackURL: when RedirectBaseURL is unset and
+// the handler falls back to X-Forwarded-Proto + Host, the logger receives a
+// warning. A regression that removed the warning call would leave operators
+// with no signal that the header-trust gap is open.
+func TestE2E_SSO_ResolveCallbackURL_WarnsOnForwardedHeaderFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := newMockSSOStore()
+	users := newMockSSOHandlerUserStore()
+	// RedirectBaseURL = "" → the fallback path (forwarded headers).
+	svc := newSSOServiceForHandler(t, store, users, "")
+	log := &capturingSSOLogger{}
+	h := NewSSOHandler(svc, store, &mockOrgAuthService{userID: "admin-1"}, "lsp_session", "https://app.test.local", log)
+
+	// Simulate a request with forwarded headers (the attacker-influenceable
+	// surface F11 documents).
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/api/v1/auth/sso/acme/start", nil)
+	c.Request.Host = "evil.example.com"
+	c.Request.Header.Set("X-Forwarded-Proto", "https")
+
+	url := h.resolveCallbackURL(c, "acme")
+
+	// The callback URL must be built from the forwarded headers (fallback path).
+	require.Contains(t, url, "https://evil.example.com/api/v1/auth/sso/acme/callback",
+		"fallback must derive from X-Forwarded-Proto + Host")
+
+	// The warning must have fired — this is the load-bearing assertion.
+	require.Len(t, log.warns, 1, "exactly one warning expected when falling back to forwarded headers")
+	require.Contains(t, log.warns[0], "forwarded headers",
+		"warning must mention forwarded headers so operators can grep for it")
+}
+
+// TestE2E_SSO_ResolveCallbackURL_NoWarnWhenRedirectBaseURLSet proves the
+// complement: when RedirectBaseURL IS set, no warning fires (the trust gap is
+// closed). This guards against a regression that warns unconditionally.
+func TestE2E_SSO_ResolveCallbackURL_NoWarnWhenRedirectBaseURLSet(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := newMockSSOStore()
+	users := newMockSSOHandlerUserStore()
+	svc := newSSOServiceForHandler(t, store, users, "https://api.production.local")
+	log := &capturingSSOLogger{}
+	h := NewSSOHandler(svc, store, &mockOrgAuthService{userID: "admin-1"}, "lsp_session", "https://app.test.local", log)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/api/v1/auth/sso/acme/start", nil)
+
+	url := h.resolveCallbackURL(c, "acme")
+	require.Contains(t, url, "https://api.production.local/api/v1/auth/sso/acme/callback")
+	require.Empty(t, log.warns, "no warning when RedirectBaseURL is set (trust gap closed)")
+}
