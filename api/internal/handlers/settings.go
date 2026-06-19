@@ -5,6 +5,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -73,6 +74,10 @@ func (h *SettingsHandler) SetAdminSetting(c *gin.Context) {
 	}
 
 	if err := h.instanceSvc.Set(c.Request.Context(), key, value); err != nil {
+		if errors.Is(err, settings.ErrReadOnly) {
+			c.JSON(http.StatusConflict, gin.H{"error": "setting is managed by Helm; edit the Helm values and upgrade"})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
