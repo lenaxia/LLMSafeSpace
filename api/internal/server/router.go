@@ -542,13 +542,13 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, insta
 		instanceName := "LLMSafeSpaces"
 		motd := ""
 		if instanceSettings != nil {
-			if v, err := instanceSettings.GetBool(c.Request.Context(), "auth.registrationEnabled"); err == nil {
+			if v, err := instanceSettings.GetBool(c.Request.Context(), settings.KeyAuthRegistrationEnabled.Name()); err == nil {
 				regEnabled = v
 			}
-			if v, err := instanceSettings.GetString(c.Request.Context(), "instance.name"); err == nil && v != "" {
+			if v, err := instanceSettings.GetString(c.Request.Context(), settings.KeyInstanceName.Name()); err == nil && v != "" {
 				instanceName = v
 			}
-			if v, err := instanceSettings.GetString(c.Request.Context(), "instance.motd"); err == nil {
+			if v, err := instanceSettings.GetString(c.Request.Context(), settings.KeyInstanceMOTD.Name()); err == nil {
 				motd = v
 			}
 		}
@@ -1092,7 +1092,7 @@ func registerSettingsRoutes(router *gin.Engine, services interfaces.Services, h 
 // getMaxActiveSessions reads the max active sessions setting, falling back to 5.
 func getMaxActiveSessions(ctx context.Context, instanceSettings *settings.InstanceService) int {
 	if instanceSettings != nil {
-		if v, err := instanceSettings.GetInt(ctx, "workspace.defaultMaxActiveSessions"); err == nil && v > 0 {
+		if v, err := instanceSettings.GetInt(ctx, settings.KeyWorkspaceDefaultMaxActiveSessions.Name()); err == nil && v > 0 {
 			return v
 		}
 	}
