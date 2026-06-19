@@ -17,15 +17,15 @@ type ProviderModelCost struct {
 
 // CatalogModel is a single model entry in a parsed agent catalog.
 type CatalogModel struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID   string            `json:"id"`
+	Name string            `json:"name"`
 	Cost ProviderModelCost `json:"cost"`
 }
 
 // CatalogProvider groups models under a provider. Models is keyed by the
 // provider-local model key (which may differ from the model's own ID).
 type CatalogProvider struct {
-	ID     string                   `json:"id"`
+	ID     string                  `json:"id"`
 	Models map[string]CatalogModel `json:"models"`
 }
 
@@ -34,7 +34,7 @@ type CatalogProvider struct {
 // holds the full provider→model tree. A ModelCatalogParser converts an
 // agent-specific wire format into this shape.
 type Catalog struct {
-	Connected []string           `json:"connected"`
+	Connected []string          `json:"connected"`
 	Providers []CatalogProvider `json:"all"`
 }
 
@@ -71,8 +71,8 @@ func (opencodeProviderParser) Parse(raw []byte) (*Catalog, error) {
 		All       []struct {
 			ID     string `json:"id"`
 			Models map[string]struct {
-				ID   string             `json:"id"`
-				Name string             `json:"name"`
+				ID   string            `json:"id"`
+				Name string            `json:"name"`
 				Cost ProviderModelCost `json:"cost"`
 			} `json:"models"`
 		} `json:"all"`
@@ -148,5 +148,3 @@ func (c *Catalog) connectedSet() map[string]bool {
 	}
 	return set
 }
-
-
