@@ -452,7 +452,7 @@ func (h *RelayAdminHandler) Deploy(c *gin.Context) {
 	}
 
 	if req.UpstreamURL == "" {
-		req.UpstreamURL = "https://opencode.ai/zen/v1"
+		req.UpstreamURL = "https://ai.thekao.cloud/v1"
 	}
 
 	if len(req.Providers) == 0 {

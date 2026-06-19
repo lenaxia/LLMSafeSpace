@@ -39,8 +39,8 @@ spec:
               properties:
                 upstreamURL:
                   type: string
-                  description: "LLM provider endpoint the relays proxy to."
-                  default: "https://opencode.ai/zen/v1"
+                  description: "LLM provider endpoint the relays proxy to. Defaults to the maintainer's gateway (ai.thekao.cloud); operators should override to their own endpoint. opencode.ai/zen's anonymous `public` key no longer authorizes inference (A23, worklog 0420)."
+                  default: "https://ai.thekao.cloud/v1"
                 providers:
                   type: array
                   description: "Relay VM cloud providers. Default fleet: 1 AWS (paid primary) + 1 OCI (free secondary). GCP optional paid tertiary."
