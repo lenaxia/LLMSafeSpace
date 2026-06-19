@@ -6,7 +6,6 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"sync"
 	"time"
 
@@ -195,6 +194,3 @@ func tierFromAvailability(a ModelAvailability) string {
 	}
 	return "paid"
 }
-
-// Ensure io is imported (used by callers of annotateModels for LimitReader).
-var _ io.Reader

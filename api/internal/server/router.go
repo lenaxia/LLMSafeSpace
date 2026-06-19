@@ -356,9 +356,10 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 	}
 
 	// Model routes (US-29.5: extracted from SecretsHandler)
+	// Registered on idGroup so they inherit WorkspaceAccessMiddleware.
 	if cfg.ModelsHandler != nil {
-		workspaceGroup.GET("/:id/models", cfg.ModelsHandler.ListModels)
-		workspaceGroup.PUT("/:id/model", cfg.ModelsHandler.SetModel)
+		idGroup.GET("/models", cfg.ModelsHandler.ListModels)
+		idGroup.PUT("/model", cfg.ModelsHandler.SetModel)
 	}
 
 	// Workspace env-var routes (US-29.4: extracted from SecretsHandler).

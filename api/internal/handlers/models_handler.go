@@ -6,7 +6,6 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"strings"
 
@@ -158,6 +157,11 @@ func (h *ModelsHandler) SetModel(c *gin.Context) {
 
 	if h.wsUpdater == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "model selection unavailable"})
+		return
+	}
+
+	if h.agentClient == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "model selection unavailable (no agent client)"})
 		return
 	}
 
@@ -333,6 +337,3 @@ func resolveModelFromCatalog(
 	}
 	return model
 }
-
-// Ensure io import is used (for LimitReader in annotateModels callers).
-var _ io.Reader
