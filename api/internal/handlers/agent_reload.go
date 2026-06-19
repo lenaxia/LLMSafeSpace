@@ -38,14 +38,19 @@ type BrokerPublisher interface {
 	PublishToWorkspace(workspaceID string, event apitypes.WorkspaceSSEEvent)
 }
 
-// respondWithAPIError maps API errors to HTTP responses.
-// Local helper for package handlers (same logic as server.respondWithError).
+// respondWithAPIError maps API errors to HTTP responses. Uses errors.As to
+// find an *apierrors.APIError anywhere in the chain (handles wrapped errors),
+// then falls back to a duck-typed StatusCode() check, then 500.
 func respondWithAPIError(c *gin.Context, err error) {
-	type apiError interface {
+	var apiErr *apierrors.APIError
+	if errors.As(err, &apiErr) {
+		c.JSON(apiErr.StatusCode(), gin.H{"error": apiErr.Error()})
+		return
+	}
+	if ae, ok := err.(interface {
 		StatusCode() int
 		Error() string
-	}
-	if ae, ok := err.(apiError); ok {
+	}); ok {
 		c.JSON(ae.StatusCode(), gin.H{"error": ae.Error()})
 		return
 	}
@@ -297,7 +302,7 @@ func (h *AgentReloadHandler) Reload(c *gin.Context) {
 	disposedAt, err := h.db.MarkAgentReloaded(c.Request.Context(), tx, workspaceID, priorChangedAt)
 	if err != nil {
 		if errors.Is(err, apierrors.ErrNoAgentStateRow) {
-			c.JSON(http.StatusConflict, gin.H{"error": "workspace has no pending credentials to reload"})
+			respondWithAPIError(c, err)
 			return
 		}
 		if h.logger != nil {

@@ -5,6 +5,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
 	"github.com/lenaxia/llmsafespace/api/internal/handlers"
 	"github.com/lenaxia/llmsafespace/api/internal/interfaces"
 	apilogger "github.com/lenaxia/llmsafespace/api/internal/logger"
@@ -959,13 +961,20 @@ func registerProxyRoutes(idGroup *gin.RouterGroup, proxyHandler *handlers.ProxyH
 	idGroup.POST("/permission/:requestID/reply", proxyHandler.PermissionReply)
 }
 
-// respondWithError maps API errors to HTTP responses.
+// respondWithError maps API errors to HTTP responses. It uses errors.As to
+// find an *apierrors.APIError anywhere in the error chain (handles both direct
+// returns and fmt.Errorf-wrapped errors), falling back to a duck-typed
+// StatusCode() check for other typed errors, then 500 for plain errors.
 func respondWithError(c *gin.Context, err error) {
-	type apiError interface {
+	var apiErr *apierrors.APIError
+	if errors.As(err, &apiErr) {
+		c.JSON(apiErr.StatusCode(), gin.H{"error": apiErr.Error()})
+		return
+	}
+	if ae, ok := err.(interface {
 		StatusCode() int
 		Error() string
-	}
-	if ae, ok := err.(apiError); ok {
+	}); ok {
 		c.JSON(ae.StatusCode(), gin.H{"error": ae.Error()})
 		return
 	}

@@ -4,12 +4,12 @@
 package eventbroker
 
 import (
-	"errors"
 	"sync"
 	"sync/atomic"
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	apierrors "github.com/lenaxia/llmsafespace/api/internal/errors"
 	apitypes "github.com/lenaxia/llmsafespace/api/internal/types"
 )
 
@@ -22,7 +22,15 @@ const (
 	HeartbeatSentinelType = "_heartbeat"
 )
 
-var ErrTooManySubscribers = errors.New("too many subscribers for user")
+// ErrTooManySubscribers is returned when SubscribeUser hits MaxSubscribersPerUser.
+// It is a *apierrors.APIError (RateLimited/429) so the centralized HTTP error
+// handler maps it automatically. Callers can still use errors.Is (backwards
+// compat) and errors.As (typed path).
+var ErrTooManySubscribers = &apierrors.APIError{
+	Type:    apierrors.ErrorTypeRateLimit,
+	Code:    "too_many_subscribers",
+	Message: "too many active SSE subscribers for user",
+}
 
 var brokerDroppedEvents = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
