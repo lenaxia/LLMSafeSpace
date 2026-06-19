@@ -18,6 +18,7 @@ import (
 	"go.uber.org/zap"
 
 	apierrors "github.com/lenaxia/llmsafespaces/api/internal/errors"
+	"github.com/lenaxia/llmsafespaces/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespaces/api/internal/services/msgqueue"
 	"github.com/lenaxia/llmsafespaces/api/internal/services/sse"
 	apitypes "github.com/lenaxia/llmsafespaces/api/internal/types"
@@ -78,7 +79,7 @@ type AgentReloadHandler struct {
 	logger         pkginterfaces.LoggerInterface
 	zapLogger      *zap.Logger
 	sseTracker     *sse.Tracker
-	getPassword    func(ctx context.Context, workspaceID string) (string, error)
+	getPassword    interfaces.WorkspacePasswordProvider
 	metricsService MetricsRecorder
 	queueSvc       QueueClearer
 	broker         BrokerPublisher
@@ -112,8 +113,8 @@ func NewAgentReloadHandler(
 func (h *AgentReloadHandler) SetSSETracker(t *sse.Tracker) { h.sseTracker = t }
 
 // SetPasswordGetter injects the password getter for drain mode (needs opencode client).
-func (h *AgentReloadHandler) SetPasswordGetter(getter func(ctx context.Context, workspaceID string) (string, error)) {
-	h.getPassword = getter
+func (h *AgentReloadHandler) SetPasswordGetter(provider interfaces.WorkspacePasswordProvider) {
+	h.getPassword = provider
 }
 
 // SetMetrics injects the metrics recorder.
@@ -217,7 +218,7 @@ func (h *AgentReloadHandler) Reload(c *gin.Context) {
 	}
 
 	if drain && h.sseTracker != nil && h.getPassword != nil {
-		pw, err := h.getPassword(c.Request.Context(), workspaceID)
+		pw, err := h.getPassword.WorkspacePassword(c.Request.Context(), workspaceID)
 		if err != nil {
 			respondWithAPIError(c, apierrors.NewInternalError("get_opencode_password_failed", err))
 			return
@@ -349,7 +350,7 @@ type BulkReloadHandler struct {
 	logger         pkginterfaces.LoggerInterface
 	zapLogger      *zap.Logger
 	sseTracker     *sse.Tracker
-	getPassword    func(ctx context.Context, workspaceID string) (string, error)
+	getPassword    interfaces.WorkspacePasswordProvider
 	metricsService MetricsRecorder
 	queueSvc       QueueClearer
 	broker         BrokerPublisher
@@ -381,8 +382,8 @@ func (h *BulkReloadHandler) SetSSETracker(t *sse.Tracker) { h.sseTracker = t }
 func (h *BulkReloadHandler) SetMetrics(m MetricsRecorder) { h.metricsService = m }
 
 // SetPasswordGetter injects the password getter for drain mode.
-func (h *BulkReloadHandler) SetPasswordGetter(getter func(ctx context.Context, workspaceID string) (string, error)) {
-	h.getPassword = getter
+func (h *BulkReloadHandler) SetPasswordGetter(provider interfaces.WorkspacePasswordProvider) {
+	h.getPassword = provider
 }
 
 // SetQueueClearer injects the queue service for clearing queued messages on dispose.
@@ -500,7 +501,7 @@ func (h *BulkReloadHandler) reloadOne(ctx context.Context, userID, workspaceID s
 	}
 
 	if drain && h.sseTracker != nil && h.getPassword != nil {
-		pw, err := h.getPassword(ctx, workspaceID)
+		pw, err := h.getPassword.WorkspacePassword(ctx, workspaceID)
 		if err != nil {
 			return map[string]any{"workspaceId": workspaceID, "error": map[string]any{"code": "get_password_failed", "message": err.Error()}}
 		}

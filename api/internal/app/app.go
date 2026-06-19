@@ -483,10 +483,13 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 					&k8sWorkspaceGetterAdapter{client: k8sClient, namespace: cfg.Kubernetes.Namespace},
 					dbSvc, log,
 				)
-				agentClient := agentoc.NewWorkspaceClient(pwGetter, ipResolver, log.ZapLogger())
+				pwAdapter := func(ctx context.Context, wsID string) (string, error) {
+				return pwGetter.WorkspacePassword(ctx, wsID)
+			}
+			agentClient := agentoc.NewWorkspaceClient(pwAdapter, ipResolver, log.ZapLogger())
 				modelsHandler.SetAgentClient(agentClient)
 				if relayURL := cfg.Server.InferenceRelayURL; relayURL != "" {
-					modelsHandler.SetRelayChecker(buildRelayChecker(ipResolver, pwGetter))
+					modelsHandler.SetRelayChecker(buildRelayChecker(ipResolver, pwAdapter))
 				}
 			}
 		}

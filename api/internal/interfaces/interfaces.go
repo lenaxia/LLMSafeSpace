@@ -213,6 +213,19 @@ type WorkspaceMetadataStore interface {
 	UpdateWorkspace(ctx context.Context, workspaceID string, updates types.WorkspaceUpdates) error
 }
 
+// WorkspacePasswordProvider retrieves the opencode workspace password for
+// Basic auth. Replaces the prior function-typed injection (US-46.11).
+type WorkspacePasswordProvider interface {
+	WorkspacePassword(ctx context.Context, workspaceID string) (string, error)
+}
+
+// PasswordFunc adapts a plain function to WorkspacePasswordProvider.
+type PasswordFunc func(ctx context.Context, workspaceID string) (string, error)
+
+func (f PasswordFunc) WorkspacePassword(ctx context.Context, workspaceID string) (string, error) {
+	return f(ctx, workspaceID)
+}
+
 type Services interface {
 	GetAuth() AuthService
 	GetDatabase() DatabaseService
