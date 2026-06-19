@@ -55,6 +55,12 @@ The original design (US-49.2) specified `email.provider` as `TypeEnum` with valu
 
 ---
 
+## Blockers
+
+None.
+
+---
+
 ## Next Steps
 
 1. Get PR #289 through review + merge.
