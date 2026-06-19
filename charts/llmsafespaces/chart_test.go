@@ -2020,6 +2020,18 @@ func TestRelayRouter_NetworkPolicy_RendersWhenEnabled(t *testing.T) {
 	require.NotEmpty(t, egress, "NetworkPolicy must include egress rules")
 }
 
+// TestRelayRouter_NetworkPolicy_HiddenWhenNetworkPolicyDisabled asserts the
+// relay-router NetworkPolicy honors the master networkPolicy.enabled toggle
+// (parity with the workspace/datastore policies) — it must NOT render when the
+// policy controller is disabled, even if inferenceRelay is enabled.
+func TestRelayRouter_NetworkPolicy_HiddenWhenNetworkPolicyDisabled(t *testing.T) {
+	docs := helmTemplate(t, "controller:\n  inferenceRelay:\n    enabled: true\nnetworkPolicy:\n  enabled: false\n")
+	for _, d := range findByKind(docs, "NetworkPolicy") {
+		require.NotContains(t, metaName(d), "relay-router",
+			"relay-router NetworkPolicy must NOT render when networkPolicy.enabled is false (master-toggle contract)")
+	}
+}
+
 // =============================================================================
 // Monitoring — Grafana dashboards, PrometheusRule, ServiceMonitor
 // =============================================================================

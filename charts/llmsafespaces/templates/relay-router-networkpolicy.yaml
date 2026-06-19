@@ -1,7 +1,10 @@
-{{- if and .Values.controller.enabled .Values.controller.inferenceRelay.enabled }}
+{{- if and .Values.controller.enabled .Values.controller.inferenceRelay.enabled .Values.networkPolicy.enabled }}
 {{- $wg := .Values.controller.inferenceRelay.router.wireGuard }}
 # US-42.8: NetworkPolicy isolating the relay-router (Epic 42 Layer 2 redesign).
-# Applies once the relay subsystem is enabled. Posture:
+# Gated on networkPolicy.enabled (the master toggle) for parity with the other
+# chart NetworkPolicies (workspace/datastore), so operators who disable the
+# policy controller stay consistent. Applies once the relay subsystem is
+# enabled. Posture:
 #
 #   - TCP 8080 ingress from workspace pods (the proxy path) and the controller
 #     pod (router /metrics scrape — the controller is NOT in the WG mesh; it

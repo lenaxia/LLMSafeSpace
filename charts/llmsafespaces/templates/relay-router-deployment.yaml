@@ -88,6 +88,14 @@ spec:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
+              # Drop ALL then add back only the two this sidecar needs. Note
+              # NET_ADMIN/NET_RAW (and runAsUser: 0, hostPath /dev/net/tun,
+              # and hostNetwork in that mode) make this pod NON-compliant with
+              # the Pod Security Admission `restricted` profile — see the
+              # wireGuard block in values.yaml and worklog 0386 for the operator
+              # remediation (privileged/baseline namespace or exemption).
+              drop:
+                - ALL
               add:
                 - NET_ADMIN
                 - NET_RAW

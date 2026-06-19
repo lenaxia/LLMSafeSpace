@@ -68,19 +68,27 @@ data:
       # apply peer-only / key changes live via `wg syncconf` without dropping
       # the tunnel (in-flight streams survive). wg syncconf reads a stripped
       # config (no wg-quick-only directives like Address) from a file, written
-      # to the writable /dev/shm since the root filesystem is read-only.
+      # to the writable /dev/shm since the root filesystem is read-only. The
+      # state file is updated ONLY on a successful apply, so a failed sync
+      # retries on the next tick instead of being masked as "applied".
       if ip link show wg0 >/dev/null 2>&1; then
         if ! [ -f "$STATE_FILE" ] || ! cmp -s "$WG_CONF" "$STATE_FILE"; then
           if wg-quick strip wg0 > "$STRIP_FILE" 2>/dev/null; then
-            wg syncconf wg0 "$STRIP_FILE" || log "wg syncconf failed"
-            cp "$WG_CONF" "$STATE_FILE"
-            log "synced updated WireGuard config"
+            if wg syncconf wg0 "$STRIP_FILE"; then
+              cp "$WG_CONF" "$STATE_FILE"
+              log "synced updated WireGuard config"
+            else
+              log "wg syncconf failed; will retry next tick"
+            fi
           fi
         fi
       else
-        wg-quick up wg0 || { log "wg-quick up failed"; return 0; }
-        cp "$WG_CONF" "$STATE_FILE"
-        log "brought up wg0 on ${ADDRESS} (listen ${LISTEN_PORT}/udp)"
+        if wg-quick up wg0; then
+          cp "$WG_CONF" "$STATE_FILE"
+          log "brought up wg0 on ${ADDRESS} (listen ${LISTEN_PORT}/udp)"
+        else
+          log "wg-quick up failed; will retry next tick"
+        fi
       fi
     }
 
