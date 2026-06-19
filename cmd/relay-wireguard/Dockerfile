@@ -42,4 +42,10 @@ RUN apk add --no-cache \
 # overrides this default CMD, but keep a sane fallback for ad-hoc runs.
 CMD ["wg"]
 
+# Default to the non-root wg user. The Helm chart overrides to runAsUser: 0 at
+# runtime because netlink/tun operations require root, but the image ships a
+# non-root default per DS-0002 (container hardening best practice). The chart
+# declares this explicitly in the sidecar's securityContext.
+USER wg
+
 ENTRYPOINT ["/sbin/tini", "--"]
