@@ -379,7 +379,7 @@ func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 // GetUserByAPIKey gets the user associated with an API key
 func (s *Service) GetUserByAPIKey(ctx context.Context, apiKey string) (*types.User, error) {
 	query := `
-        SELECT u.id, u.username, u.email, u.created_at, u.updated_at, u.active, u.role, u.status
+        SELECT u.id, u.username, u.email, u.created_at, u.updated_at, u.active, u.role, u.status, u.email_verified
         FROM users u
         JOIN api_keys k ON u.id = k.user_id
         WHERE k.key = $1 AND k.active = true
@@ -396,6 +396,7 @@ func (s *Service) GetUserByAPIKey(ctx context.Context, apiKey string) (*types.Us
 		&user.Active,
 		&user.Role,
 		&user.Status,
+		&user.EmailVerified,
 	)
 
 	if err != nil {

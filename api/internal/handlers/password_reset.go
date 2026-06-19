@@ -170,10 +170,10 @@ func (h *PasswordResetHandler) Request(c *gin.Context) {
 // Confirm handles POST /api/v1/auth/password-reset/confirm.
 //
 // Public (the token IS the credential). Verifies the token hash, checks
-// expiry + consumption, then executes the 5-step reset:
+// expiry + consumption, then executes the reset:
 //  1. Consume token (single-use)
-//  2. Reinitialise DEK (old DEK unrecoverable without old password/recovery key)
-//  3. Update bcrypt hash
+//  2. Update bcrypt hash (FIRST — avoids unrecoverable state if DEK reinit fails)
+//  3. Reinitialise DEK (old DEK unrecoverable without old password/recovery key)
 //  4. Revoke all outstanding sessions
 //  5. Send "password changed" notification email
 //
