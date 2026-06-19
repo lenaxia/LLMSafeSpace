@@ -47,6 +47,11 @@ func (s *SecretService) CreateSecret(ctx context.Context, userID, sessionID stri
 			ErrInvalidSecretType, req.Type, formatSecretTypes(ValidSecretTypesList()))
 	}
 
+	if req.Type == SecretTypeAPIKey && isAPIKeySunset() {
+		return nil, fmt.Errorf("%w: api-key secret type was removed on %s; migrate to llm-provider (for LLM APIs) or env-secret (for other APIs). See docs/migration/api-key-to-llm-provider.md",
+			ErrInvalidSecretType, APIKeySunsetDate)
+	}
+
 	if err := validation.ValidateSecretName(req.Name); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidMetadata, err)
 	}

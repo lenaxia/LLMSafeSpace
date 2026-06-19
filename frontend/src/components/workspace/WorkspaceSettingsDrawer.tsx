@@ -20,11 +20,12 @@ export interface WorkspaceSettings {
 }
 
 const SECRET_TYPE_LABELS: Record<string, { label: string; icon: string }> = {
-  "api-key": { label: "LLM Providers", icon: "🤖" },
+  "llm-provider": { label: "LLM Providers", icon: "🤖" },
   "ssh-key": { label: "SSH Keys", icon: "🔑" },
   "git-credential": { label: "Git Credentials", icon: "📦" },
   "secret-file": { label: "Secret Files", icon: "📄" },
   "env-secret": { label: "Environment Variables", icon: "⚙️" },
+  "api-key": { label: "API Keys (legacy)", icon: "🗝️" },
 };
 
 export function WorkspaceSettingsDrawer({ workspace, open, onOpenChange, onSave }: Props) {
