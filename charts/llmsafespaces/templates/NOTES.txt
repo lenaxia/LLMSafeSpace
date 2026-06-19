@@ -268,6 +268,8 @@ The chart's other pods remain individually hardened regardless.
 {{- end }}
 
 See worklog 0398 (US-42.8) and Epic 42 Layer 2 for the full rationale.
+{{- end }}
+
 {{- if .Values.email.enabled }}
 
 OUTBOUND EMAIL (Epic 49)
@@ -303,6 +305,5 @@ the NoopProvider, which logs emails to stderr but does NOT send them. This is fi
 for development and air-gapped deployments. To send real email, set provider=ses
 along with sesRegion/fromAddress/baseUrl.
 
-{{- end }}
 {{- end }}
 {{- end }}
