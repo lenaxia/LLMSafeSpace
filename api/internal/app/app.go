@@ -158,6 +158,19 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	instanceSettings := settings.NewInstanceService(dbSvc, log)
 	userSettings := settings.NewUserService(dbSvc, log)
 
+	// US-49.2: When email is helm-managed (email block present in config.yaml),
+	// mark the email.* instance settings as read-only and pin their values
+	// from the helm config. The admin UX will show them disabled with a
+	// "Managed by Helm" badge; PUT attempts return 409.
+	if cfg.Email.Provider != "" || cfg.Email.FromAddress != "" || cfg.Email.BaseURL != "" {
+		instanceSettings.SetHelmOverrides(map[string]any{
+			"email.provider":    cfg.Email.Provider,
+			"email.sesRegion":   cfg.Email.SESRegion,
+			"email.fromAddress": cfg.Email.FromAddress,
+			"email.baseUrl":     cfg.Email.BaseURL,
+		})
+	}
+
 	// Inject instance settings into workspace service for enforcement.
 	if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
 		wsSvc.SetInstanceSettings(instanceSettings)

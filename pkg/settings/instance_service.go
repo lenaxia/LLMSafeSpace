@@ -21,6 +21,11 @@ type InstanceStore interface {
 	SetInstanceSetting(ctx context.Context, key string, value json.RawMessage) error
 }
 
+// ErrReadOnly is returned by Set when the key is helm-managed (Tier 1).
+// Callers (the settings handler) map this to HTTP 409 Conflict so the admin
+// UX gets a clear "this setting is managed by Helm" signal.
+var ErrReadOnly = fmt.Errorf("setting is managed by Helm and cannot be changed via the API")
+
 // InstanceService implements InstanceSettingsService with a full-map cache
 // and singleflight to prevent thundering herd on TTL expiry.
 type InstanceService struct {
@@ -33,17 +38,46 @@ type InstanceService struct {
 	ttl      time.Duration
 	sf       singleflight.Group
 
-	index map[string]SettingDef
+	index         map[string]SettingDef
+	helmOverrides map[string]any // key → helm-provided value; presence = read-only
 }
 
 // NewInstanceService creates a new instance settings service.
 func NewInstanceService(store InstanceStore, logger pkginterfaces.LoggerInterface) *InstanceService {
 	return &InstanceService{
-		store:  store,
-		logger: logger,
-		ttl:    60 * time.Second,
-		index:  InstanceSettingIndex(),
+		store:         store,
+		logger:        logger,
+		ttl:           60 * time.Second,
+		index:         InstanceSettingIndex(),
+		helmOverrides: map[string]any{},
 	}
+}
+
+// SetHelmOverrides marks the given keys as helm-managed (Tier 1) and pins
+// their values. Called once at boot from app.go when email.enabled=true.
+// Keys not in the instance schema are silently ignored (defensive). Must be
+// called before Start() / before serving requests. After that, the map is
+// not written again; all reads take s.mu.RLock() (the same lock that guards
+// the data cache), so concurrent access is race-free.
+func (s *InstanceService) SetHelmOverrides(overrides map[string]any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k, v := range overrides {
+		if _, ok := s.index[k]; ok {
+			s.helmOverrides[k] = v
+		} else if s.logger != nil {
+			s.logger.Warn("helm_override_ignored_unknown_key", "key", k)
+		}
+	}
+}
+
+// isReadOnly returns true if the key is helm-managed. Caller must NOT hold
+// s.mu — this is called from paths that take the lock themselves.
+func (s *InstanceService) isReadOnly(key string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.helmOverrides[key]
+	return ok
 }
 
 func (s *InstanceService) Start() error {
@@ -55,9 +89,19 @@ func (s *InstanceService) Start() error {
 
 func (s *InstanceService) Stop() error { return nil }
 
-// Schema returns the Tier 2 setting definitions.
+// Schema returns the Tier 2 setting definitions. Helm-managed keys (those
+// set via SetHelmOverrides) are marked ReadOnly=true so the frontend can
+// render them as disabled with a "Managed by Helm" badge.
 func (s *InstanceService) Schema() []SettingDef {
-	return InstanceSettings()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	defs := InstanceSettings()
+	for i := range defs {
+		if _, ok := s.helmOverrides[defs[i].Key]; ok {
+			defs[i].ReadOnly = true
+		}
+	}
+	return defs
 }
 
 // GetBool returns a bool setting value.
@@ -123,13 +167,15 @@ func (s *InstanceService) GetStrings(ctx context.Context, key string) ([]string,
 	}
 }
 
-// GetAll returns all instance settings merged with schema defaults.
+// GetAll returns all instance settings merged with schema defaults and
+// helm overrides. Helm-managed keys (Tier 1) take precedence over both DB
+// values and schema defaults.
 func (s *InstanceService) GetAll(ctx context.Context) (map[string]any, error) {
 	data, err := s.ensureCache(ctx)
 	if err != nil {
 		return nil, err
 	}
-	// Merge with defaults
+	// Merge: schema defaults < DB values < helm overrides
 	result := make(map[string]any, len(s.index))
 	for key, def := range s.index {
 		result[key] = def.Default
@@ -137,16 +183,20 @@ func (s *InstanceService) GetAll(ctx context.Context) (map[string]any, error) {
 	for key, val := range data {
 		result[key] = val
 	}
+	s.mu.RLock()
+	for key, val := range s.helmOverrides {
+		result[key] = val
+	}
+	s.mu.RUnlock()
 	return result, nil
 }
 
 // Set validates and persists a setting value, then invalidates the cache.
-//
-// The value is run through Normalize() before Validate(), so honest
-// typos like "8gi" (lowercase unit) get auto-corrected to "8Gi"
-// instead of being rejected. See pkg/settings/normalize.go for the
-// rules and the production failure that motivated this.
+// Returns ErrReadOnly if the key is helm-managed (Tier 1).
 func (s *InstanceService) Set(ctx context.Context, key string, value any) error {
+	if s.isReadOnly(key) {
+		return ErrReadOnly
+	}
 	def, ok := s.index[key]
 	if !ok {
 		return fmt.Errorf("unknown instance setting key: %q", key)
@@ -182,12 +232,21 @@ func (s *InstanceService) Set(ctx context.Context, key string, value any) error 
 	return nil
 }
 
-// get retrieves a single setting value, using cache with schema default fallback.
+// get retrieves a single setting value. Precedence: helm override > DB >
+// schema default.
 func (s *InstanceService) get(ctx context.Context, key string) (any, error) {
 	def, ok := s.index[key]
 	if !ok {
 		return nil, fmt.Errorf("unknown instance setting key: %q", key)
 	}
+
+	// Helm overrides win.
+	s.mu.RLock()
+	if val, exists := s.helmOverrides[key]; exists {
+		s.mu.RUnlock()
+		return val, nil
+	}
+	s.mu.RUnlock()
 
 	data, err := s.ensureCache(ctx)
 	if err != nil {

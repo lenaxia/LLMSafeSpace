@@ -51,8 +51,10 @@ interface SettingRowProps {
 
 function SettingRow({ def, value, onSave, disabled }: SettingRowProps) {
   const [saving, setSaving] = useState(false);
+  const isReadOnly = def.readOnly === true;
 
   const handleChange = async (newValue: unknown) => {
+    if (isReadOnly) return;
     setSaving(true);
     try {
       await onSave(def.key, newValue);
@@ -66,13 +68,20 @@ function SettingRow({ def, value, onSave, disabled }: SettingRowProps) {
   return (
     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-4 px-4 py-3">
       <div className="flex-1 min-w-0">
-        <label className="text-sm font-medium" htmlFor={def.key}>
-          {def.label}
-        </label>
+        <div className="flex items-center gap-2">
+          <label className="text-sm font-medium" htmlFor={def.key}>
+            {def.label}
+          </label>
+          {isReadOnly && (
+            <span className="inline-flex items-center rounded-md bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground" title="This setting is managed by Helm. Edit the Helm values and upgrade to change it.">
+              Managed by Helm
+            </span>
+          )}
+        </div>
         <p className="text-xs text-muted-foreground mt-0.5">{def.description}</p>
       </div>
       <div className="shrink-0">
-        <SettingControl def={def} value={value} onChange={handleChange} disabled={disabled || saving} />
+        <SettingControl def={def} value={value} onChange={handleChange} disabled={disabled || saving || isReadOnly} />
       </div>
     </div>
   );
