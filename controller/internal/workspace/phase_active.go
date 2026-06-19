@@ -95,6 +95,10 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 			workspace.Status.Phase = v1.WorkspacePhaseCreating
 			workspace.Status.PodIP = ""
 			workspace.Status.Endpoint = ""
+			// US-24.7 counter semantics: ControllerRestartCount is incremented
+			// by the health-check loop only. This password-secret self-heal is
+			// a different recovery path, so it bumps RestartCount (total pod
+			// restarts) but deliberately NOT ControllerRestartCount.
 			workspace.Status.RestartCount++
 			if err := r.Status().Update(ctx, workspace); err != nil {
 				recordStatusUpdateConflictOnError("handleActive_pw_missing", err)

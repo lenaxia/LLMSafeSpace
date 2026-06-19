@@ -18,6 +18,14 @@ func (r *WorkspaceReconciler) handleSuspending(ctx context.Context, workspace *v
 
 	r.deletePodByName(ctx, name, workspace.Namespace)
 
+	// US-24.8 F22: suspend clears recovery state for a fresh start on resume.
+	// SafeMode is intentionally preserved (US-24.13 AC 9) so handleSuspended
+	// can disable TTL for safe-mode workspaces.
+	wasInRecovery := workspace.Status.ConsecutiveFailures > 0
+	if wasInRecovery {
+		metrics.WorkspacesInRecovery.Dec()
+	}
+
 	now := metav1.Now()
 	workspacePhaseTransitions.WithLabelValues(string(v1.WorkspacePhaseSuspending), string(v1.WorkspacePhaseSuspended)).Inc()
 	runtime := workspace.Spec.Runtime
@@ -30,6 +38,7 @@ func (r *WorkspaceReconciler) handleSuspending(ctx context.Context, workspace *v
 	workspace.Status.Endpoint = ""
 	workspace.Status.SuspendedAt = &now
 	workspace.Status.ConsecutiveFailures = 0
+	workspace.Status.ControllerRestartCount = 0
 	workspace.Status.NextRetryAt = nil
 	workspace.Status.LastFailureClass = ""
 	workspace.Status.LastFailureAt = nil
@@ -39,6 +48,9 @@ func (r *WorkspaceReconciler) handleSuspending(ctx context.Context, workspace *v
 	if err := r.Status().Update(ctx, workspace); err != nil {
 		recordStatusUpdateConflictOnError("handleSuspending_suspended", err)
 		metrics.WorkspacesRunning.WithLabelValues(runtime, secLevel).Inc()
+		if wasInRecovery {
+			metrics.WorkspacesInRecovery.Inc()
+		}
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil

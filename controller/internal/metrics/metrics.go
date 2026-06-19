@@ -23,7 +23,7 @@ var (
 		[]string{"runtime", "security_level"},
 	)
 	WorkspacesFailedTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{Name: "llmsafespace_workspaces_failed_total", Help: "Workspaces that entered terminal Failed phase"},
+		prometheus.CounterOpts{Name: "llmsafespace_workspaces_failed_total", Help: "Workspaces entering SafeMode, by failure class (incremented once per episode on the failure that trips SafeMode)"},
 		[]string{"reason"},
 	)
 	WorkspaceRecoveryAttemptsTotal = prometheus.NewCounterVec(
@@ -41,9 +41,6 @@ var (
 			Buckets: []float64{5, 15, 30, 60, 120, 300, 600, 1800},
 		},
 		[]string{"failure_class"},
-	)
-	WorkspaceConsecutiveFailuresMax = prometheus.NewGauge(
-		prometheus.GaugeOpts{Name: "llmsafespace_workspace_consecutive_failures_max", Help: "Highest ConsecutiveFailures across any active workspace"},
 	)
 	WorkspaceSafeModeActive = prometheus.NewGauge(
 		prometheus.GaugeOpts{Name: "llmsafespace_workspace_safe_mode_active", Help: "Count of workspaces currently in SafeMode (aggregate, no per-workspace label per F18)"},
@@ -190,7 +187,7 @@ func AllCollectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		WorkspacesCreatedTotal, WorkspacesDeletedTotal, WorkspacesRunning, WorkspacesFailedTotal,
 		WorkspaceRecoveryAttemptsTotal, WorkspaceRecoverySuccessTotal,
-		WorkspaceRecoveryBackoffDurationSeconds, WorkspaceConsecutiveFailuresMax,
+		WorkspaceRecoveryBackoffDurationSeconds,
 		WorkspaceSafeModeActive, WorkspaceSafeModeEntriesTotal, WorkspaceSafeModeExitsTotal,
 		WorkspaceControllerRestartsTotal, WorkspacesInRecovery,
 		WorkspaceRecoveryDurationSeconds,

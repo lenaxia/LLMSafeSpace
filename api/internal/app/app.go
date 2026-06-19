@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -35,6 +36,7 @@ import (
 	"github.com/lenaxia/llmsafespace/api/internal/services/workspace"
 	"github.com/lenaxia/llmsafespace/api/internal/services/wsstate"
 	agentoc "github.com/lenaxia/llmsafespace/pkg/agent/opencode"
+	"github.com/lenaxia/llmsafespace/pkg/agentd"
 	"github.com/lenaxia/llmsafespace/pkg/billing"
 	emailpkg "github.com/lenaxia/llmsafespace/pkg/email"
 	"github.com/lenaxia/llmsafespace/pkg/kubernetes"
@@ -907,7 +909,25 @@ func buildRelayChecker(
 	ipResolver handlers.PodIPResolver,
 	pwGetter func(context.Context, string) (string, error),
 ) handlers.RelayStateChecker {
-	client := &http.Client{Timeout: 5 * time.Second}
+	return newRelayChecker(&http.Client{Timeout: 5 * time.Second}, agentd.AgentdAdminPort, ipResolver, pwGetter)
+}
+
+// readyzReadLimit bounds the /v1/readyz response read. readyz is a tiny
+// envelope (a bool plus small fields); 16 KiB is ample and matches the
+// precedent set by the statusz decoder in proxy_events.go. Worklog 0372
+// (H4): the limit was dropped during the US-29.5 extraction, leaving the
+// decoder exposed to an unbounded body.
+const readyzReadLimit = 16 * 1024
+
+// newRelayChecker is the testable core of buildRelayChecker. The port and
+// http.Client are injected so tests can target an httptest server and
+// verify the read limit without binding the real agentd admin port.
+func newRelayChecker(
+	client *http.Client,
+	port int,
+	ipResolver handlers.PodIPResolver,
+	pwGetter func(context.Context, string) (string, error),
+) handlers.RelayStateChecker {
 	return func(ctx context.Context, userID, workspaceID string) bool {
 		podIP, err := ipResolver.GetWorkspacePodIP(ctx, userID, workspaceID)
 		if err != nil || podIP == "" {
@@ -917,7 +937,7 @@ func buildRelayChecker(
 		if err != nil || password == "" {
 			return false
 		}
-		url := fmt.Sprintf("http://%s:4098/v1/readyz", podIP)
+		url := fmt.Sprintf("http://%s:%d/v1/readyz", podIP, port)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
 			return false
@@ -934,7 +954,7 @@ func buildRelayChecker(
 		var readyz struct {
 			RelayInjected bool `json:"relay_injected"`
 		}
-		if json.NewDecoder(resp.Body).Decode(&readyz) != nil {
+		if json.NewDecoder(io.LimitReader(resp.Body, readyzReadLimit)).Decode(&readyz) != nil {
 			return false
 		}
 		return readyz.RelayInjected
