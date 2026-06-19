@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 // Package email provides the orchestration layer for outbound transactional
-// email. It wraps a pkg/email.EmailProvider (SES or Noop) and centralises
+// email. It wraps a pkg/email.EmailProvider (SES or Noop) and centralizes
 // message construction so that email bodies and link shapes are defined in
 // one place rather than scattered as inline fmt.Sprintf calls across handlers.
 //
@@ -64,7 +64,7 @@ func (s *Service) SendTest(ctx context.Context, to string) error {
 }
 
 // normaliseProviderName maps the raw config value to the resolved label.
-// Empty or unrecognised values become "noop" so the UX never shows a raw
+// Empty or unrecognized values become "noop" so the UX never shows a raw
 // provider string the user can't interpret.
 func normaliseProviderName(name string) string {
 	switch strings.ToLower(name) {

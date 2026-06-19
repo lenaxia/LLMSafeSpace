@@ -2413,7 +2413,7 @@ func TestMonitoring_DashboardConfigMap_NotEmpty(t *testing.T) {
 //
 // Contracts:
 //   1. By default (email.enabled=false), NO email block renders — the API
-//      falls back to NoopProvider (provider=""), matching today's behaviour.
+//      falls back to NoopProvider (provider=""), matching today's behavior.
 //   2. When email.enabled=true with provider=ses, the email block renders
 //      with all four fields (provider, sesRegion, fromAddress, baseUrl)
 //      that Config.Email reads via Viper mapstructure.
