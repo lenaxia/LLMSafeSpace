@@ -33,7 +33,7 @@ In-cluster HTTP router that distributes workspace traffic across healthy relay V
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LISTEN_ADDR` | `:8080` | Listen address |
-| `UPSTREAM_URL` | `https://opencode.ai/zen/v1` | Direct fallback upstream |
+| `UPSTREAM_URL` | `https://ai.thekao.cloud/v1` | Direct fallback upstream |
 | `PEER_CONFIG_PATH` | `/etc/relay-router/peers.json` | ConfigMap mount path |
 | `PEER_POLL_INTERVAL` | `5s` | ConfigMap re-read interval |
 | `HEALTH_INTERVAL` | `15s` | Health check interval |
