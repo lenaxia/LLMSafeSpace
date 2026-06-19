@@ -1,7 +1,7 @@
-# Worklog: Fix worklog-0372 adversarial validation findings
+# Worklog: Fix worklog-0374 adversarial validation findings
 
 **Date:** 2026-06-19
-**Session:** Triage and fix of the verified findings in worklog 0372 (the
+**Session:** Triage and fix of the verified findings in worklog 0374 (the
 session-wide adversarial validation register). All REAL findings that were
 clear-cut or part of the recovery state-machine coherent unit were fixed
 under TDD; design-decision items were surfaced to the user rather than
@@ -12,7 +12,7 @@ guessed (Rule 6).
 
 ## Objective
 
-Take the canonical findings register (worklog 0372: 22 REAL, 2 PARTIALLY-REAL,
+Take the canonical findings register (worklog 0374: 22 REAL, 2 PARTIALLY-REAL,
 1 FALSE ALARM) and remediate every finding that is a clear bug or test gap,
 validating each against the live code AND the authoritative design specs
 (US-24.7 / US-24.8 / US-24.13) before touching code (Rule 7 + Rule 11 Phase 2).
@@ -229,8 +229,8 @@ equivalent. CI should re-run with the repo's pinned version.
    `safeModeImage`, handleActive SafeMode early-return) remains a pre-existing
    gap; now that both entry triggers (ConsecutiveFailures + ControllerRestart)
    are wired, completing the pod side would make SafeMode user-visible.
-3. Open a PR for this branch (`fix/worklog-372-validation-findings`) per the
-   mandatory branch-and-PR workflow once the user confirms scope.
+3. PR #257 opened for this branch (`fix/worklog-372-validation-findings`) per
+   the mandatory branch-and-PR workflow.
 
 ---
 
