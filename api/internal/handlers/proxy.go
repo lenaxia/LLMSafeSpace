@@ -326,6 +326,8 @@ func (h *ProxyHandler) proxyToWorkspaceWithErrBody(
 			result:   make(chan error, 1),
 			deadline: time.Now().Add(h.requestBuffer.timeout),
 			cancelCh: make(chan struct{}),
+			// C5: account the body bytes against the global buffer memory cap.
+			bodySize: len(bodyBytes),
 		}
 		if !h.requestBuffer.tryEnqueue(workspaceID, bufReq) {
 			metrics.RecordRequestBufferFull(workspaceID)
