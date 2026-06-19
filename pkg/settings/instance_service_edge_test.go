@@ -105,6 +105,78 @@ func TestInstanceService_Set_StringPatternReject(t *testing.T) {
 	}
 }
 
+// Regression: production failure 2026-06-18.
+// Admin saved workspace.defaultResources.memory = "8gi" (lowercase
+// unit) via the admin UI. Without normalization, the lowercase value
+// reached the database and broke every workspace creation when the
+// validating webhook rejected it. With Normalize() running before
+// Validate() in InstanceService.Set, "8gi" gets canonicalized to
+// "8Gi" and stored as "8Gi". This pins the end-to-end fix.
+func TestInstanceService_Set_NormalizesMemoryQuantity(t *testing.T) {
+	store := newMockStore()
+	svc := newTestService(store)
+	ctx := context.Background()
+
+	// The exact production input.
+	if err := svc.Set(ctx, "workspace.defaultResources.memory", "8gi"); err != nil {
+		t.Fatalf("Set(\"8gi\") errored — Normalize must canonicalize before Validate: %v", err)
+	}
+
+	// Stored value must be the canonical form, not the input.
+	stored, err := svc.GetString(ctx, "workspace.defaultResources.memory")
+	if err != nil {
+		t.Fatalf("GetString errored: %v", err)
+	}
+	if stored != "8Gi" {
+		t.Errorf("stored value = %q; want %q (canonical Kubernetes Quantity form)", stored, "8Gi")
+	}
+}
+
+func TestInstanceService_Set_NormalizesMemoryUnitVariants(t *testing.T) {
+	// Exhaustive matrix of normalizations the user might type.
+	cases := map[string]string{
+		"8gi":   "8Gi",
+		"8GB":   "8Gi",
+		"8 Gi":  "8Gi",
+		"  4gi": "4Gi",
+		"512mi": "512Mi",
+	}
+	for in, want := range cases {
+		store := newMockStore()
+		svc := newTestService(store)
+		ctx := context.Background()
+
+		if err := svc.Set(ctx, "workspace.defaultResources.memory", in); err != nil {
+			t.Errorf("Set(%q) errored: %v", in, err)
+			continue
+		}
+		got, err := svc.GetString(ctx, "workspace.defaultResources.memory")
+		if err != nil {
+			t.Errorf("GetString errored after Set(%q): %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("Set(%q) → stored %q; want %q", in, got, want)
+		}
+	}
+}
+
+func TestInstanceService_Set_StillRejectsGarbage(t *testing.T) {
+	// Normalize must NOT silently fix unambiguous-bad inputs into
+	// something valid. "banana" stays "banana" through the normalizer
+	// and gets rejected by Validate's pattern check.
+	store := newMockStore()
+	svc := newTestService(store)
+	ctx := context.Background()
+
+	rejected := []string{"banana", "8 G", "8.5Gi", "-1Gi", ""}
+	for _, v := range rejected {
+		if err := svc.Set(ctx, "workspace.defaultResources.memory", v); err == nil {
+			t.Errorf("Set(%q) should have errored — Normalize must not silently fix unambiguous-bad input", v)
+		}
+	}
+}
+
 func TestInstanceService_Set_EnumValid(t *testing.T) {
 	store := newMockStore()
 	svc := newTestService(store)

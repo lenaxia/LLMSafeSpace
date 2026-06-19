@@ -285,3 +285,181 @@ func TestValidate_UnknownType(t *testing.T) {
 		t.Error("expected error for unknown type")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Resource-quantity validation (regression tests for the "8gi" bug)
+// ---------------------------------------------------------------------------
+//
+// Background: an admin saved `workspace.defaultResources.memory = "8gi"`
+// (lowercase "gi") via the admin settings UI. The setting had no Pattern,
+// so the value was accepted into the database. On the next workspace
+// creation, the API service piped the lowercase value into the
+// Workspace CRD's spec.resources.memory, which the validating webhook
+// rejected with the cryptic message:
+//
+//   spec.resources.memory "8gi": memory "8gi" does not match ^[0-9]+(Ki|Mi|Gi)$
+//
+// User-visible: the "Create workspace" button stopped working for
+// every user, with an internal_error toast that didn't say what was
+// wrong. Diagnosis required tracing all the way to the webhook.
+//
+// Root cause: the schema in pkg/settings/schema.go declared the
+// `workspace.defaultResources.{cpu,memory}` settings with no Pattern,
+// so any string the admin typed was accepted at save time. The
+// constraint was discovered eight code paths downstream.
+//
+// Fix: every setting that ends up as a Kubernetes Quantity-shaped
+// field on the Workspace CRD must declare a Pattern that matches the
+// CRD/webhook regex. These tests pin that contract.
+
+// memoryPattern mirrors the constant in
+// controller/internal/webhooks/workspace_webhook.go and the
+// kubebuilder annotation on
+// pkg/apis/llmsafespace/v1/workspace_types.go ResourceRequirements.Memory.
+// Duplicated here intentionally so a drift between the webhook and
+// the settings schema fails this package's tests, not just the
+// controller's.
+const expectedMemoryPattern = `^[0-9]+(Ki|Mi|Gi)$`
+const expectedCPUPattern = `^([0-9]+m|[0-9]+\.[0-9]+)$`
+const expectedStoragePattern = `^[0-9]+(Gi|Mi)$`
+
+// resourceQuantitySettings are the keys that end up on a CRD as a
+// Kubernetes Quantity. Each MUST declare a Pattern in the schema, AND
+// the Pattern must match the corresponding webhook regex. If you add a
+// new resource setting (e.g. workspace.defaultResources.ephemeralStorage)
+// add it here so the contract is enforced.
+var resourceQuantitySettings = map[string]string{
+	"workspace.defaultResources.memory": expectedMemoryPattern,
+	"workspace.defaultResources.cpu":    expectedCPUPattern,
+	"workspace.defaultStorageSize":      expectedStoragePattern,
+}
+
+func TestInstanceSettings_ResourceQuantitiesHavePatterns(t *testing.T) {
+	idx := InstanceSettingIndex()
+	for key, expected := range resourceQuantitySettings {
+		def, ok := idx[key]
+		if !ok {
+			t.Errorf("setting %q in resourceQuantitySettings but not in InstanceSettings", key)
+			continue
+		}
+		if def.Pattern == "" {
+			t.Errorf("setting %q has no Pattern; admins can save invalid values "+
+				"that the validating webhook will reject at workspace-create time. "+
+				"Expected pattern %q.", key, expected)
+		}
+	}
+}
+
+func TestInstanceSettings_ResourcePatternsAgreeWithWebhook(t *testing.T) {
+	// Drift guard: if the webhook regex changes, this test forces the
+	// settings schema to track. Mismatch means an admin could save a
+	// value the schema accepts but the webhook rejects (or vice
+	// versa), reproducing the "8gi" failure mode.
+	idx := InstanceSettingIndex()
+	for key, expected := range resourceQuantitySettings {
+		def, ok := idx[key]
+		if !ok {
+			continue // covered by TestInstanceSettings_ResourceQuantitiesHavePatterns
+		}
+		if def.Pattern != expected {
+			t.Errorf("setting %q pattern %q does not match webhook regex %q. "+
+				"If the webhook regex was updated, update the schema in lockstep.",
+				key, def.Pattern, expected)
+		}
+	}
+}
+
+func TestValidate_Memory_RejectsLowercaseUnit(t *testing.T) {
+	// Direct regression test for the "8gi" bug. The setting Validate
+	// path must reject lowercase unit suffixes — they're not valid
+	// Kubernetes Quantity strings and the apiserver/webhook rejects
+	// them downstream.
+	idx := InstanceSettingIndex()
+	def, ok := idx["workspace.defaultResources.memory"]
+	if !ok {
+		t.Fatal("workspace.defaultResources.memory missing from InstanceSettings")
+	}
+	if def.Pattern == "" {
+		t.Fatal("workspace.defaultResources.memory has no Pattern (covered by " +
+			"TestInstanceSettings_ResourceQuantitiesHavePatterns; " +
+			"this test cannot proceed without the fix)")
+	}
+
+	rejected := []string{
+		"8gi",    // the actual bug
+		"8GB",    // common mistake; not a k8s suffix
+		"8 Gi",   // whitespace
+		"8.5Gi",  // floating point not allowed by k8s memory suffixes
+		"8gib",   // lowercase, full word
+		"banana", // anything goes when there's no pattern
+		"",       // empty string accepted by no-pattern; should not be saved as a default
+		"-1Gi",   // negative
+		"8",      // bare number, no unit
+	}
+	for _, v := range rejected {
+		if err := Validate(def, v); err == nil {
+			t.Errorf("Validate accepted invalid memory value %q; webhook will reject "+
+				"it later, breaking workspace creation for every user", v)
+		}
+	}
+
+	accepted := []string{"512Mi", "1Gi", "8Gi", "16Gi", "1024Ki"}
+	for _, v := range accepted {
+		if err := Validate(def, v); err != nil {
+			t.Errorf("Validate rejected valid memory value %q: %v", v, err)
+		}
+	}
+}
+
+func TestValidate_CPU_RejectsBogusValues(t *testing.T) {
+	idx := InstanceSettingIndex()
+	def, ok := idx["workspace.defaultResources.cpu"]
+	if !ok {
+		t.Fatal("workspace.defaultResources.cpu missing from InstanceSettings")
+	}
+	if def.Pattern == "" {
+		t.Fatal("workspace.defaultResources.cpu has no Pattern")
+	}
+
+	rejected := []string{
+		"banana",
+		"1 core",
+		"1000M", // capital M is not millicores
+		"",
+		"-500m",
+		"100%",
+	}
+	for _, v := range rejected {
+		if err := Validate(def, v); err == nil {
+			t.Errorf("Validate accepted invalid CPU value %q", v)
+		}
+	}
+
+	accepted := []string{"500m", "1000m", "1.0", "0.5", "16.0"}
+	for _, v := range accepted {
+		if err := Validate(def, v); err != nil {
+			t.Errorf("Validate rejected valid CPU value %q: %v", v, err)
+		}
+	}
+}
+
+func TestValidate_StorageSize_RejectsBogusValues(t *testing.T) {
+	idx := InstanceSettingIndex()
+	def, ok := idx["workspace.defaultStorageSize"]
+	if !ok {
+		t.Fatal("workspace.defaultStorageSize missing from InstanceSettings")
+	}
+	// Pattern was already present pre-fix; treat this as a drift guard.
+	rejected := []string{"15gi", "15Ti", "15GB", "banana", "", "-1Gi"}
+	for _, v := range rejected {
+		if err := Validate(def, v); err == nil {
+			t.Errorf("Validate accepted invalid storage value %q", v)
+		}
+	}
+	accepted := []string{"15Gi", "100Gi", "1024Mi"}
+	for _, v := range accepted {
+		if err := Validate(def, v); err != nil {
+			t.Errorf("Validate rejected valid storage value %q: %v", v, err)
+		}
+	}
+}

@@ -59,8 +59,8 @@ func InstanceSettings() []SettingDef {
 		{Key: "workspace.defaultStorageClass", Tier: 2, Type: TypeString, Default: "", Category: "Workspace", Label: "Storage Class", Description: "K8s StorageClass (empty = cluster default)"},
 		{Key: "workspace.maxActiveWorkspacesPerUser", Tier: 2, Type: TypeInt, Default: 10, Min: intPtr(1), Max: intPtr(50), Category: "Workspace", Label: "Max Active Workspaces", Description: "Max running pods per user; oldest auto-suspended"},
 		{Key: "workspace.defaultMaxActiveSessions", Tier: 2, Type: TypeInt, Default: 5, Min: intPtr(1), Max: intPtr(20), Category: "Workspace", Label: "Max Sessions", Description: "Concurrent sessions per workspace"},
-		{Key: "workspace.defaultResources.cpu", Tier: 2, Type: TypeString, Default: "500m", Category: "Workspace", Label: "Default CPU", Description: "Default CPU limit"},
-		{Key: "workspace.defaultResources.memory", Tier: 2, Type: TypeString, Default: "1Gi", Category: "Workspace", Label: "Default Memory", Description: "Default memory limit"},
+		{Key: "workspace.defaultResources.cpu", Tier: 2, Type: TypeString, Default: "500m", Pattern: `^([0-9]+m|[0-9]+\.[0-9]+)$`, Category: "Workspace", Label: "Default CPU", Description: "Default CPU limit (e.g. 500m, 1.0)"},
+		{Key: "workspace.defaultResources.memory", Tier: 2, Type: TypeString, Default: "1Gi", Pattern: `^[0-9]+(Ki|Mi|Gi)$`, Category: "Workspace", Label: "Default Memory", Description: "Default memory limit (e.g. 512Mi, 1Gi). Suffix is case-sensitive."},
 
 		// Auto-Suspend
 		{Key: "workspace.autoSuspend.enabled", Tier: 2, Type: TypeBool, Default: true, Category: "Auto-Suspend", Label: "Auto-Suspend", Description: "Global auto-suspend"},

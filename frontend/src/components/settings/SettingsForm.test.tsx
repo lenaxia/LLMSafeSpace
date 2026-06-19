@@ -114,4 +114,300 @@ describe("SettingsForm", () => {
       expect(input.className).toContain("sm:w-48");
     });
   });
+
+  // Regression: real production failure 2026-06-18.
+  // Admin saved workspace.defaultResources.memory = "8gi" (lowercase
+  // unit). The setting had no pattern, so the value reached the
+  // database. Every subsequent workspace creation failed with a
+  // cryptic webhook error. The frontend silently submitted the
+  // invalid value because the StringInput did not consult def.pattern.
+  // These tests pin the contract: when def.pattern is present, the
+  // frontend must validate before calling onSave and must show the
+  // user what's expected.
+  describe("string input pattern validation", () => {
+    const memorySchema: SettingDef[] = [
+      {
+        key: "workspace.defaultResources.memory",
+        tier: 2,
+        type: "string",
+        default: "1Gi",
+        pattern: "^[0-9]+(Ki|Mi|Gi)$",
+        category: "Workspace",
+        label: "Default Memory",
+        description: "Default memory limit (e.g. 512Mi, 1Gi). Suffix is case-sensitive.",
+      },
+    ];
+
+    it("does not call onSave when value violates pattern", async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      render(<SettingsForm schema={memorySchema} values={{ "workspace.defaultResources.memory": "1Gi" }} onSave={onSave} />);
+
+      const input = screen.getByDisplayValue("1Gi");
+      // Truly-invalid value the normalizer can't safely fix.
+      fireEvent.change(input, { target: { value: "banana" } });
+      fireEvent.blur(input);
+
+      // Give any pending microtasks a chance to run, then assert the
+      // negative: no save call was made for the invalid value. We
+      // can't waitFor a non-event, so a microtask flush + immediate
+      // assertion is the right shape.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(onSave).not.toHaveBeenCalled();
+    });
+
+    it("shows a visible error when value violates pattern", async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      render(<SettingsForm schema={memorySchema} values={{ "workspace.defaultResources.memory": "1Gi" }} onSave={onSave} />);
+
+      const input = screen.getByDisplayValue("1Gi");
+      fireEvent.change(input, { target: { value: "banana" } });
+      fireEvent.blur(input);
+
+      // The error must be reachable via the accessibility tree —
+      // aria-invalid plus an aria-describedby message — so screen
+      // readers and the visible UI are both wired.
+      await waitFor(() => {
+        expect(input).toHaveAttribute("aria-invalid", "true");
+      });
+      const describedBy = input.getAttribute("aria-describedby");
+      expect(describedBy).toBeTruthy();
+      const errorEl = document.getElementById(describedBy as string);
+      expect(errorEl).not.toBeNull();
+      expect(errorEl?.textContent || "").toMatch(/match|pattern|format/i);
+    });
+
+    it("calls onSave when value matches pattern", async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      render(<SettingsForm schema={memorySchema} values={{ "workspace.defaultResources.memory": "1Gi" }} onSave={onSave} />);
+
+      const input = screen.getByDisplayValue("1Gi");
+      fireEvent.change(input, { target: { value: "8Gi" } });
+      fireEvent.blur(input);
+
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalledWith("workspace.defaultResources.memory", "8Gi");
+      });
+      // No error state when value is valid.
+      expect(input).not.toHaveAttribute("aria-invalid", "true");
+    });
+
+    it("clears error state when invalid value is replaced with valid one", async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      render(<SettingsForm schema={memorySchema} values={{ "workspace.defaultResources.memory": "1Gi" }} onSave={onSave} />);
+
+      const input = screen.getByDisplayValue("1Gi");
+
+      // First: invalid → error appears
+      fireEvent.change(input, { target: { value: "banana" } });
+      fireEvent.blur(input);
+      await waitFor(() => {
+        expect(input).toHaveAttribute("aria-invalid", "true");
+      });
+
+      // Then: valid → error clears
+      fireEvent.change(input, { target: { value: "8Gi" } });
+      fireEvent.blur(input);
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalledWith("workspace.defaultResources.memory", "8Gi");
+      });
+      expect(input).not.toHaveAttribute("aria-invalid", "true");
+    });
+
+    it("does not block input while typing — only validates on commit", () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      render(<SettingsForm schema={memorySchema} values={{ "workspace.defaultResources.memory": "1Gi" }} onSave={onSave} />);
+
+      const input = screen.getByDisplayValue("1Gi");
+      // User is mid-typing "8Gi" — at "8" alone, value is invalid by
+      // pattern. We must NOT show an error or block typing yet.
+      fireEvent.change(input, { target: { value: "8" } });
+      expect(input).not.toHaveAttribute("aria-invalid", "true");
+      // Until they blur (commit), nothing happens.
+      expect(onSave).not.toHaveBeenCalled();
+    });
+
+    it("shows pattern as a hint (placeholder or title) so user knows what's expected", () => {
+      render(<SettingsForm schema={memorySchema} values={{}} onSave={vi.fn()} />);
+      const input = screen.getByLabelText("Default Memory");
+      // Either as placeholder or title — both are accessible hints.
+      const placeholder = input.getAttribute("placeholder") || "";
+      const title = input.getAttribute("title") || "";
+      const hint = `${placeholder}${title}`;
+      // The hint must reveal what's expected — either by showing the
+      // pattern verbatim, or by showing an example value (e.g. "1Gi").
+      // Either is acceptable, both fail the empty-string case.
+      expect(hint.length).toBeGreaterThan(0);
+    });
+
+    it("string settings without a pattern accept any value (no regression)", async () => {
+      // The branding-style settings (instance.name etc.) and free-form
+      // strings should still work as before — only patterned strings
+      // get the new validation.
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      const freeFormSchema: SettingDef[] = [
+        { key: "test.string", tier: 3, type: "string", default: "", category: "Test", label: "Free Text", description: "" },
+      ];
+      render(<SettingsForm schema={freeFormSchema} values={{ "test.string": "" }} onSave={onSave} />);
+      const input = screen.getByLabelText("Free Text");
+      fireEvent.change(input, { target: { value: "anything goes 123!@#" } });
+      fireEvent.blur(input);
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalledWith("test.string", "anything goes 123!@#");
+      });
+      expect(input).not.toHaveAttribute("aria-invalid", "true");
+    });
+  });
+
+  // Normalization on commit: when the user types an unambiguous near-miss
+  // (lowercase unit, GB instead of Gi, stray whitespace) the form
+  // canonicalizes the value before submitting. The user sees the
+  // auto-correction land in the input itself — no toast, no error,
+  // just the value silently fixed. This mirrors the backend
+  // pkg/settings/Normalize() so a curl client and a UI client both
+  // get the same canonical value on the wire.
+  describe("string input normalization", () => {
+    const memorySchema: SettingDef[] = [
+      {
+        key: "workspace.defaultResources.memory",
+        tier: 2,
+        type: "string",
+        default: "1Gi",
+        pattern: "^[0-9]+(Ki|Mi|Gi)$",
+        category: "Workspace",
+        label: "Default Memory",
+        description: "Default memory limit",
+      },
+    ];
+
+    it("auto-corrects lowercase unit on blur (the production bug)", async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      render(<SettingsForm schema={memorySchema} values={{ "workspace.defaultResources.memory": "1Gi" }} onSave={onSave} />);
+      const input = screen.getByDisplayValue("1Gi") as HTMLInputElement;
+
+      fireEvent.change(input, { target: { value: "8gi" } });
+      fireEvent.blur(input);
+
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalledWith("workspace.defaultResources.memory", "8Gi");
+      });
+      expect(input.value).toBe("8Gi");
+      expect(input).not.toHaveAttribute("aria-invalid", "true");
+    });
+
+    it("auto-corrects GB → Gi", async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      render(<SettingsForm schema={memorySchema} values={{ "workspace.defaultResources.memory": "1Gi" }} onSave={onSave} />);
+      const input = screen.getByDisplayValue("1Gi") as HTMLInputElement;
+
+      fireEvent.change(input, { target: { value: "8GB" } });
+      fireEvent.blur(input);
+
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalledWith("workspace.defaultResources.memory", "8Gi");
+      });
+      expect(input.value).toBe("8Gi");
+    });
+
+    it("trims whitespace", async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      render(<SettingsForm schema={memorySchema} values={{ "workspace.defaultResources.memory": "1Gi" }} onSave={onSave} />);
+      const input = screen.getByDisplayValue("1Gi") as HTMLInputElement;
+
+      fireEvent.change(input, { target: { value: "  8 Gi  " } });
+      fireEvent.blur(input);
+
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalledWith("workspace.defaultResources.memory", "8Gi");
+      });
+      expect(input.value).toBe("8Gi");
+    });
+
+    it("does not normalize ambiguous inputs — they fall through to the pattern error", async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      render(<SettingsForm schema={memorySchema} values={{ "workspace.defaultResources.memory": "1Gi" }} onSave={onSave} />);
+      const input = screen.getByDisplayValue("1Gi") as HTMLInputElement;
+
+      // Bare "G" is ambiguous (decimal vs binary). Don't auto-correct;
+      // show the user the error so they pick consciously.
+      fireEvent.change(input, { target: { value: "8 G" } });
+      fireEvent.blur(input);
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(onSave).not.toHaveBeenCalled();
+      await waitFor(() => {
+        expect(input).toHaveAttribute("aria-invalid", "true");
+      });
+      expect(input.value).toBe("8 G");
+    });
+
+    it("does not normalize garbage", async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      render(<SettingsForm schema={memorySchema} values={{ "workspace.defaultResources.memory": "1Gi" }} onSave={onSave} />);
+      const input = screen.getByDisplayValue("1Gi") as HTMLInputElement;
+
+      fireEvent.change(input, { target: { value: "banana" } });
+      fireEvent.blur(input);
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(onSave).not.toHaveBeenCalled();
+      await waitFor(() => {
+        expect(input).toHaveAttribute("aria-invalid", "true");
+      });
+    });
+
+    it("CPU 500M → 500m", async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      const cpuSchema: SettingDef[] = [
+        {
+          key: "workspace.defaultResources.cpu",
+          tier: 2,
+          type: "string",
+          default: "500m",
+          pattern: "^([0-9]+m|[0-9]+\\.[0-9]+)$",
+          category: "Workspace",
+          label: "Default CPU",
+          description: "Default CPU limit",
+        },
+      ];
+      render(<SettingsForm schema={cpuSchema} values={{ "workspace.defaultResources.cpu": "500m" }} onSave={onSave} />);
+      const input = screen.getByDisplayValue("500m") as HTMLInputElement;
+
+      fireEvent.change(input, { target: { value: "1000M" } });
+      fireEvent.blur(input);
+
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalledWith("workspace.defaultResources.cpu", "1000m");
+      });
+      expect(input.value).toBe("1000m");
+    });
+
+    it("non-resource patterned strings are not normalized", async () => {
+      // instance.name has a pattern (^.{1,64}$) but isn't a resource
+      // quantity. Don't auto-uppercase or trim it — that'd be
+      // surprising behavior for a name field.
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      const nameSchema: SettingDef[] = [
+        {
+          key: "instance.name",
+          tier: 2,
+          type: "string",
+          default: "LLMSafeSpace",
+          pattern: "^.{1,64}$",
+          category: "Branding",
+          label: "Instance Name",
+          description: "",
+        },
+      ];
+      render(<SettingsForm schema={nameSchema} values={{ "instance.name": "Old" }} onSave={onSave} />);
+      const input = screen.getByDisplayValue("Old") as HTMLInputElement;
+
+      fireEvent.change(input, { target: { value: "  My Workspace  " } });
+      fireEvent.blur(input);
+
+      await waitFor(() => {
+        expect(onSave).toHaveBeenCalledWith("instance.name", "  My Workspace  ");
+      });
+      expect(input.value).toBe("  My Workspace  ");
+    });
+  });
 });

@@ -4,6 +4,7 @@ import { Toggle } from "../ui/Toggle";
 import { NumberInput } from "../ui/NumberInput";
 import { Select } from "../ui/Select";
 import { TagInput } from "../ui/TagInput";
+import { normalizeSettingValue } from "../../lib/settingsNormalize";
 
 interface SettingsFormProps {
   schema: SettingDef[];
@@ -113,9 +114,12 @@ function SettingControl({ def, value, onChange, disabled }: SettingControlProps)
       return (
         <StringInput
           id={def.key}
+          settingKey={def.key}
           value={value as string}
           onCommit={onChange}
           disabled={disabled}
+          pattern={def.pattern}
+          patternHint={def.default ? String(def.default) : undefined}
         />
       );
     case "strings":
@@ -132,28 +136,119 @@ function SettingControl({ def, value, onChange, disabled }: SettingControlProps)
   }
 }
 
-/** Text input that only commits on blur or Enter — avoids saving on every keystroke. */
-function StringInput({ id, value, onCommit, disabled, placeholder }: {
+/** Text input that only commits on blur or Enter — avoids saving on every keystroke.
+ *
+ * On commit, the typed value is run through normalizeSettingValue() to
+ * canonicalize unambiguous near-misses (e.g. "8gi" → "8Gi"). The
+ * normalized form is then checked against `pattern`; if it matches,
+ * onCommit fires with the normalized value AND the visible input is
+ * updated so the user sees the auto-correction. If it doesn't match,
+ * the value is left as-typed and an aria-invalid + helpful error is
+ * shown.
+ *
+ * Without a `pattern`, behavior is unchanged (free-form input).
+ *
+ * The two-stage policy mirrors pkg/settings/Normalize() + Validate()
+ * on the backend so a curl client and a UI client both produce the
+ * same canonical wire payload. */
+function StringInput({ id, settingKey, value, onCommit, disabled, placeholder, pattern, patternHint }: {
   id: string;
+  settingKey?: string;
   value: string;
   onCommit: (value: unknown) => void;
   disabled?: boolean;
   placeholder?: string;
+  pattern?: string;
+  patternHint?: string;
 }) {
   const [local, setLocal] = useState(value);
+  const [error, setError] = useState<string | null>(null);
+  const errorId = `${id}-error`;
+
   // Sync when value prop changes externally (e.g. API response)
-  useEffect(() => { setLocal(value); }, [value]);
+  useEffect(() => {
+    setLocal(value);
+    setError(null);
+  }, [value]);
+
+  // Compile the pattern once per change — RegExp construction is cheap
+  // and we want fresh state when the schema swaps the pattern.
+  const re = pattern ? safeRegExp(pattern) : null;
+
+  const commit = () => {
+    if (local === value) {
+      // No change — don't show an error for an untouched field.
+      setError(null);
+      return;
+    }
+    // Normalize first, then pattern-check. Lets unambiguous typos
+    // ("8gi") get auto-corrected; leaves ambiguous/garbage to the
+    // pattern rejection.
+    const normalized = settingKey ? normalizeSettingValue(settingKey, local) : local;
+    if (re && !re.test(normalized)) {
+      setError(
+        patternHint
+          ? `Value does not match required format. Example: ${patternHint}`
+          : `Value does not match required pattern: ${pattern}`,
+      );
+      return;
+    }
+    setError(null);
+    if (normalized !== local) {
+      // Show the user the canonicalized form they're committing.
+      setLocal(normalized);
+    }
+    onCommit(normalized);
+  };
+
+  // Hint priority: explicit placeholder > pattern example > pattern itself.
+  // The hint is what the user sees before typing, distinct from the
+  // error which appears after a bad commit.
+  const visibleHint = placeholder || patternHint || pattern || undefined;
+
   return (
-    <input
-      id={id}
-      type="text"
-      value={local}
-      onChange={(e) => setLocal(e.target.value)}
-      onBlur={() => { if (local !== value) onCommit(local); }}
-      onKeyDown={(e) => { if (e.key === "Enter") { e.currentTarget.blur(); } }}
-      disabled={disabled}
-      placeholder={placeholder}
-      className="h-8 w-full sm:w-48 rounded-md border border-border bg-background px-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed"
-    />
+    <div className="flex flex-col gap-1">
+      <input
+        id={id}
+        type="text"
+        value={local}
+        onChange={(e) => {
+          setLocal(e.target.value);
+          // Clear stale error as soon as the user starts editing again.
+          if (error) setError(null);
+        }}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.currentTarget.blur(); } }}
+        disabled={disabled}
+        placeholder={visibleHint}
+        title={pattern ? `Pattern: ${pattern}` : undefined}
+        aria-invalid={error ? "true" : undefined}
+        aria-describedby={error ? errorId : undefined}
+        className={
+          "h-8 w-full sm:w-48 rounded-md border bg-background px-2 text-sm focus:outline-none focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed " +
+          (error
+            ? "border-destructive focus:ring-destructive"
+            : "border-border focus:ring-ring")
+        }
+      />
+      {error && (
+        <span id={errorId} role="alert" className="text-xs text-destructive">
+          {error}
+        </span>
+      )}
+    </div>
   );
+}
+
+/** Compile a regex from a (possibly user-supplied) pattern string.
+ * Returns null if the pattern is invalid — in that case we degrade to
+ * accepting anything rather than crashing the form. The Go-side
+ * settings schema is the source of truth; an invalid pattern there is
+ * a separate bug, caught by TestInstanceSettings_DefaultsPassValidation. */
+function safeRegExp(pattern: string): RegExp | null {
+  try {
+    return new RegExp(pattern);
+  } catch {
+    return null;
+  }
 }
