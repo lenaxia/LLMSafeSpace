@@ -473,24 +473,23 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// is nil until proxyHandler.Start() runs. Wire password getter + metrics here
 	// (these are available at construction time).
 	if agentReloadHandler != nil {
-		if pwGetter := proxyHandler.GetPasswordGetter(); pwGetter != nil {
-			agentReloadHandler.SetPasswordGetter(pwGetter)
-			bulkReloadHandler.SetPasswordGetter(pwGetter)
-			// US-29.5: construct ModelsHandler with AgentClient now that
-			// the password getter is available.
-			if modelsHandler != nil {
-				ipResolver := newSecretsPodIPResolver(
-					&k8sWorkspaceGetterAdapter{client: k8sClient, namespace: cfg.Kubernetes.Namespace},
-					dbSvc, log,
-				)
-				pwAdapter := func(ctx context.Context, wsID string) (string, error) {
-					return pwGetter.WorkspacePassword(ctx, wsID)
-				}
-				agentClient := agentoc.NewWorkspaceClient(pwAdapter, ipResolver, log.ZapLogger())
-				modelsHandler.SetAgentClient(agentClient)
-				if relayURL := cfg.Server.InferenceRelayURL; relayURL != "" {
-					modelsHandler.SetRelayChecker(buildRelayChecker(ipResolver, pwAdapter))
-				}
+		pwGetter := proxyHandler.GetPasswordGetter()
+		agentReloadHandler.SetPasswordGetter(pwGetter)
+		bulkReloadHandler.SetPasswordGetter(pwGetter)
+		// US-29.5: construct ModelsHandler with AgentClient now that
+		// the password getter is available.
+		if modelsHandler != nil {
+			ipResolver := newSecretsPodIPResolver(
+				&k8sWorkspaceGetterAdapter{client: k8sClient, namespace: cfg.Kubernetes.Namespace},
+				dbSvc, log,
+			)
+			pwAdapter := func(ctx context.Context, wsID string) (string, error) {
+				return pwGetter.WorkspacePassword(ctx, wsID)
+			}
+			agentClient := agentoc.NewWorkspaceClient(pwAdapter, ipResolver, log.ZapLogger())
+			modelsHandler.SetAgentClient(agentClient)
+			if relayURL := cfg.Server.InferenceRelayURL; relayURL != "" {
+				modelsHandler.SetRelayChecker(buildRelayChecker(ipResolver, pwAdapter))
 			}
 		}
 	}
