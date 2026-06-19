@@ -530,7 +530,7 @@ func TestRelayDeploy_Create_Success(t *testing.T) {
 }
 
 // TestRelayDeploy_Create_RealClientNotFoundSemantics is a regression test for
-// worklog 0362 — the real typed client at pkg/kubernetes/client_crds.go:307
+// worklog 0385 — the real typed client at pkg/kubernetes/client_crds.go:307
 // pre-allocates `result := &v1.InferenceRelay{}` and returns it alongside the
 // NotFound error, so a `nil`-check on the returned pointer is always false.
 // This drove the handler into the Update branch on first deploy, producing

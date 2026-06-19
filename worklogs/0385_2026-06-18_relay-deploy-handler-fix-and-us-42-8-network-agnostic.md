@@ -166,6 +166,29 @@ Zero real findings.
 
 ---
 
+## Blockers
+
+This fix unblocks the *click* on "Deploy Relay Fleet" (the InferenceRelay CR
+now creates on first deploy). It does **not** make the relay fleet function.
+End-to-end operation is still blocked by:
+
+1. **US-42.8 (chart implementation)** — the relay-router pod has no WireGuard
+   sidecar, so no `wg0` interface terminates in-cluster and cloud relay VMs
+   cannot tunnel back. The fleet stays 0/N healthy forever. The redesigned
+   Layer 2 spec in this commit is the implementation plan for the follow-up PR.
+2. **US-42.2 (day-one validation)** — manual operator step: deploy a relay VM
+   on AWS + OCI and curl `opencode.ai/zen/v1` to confirm those IPs are not
+   blocked (assumption A22). No code; prerequisite before enabling the fleet
+   is worth the operator's time.
+3. **Operator config** — `controller.inferenceRelay.enabled` defaults to
+   `false`; provider credential Secrets are absent by default.
+
+None of these are blockers for *this* PR (the handler fix is correct and
+useful in isolation). They are the remaining workstream documented so the
+next session/operator has the full picture.
+
+---
+
 ## Next Steps
 
 1. **Operator (immediate):** redeploy the API image with this fix, retry "Deploy Relay Fleet" — the CR will create successfully. The fleet will still be 0/N healthy until US-42.8 is implemented because no WG tunnel terminates in-cluster, but the deploy step itself unblocks.

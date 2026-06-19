@@ -188,14 +188,14 @@ The relay-router Deployment runs two containers:
 This follows the established pattern in `design/stories/epic-32-vpn-network-iam/README.md` for WireGuard sidecars with `NET_ADMIN` + `NET_RAW` capabilities.
 
 **WireGuard ingress — network-agnostic, operator-selectable:**
-Relay VMs must reach the router's WG endpoint from outside the cluster. The chart MUST NOT depend on a specific load-balancer implementation: bare-metal Talos clusters typically lack a cloud LB, but operators may run on managed K8s (GKE/EKS/AKS), bare-metal with MetalLB or kube-vip, or behind their own DNAT. The chart ships **three operator-selectable ingress modes** plus an "external" escape hatch. Mode is chosen via `controller.inferenceRelay.router.wireGuard.ingress.mode`; default is `external` so installs never break when no LB is present.
+Relay VMs must reach the router's WG endpoint from outside the cluster. The chart MUST NOT depend on a specific load-balancer implementation: bare-metal Talos clusters typically lack a cloud LB, but operators may run on managed K8s (GKE/EKS/AKS), bare-metal with MetalLB or kube-vip, or behind their own DNAT. The chart ships **four operator-selectable ingress modes** (`external` default, `loadBalancer`, `nodePort`, `hostNetwork`). Mode is chosen via `controller.inferenceRelay.router.wireGuard.ingress.mode`; default is `external` so installs never break when no LB is present.
 
 | Mode | What it does | When to use | Resilience | Operator burden |
 |------|--------------|-------------|------------|-----------------|
 | `external` (default) | Chart creates **no** ingress resources. Operator points DNS at whatever ingress they already run (cloud LB, hostNetwork pod, NAT rule, MetalLB Service applied out-of-band). The CRD's `spec.wireGuard.routerEndpoint` is the operator's source of truth. | Any cluster — universal escape hatch | Operator's choice | Highest (full DIY) |
 | `loadBalancer` | Chart creates a `Service` of type `LoadBalancer` on UDP 51820, optionally pinned to `loadBalancerIP`. Works with **any** controller that satisfies LoadBalancer Services (cloud LB, MetalLB, kube-vip, Cilium L2, etc.) — the chart does **not** install or assume MetalLB. | Cloud K8s; bare-metal with an existing LB | Best (LB controller picks a healthy node) | Low |
 | `nodePort` | Chart creates a `Service` of type `NodePort` on a pinned UDP port. Operator points DNS at one or more node IPs (or a static external LB they manage). | Bare-metal without an LB controller | Medium (NodePort is per-node; node failure breaks the tunnel until DNS / external LB re-points) | Medium |
-| `hostNetwork` | Chart deploys the router as `hostNetwork: true` pinned to a labelled node. Operator labels the chosen node with `llmsafespace.dev/relay-router=true` and points DNS at that node's IP. | Bare-metal where NodePort is undesirable and no LB exists | Lowest (single node) | Medium |
+| `hostNetwork` | Chart deploys the router as `hostNetwork: true` pinned to a labelled node. Operator labels the chosen node with `llmsafespaces.dev/relay-router=true` and points DNS at that node's IP. | Bare-metal where NodePort is undesirable and no LB exists | Lowest (single node) | Medium |
 
 **Rules common to all modes:**
 - The CRD `spec.wireGuard.routerEndpoint` is **always** the public `host:port` the relay VM dials. The chart never derives this — it's an operator declaration, validated only by reachability when relay VMs successfully tunnel back.
@@ -241,7 +241,7 @@ controller:
         ingress:
           mode: hostNetwork
           # operator must label the node:
-          #   kubectl label node <name> llmsafespace.dev/relay-router=true
+          #   kubectl label node <name> llmsafespaces.dev/relay-router=true
 ```
 
 **Why this redesign vs the original MetalLB plan:**
