@@ -43,7 +43,12 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 		workspace.Status.NextRetryAt = nil
 		workspace.Status.LastFailureClass = ""
 		workspace.Status.LastFailureAt = nil
+		workspace.Status.LastStableAt = nil
 		workspace.Status.SafeMode = false
+		// US-24.7 AC 5: restartGeneration bump clears ControllerRestartCount.
+		// Worklog 0372 (M7): previously omitted, so a user-initiated retry
+		// left stale health-restart state that could re-trip SafeMode.
+		workspace.Status.ControllerRestartCount = 0
 		workspace.Status.RestartCount++
 		workspace.Status.ObservedRestartGeneration = workspace.Spec.RestartGeneration
 		// Fall through to pod creation below.

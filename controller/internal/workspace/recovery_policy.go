@@ -35,7 +35,10 @@ func calculateBackoff(failures int32, policy RecoveryPolicy) time.Duration {
 	if shift > 30 {
 		shift = 30
 	}
-	backoff := policy.BackoffBase * time.Duration(1<<uint(shift))
+	// failures >= 1 here (early-return above), so shift is bounded [0,30];
+	// shift the duration directly to avoid an int→uint conversion
+	// (gosec G115) while staying bit-identical to BackoffBase * 2^shift.
+	backoff := policy.BackoffBase << shift
 	if backoff > policy.BackoffMax || backoff < 0 {
 		backoff = policy.BackoffMax
 	}
@@ -59,9 +62,16 @@ func timeUntilNextRetry(ws *v1.Workspace) time.Duration {
 
 // maybeResetConsecutiveFailures clears recovery state after the workspace
 // has been healthy for the stability window (2 min). If LastStableAt is nil
-// and there are outstanding failures, it starts the clock.
+// and there is outstanding recovery state, it starts the clock.
+//
+// The guard checks BOTH ConsecutiveFailures and ControllerRestartCount: a
+// health-check restart bumps ControllerRestartCount without touching
+// ConsecutiveFailures (US-24.7), so the reset must be reachable for either
+// counter independently. Worklog 0372 (C1): the previous guard checked only
+// ConsecutiveFailures, leaving ControllerRestartCount un-resettable in the
+// common (health-restart-only) case. Matches US-24.8 spec lines 13-17.
 func maybeResetConsecutiveFailures(ws *v1.Workspace) {
-	if ws.Status.ConsecutiveFailures == 0 {
+	if ws.Status.ConsecutiveFailures == 0 && ws.Status.ControllerRestartCount == 0 {
 		return
 	}
 	if ws.Status.LastStableAt == nil {
