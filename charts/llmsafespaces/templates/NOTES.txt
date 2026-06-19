@@ -238,6 +238,38 @@ CiliumNetworkPolicy alongside the chart:
 This requires Cilium with FQDN policy enabled. Calico operators
 can use a similar GlobalNetworkPolicy with negative selectors.
 
+{{- if .Values.controller.inferenceRelay.enabled }}
+
+INFERENCE RELAY (US-42.8) — Pod Security Admission
+===================================================
+
+You have enabled controller.inferenceRelay. The relay-router pod runs a
+WireGuard sidecar that requires root + NET_ADMIN/NET_RAW + hostPath
+/dev/net/tun (and hostNetwork in that ingress mode). This pod CANNOT be
+admitted under the Kubernetes Pod Security Admission `restricted` profile.
+
+{{- if .Values.namespace.create }}
+The chart-created namespace has been labelled `pod-security.kubernetes.io/enforce=privileged`
+to admit the sidecar. The chart's other pods (API, controller, frontend)
+remain individually hardened (non-root, ALL caps dropped, read-only root FS).
+{{- else }}
+ACTION REQUIRED: your release namespace ({{ .Release.Namespace }}) is NOT
+created by this chart, so the chart could not relax its Pod Security profile.
+Before the relay-router pod will start, ensure that namespace carries
+`pod-security.kubernetes.io/enforce=privileged` (or remove the label /
+set it to "" to disable PSA entirely). `baseline` is NOT sufficient — it
+forbids hostPath and NET_ADMIN/NET_RAW, both of which the sidecar requires.
+
+    kubectl label namespace {{ .Release.Namespace }} \
+      pod-security.kubernetes.io/enforce=privileged \
+      --overwrite
+
+The chart's other pods remain individually hardened regardless.
+{{- end }}
+
+See worklog 0410 (US-42.8) and Epic 42 Layer 2 for the full rationale.
+{{- end }}
+
 {{- if .Values.email.enabled }}
 
 OUTBOUND EMAIL (Epic 49)

@@ -77,6 +77,26 @@ type App struct {
 	cancel             context.CancelFunc
 }
 
+// newEmailMailer resolves the configured email provider into an
+// emailpkg.EmailProvider. Extracted from New to keep New under the funlen
+// limit (worklog 0410). SES validation fails fast at boot.
+func newEmailMailer(cfg *config.Config) (emailpkg.EmailProvider, error) {
+	switch strings.ToLower(cfg.Email.Provider) {
+	case "ses":
+		if cfg.Email.FromAddress == "" || cfg.Email.BaseURL == "" {
+			return nil, fmt.Errorf("email provider 'ses' requires fromAddress and baseUrl to be set")
+		}
+		awsCfg, err := awsconfig.LoadDefaultConfig(context.Background(),
+			awsconfig.WithRegion(cfg.Email.SESRegion))
+		if err != nil {
+			return nil, fmt.Errorf("init aws config for ses: %w", err)
+		}
+		return emailpkg.NewSESProvider(awsCfg, cfg.Email.FromAddress), nil
+	default:
+		return &emailpkg.NoopProvider{}, nil
+	}
+}
+
 func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -597,22 +617,10 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// required) applies at boot regardless of whether the org store is
 	// available, so a misconfigured SES install fails fast rather than
 	// silently degrading to noop when pgOrgStore is nil.
-	var mailer emailpkg.EmailProvider
-	switch strings.ToLower(cfg.Email.Provider) {
-	case "ses":
-		if cfg.Email.FromAddress == "" || cfg.Email.BaseURL == "" {
-			cancel()
-			return nil, fmt.Errorf("email provider 'ses' requires fromAddress and baseUrl to be set")
-		}
-		awsCfg, err := awsconfig.LoadDefaultConfig(context.Background(),
-			awsconfig.WithRegion(cfg.Email.SESRegion))
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("init aws config for ses: %w", err)
-		}
-		mailer = emailpkg.NewSESProvider(awsCfg, cfg.Email.FromAddress)
-	default:
-		mailer = &emailpkg.NoopProvider{}
+	mailer, err := newEmailMailer(cfg)
+	if err != nil {
+		cancel()
+		return nil, err
 	}
 	emailService = emailsvc.NewService(mailer, cfg.Email.BaseURL, cfg.Email.Provider)
 	emailHandler = handlers.NewEmailHandler(emailService, svc.GetRateLimiter(), log)

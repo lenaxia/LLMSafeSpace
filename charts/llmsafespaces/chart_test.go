@@ -35,6 +35,7 @@ package chart_test
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -2402,6 +2403,26 @@ func TestMonitoring_DashboardConfigMap_NotEmpty(t *testing.T) {
 }
 
 // =============================================================================
+// InferenceRelay — US-42.8 Pod Security Admission (PSA) namespace relaxation
+// =============================================================================
+//
+// The relay-router WireGuard sidecar (root + NET_ADMIN + hostPath /dev/net/tun
+// + hostNetwork in that mode) cannot be admitted under the PSA `restricted`
+// profile. When inferenceRelay is enabled AND the chart creates the namespace,
+// the namespace template auto-widens the profile to `privileged` so the pod
+// actually starts (worklog 0410). These tests guard that contract.
+
+// findNamespace returns the Namespace doc rendered by the chart, or nil.
+func findNamespace(docs []map[string]any) map[string]any {
+	for _, d := range docs {
+		if d["kind"] == "Namespace" {
+			return d
+		}
+	}
+	return nil
+}
+
+// =============================================================================
 // Epic 49 — Email config (US-49.1): move email config out of env into helm
 // =============================================================================
 //
@@ -2433,6 +2454,167 @@ func findAPIConfigMap(t *testing.T, docs []map[string]any) map[string]any {
 		}
 	}
 	return nil
+}
+
+// nsPSAEnforce returns the pod-security.kubernetes.io/enforce label value
+// on a Namespace doc, or "" if unset.
+func nsPSAEnforce(ns map[string]any) string {
+	meta, _ := ns["metadata"].(map[string]any)
+	labels, _ := meta["labels"].(map[string]any)
+	v, _ := labels["pod-security.kubernetes.io/enforce"].(string)
+	return v
+}
+
+// TestRelayRouter_PSA_NamespaceStaysRestrictedWhenRelayDisabled asserts the
+// default posture is unchanged when inferenceRelay is off: the chart-created
+// namespace enforces `restricted`.
+func TestRelayRouter_PSA_NamespaceStaysRestrictedWhenRelayDisabled(t *testing.T) {
+	docs := helmTemplate(t, "namespace:\n  create: true\n")
+	ns := findNamespace(docs)
+	require.NotNil(t, ns, "namespace must render when namespace.create=true")
+	require.Equal(t, "restricted", nsPSAEnforce(ns),
+		"namespace PSA must stay `restricted` when inferenceRelay is disabled (default posture)")
+}
+
+// TestRelayRouter_PSA_NamespaceAutoRelaxesWhenRelayEnabled asserts that
+// enabling inferenceRelay widens the chart-created namespace to `privileged`
+// so the WireGuard sidecar can be admitted. This is the load-bearing fix for
+// the "pod never starts" failure mode.
+func TestRelayRouter_PSA_NamespaceAutoRelaxesWhenRelayEnabled(t *testing.T) {
+	docs := helmTemplate(t, "namespace:\n  create: true\ncontroller:\n  inferenceRelay:\n    enabled: true\n")
+	ns := findNamespace(docs)
+	require.NotNil(t, ns)
+	require.Equal(t, "privileged", nsPSAEnforce(ns),
+		"namespace PSA must auto-widen to `privileged` when inferenceRelay.enabled + namespace.create "+
+			"(the WG sidecar needs root + NET_ADMIN + hostPath, all forbidden under `restricted`)")
+}
+
+// TestRelayRouter_PSA_OperatorOverrideRespected asserts that an operator who
+// explicitly sets podSecurityEnforce to something other than `restricted` has
+// their choice honored (the chart does not force-`privileged` an already-
+// relaxed namespace, and does not downgrade a deliberately-empty one).
+func TestRelayRouter_PSA_OperatorOverrideRespected(t *testing.T) {
+	docs := helmTemplate(t, "namespace:\n  create: true\n  podSecurityEnforce: \"baseline\"\ncontroller:\n  inferenceRelay:\n    enabled: true\n")
+	ns := findNamespace(docs)
+	require.NotNil(t, ns)
+	require.Equal(t, "baseline", nsPSAEnforce(ns),
+		"operator-set podSecurityEnforce=baseline must be respected (only `restricted` auto-widens)")
+}
+
+// TestRelayRouter_PSA_EmptyStringOmitsAllLabels asserts that an operator who
+// sets podSecurityEnforce to "" (opt out of PSA entirely) gets NO PSA labels
+// at all, regardless of inferenceRelay. Guards against a regression where
+// empty-string handling rendered a literal
+// `pod-security.kubernetes.io/enforce: ""` label (the {{- if $psa }} guard is
+// the only thing preventing it).
+func TestRelayRouter_PSA_EmptyStringOmitsAllLabels(t *testing.T) {
+	docs := helmTemplate(t, "namespace:\n  create: true\n  podSecurityEnforce: \"\"\ncontroller:\n  inferenceRelay:\n    enabled: true\n")
+	ns := findNamespace(docs)
+	require.NotNil(t, ns)
+	meta, _ := ns["metadata"].(map[string]any)
+	labels, _ := meta["labels"].(map[string]any)
+	for k := range labels {
+		require.NotContains(t, k, "pod-security.kubernetes.io/",
+			"empty podSecurityEnforce must omit ALL PSA labels (got %q)", k)
+	}
+}
+
+// TestRelayRouter_WGScript_DetectWGImpl_Behavior exercises the detect_wg_impl
+// shell function (shipped in the relay-router-wg-scripts ConfigMap) by
+// extracting it from the rendered chart and invoking it under controlled
+// fakes. Validates the three branches the Talos/kernel compatibility depends
+// on (worklog 0410, A-IMG-TALOS): in-kernel WG → unset userspace env;
+// userspace-only → set WG_QUICK_USERSPACE_IMPLEMENTATION=wireguard-go; neither
+// → non-zero exit. This is the TDD coverage the PR-287 review flagged as
+// missing — `sh -n` only checks parse-ability, not behavior.
+func TestRelayRouter_WGScript_DetectWGImpl_Behavior(t *testing.T) {
+	docs := helmTemplate(t, relayEnabledValues)
+	var script string
+	for _, d := range findByKind(docs, "ConfigMap") {
+		if strings.Contains(metaName(d), "relay-router-wg-scripts") {
+			data, _ := d["data"].(map[string]any)
+			script, _ = data["render-wg.sh"].(string)
+		}
+	}
+	require.NotEmpty(t, script, "render-wg.sh must render in the wg-scripts ConfigMap")
+
+	// Slice out just the detect_wg_impl function body (from its definition to
+	// the closing brace before the next function). The function is
+	// self-contained: it only calls modprobe, tests /sys/module/wireguard,
+	// and checks for wireguard-go on PATH. We stub all three.
+	start := strings.Index(script, "detect_wg_impl()")
+	require.NotEqual(t, -1, start, "detect_wg_impl must be defined in render-wg.sh")
+	// Anchor the end on the function terminal "return 1\n    }\n" (the
+	// neither-implementation branch). A naive closing-brace search would
+	// stop at the first inner if-block closing brace.
+	endMarker := "return 1\n}\n"
+	end := strings.Index(script[start:], endMarker)
+	require.NotZero(t, end, "could not locate end of detect_wg_impl (return 1 + closing brace)")
+	fnBody := script[start : start+end+len(endMarker)]
+
+	// runCase stubs the three probes and runs the function under sh.
+	//   fakeModprobeOK     — modprobe wireguard returns 0 (module loadable)
+	//   fakeSysmoduleExists— /sys/module/wireguard exists (module loaded)
+	//   fakeWGGoOnPath     — a fake `wireguard-go` is placed on PATH
+	// /sys/module is a real path test we cannot fake as a function, so we
+	// rewrite that branch to consult an env flag. modprobe IS a function.
+	// wireguard-go is faked by putting a real script on PATH (command -v is
+	// a builtin and cannot be reliably overridden as a function under dash).
+	runCase := func(t *testing.T, fakeModprobeOK, fakeSysmoduleExists, fakeWGGoOnPath bool) (exitOK bool, userspaceEnv string) {
+		t.Helper()
+		fakeBin := t.TempDir()
+		if fakeWGGoOnPath {
+			fp := filepath.Join(fakeBin, "wireguard-go")
+			require.NoError(t, os.WriteFile(fp, []byte("#!/bin/sh\nexit 0\n"), 0755))
+		}
+		stubs := fmt.Sprintf(`
+modprobe() { return %d; }
+__sysmod_exists=%v
+log() { :; }
+`, boolToRet(fakeModprobeOK), fakeSysmoduleExists)
+		// Rewrite the in-function probes to consult our flags.
+		fudged := strings.ReplaceAll(fnBody, "[ -d /sys/module/wireguard ]", "[ \"$__sysmod_exists\" = \"true\" ]")
+		fudged = strings.ReplaceAll(fudged, "modprobe wireguard 2>/dev/null", "modprobe wireguard")
+		snippet := stubs + fudged + `
+detect_wg_impl
+rc=$?
+echo "EXIT=$rc USPACE=$WG_QUICK_USERSPACE_IMPLEMENTATION"
+`
+		cmd := exec.Command("sh", "-c", snippet)
+		cmd.Env = append(os.Environ(), "PATH="+fakeBin+":/usr/bin:/bin")
+		out, _ := cmd.CombinedOutput()
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.HasPrefix(line, "EXIT=") {
+				exitOK = strings.Contains(line, "EXIT=0")
+				if i := strings.Index(line, "USPACE="); i >= 0 {
+					userspaceEnv = strings.TrimSpace(line[i+len("USPACE="):])
+				}
+			}
+		}
+		return exitOK, userspaceEnv
+	}
+
+	t.Run("kernel module present", func(t *testing.T) {
+		ok, uspace := runCase(t, true, true, true)
+		require.True(t, ok, "in-kernel WG: detect_wg_impl must succeed")
+		require.Empty(t, uspace, "in-kernel WG: must NOT set WG_QUICK_USERSPACE_IMPLEMENTATION")
+	})
+	t.Run("no kernel module, userspace available", func(t *testing.T) {
+		ok, uspace := runCase(t, false, false, true)
+		require.True(t, ok, "userspace fallback: detect_wg_impl must succeed when wireguard-go is on PATH")
+		require.Equal(t, "wireguard-go", uspace, "userspace fallback: must set WG_QUICK_USERSPACE_IMPLEMENTATION=wireguard-go")
+	})
+	t.Run("no kernel module, no userspace", func(t *testing.T) {
+		ok, _ := runCase(t, false, false, false)
+		require.False(t, ok, "neither implementation available: detect_wg_impl must fail (non-zero exit)")
+	})
+}
+
+func boolToRet(b bool) int {
+	if b {
+		return 0
+	}
+	return 1
 }
 
 // configYAML extracts the config.yaml string from an API ConfigMap. Fatals

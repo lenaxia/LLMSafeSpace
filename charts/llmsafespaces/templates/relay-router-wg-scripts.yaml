@@ -36,6 +36,27 @@ data:
 
     have_jq() { command -v jq >/dev/null 2>&1; }
 
+    # detect_wg_impl: prefer the in-kernel WireGuard module (Talos and modern
+    # Linux ship it). If `modprobe wireguard` fails OR the module isn't
+    # visible, fall back to userspace wireguard-go via the
+    # WG_QUICK_USERSPACE_IMPLEMENTATION env that wg-quick honours. This makes
+    # the sidecar work on Talos (kernel WG), generic Linux, and locked-down
+    # kernels (userspace) alike — worklog 0410 assumption A-IMG.
+    detect_wg_impl() {
+      if modprobe wireguard 2>/dev/null || [ -d /sys/module/wireguard ]; then
+        log "using in-kernel WireGuard"
+        unset WG_QUICK_USERSPACE_IMPLEMENTATION
+        return 0
+      fi
+      if command -v wireguard-go >/dev/null 2>&1; then
+        log "kernel WG module unavailable; using userspace wireguard-go"
+        export WG_QUICK_USERSPACE_IMPLEMENTATION=wireguard-go
+        return 0
+      fi
+      log "ERROR: no WireGuard implementation available (no kernel module, no wireguard-go)"
+      return 1
+    }
+
     # render_conf prints a fresh wg0.conf to stdout, or returns 1 when there is
     # no private key yet (controller has not provisioned any relay VM).
     render_conf() {
@@ -97,8 +118,15 @@ data:
       log "WARNING: jq not present in image — peers from ${PEERS_FILE} will not be configured. " \
           "Use an image providing wireguard-tools, iproute2 and jq (see values.yaml wireGuard.image)."
     fi
+    # Probe the WG implementation once at startup. Both paths are probed on
+    # every retry inside the loop in case the kernel module loads late.
+    detect_wg_impl || true
 
     while true; do
+      # Re-probe each tick: the kernel module may have loaded after the first
+      # pass (Talos loads some modules lazily), or the userspace daemon may
+      # have died.
+      detect_wg_impl || true
       apply_conf || true
       sleep "$SYNC_INTERVAL"
     done

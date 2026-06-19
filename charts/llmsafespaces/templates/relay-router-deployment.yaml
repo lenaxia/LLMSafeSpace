@@ -91,9 +91,11 @@ spec:
               # Drop ALL then add back only the two this sidecar needs. Note
               # NET_ADMIN/NET_RAW (and runAsUser: 0, hostPath /dev/net/tun,
               # and hostNetwork in that mode) make this pod NON-compliant with
-              # the Pod Security Admission `restricted` profile — see the
-              # wireGuard block in values.yaml and worklog 0395 for the operator
-              # remediation (privileged/baseline namespace or exemption).
+              # the PSA `restricted` profile. The chart auto-widens the
+              # chart-created namespace to `privileged` when inferenceRelay is
+              # enabled (see namespace.yaml); for namespace.create=false,
+              # NOTES.txt prints the operator kubectl label command. See
+              # worklog 0410.
               drop:
                 - ALL
               add:
@@ -128,6 +130,15 @@ spec:
               readOnly: true
             - name: dev-tun
               mountPath: /dev/net/tun
+            # Writable /tmp + /var/run for the userspace wireguard-go fallback
+            # (taken when the kernel WG module is absent — see detect_wg_impl).
+            # The kernel path (Talos) doesn't need these; the userspace path
+            # uses /var/run/wireguard for its socket. Matches the /tmp mount
+            # every other readOnlyRootFilesystem chart pod carries.
+            - name: wg-run
+              mountPath: /tmp
+            - name: wg-run
+              mountPath: /var/run/wireguard
       volumes:
         - name: peer-config
           configMap:
@@ -139,6 +150,9 @@ spec:
             defaultMode: 0755
         - name: wg-config
           emptyDir: {}
+        - name: wg-run
+          emptyDir:
+            medium: Memory
         # relay-router-wg holds the router's WG private/public keypair. It is
         # created by the controller (ensureRouterWGKey) on first provision and
         # may not exist at chart-install time, so it is optional.
