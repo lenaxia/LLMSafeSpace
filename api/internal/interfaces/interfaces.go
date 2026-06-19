@@ -221,6 +221,14 @@ type WorkspacePasswordProvider interface {
 	WorkspacePassword(ctx context.Context, workspaceID string) (string, error)
 }
 
+// PasswordFunc adapts a plain function to WorkspacePasswordProvider.
+// Tests use this to wrap inline closures for SetPasswordGetter.
+type PasswordFunc func(ctx context.Context, workspaceID string) (string, error)
+
+func (f PasswordFunc) WorkspacePassword(ctx context.Context, workspaceID string) (string, error) {
+	return f(ctx, workspaceID)
+}
+
 type Services interface {
 	GetAuth() AuthService
 	GetDatabase() DatabaseService

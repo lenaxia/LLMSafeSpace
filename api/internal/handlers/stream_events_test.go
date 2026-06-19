@@ -183,7 +183,7 @@ func TestStreamEvents_EnsuresWatchingOnOpen(t *testing.T) {
 	require.NoError(t, err)
 
 	handler.sseTracker = sse.NewTracker(httpClient, &testLogger{}, handler.onSessionIdle)
-	handler.sseTracker.SetPasswordGetter(handler.getPassword)
+	handler.sseTracker.SetPasswordGetter(handler)
 	handler.sseTracker.SetPodIPResolver(handler.getPodIPForSSE)
 	handler.sseTracker.SetOnSessionActive(handler.onSessionActive)
 	handler.userBroker = eventbroker.NewUserEventBroker()

@@ -328,9 +328,7 @@ func TestE2E_DrainMode_AlreadyIdle(t *testing.T) {
 
 	handler := NewAgentReloadHandler(wsSvc, agentDB, pods, &http.Client{Timeout: 100 * time.Millisecond}, nil)
 	handler.SetSSETracker(tracker)
-	handler.SetPasswordGetter(func(_ context.Context, _ string) (string, error) {
-		return "test-pw", nil
-	})
+	handler.SetPasswordGetter(fakePWProvider{pw: "test-pw"})
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {

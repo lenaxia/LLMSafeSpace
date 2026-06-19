@@ -78,6 +78,16 @@ func makeNestedMessageUpdatedEvent(sessionID string) string {
 	})
 }
 
+// fakePWProvider implements interfaces.WorkspacePasswordProvider for tests.
+type fakePWProvider struct {
+	pw  string
+	err error
+}
+
+func (f fakePWProvider) WorkspacePassword(_ context.Context, _ string) (string, error) {
+	return f.pw, f.err
+}
+
 func TestSSETracker_ProcessEvent_Nested_IdleEvent(t *testing.T) {
 	var mu sync.Mutex
 	var calls []struct {
@@ -476,9 +486,7 @@ func TestSSETracker_ProcessEvent_IgnoresIdleWithEmptySessionID(t *testing.T) {
 
 func TestSSETracker_EnsureWatching_CreatesSubscription(t *testing.T) {
 	tracker := newTestSSETracker(func(sandboxID, sessionID string) {})
-	tracker.SetPasswordGetter(func(ctx context.Context, sandboxID string) (string, error) {
-		return "", fmt.Errorf("test error")
-	})
+	tracker.SetPasswordGetter(fakePWProvider{err: fmt.Errorf("test error")})
 
 	tracker.EnsureWatching("sb-1")
 	assert.Equal(t, 1, tracker.SubscriptionCount())
@@ -488,9 +496,7 @@ func TestSSETracker_EnsureWatching_CreatesSubscription(t *testing.T) {
 
 func TestSSETracker_EnsureWatching_NoDuplicateSubscription(t *testing.T) {
 	tracker := newTestSSETracker(func(sandboxID, sessionID string) {})
-	tracker.SetPasswordGetter(func(ctx context.Context, sandboxID string) (string, error) {
-		return "", fmt.Errorf("test error")
-	})
+	tracker.SetPasswordGetter(fakePWProvider{err: fmt.Errorf("test error")})
 
 	tracker.EnsureWatching("sb-1")
 	tracker.EnsureWatching("sb-1")
@@ -502,9 +508,7 @@ func TestSSETracker_EnsureWatching_NoDuplicateSubscription(t *testing.T) {
 
 func TestSSETracker_EnsureWatching_MultipleSandboxes(t *testing.T) {
 	tracker := newTestSSETracker(func(sandboxID, sessionID string) {})
-	tracker.SetPasswordGetter(func(ctx context.Context, sandboxID string) (string, error) {
-		return "", fmt.Errorf("test error")
-	})
+	tracker.SetPasswordGetter(fakePWProvider{err: fmt.Errorf("test error")})
 
 	tracker.EnsureWatching("sb-1")
 	tracker.EnsureWatching("sb-2")
@@ -516,9 +520,7 @@ func TestSSETracker_EnsureWatching_MultipleSandboxes(t *testing.T) {
 
 func TestSSETracker_StopWatching_CancelsSubscription(t *testing.T) {
 	tracker := newTestSSETracker(func(sandboxID, sessionID string) {})
-	tracker.SetPasswordGetter(func(ctx context.Context, sandboxID string) (string, error) {
-		return "", fmt.Errorf("test error")
-	})
+	tracker.SetPasswordGetter(fakePWProvider{err: fmt.Errorf("test error")})
 
 	tracker.EnsureWatching("sb-1")
 	tracker.EnsureWatching("sb-2")
@@ -539,9 +541,7 @@ func TestSSETracker_StopWatching_NonexistentSandbox(t *testing.T) {
 
 func TestSSETracker_Stop_CancelsAllSubscriptions(t *testing.T) {
 	tracker := newTestSSETracker(func(sandboxID, sessionID string) {})
-	tracker.SetPasswordGetter(func(ctx context.Context, sandboxID string) (string, error) {
-		return "", fmt.Errorf("test error")
-	})
+	tracker.SetPasswordGetter(fakePWProvider{err: fmt.Errorf("test error")})
 
 	tracker.EnsureWatching("sb-1")
 	tracker.EnsureWatching("sb-2")
@@ -559,9 +559,7 @@ func TestSSETracker_SubscriptionCount_ZeroInitially(t *testing.T) {
 
 func TestSSETracker_SubscriptionCount_AccurateAfterOperations(t *testing.T) {
 	tracker := newTestSSETracker(func(sandboxID, sessionID string) {})
-	tracker.SetPasswordGetter(func(ctx context.Context, sandboxID string) (string, error) {
-		return "", fmt.Errorf("test error")
-	})
+	tracker.SetPasswordGetter(fakePWProvider{err: fmt.Errorf("test error")})
 
 	assert.Equal(t, 0, tracker.SubscriptionCount())
 
@@ -585,13 +583,11 @@ func TestSSETracker_SetPasswordGetter(t *testing.T) {
 	tracker := newTestSSETracker(func(sandboxID, sessionID string) {})
 	require.Nil(t, tracker.passwordGetter)
 
-	getter := func(ctx context.Context, sandboxID string) (string, error) {
-		return "test-password", nil
-	}
+	getter := fakePWProvider{pw: "test-password"}
 	tracker.SetPasswordGetter(getter)
 	require.NotNil(t, tracker.passwordGetter)
 
-	pw, err := tracker.passwordGetter(context.Background(), "sb-1")
+	pw, err := tracker.passwordGetter.WorkspacePassword(context.Background(), "sb-1")
 	assert.NoError(t, err)
 	assert.Equal(t, "test-password", pw)
 }
@@ -641,9 +637,7 @@ func TestSSETracker_Subscribe_ReceivesIdleEvent(t *testing.T) {
 			mu.Unlock()
 		},
 	)
-	tracker.SetPasswordGetter(func(ctx context.Context, sandboxID string) (string, error) {
-		return "test-pw", nil
-	})
+	tracker.SetPasswordGetter(fakePWProvider{pw: "test-pw"})
 	tracker.SetPodIPResolver(func(sandboxID string) string {
 		return "10.0.0.1"
 	})
@@ -975,9 +969,7 @@ func TestSSETracker_Subscribe_ReceivesStepEndedViaSSE(t *testing.T) {
 		}{workspaceID, eventType, rawData})
 		mu.Unlock()
 	})
-	tracker.SetPasswordGetter(func(_ context.Context, _ string) (string, error) {
-		return "test-pw", nil
-	})
+	tracker.SetPasswordGetter(fakePWProvider{pw: "test-pw"})
 	tracker.SetPodIPResolver(func(_ string) string { return "10.0.0.1" })
 
 	tracker.EnsureWatching("ws-1")

@@ -4,7 +4,6 @@
 package sse
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"net/http"
@@ -24,9 +23,7 @@ func newAgentDiedTracker(t *testing.T, server *httptest.Server, onDied AgentDied
 		&testLogger{},
 		func(workspaceID, sessionID string) {},
 	)
-	tracker.SetPasswordGetter(func(ctx context.Context, workspaceID string) (string, error) {
-		return "test-pw", nil
-	})
+	tracker.SetPasswordGetter(fakePWProvider{pw: "test-pw"})
 	tracker.SetPodIPResolver(func(workspaceID string) string { return "10.0.0.1" })
 	tracker.SetOnAgentDied(onDied)
 	return tracker
@@ -163,9 +160,7 @@ func TestSSETracker_AgentDied_NilCallbackDoesNotPanic(t *testing.T) {
 		&testLogger{},
 		func(workspaceID, sessionID string) {},
 	)
-	tracker.SetPasswordGetter(func(ctx context.Context, workspaceID string) (string, error) {
-		return "test-pw", nil
-	})
+	tracker.SetPasswordGetter(fakePWProvider{pw: "test-pw"})
 	tracker.SetPodIPResolver(func(workspaceID string) string { return "10.0.0.1" })
 
 	assert.NotPanics(t, func() {

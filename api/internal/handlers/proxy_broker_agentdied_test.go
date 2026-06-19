@@ -4,7 +4,6 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -112,9 +111,7 @@ func TestProxy_TrackerToBroker_AgentDied_E2E(t *testing.T) {
 	defer handler.userBroker.UnsubscribeWorkspace("ws-e2e", sub)
 
 	tracker := sse.NewTracker(httpClient, &testLogger{}, func(workspaceID, sessionID string) {})
-	tracker.SetPasswordGetter(func(ctx context.Context, workspaceID string) (string, error) {
-		return "test-pw", nil
-	})
+	tracker.SetPasswordGetter(fakePWProvider{pw: "test-pw"})
 	tracker.SetPodIPResolver(func(workspaceID string) string { return "10.0.0.1" })
 	tracker.SetOnAgentDied(handler.onAgentDied)
 	t.Cleanup(tracker.Stop)
