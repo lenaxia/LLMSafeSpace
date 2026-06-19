@@ -1060,6 +1060,70 @@ func TestActivateWorkspace_K8sUpdateFails(t *testing.T) {
 	assert.Contains(t, err.Error(), "workspace_resume_failed")
 }
 
+// TestActivateWorkspace_SpecSuspendPruned reproduces the failure mode from
+// worklog 0397 (2026-06-19) where a deployed CRD missing spec.suspend
+// caused the apiserver to silently prune the field on Update. The Update
+// returned 200, the API logged "Workspace activated", but the persisted
+// object had Spec.Suspend=nil so the controller never observed a transition
+// and the workspace stayed Suspended forever — frontend showed nothing.
+//
+// The post-write read-back assertion reads the object the apiserver
+// returned (which reflects post-pruning storage state) and rejects the
+// activate when Spec.Suspend was not actually persisted as &false.
+func TestActivateWorkspace_SpecSuspendPruned(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+	suspendedCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
+	suspendedCrd.Status.Phase = v1.WorkspacePhaseSuspended
+	f.ws.On("List", mock.Anything, mock.Anything).Return(&v1.WorkspaceList{}, nil)
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(suspendedCrd, nil)
+
+	// Simulate apiserver field pruning: Update succeeds but the returned
+	// object has Spec.Suspend=nil because the deployed CRD schema lacks
+	// `spec.suspend`.
+	prunedReturn := suspendedCrd.DeepCopy()
+	prunedReturn.Spec.Suspend = nil
+	f.ws.On("Update", mock.Anything, mock.AnythingOfType("*v1.Workspace")).
+		Return(prunedReturn, nil)
+
+	_, err := f.svc.ActivateWorkspace(ctx, "user1", "ws-1")
+
+	require.Error(t, err, "must reject activate when spec.suspend was pruned")
+	assert.Contains(t, err.Error(), "workspace_resume_failed",
+		"must use the resume_failed error code so callers see a concrete failure, not a phantom 200")
+	assert.Contains(t, err.Error(), "spec.suspend",
+		"error must name the pruned field so operators can correlate to CRD schema drift")
+}
+
+// TestActivateWorkspace_SpecSuspendPersistedAsTrue defends against an
+// apiserver writing back &true (e.g. because the CRD has a default of true,
+// which would be an admin misconfiguration). Field is present but the
+// wrong value still means the controller will not resume.
+func TestActivateWorkspace_SpecSuspendPersistedAsTrue(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+
+	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+	suspendedCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
+	suspendedCrd.Status.Phase = v1.WorkspacePhaseSuspended
+	f.ws.On("List", mock.Anything, mock.Anything).Return(&v1.WorkspaceList{}, nil)
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(suspendedCrd, nil)
+
+	wrongReturn := suspendedCrd.DeepCopy()
+	suspendTrue := true
+	wrongReturn.Spec.Suspend = &suspendTrue
+	f.ws.On("Update", mock.Anything, mock.AnythingOfType("*v1.Workspace")).
+		Return(wrongReturn, nil)
+
+	_, err := f.svc.ActivateWorkspace(ctx, "user1", "ws-1")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "workspace_resume_failed")
+	assert.Contains(t, err.Error(), "spec.suspend")
+}
+
 // ===== GetWorkspaceStatus =====
 
 func TestGetWorkspaceStatus_HappyPath(t *testing.T) {
