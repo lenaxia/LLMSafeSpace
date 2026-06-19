@@ -529,6 +529,40 @@ func TestRelayDeploy_Create_Success(t *testing.T) {
 	assert.True(t, resp["deployed"].(bool))
 }
 
+// TestRelayDeploy_Create_RealClientNotFoundSemantics is a regression test for
+// worklog 0362 — the real typed client at pkg/kubernetes/client_crds.go:307
+// pre-allocates `result := &v1.InferenceRelay{}` and returns it alongside the
+// NotFound error, so a `nil`-check on the returned pointer is always false.
+// This drove the handler into the Update branch on first deploy, producing
+// `inferencerelays.llmsafespace.dev "relay-fleet" not found` from the API
+// server. The handler must gate on apierrors.IsNotFound(err), not on
+// `existing != nil`.
+func TestRelayDeploy_Create_RealClientNotFoundSemantics(t *testing.T) {
+	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
+
+	// Mimic the real typed client: empty struct + NotFound error.
+	emptyResult := &v1.InferenceRelay{}
+	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).
+		Return(emptyResult, notFoundError()).Maybe()
+	// If the handler incorrectly chose Update, this Create would never fire and
+	// Update would be called against a non-existent CR, returning the original
+	// NotFound. We assert Create is the path actually taken.
+	createCalled := false
+	relayMock.On("Create", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) { createCalled = true }).
+		Return(makeRelayCR("relay-fleet", nil, 0), nil)
+	// Update should never be invoked for the create-path; if the bug regresses
+	// the Update mock would be hit instead of Create.
+	relayMock.On("Update", mock.Anything, mock.Anything).
+		Return((*v1.InferenceRelay)(nil), notFoundError()).Maybe()
+
+	body := `{"routerEndpoint":"relay-gw.example.com:51820","providers":["oci"]}`
+	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/deploy", body)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.True(t, createCalled, "handler must call Create when CR does not exist, even when Get returns a non-nil empty struct alongside NotFound")
+}
+
 func TestRelayDeploy_Update_Existing(t *testing.T) {
 	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
 	existing := makeRelayCR("relay-fleet", nil, 0)

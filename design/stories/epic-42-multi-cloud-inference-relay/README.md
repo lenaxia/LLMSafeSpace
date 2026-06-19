@@ -104,7 +104,7 @@ The controller maintains up to **2 relay VMs** by default: 1 AWS (paid primary) 
 │                                                                    │
 │  relay-router (Deployment, 1 replica, PDB minAvailable=1)          │
 │    └─ Service: relay-router (ClusterIP)                            │
-│    └─ Service: relay-wg (LoadBalancer, MetalLB, UDP 51820)         │
+│    └─ Service: relay-wg (UDP 51820 — operator-selectable ingress mode)│
 │    └─ WireGuard interface: wg0 (10.42.42.1)                        │
 │    └─ Healthy relays list (computed from health checks)            │
 │    └─ Relay routing: weighted selection (AWS primary, OCI→failover)│
@@ -187,30 +187,77 @@ The relay-router Deployment runs two containers:
 
 This follows the established pattern in `design/stories/epic-32-vpn-network-iam/README.md` for WireGuard sidecars with `NET_ADMIN` + `NET_RAW` capabilities.
 
-**WireGuard ingress — MetalLB LoadBalancer (not NodePort):**
-Relay VMs must reach the router's WG endpoint from outside the cluster. The cluster runs on bare-metal Talos (no cloud LB). A UDP NodePort is NOT suitable: NodePorts are not load-balanced across nodes — if the target node dies, all WG tunnels drop simultaneously with no failover.
+**WireGuard ingress — network-agnostic, operator-selectable:**
+Relay VMs must reach the router's WG endpoint from outside the cluster. The chart MUST NOT depend on a specific load-balancer implementation: bare-metal Talos clusters typically lack a cloud LB, but operators may run on managed K8s (GKE/EKS/AKS), bare-metal with MetalLB or kube-vip, or behind their own DNAT. The chart ships **three operator-selectable ingress modes** plus an "external" escape hatch. Mode is chosen via `controller.inferenceRelay.router.wireGuard.ingress.mode`; default is `external` so installs never break when no LB is present.
 
-Instead, deploy **MetalLB** (the standard bare-metal Kubernetes LB) with a `LoadBalancer` Service on UDP 51820. MetalLB supports UDP in both L2 and BGP modes. This gives the WG endpoint a stable VIP that is reachable regardless of which node the router pod is scheduled on.
+| Mode | What it does | When to use | Resilience | Operator burden |
+|------|--------------|-------------|------------|-----------------|
+| `external` (default) | Chart creates **no** ingress resources. Operator points DNS at whatever ingress they already run (cloud LB, hostNetwork pod, NAT rule, MetalLB Service applied out-of-band). The CRD's `spec.wireGuard.routerEndpoint` is the operator's source of truth. | Any cluster — universal escape hatch | Operator's choice | Highest (full DIY) |
+| `loadBalancer` | Chart creates a `Service` of type `LoadBalancer` on UDP 51820, optionally pinned to `loadBalancerIP`. Works with **any** controller that satisfies LoadBalancer Services (cloud LB, MetalLB, kube-vip, Cilium L2, etc.) — the chart does **not** install or assume MetalLB. | Cloud K8s; bare-metal with an existing LB | Best (LB controller picks a healthy node) | Low |
+| `nodePort` | Chart creates a `Service` of type `NodePort` on a pinned UDP port. Operator points DNS at one or more node IPs (or a static external LB they manage). | Bare-metal without an LB controller | Medium (NodePort is per-node; node failure breaks the tunnel until DNS / external LB re-points) | Medium |
+| `hostNetwork` | Chart deploys the router as `hostNetwork: true` pinned to a labelled node. Operator labels the chosen node with `llmsafespace.dev/relay-router=true` and points DNS at that node's IP. | Bare-metal where NodePort is undesirable and no LB exists | Lowest (single node) | Medium |
+
+**Rules common to all modes:**
+- The CRD `spec.wireGuard.routerEndpoint` is **always** the public `host:port` the relay VM dials. The chart never derives this — it's an operator declaration, validated only by reachability when relay VMs successfully tunnel back.
+- The router **always** runs the WireGuard sidecar (`NET_ADMIN`, `NET_RAW`); the only thing that varies between modes is *how UDP 51820 reaches the pod*.
+- `mode: external` produces no Service at all — operators wire ingress out-of-band. This guarantees `helm install` succeeds on any cluster, even ones with no LB controller, NodePort policy, or hostNetwork access.
+
+**Example values per mode:**
 
 ```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: relay-wg
-spec:
-  type: LoadBalancer
-  loadBalancerIP: <MetalLB-allocated-VIP>
-  ports:
-    - port: 51820
-      protocol: UDP
-      targetPort: 51820
-  selector:
-    app: relay-router
+# Default — operator wires ingress themselves
+controller:
+  inferenceRelay:
+    router:
+      wireGuard:
+        ingress:
+          mode: external
+
+# Cloud / MetalLB / kube-vip
+controller:
+  inferenceRelay:
+    router:
+      wireGuard:
+        ingress:
+          mode: loadBalancer
+          loadBalancerIP: ""           # optional; empty lets the LB pool assign
+          loadBalancerClass: ""        # optional; e.g. "metallb" if multiple LB classes
+          annotations: {}              # cloud-specific (e.g. AWS NLB)
+
+# Bare-metal NodePort
+controller:
+  inferenceRelay:
+    router:
+      wireGuard:
+        ingress:
+          mode: nodePort
+          nodePort: 31820              # pinned for stable DNS
+
+# hostNetwork on a labelled node
+controller:
+  inferenceRelay:
+    router:
+      wireGuard:
+        ingress:
+          mode: hostNetwork
+          # operator must label the node:
+          #   kubectl label node <name> llmsafespace.dev/relay-router=true
 ```
 
-The `RouterEndpoint` in the CRD spec (`relay-gw.safespaces.dev:51820`) resolves to this VIP via DNS. MetalLB is not currently deployed in the cluster and must be installed as a prerequisite (US-42.8).
+**Why this redesign vs the original MetalLB plan:**
 
-If MetalLB is unavailable (e.g. network constraints), the fallback is a dedicated WG gateway pod with `hostNetwork: true` pinned to a specific node, with a DNS name pointing at that node's IP. This is less resilient (single node) but avoids the MetalLB dependency.
+The original US-42.8 design (worklog 0262, original epic README) coupled the chart to MetalLB. Worklog 0294 already discovered the first symptom: the setup endpoint can't probe MetalLB without cross-namespace RBAC, so the MetalLB checklist gate was removed but the underlying assumption — that MetalLB exists — survived in the chart-template plan. That plan was never implemented (US-42.8 NOT DONE per worklog 0299), and any attempt to ship it would either:
+
+1. Fail on managed-K8s clusters (cloud LB controllers don't recognise MetalLB conventions like `loadBalancerIP` from a MetalLB pool), or
+2. Fail on bare-metal-without-MetalLB clusters (no LB controller → Service stays `<pending>`), or
+3. Force the chart to bundle/install MetalLB — cluster-scoped infra that can conflict with operators' existing networking.
+
+The 4-mode design is the smallest correct answer:
+
+- **`external`** is the universal escape hatch — anyone can use the chart even on networks the chart's authors didn't anticipate.
+- **`loadBalancer`** delegates to whatever LB controller is already running. The chart sets `type: LoadBalancer` and walks away. MetalLB users get a VIP; cloud K8s users get a cloud LB; kube-vip users get a kube-vip VIP. Same template.
+- **`nodePort`** and **`hostNetwork`** are bare-metal-without-LB options. NodePort is the more common choice; hostNetwork is the "I really want a single fixed IP" option for clusters that NodePort doesn't fit.
+- The chart **never** installs MetalLB or any other infra. That stays the operator's responsibility, exactly like Postgres and Redis (`charts/llmsafespace/values.yaml:288`).
 
 **Why WireGuard over mTLS/TLS:**
 - Eliminates CA, cert generation, cert rotation, Caddy, DNS-for-cert-validation
@@ -223,7 +270,7 @@ If MetalLB is unavailable (e.g. network constraints), the fallback is a dedicate
 
 A Go HTTP server running as a Deployment (1 replica). This is the only endpoint workspace pods talk to.
 
-**Why single replica:** WireGuard requires one interface (wg0) with one IP (10.42.42.1) and one keypair. Two replicas cannot share a WG IP or keypair — each pod has its own network namespace, so each would need a separate wg0, IP, and peer config on every relay VM. MetalLB in L2 mode also routes UDP to one pod at a time, making the second replica's WG sidecar idle. The router is a lightweight Go binary that restarts in <1s; during restart, opencode's retry logic covers the gap. A `PodDisruptionBudget` (`minAvailable: 1`) prevents voluntary eviction during node drains. HA via a leader-elected WG gateway is a future concern if the single-replica restart gap proves problematic.
+**Why single replica:** WireGuard requires one interface (wg0) with one IP (10.42.42.1) and one keypair. Two replicas cannot share a WG IP or keypair — each pod has its own network namespace, so each would need a separate wg0, IP, and peer config on every relay VM. UDP load-balancers also route to one pod at a time in nearly all common implementations (MetalLB L2, NodePort, kube-vip), making any second replica's WG sidecar idle. The router is a lightweight Go binary that restarts in <1s; during restart, opencode's retry logic covers the gap. A `PodDisruptionBudget` (`minAvailable: 1`) prevents voluntary eviction during node drains. HA via a leader-elected WG gateway is a future concern if the single-replica restart gap proves problematic.
 
 **Responsibilities:**
 
@@ -699,7 +746,7 @@ All assumptions below were validated against provider documentation and technica
 | A18 | OCI E2.1.Micro shape has 50 Mbps bandwidth to internet | ✅ Verified | OCI docs: "up to 50 Mbps network bandwidth via the internet" |
 | A19 | WireGuard is available in standard Linux kernels ≥5.6 (no DKMS needed) | ✅ Verified | WireGuard was merged into the Linux kernel in 5.6 (2020-03). OCI Oracle Linux 8/9 and GCP Ubuntu 20.04+ images ship kernels ≥5.6. |
 | A20 | WireGuard UDP hole-punching works through cloud NAT with PersistentKeepalive | ✅ Verified | wireguard.com quickstart: "A sensible interval that works with a wide variety of firewalls is 25 seconds." `PersistentKeepalive = 25` is the documented standard NAT-traversal mechanism. Per-provider NAT behavior still needs live verification during US-42.5/42.6. |
-| A21 | Cluster can expose a reachable UDP endpoint for WG via MetalLB | ✅ Verified (solution specified) | MetalLB is the standard bare-metal Kubernetes LB, supports UDP in both L2 and BGP modes. The cluster runs bare-metal Talos (confirmed from Helm values.yaml). MetalLB is NOT currently deployed (no references in charts/) — must be installed as a prerequisite in US-42.8. A `LoadBalancer` Service on UDP 51820 provides a stable VIP. Fallback: `hostNetwork: true` pod pinned to a specific node. |
+| A21 | Cluster can expose a reachable UDP endpoint for WG via at least one of: cloud LB, MetalLB, kube-vip, NodePort, hostNetwork, or operator-supplied DNAT | ✅ Verified (multi-mode) | The chart ships four operator-selectable ingress modes (`external`, `loadBalancer`, `nodePort`, `hostNetwork`); see Layer 2 redesign. The chart does **not** install MetalLB or any other LB controller — that's an operator responsibility (same model as Postgres/Redis). Default mode is `external`: the chart creates no ingress resources, the operator points DNS at whatever they already run. This guarantees `helm install` works on any K8s distribution. |
 | A22 | OCI and AWS IPs are not blocked by opencode.ai/zen | ⚠️ Day-one gate | **Day-one validation gate (US-42.2).** Must deploy a relay VM on each provider and curl `opencode.ai/zen/v1` before building the full controller. Since the throttle is per-IP (A0), OCI and AWS datacenter IPs should not be in Cloudflare's egress range — but this must be verified, not assumed. |
 
 ---
@@ -709,7 +756,7 @@ All assumptions below were validated against provider documentation and technica
 | # | Question | Answer | Rationale |
 |---|----------|--------|-----------|
 | DQ1 | How do we prevent OCI from reclaiming idle relay VMs? | **Keepalive daemon.** Cloud-init installs a cron job that curls `localhost:8080/healthz` every minute. The relay binary also runs a goroutine that probes the upstream (`GET opencode.ai/zen/v1/models`) every 30s. Both contribute to network utilization. The Go runtime's memory footprint (>2 GB on a 12 GB VM) keeps memory above 20%. | OCI reclaims Always Free instances with <20% CPU/network/memory utilization over 7 days (A6). The keepalive ensures network + CPU stay measurable. Requires 7-day empirical validation. |
-| DQ2 | How does the router expose its WireGuard port to relay VMs? | **MetalLB LoadBalancer on UDP 51820.** MetalLB is the standard bare-metal Kubernetes LB (supports UDP). Provides a stable VIP that is node-independent. A plain NodePort is not suitable — UDP NodePorts are not load-balanced across nodes; if the target node dies, all tunnels drop with no failover. MetalLB is not currently deployed in the cluster and must be installed as a prerequisite (US-42.8). Fallback if MetalLB is unavailable: `hostNetwork: true` pod on a known node with DNS pointing at that node's IP. | The cluster runs on bare-metal Talos (confirmed from Helm values.yaml). MetalLB gives us a proper VIP. Traefik doesn't handle UDP. |
+| DQ2 | How does the router expose its WireGuard port to relay VMs? | **Network-agnostic, four operator-selectable ingress modes:** `external` (default; chart creates no ingress, operator wires it out-of-band), `loadBalancer` (chart creates a LoadBalancer Service — works with any LB controller including cloud LBs, MetalLB, kube-vip, Cilium L2), `nodePort` (chart creates a NodePort Service on a pinned UDP port), `hostNetwork` (chart pins the router to a labelled node with `hostNetwork: true`). The chart NEVER installs MetalLB or any other LB controller. See Layer 2 redesign. The CRD's `spec.wireGuard.routerEndpoint` is always the operator's authoritative `host:port`. | Earlier plan coupled the chart to MetalLB, which would fail on managed K8s, on bare-metal-without-MetalLB, or force the chart to install cluster-scoped infra. The 4-mode design lets the chart work on any K8s distribution while still offering a single-document quick path for clusters that have an LB controller. |
 | DQ3 | How does the router identify which workspace a request belongs to? | **`X-Workspace-ID` header** via `@ai-sdk/openai-compatible` `headers` field. Verified from npm docs (v2.0.50+): the provider config supports `headers: { ... }`. The relay injector adds a `Headers` field to the `options` struct (currently only `{BaseURL, APIKey}` at `relay_injector.go:136-138`). Used for per-workspace metrics only — not for routing (relays are stateless). | The router can use the workspace ID for metrics/logging. Not needed for routing since relays are stateless byte-pipes. |
 | DQ4 | What happens when both relays are unhealthy? | **Rate-limited direct fallback.** The router proxies directly to `opencode.ai/zen/v1` (server IPs) at a global rate of 1 req/2s with max 1 concurrent request. Requests exceeding the rate get `429 + Retry-After: 2`. Returns `X-Relay-Status: fallback` header so the frontend can display a warning. Better than a hard 502, and the rate limit prevents escalating IP throttling. | Unthrottled fallback would just get 429'd instantly and risk worsening the block. 1 req/2s keeps *some* free-tier access alive (slowly) while the controller reprovisions. Intentionally hostile UX — fallback is not a sustainable mode. |
 | DQ5 | Destroy-and-recreate vs in-place rotation? | **Always destroy-and-recreate.** No in-place IP swapping, key rotation, or config pushing. Relay VMs are stateless. The other VM carries traffic during the ~60s provisioning window. | Simpler driver interface (no RotateIP), simpler cloud-init (no runtime reconfiguration), identical flow for failure recovery and key/IP rotation. |
@@ -747,7 +794,7 @@ OCI will reclaim Always Free instances where CPU utilization (95th percentile), 
 | US-42.5 | OCI provider driver (provision, destroy, status) — **blocked by 7-day reclamation validation gate** | Medium (1-2d) | US-42.2, US-42.4 |
 | US-42.6 | GCP provider driver (provision, destroy, status) — **optional, not in default fleet** | Medium (1d) | US-42.2, US-42.4 |
 | US-42.7 | Relay-router: weighted selection + health checking + 429 detection + ConfigMap poll (5s) + metrics (per-relay health, streams, egress) | Medium-Large (2d) | US-42.3 |
-| US-42.8 | **MetalLB install** + router WireGuard sidecar + LoadBalancer Service (UDP 51820) + **NetworkPolicy** (router ingress limited to workspace pods) | Small-Medium (1d) | US-42.4, US-42.7 |
+| US-42.8 | **Router WireGuard sidecar** + **network-agnostic ingress** (4 modes: `external`, `loadBalancer`, `nodePort`, `hostNetwork`; chart does NOT install MetalLB) + **NetworkPolicy** (router ingress limited to workspace pods) — see Layer 2 redesign in worklog 0362 | Medium (1.5d) | US-42.4, US-42.7 |
 | US-42.9 | InferenceRelay reconciler (lifecycle: provision, health via router /metrics, graceful drain, destroy+recreate, ConfigMap sync, provisioning circuit breaker, egress quota tracking) | Large (2-3d) | US-42.3, US-42.5, US-42.6, US-42.7 |
 | US-42.10 | Helm chart integration (CRD, router Deployment+Service+PDB, NetworkPolicy, controller flags, WG Secret) | Small (0.5d) | US-42.3, US-42.9 |
 | US-42.11 | Fallback mode: rate-limited direct routing when all relays unhealthy (1 req/2s, max 1 concurrent) | Small-Medium (1d) | US-42.7 |
@@ -797,7 +844,7 @@ Port relay binary, deploy on AWS + OCI manually, curl `opencode.ai/zen/v1` from 
 CRD types and WG keypair generation. No cloud dependencies — can be fully unit-tested.
 
 **Phase 2 — Router (day 3-5):** US-42.7, US-42.8
-Build the relay-router with mock relays. Install MetalLB. WireGuard sidecar + LoadBalancer Service. Test weighted selection, failover, 429 detection against mock HTTP servers.
+Build the relay-router with mock relays. WireGuard sidecar + ingress (operator picks mode; default `external`). Test weighted selection, failover, 429 detection against mock HTTP servers.
 
 **Phase 3 — Provider drivers (day 5-8):** US-42.13, US-42.5
 AWS and OCI drivers. Can be developed in parallel. End of phase 3: controller can provision a VM on each provider, establish WG tunnel, health-check it.
@@ -836,7 +883,7 @@ spec:
   wireGuard:
     cidr: "10.42.42.0/24"
     port: 51820
-    routerEndpoint: "relay-gw.safespaces.dev:51820"  # DNS → MetalLB VIP
+    routerEndpoint: "relay-gw.safespaces.dev:51820"  # DNS → operator's chosen ingress (LB VIP, NodePort host, hostNetwork node, etc.)
   providers:
     - provider: aws
       region: us-east-1
@@ -934,7 +981,7 @@ The controller and router expose Prometheus metrics and CR conditions. The follo
 
 4. **UFW firewall on relay VMs.** Cloud-init configures: deny all incoming, allow UDP 51820 (WG), allow outgoing. SSH is either disabled or restricted to the WG interface.
 
-5. **Router is in-cluster, not exposed to the internet.** Workspace pods reach it via ClusterIP. Only the WG UDP port is exposed (via MetalLB LoadBalancer) for relay VMs to connect back.
+5. **Router is in-cluster, not exposed to the internet.** Workspace pods reach it via ClusterIP. Only the WG UDP port is exposed (via the operator's chosen ingress mode — see Layer 2) for relay VMs to connect back.
 
 6. **Provider credential rotation.** Cloud credentials (AWS access key / IAM role, OCI API key, GCP service account JSON) live in K8s Secrets, used only by the controller. Rotating them doesn't affect running VMs — only future provisioning calls. The validating webhook checks that the referenced Secret exists and contains the required keys before provisioning.
 
@@ -951,7 +998,7 @@ The controller and router expose Prometheus metrics and CR conditions. The follo
 | OQ1 | What is the exact OCI free-tier limit on ephemeral/reserved public IPs? | Empirical (A8). Must test during US-42.5. Determines feasibility of IP rotation via destroy+recreate (which allocates a new ephemeral IP each time). |
 | OQ2 | ~~Does OCI support cloud-init on Always Free images?~~ | ✅ Resolved (A9). OCI "Creating an Instance" docs confirm cloud-init/user-data support on Ubuntu and Oracle Linux images. Max 32,000 bytes userdata. |
 | OQ3 | ~~What are the actual GCP e2-micro specs?~~ | ✅ Resolved (A15). 2 vCPUs (0.25 fractional shared-core), 1 GB memory, burstable to 100% for 30s. Max egress 1 Gbps. |
-| OQ4 | ~~Can the cluster expose a UDP endpoint for WG?~~ | ✅ Resolved (A21). MetalLB LoadBalancer on UDP 51820 is the solution. Not currently deployed — must install in US-42.8. Fallback: `hostNetwork: true` pod. |
+| OQ4 | ~~Can the cluster expose a UDP endpoint for WG?~~ | ✅ Resolved (A21). Network-agnostic four-mode design (`external`, `loadBalancer`, `nodePort`, `hostNetwork`); the chart does NOT install MetalLB. Default `external` produces no ingress resources — operator declares `routerEndpoint` and wires UDP 51820 themselves. See Layer 2 redesign. |
 | OQ5 | Will OCI's idle reclamation actually trigger for a relay VM with keepalive traffic? | Requires 7-day empirical testing (see "OCI Idle Reclamation Mitigation"). The 20% thresholds are documented (95th percentile CPU). **Hard gate for US-42.5.** |
 | OQ6 | Does Zen (opencode.ai) block OCI and GCP IP ranges? | **Day-one validation gate (A22).** Since the throttle is per-IP (A0), OCI/GCP datacenter IPs should not be in Cloudflare's egress range — but must curl to verify. |
 | OQ7 | ~~How does the router inject `X-Workspace-ID`?~~ | ✅ Resolved. `@ai-sdk/openai-compatible` (v2.0.50+) supports a `headers` field in provider config (verified from npm docs). Add `Headers map[string]string` to the `options` struct at `relay_injector.go:136`. Used for metrics only, not routing. |
