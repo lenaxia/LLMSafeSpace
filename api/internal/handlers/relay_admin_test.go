@@ -534,7 +534,7 @@ func TestRelayDeploy_Create_Success(t *testing.T) {
 // pre-allocates `result := &v1.InferenceRelay{}` and returns it alongside the
 // NotFound error, so a `nil`-check on the returned pointer is always false.
 // This drove the handler into the Update branch on first deploy, producing
-// `inferencerelays.llmsafespace.dev "relay-fleet" not found` from the API
+// `inferencerelays.llmsafespaces.dev "relay-fleet" not found` from the API
 // server. The handler must gate on apierrors.IsNotFound(err), not on
 // `existing != nil`.
 func TestRelayDeploy_Create_RealClientNotFoundSemantics(t *testing.T) {
