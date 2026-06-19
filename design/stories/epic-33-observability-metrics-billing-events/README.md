@@ -194,12 +194,11 @@ to both from the same event stream.
       (TSDB, 90d retention)      │    - fleet operational counters
              ▲                   │
              └───────────────────┘
-                                 │
-                                 └──→ Postgres
-                                      - compute_periods
-                                      - inference_events
-                                      - workspace_events
-                                      - workspace_events_dlq
+                                  │
+                                  └──→ Postgres
+                                       - usage_events (compute_seconds, llm_tokens)
+                                       - workspace_events
+                                       - workspace_events_dlq
 ```
 
 ---
@@ -1001,37 +1000,49 @@ One new reconciliation function. Runs every 60 seconds.
 
 ```go
 func (r *WorkspaceReconciler) reconcileStaleComputePeriods(ctx context.Context) {
-    // Find open periods where agentd has gone silent
-    stale, err := r.db.GetStaleOpenPeriods(ctx, 90*time.Second)
+    // Find workspaces that had a pod_ready event (via usage_events) but no
+    // corresponding pod_terminated/pod_suspended event and no recent resource
+    // sample push (agentd heartbeat). These are "orphaned" compute periods —
+    // agentd crashed or was killed without pushing the close event.
+    //
+    // usage_events is append-only — there is no "open" or "closed" state.
+    // Instead, we detect orphans by querying workspace_events for pod_ready
+    // events that lack a matching pod_terminated/pod_suspended within a
+    // reasonable window AND whose workspace pod is confirmed gone.
+    stale, err := r.db.GetWorkspacesWithOrphanedCompute(ctx, 90*time.Second)
     if err != nil {
-        r.log.Warn("stale period query failed", "error", err)
+        r.log.Warn("orphaned compute query failed", "error", err)
         return
     }
 
-    for _, period := range stale {
+    for _, orphan := range stale {
         // Critical: verify the pod is actually gone before closing.
-        // A slow gateway causing delayed heartbeats must not close an active period.
-        pod, err := r.getPod(ctx, period.WorkspaceID)
+        // A slow gateway causing delayed pushes must not trigger a false close.
+        pod, err := r.getPod(ctx, orphan.WorkspaceID)
         if err == nil && pod.Status.Phase == corev1.PodRunning {
-            r.log.Warn("stale heartbeat but pod still running — gateway may be slow",
-                "workspace_id", period.WorkspaceID,
-                "last_heartbeat", period.LastHeartbeatAt)
+            r.log.Warn("orphaned compute but pod still running — gateway may be slow",
+                "workspace_id", orphan.WorkspaceID,
+                "last_event_time", orphan.LastEventTime)
             continue  // do not close — false positive
         }
 
         // Pod is gone or unresolvable — safe to close
-        endTime := r.getBestEndTime(ctx, period.WorkspaceID, pod)
+        endTime := r.getBestEndTime(ctx, orphan.WorkspaceID, pod)
 
+        // Emit a compute_seconds event for the gap duration via the gateway.
+        // The gateway writes it to usage_events (source='agentd').
         r.eventWriter.Write(ctx, events.WorkspaceEvent{
-            WorkspaceID: &period.WorkspaceID,
-            UserID:      &period.UserID,
+            WorkspaceID: &orphan.WorkspaceID,
+            UserID:      &orphan.UserID,
             EventType:   events.EventPodTerminated,
             Severity:    "info",
             Source:      "controller_gap_close",
             Detail:      json.RawMessage(`{"reason":"stale_heartbeat"}`),
             OccurredAt:  endTime,
         })
-        // Gateway handles the compute_period close via the pod_terminated event
+        // The gateway translates pod_terminated into a final compute_seconds
+        // event in usage_events covering the gap from the last known event
+        // to endTime.
     }
 }
 
@@ -1042,14 +1053,14 @@ func (r *WorkspaceReconciler) getBestEndTime(
 ) time.Time {
     // Preference order:
     // 1. Pod deletion timestamp (most accurate)
-    // 2. Last heartbeat time (best available estimate)
+    // 2. Last usage_events event_time for this workspace (best available estimate)
     // 3. Now (conservative fallback — may slightly overcharge)
     if pod != nil && pod.DeletionTimestamp != nil {
         return pod.DeletionTimestamp.Time
     }
-    stale, err := r.db.GetLastHeartbeat(ctx, workspaceID)
-    if err == nil && !stale.IsZero() {
-        return stale
+    lastEvent, err := r.db.GetLastComputeEventTime(ctx, workspaceID)
+    if err == nil && !lastEvent.IsZero() {
+        return lastEvent
     }
     return time.Now()
 }
@@ -1243,7 +1254,8 @@ see WAL Correction section for the full analysis).
 Atomic rename on write. Immediate delete on confirm. `maxPending` cap with
 `ErrWALFull`. Self-metrics (`llmsafespaces_agentd_wal_pending_entries`).
 
-The `workspace-dirs` init container creates `/tmp/agentd-wal/` at pod start
+The `workspace-dirs` init container (defined in
+`controller/internal/workspace/pod_builder.go`) creates `/tmp/agentd-wal/` at pod start
 (alongside the existing `workspace/`, `home/`, `tmp/` directories).
 
 Update `GatewayClient` to WAL-protect Tier 1 events: Append → POST → Confirm.
