@@ -844,18 +844,20 @@ func (s *Service) trackUserSession(ctx context.Context, userID, jti, token strin
 	}
 	key := "user-sessions:" + userID
 	hashKey := "token:" + pkgutil.HashString(token)
-	jtiKey := "token:" + jti
-	entry := jti + "|" + hashKey // compact encoding: jti|hashKey
+	entry := jti + "|" + hashKey
 	var entries []string
 	_ = s.cacheService.GetObject(ctx, key, &entries)
 	entries = append(entries, entry)
 	if len(entries) > 50 {
 		entries = entries[len(entries)-50:]
 	}
-	if err := s.cacheService.SetObject(ctx, key, entries, ttl); err != nil && s.logger != nil {
+	// Use the max possible TTL (not this session's TTL) so a short-lived
+	// login doesn't truncate the list and cause RevokeAllUserSessions to
+	// miss longer-lived remember-me sessions.
+	storeTTL := s.maxSessionRevocationTTL()
+	if err := s.cacheService.SetObject(ctx, key, entries, storeTTL); err != nil && s.logger != nil {
 		s.logger.Warn("Login: failed to track session for revocation", "user_id", userID)
 	}
-	_ = jtiKey // jtiKey is derived from jti at revoke time; only hashKey is stored
 }
 
 // maxSessionRevocationTTL returns the longest possible token TTL so the

@@ -7,7 +7,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"time"
 
 	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
@@ -74,7 +73,3 @@ func (s *PgEmailTokenStore) ConsumeEmailToken(ctx context.Context, id string) er
 // (the token was consumed by a concurrent request between Get and Consume —
 // TOCTOU race). The handler maps this to 410 Gone.
 var ErrTokenAlreadyConsumed = fmt.Errorf("token already consumed")
-
-// staleTime returns a time 24h in the past, for periodic cleanup of old
-// consumed/expired tokens. Not yet wired (future cleanup job).
-func staleTime() time.Time { return time.Now().Add(-24 * time.Hour) }

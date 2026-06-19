@@ -212,22 +212,27 @@ func (h *PasswordResetHandler) Confirm(c *gin.Context) {
 		return
 	}
 
-	// Step 1: Reinitialise DEK. The old DEK is unrecoverable (no old password
-	// or recovery key available via email reset). This creates a fresh DEK
-	// wrapped with the new password and generates a new recovery key.
-	recoveryKey, err := h.keyInit.InitializeUserKeys(ctx, tok.UserID, []byte(req.NewPassword))
-	if err != nil {
+	// Step 1: Update bcrypt hash FIRST. If this fails, nothing else happened
+	// and the user can still log in with their old password. This ordering
+	// avoids the unrecoverable state where DEK is reinitialised but bcrypt
+	// fails (user can't log in with either password).
+	if err := h.pwUpdate.UpdatePasswordHash(ctx, tok.UserID, []byte(req.NewPassword)); err != nil {
 		if h.log != nil {
-			h.log.Error("password-reset: DEK reinit failed", err, "user_id", tok.UserID)
+			h.log.Error("password-reset: bcrypt update failed", err, "user_id", tok.UserID)
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "password reset failed"})
 		return
 	}
 
-	// Step 2: Update bcrypt hash.
-	if err := h.pwUpdate.UpdatePasswordHash(ctx, tok.UserID, []byte(req.NewPassword)); err != nil {
+	// Step 2: Reinitialise DEK. The old DEK is unrecoverable (no old password
+	// or recovery key via email reset). Creates a fresh DEK wrapped with the
+	// new password and generates a new recovery key. If this fails, the user
+	// can still log in (bcrypt was updated); the auto-init on next login
+	// creates a new DEK (secrets from the old DEK are lost regardless).
+	recoveryKey, err := h.keyInit.InitializeUserKeys(ctx, tok.UserID, []byte(req.NewPassword))
+	if err != nil {
 		if h.log != nil {
-			h.log.Error("password-reset: bcrypt update failed", err, "user_id", tok.UserID)
+			h.log.Error("password-reset: DEK reinit failed", err, "user_id", tok.UserID)
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "password reset failed"})
 		return
