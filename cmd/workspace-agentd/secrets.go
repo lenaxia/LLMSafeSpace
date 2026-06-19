@@ -481,10 +481,15 @@ func reloadSecretsHandler(cfg materializeConfig, proc restartableProcess, openco
 			}
 		}
 
-		// Restart for env-secret/api-key changes (agent reads env at boot only).
-		// US-44.2: session-aware restart — defer until all sessions idle.
 		restarted := false
 		if proc != nil && shouldRestart(batch) {
+			if reason, names := classifySecretRestartReason(batch); reason != "" {
+				if err := writeRestartReasonMarker(RestartReasonMarkerPath, reason, names); err != nil {
+					log.Error("failed to write restart-reason marker", zap.Error(err))
+				} else {
+					logRestartReasonAtWrite(reason, names, log.Core())
+				}
+			}
 			restarted = makeSessionAwareRestartDecision(proc, tracker, restartIdleCheckInterval)
 		}
 

@@ -4,6 +4,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -92,4 +93,48 @@ func TestIsOOMExit_NormalExit_ReturnsFalse(t *testing.T) {
 func TestIsOOMExit_CrashExit_ReturnsFalse(t *testing.T) {
 	assert.False(t, isOOMExit(exitCrash),
 		"non-SIGKILL crash (e.g. segfault exit code 139) is not OOM")
+}
+
+// ---------------------------------------------------------------------------
+// handleOOMExit writes BOTH the OOM marker and the restart-reason marker
+// (US-44.7). Both are PVC-backed, sibling files; the OOM marker carries
+// exitCode/memoryLimit detail, the restart-reason marker is the unified
+// reason surface consumed on next boot.
+// ---------------------------------------------------------------------------
+
+func TestHandleOOMExit_WritesBothMarkers(t *testing.T) {
+	dir := t.TempDir()
+	oomPath := filepath.Join(dir, ".opencode-oom-marker")
+	restartPath := filepath.Join(dir, ".opencode-restart-reason")
+
+	handleOOMExit("ws-123", oomPath, restartPath)
+
+	// OOM marker
+	oomData, err := os.ReadFile(oomPath)
+	require.NoError(t, err, "OOM marker must be written")
+	assert.Contains(t, string(oomData), `"reason":"oom"`)
+	assert.Contains(t, string(oomData), `"exitCode":137`)
+	assert.Contains(t, string(oomData), `"memoryLimit"`)
+	assert.Contains(t, string(oomData), `"timestamp"`)
+
+	// Restart-reason marker
+	restartData, err := os.ReadFile(restartPath)
+	require.NoError(t, err, "restart-reason marker must ALSO be written")
+	var r restartReason
+	require.NoError(t, json.Unmarshal(restartData, &r))
+	assert.Equal(t, "oom", r.Reason)
+	assert.NotEmpty(t, r.Timestamp)
+	assert.Empty(t, r.SecretNames, "oom reason has no secret names")
+}
+
+func TestHandleOOMExit_EmptyWorkspaceID_DefaultsToUnknown(t *testing.T) {
+	dir := t.TempDir()
+	oomPath := filepath.Join(dir, ".opencode-oom-marker")
+	restartPath := filepath.Join(dir, ".opencode-restart-reason")
+
+	// Must not panic; counter increment uses the defaulted label.
+	assert.NotPanics(t, func() { handleOOMExit("", oomPath, restartPath) })
+
+	require.FileExists(t, oomPath, "OOM marker written even with empty workspace ID")
+	require.FileExists(t, restartPath, "restart-reason marker written even with empty workspace ID")
 }

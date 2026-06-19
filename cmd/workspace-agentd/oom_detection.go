@@ -99,18 +99,36 @@ func writeOOMMarker(path, memoryLimit string) error {
 }
 
 // handleOOMExit is called from the supervisor's crash path when OOM is
-// detected. It writes the marker file, increments the Prometheus counters
-// (OOM kills + restarts), and logs the event.
-func handleOOMExit(workspaceID, markerPath string) {
+// detected. It writes the OOM marker file AND the generalized
+// restart-reason marker (US-44.7), logs the restart-reason in real time,
+// increments the Prometheus counters (OOM kills + restarts), and logs
+// the OOM event.
+//
+// oomMarkerPath is the path for the OOM-specific marker (carries
+// exitCode/memoryLimit); restartReasonMarkerPath is the path for the
+// unified restart-reason marker consumed on next boot. Both are passed in
+// (rather than reading the package constants) so tests can target a
+// tempdir.
+func handleOOMExit(workspaceID, oomMarkerPath, restartReasonMarkerPath string) {
 	if workspaceID == "" {
 		workspaceID = "unknown"
 	}
 	log.Warn("opencode was killed by OOM killer (SIGKILL/exit 137)",
 		zap.String("workspace_id", workspaceID))
 
-	if err := writeOOMMarker(markerPath, getMemoryLimit()); err != nil {
+	if err := writeOOMMarker(oomMarkerPath, getMemoryLimit()); err != nil {
 		log.Error("failed to write OOM marker file", zap.Error(err),
-			zap.String("path", markerPath))
+			zap.String("path", oomMarkerPath))
+	}
+
+	// US-44.7: also write the generalized restart-reason marker and log it
+	// in real time. Both markers coexist: the OOM marker carries
+	// exitCode/memoryLimit detail; this one is the unified reason surface
+	// consumed by logRestartReason on the next boot.
+	if err := writeRestartReasonMarker(restartReasonMarkerPath, "oom", nil); err != nil {
+		log.Error("failed to write restart-reason marker", zap.Error(err))
+	} else {
+		logRestartReasonAtWrite("oom", nil, log.Core())
 	}
 
 	oomKillsCounter.WithLabelValues(workspaceID).Inc()
