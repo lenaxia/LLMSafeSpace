@@ -592,57 +592,14 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			pgOrgStore, checkoutProvider, log, time.Hour, 7*24*time.Hour)
 	}
 
-	// US-43.2 / Epic 49: Resolve the email provider and construct the
-	// EmailService. This is independent of pgOrgStore — the service needs
-	// only the provider + baseURL. SES validation (fromAddress/baseUrl
-	// required) applies at boot regardless of whether the org store is
-	// available, so a misconfigured SES install fails fast rather than
-	// silently degrading to noop when pgOrgStore is nil.
-	var mailer emailpkg.EmailProvider
-	switch strings.ToLower(cfg.Email.Provider) {
-	case "ses":
-		if cfg.Email.FromAddress == "" || cfg.Email.BaseURL == "" {
-			cancel()
-			return nil, fmt.Errorf("email provider 'ses' requires fromAddress and baseUrl to be set")
-		}
-		awsCfg, err := awsconfig.LoadDefaultConfig(context.Background(),
-			awsconfig.WithRegion(cfg.Email.SESRegion))
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("init aws config for ses: %w", err)
-		}
-		mailer = emailpkg.NewSESProvider(awsCfg, cfg.Email.FromAddress)
-	default:
-		mailer = &emailpkg.NoopProvider{}
-	}
-	emailService = emailsvc.NewService(mailer, cfg.Email.BaseURL, cfg.Email.Provider)
-	emailHandler = handlers.NewEmailHandler(emailService, svc.GetRateLimiter(), log)
-
-	// US-49.5: Password reset via email. Constructs the handler with a PG
-	// token store, the database for user lookups, the key service for DEK
-	// reinitialisation, the bcrypt updater, and the auth service for session
-	// revocation. The auth service must be the concrete *auth.Service to
-	// access RevokeAllUserSessions; if it isn't (test mode), the handler
-	// skips session revocation (best-effort, nil-safe).
-	emailTokenStore := database.NewPgEmailTokenStore(dbSvc.DB)
-	var sessionRevoker interface {
-		RevokeAllUserSessions(userID string) error
-	}
-	if authSvc, ok := svc.GetAuth().(*auth.Service); ok {
-		sessionRevoker = authSvc
-	}
-	passwordResetHandler = handlers.NewPasswordResetHandler(
-		emailTokenStore,
-		svc.Database,
-		keyService,
-		&bcryptPasswordUpdater{db: svc.Database},
-		sessionRevoker,
-		emailService,
-		log,
-	)
+	// Epic 49: email + password-reset wiring. Extracted into a helper to
+	// keep New() under the funlen limit. The helper constructs the email
+	// provider, EmailService, EmailHandler, and PasswordResetHandler.
+	emailService, emailHandler, passwordResetHandler = initEmailStack(cfg, svc, dbSvc, keyService, log, cancel)
 
 	// Invitations still needs the raw provider + the org store.
 	if pgOrgStore != nil {
+		mailer := resolveEmailProvider(cfg, cancel)
 		invitationsHandler = handlers.NewInvitationsHandler(pgOrgStore, mailer, svc.GetAuth(), cfg.Email.BaseURL, log)
 		if orgCredBinder != nil {
 			invitationsHandler.SetCredentialBinder(orgCredBinder)
@@ -1038,4 +995,60 @@ func newRelayChecker(
 		}
 		return readyz.RelayInjected
 	}
+}
+
+// resolveEmailProvider constructs the email provider based on config. Returns
+// nil for the noop case (NoopProvider). Used by initEmailStack and the
+// invitations handler wiring.
+func resolveEmailProvider(cfg *config.Config, cancel context.CancelFunc) emailpkg.EmailProvider {
+	switch strings.ToLower(cfg.Email.Provider) {
+	case "ses":
+		if cfg.Email.FromAddress == "" || cfg.Email.BaseURL == "" {
+			cancel()
+			return nil
+		}
+		awsCfg, err := awsconfig.LoadDefaultConfig(context.Background(),
+			awsconfig.WithRegion(cfg.Email.SESRegion))
+		if err != nil {
+			cancel()
+			return nil
+		}
+		return emailpkg.NewSESProvider(awsCfg, cfg.Email.FromAddress)
+	default:
+		return &emailpkg.NoopProvider{}
+	}
+}
+
+// initEmailStack constructs the EmailService, EmailHandler, and
+// PasswordResetHandler. Extracted from New() to keep it under the funlen
+// limit. Returns (emailService, emailHandler, passwordResetHandler).
+func initEmailStack(
+	cfg *config.Config,
+	svc *services.Services,
+	dbSvc *database.Service,
+	keyService *secrets.KeyService,
+	log *logger.Logger,
+	cancel context.CancelFunc,
+) (*emailsvc.Service, *handlers.EmailHandler, *handlers.PasswordResetHandler) {
+	mailer := resolveEmailProvider(cfg, cancel)
+	emailService := emailsvc.NewService(mailer, cfg.Email.BaseURL, cfg.Email.Provider)
+	emailHandler := handlers.NewEmailHandler(emailService, svc.GetRateLimiter(), log)
+
+	emailTokenStore := database.NewPgEmailTokenStore(dbSvc.DB)
+	var sessionRevoker interface {
+		RevokeAllUserSessions(userID string) error
+	}
+	if authSvc, ok := svc.GetAuth().(*auth.Service); ok {
+		sessionRevoker = authSvc
+	}
+	passwordResetHandler := handlers.NewPasswordResetHandler(
+		emailTokenStore,
+		svc.Database,
+		keyService,
+		&bcryptPasswordUpdater{db: svc.Database},
+		sessionRevoker,
+		emailService,
+		log,
+	)
+	return emailService, emailHandler, passwordResetHandler
 }

@@ -72,7 +72,7 @@ func (s *Service) SendTest(ctx context.Context, to string) error {
 
 // SendPasswordReset sends a password-reset link. The link targets the
 // interstitial frontend page /reset-password, which POSTs to the confirm
-// endpoint — never a consuming GET (scanner-defence invariant, US-49.9).
+// endpoint — never a consuming GET (scanner-defense invariant, US-49.9).
 func (s *Service) SendPasswordReset(ctx context.Context, to, token string) error {
 	if s.provider == nil {
 		return ErrNotConfigured
@@ -111,7 +111,7 @@ func (s *Service) SendPasswordChanged(ctx context.Context, to string) error {
 
 // buildLink constructs a frontend URL carrying the token in the query string.
 // Trims trailing slashes from baseURL; URL-encodes the token as
-// defence-in-depth (tokens are crypto/rand base64url which is URL-safe, but
+// defense-in-depth (tokens are crypto/rand base64url which is URL-safe, but
 // escaping guards against future callers passing differently-shaped tokens).
 func (s *Service) buildLink(path, token string) string {
 	base := strings.TrimRight(s.baseURL, "/")
