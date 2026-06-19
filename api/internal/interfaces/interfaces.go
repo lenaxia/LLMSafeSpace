@@ -212,15 +212,6 @@ type SettingsReader interface {
 	GetStrings(ctx context.Context, key string) ([]string, error)
 }
 
-// WorkspaceMetadataStore is the workspace-CRUD subset of DatabaseService.
-// Handlers that only need to read/update workspace metadata depend on
-// this narrow interface instead of the full DatabaseService. ISP-extracted
-// (US-46.7).
-type WorkspaceMetadataStore interface {
-	GetWorkspace(ctx context.Context, workspaceID string) (*types.WorkspaceMetadata, error)
-	UpdateWorkspace(ctx context.Context, workspaceID string, updates types.WorkspaceUpdates) error
-}
-
 // WorkspacePasswordProvider retrieves the opencode workspace password for
 // Basic auth. Replaces the prior function-typed injection (US-46.11).
 type WorkspacePasswordProvider interface {
