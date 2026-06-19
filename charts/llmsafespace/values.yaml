@@ -270,6 +270,28 @@ controller:
     periodSeconds: 5
 
 # ----------------------------------------------------------------------------
+# Platform requirements (workspace pods)
+# ----------------------------------------------------------------------------
+# Worklog 371 H4: workspace pods read memory usage and pressure from cgroup v2
+# (/sys/fs/cgroup/memory.current, /sys/fs/cgroup/memory.max). cgroup v2 is a
+# HARD REQUIREMENT for:
+#   - US-44.5 memory pressure warnings (>85% of limit)
+#   - US-44.8 workspace_memory_bytes ops gauge
+#   - US-44.4 OOM-limit detection / workspace_oom_kills_total attribution
+#
+# On cgroup v1 hosts these features silently produce nothing — agentd logs a
+# single Warn per pod boot ("cgroup v2 memory.current unreadable") so the
+# silent degradation is observable, but the features remain unavailable until
+# the pod is scheduled on a cgroup v2 node. cgroup v2 is the default on all
+# supported runtime images (Debian bookworm-slim) and all modern Kubernetes
+# node OSes (Debian 11+, Ubuntu 22.04+, RHEL 9, Flatcar, Bottlerocket). The
+# chart does NOT set a nodeSelector for cgroup v2 because scheduling-time
+# detection is unreliable across distros; the runtime-time warning is the
+# authoritative signal.
+workspace:
+  cgroupV2Required: true
+
+# ----------------------------------------------------------------------------
 # CRDs
 # ----------------------------------------------------------------------------
 # CRDs are installed from the chart's crds/ directory by default.
@@ -354,6 +376,19 @@ postgresql:
   connMaxLifetime: 5m
 
 # Redis connection (consumed by the API config).
+#
+# H3 (worklog 371) PRODUCTION REQUIREMENT: the API caches per-workspace
+# opencode passwords in Redis in PLAINTEXT (see wsstate.SetCachedPassword).
+# This is necessary because the proxy needs the plaintext for Basic-Auth on
+# every forwarded request — hashing would defeat the cache. Production Redis
+# deployments MUST therefore provide:
+#   - TLS in-transit (configure the API to use rediss://, or run a TLS sidecar)
+#   - At-rest encryption (Redis 7 ACL + encryption, or PVC-level encryption)
+#   - NetworkPolicy restricting Redis ingress to API pods only
+# Without these, workspace passwords are exposed in Redis RDB/AOF dumps,
+# memory, and backups. The passwords are per-workspace generated credentials
+# (not user passwords), bounded by a 1h TTL, and the source of truth is the
+# K8s Secret (encrypted at rest by the cluster).
 redis:
   host: redis-master
   port: 6379
@@ -423,6 +458,17 @@ networkPolicy:
   controllerPodLabelSelector:
     app.kubernetes.io/name: llmsafespace
     app.kubernetes.io/component: controller
+
+  # Prometheus pod selector — used by workspace ingress allow rule so the
+  # Prometheus scraper can reach workspace pods on the agentd admin port
+  # 4098 (/metrics). Only takes effect when monitoring.serviceMonitors.agentdPodMonitor.enabled
+  # is true. The default matches the kube-prometheus-stack chart's Prometheus
+  # pod labels; override to match a custom Prometheus deployment. The
+  # prometheusNamespace defaults to the release namespace but is typically
+  # overridden to the namespace where Prometheus runs (e.g. "monitoring").
+  prometheusPodLabelSelector:
+    app.kubernetes.io/name: prometheus
+  prometheusNamespace: ""
 
   # DNS policy: where to send port-53 traffic. Default targets the
   # kube-system/kube-dns service which works on most clusters
@@ -787,3 +833,13 @@ monitoring:
       # Example:
       #   name: llmsafespace-metrics-token
       #   key: token
+    # PodMonitor for workspace pods' agentd admin port (:4098/metrics).
+    # Workspace pods are dynamic (one per Workspace CRD) and addressed by
+    # PodIP, so a PodMonitor (not ServiceMonitor) is the correct resource.
+    # When enabled, the chart also extends the workspace NetworkPolicy to
+    # permit Prometheus ingress on port 4098 — see networkPolicy.prometheusPodLabelSelector.
+    # Without this, US-44.8 metrics (workspace_restarts_total, workspace_memory_bytes,
+    # workspace_active_sessions, workspace_context_tokens, workspace_oom_kills_total)
+    # are never scraped and do not appear in production dashboards.
+    agentdPodMonitor:
+      enabled: true

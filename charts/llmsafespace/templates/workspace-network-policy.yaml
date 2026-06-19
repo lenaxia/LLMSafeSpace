@@ -63,6 +63,24 @@ spec:
       ports:
         - protocol: TCP
           port: 4098
+    {{- if and .Values.monitoring.enabled .Values.monitoring.serviceMonitors.enabled .Values.monitoring.serviceMonitors.agentdPodMonitor.enabled }}
+    # Prometheus pod → workspace pod admin port (4098 only). Required so
+    # the PodMonitor (podmonitor-agentd.yaml) can scrape /metrics for
+    # US-44.8 ops gauges (workspace_restarts_total, workspace_memory_bytes,
+    # workspace_active_sessions, workspace_context_tokens, workspace_oom_kills_total).
+    # The /metrics endpoint is unauthenticated; this NetworkPolicy rule is
+    # the sole network-layer control on who can read it.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ default .Release.Namespace .Values.networkPolicy.prometheusNamespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.prometheusPodLabelSelector | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 4098
+    {{- end }}
 ---
 # Epic 17 G16: Workspace egress allow-list.
 #

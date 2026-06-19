@@ -12,7 +12,9 @@ import (
 // US-44.8 for SRE dashboards. All metrics are NOT user-facing.
 //
 // Registered via promauto (default Prometheus registry) so they appear
-// on the existing :9090/metrics endpoint alongside gate timings.
+// on the agentd admin port (:4098/metrics) alongside gate timings. The
+// chart ships a PodMonitor that scrapes this endpoint on every workspace
+// pod — see charts/llmsafespace/templates/podmonitor-agentd.yaml.
 type opsMetrics struct {
 	restartsTotal  *prometheus.CounterVec
 	memoryBytes    *prometheus.GaugeVec
