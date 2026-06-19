@@ -1686,7 +1686,7 @@ func TestRelay_APIInferenceRelayClusterRole_RendersWhenEnabled(t *testing.T) {
 // InferenceRelay — US-42.8 router WireGuard sidecar + network-agnostic ingress
 // =============================================================================
 //
-// These tests guard the US-42.8 chart implementation (worklog 0388 / Epic 42
+// These tests guard the US-42.8 chart implementation (worklog 0389 / Epic 42
 // Layer 2 redesign): the relay-router Deployment gains a WireGuard sidecar
 // that brings up wg0 (10.42.42.1/24), and a second Service template renders
 // the WireGuard UDP

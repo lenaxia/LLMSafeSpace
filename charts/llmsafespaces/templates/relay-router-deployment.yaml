@@ -92,7 +92,7 @@ spec:
               # NET_ADMIN/NET_RAW (and runAsUser: 0, hostPath /dev/net/tun,
               # and hostNetwork in that mode) make this pod NON-compliant with
               # the Pod Security Admission `restricted` profile — see the
-              # wireGuard block in values.yaml and worklog 0388 for the operator
+              # wireGuard block in values.yaml and worklog 0389 for the operator
               # remediation (privileged/baseline namespace or exemption).
               drop:
                 - ALL
