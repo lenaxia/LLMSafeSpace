@@ -124,9 +124,9 @@ func TestAgentConfigWriter_Rebuild_ProvidersAndModel(t *testing.T) {
 	require.NoError(t, err)
 
 	var cfg struct {
-		Schema   string                `json:"$schema"`
+		Schema   string                     `json:"$schema"`
 		Provider map[string]json.RawMessage `json:"provider"`
-		Model    string                `json:"model"`
+		Model    string                     `json:"model"`
 	}
 	require.NoError(t, json.Unmarshal(written, &cfg))
 	assert.Equal(t, "https://opencode.ai/config.json", cfg.Schema)
@@ -181,10 +181,10 @@ func TestAgentConfigWriter_Rebuild_AllSources(t *testing.T) {
 	require.NoError(t, err)
 
 	var cfg struct {
-		Schema            string                    `json:"$schema"`
+		Schema            string                     `json:"$schema"`
 		Provider          map[string]json.RawMessage `json:"provider"`
-		Model             string                    `json:"model"`
-		DisabledProviders []string                  `json:"disabled_providers"`
+		Model             string                     `json:"model"`
+		DisabledProviders []string                   `json:"disabled_providers"`
 	}
 	require.NoError(t, json.Unmarshal(written, &cfg))
 
@@ -198,8 +198,8 @@ func TestAgentConfigWriter_Rebuild_AllSources(t *testing.T) {
 	var rp struct {
 		Models map[string]struct {
 			Limit struct {
-				Context int `json:"context"`
-				Output  int `json:"output"`
+				Context int  `json:"context"`
+				Output  int  `json:"output"`
 				Input   *int `json:"input"`
 			} `json:"limit"`
 		} `json:"models"`
@@ -404,10 +404,10 @@ func TestAgentConfigWriter_BootThenRelayInjection(t *testing.T) {
 	require.NoError(t, err)
 
 	var cfg struct {
-		Schema            string                    `json:"$schema"`
+		Schema            string                     `json:"$schema"`
 		Provider          map[string]json.RawMessage `json:"provider"`
-		Model             string                    `json:"model"`
-		DisabledProviders []string                  `json:"disabled_providers"`
+		Model             string                     `json:"model"`
+		DisabledProviders []string                   `json:"disabled_providers"`
 	}
 	require.NoError(t, json.Unmarshal(written, &cfg))
 

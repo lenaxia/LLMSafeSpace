@@ -12,7 +12,7 @@ package main
 //   4. reloadSecretsHandler re-merge — restores relay after FlushProviders clobbers it
 //
 // None coordinated atomically. The design relied on strict boot ordering,
-// reloadMu serialisation, and opencode not hot-reloading the file. This was
+// reloadMu serialization, and opencode not hot-reloading the file. This was
 // fragile — a future change that reorders the boot sequence or adds a new
 // write path could reintroduce relay clobbering.
 //
@@ -20,7 +20,7 @@ package main
 // It holds three sources — providers, model, relay — and Rebuild() merges
 // them into a complete config written atomically via temp-file + os.Rename.
 //
-// Boot initialisation: NewAgentConfigWriter reads the existing file (written
+// Boot initialization: NewAgentConfigWriter reads the existing file (written
 // by the materialize subcommand) and captures the provider map and model as
 // initial sources. This lets the relay injector merge into them without
 // re-deriving provider credentials.
@@ -50,7 +50,7 @@ type relaySource struct {
 // selection, relay injection) go through SetProviders/SetModel/SetRelay
 // followed by Rebuild.
 //
-// Thread-safe: all methods acquire mu. Rebuild serialises the
+// Thread-safe: all methods acquire mu. Rebuild serializes the
 // read-merge-write cycle so concurrent reloads and relay injection
 // cannot interleave.
 type AgentConfigWriter struct {
@@ -61,7 +61,7 @@ type AgentConfigWriter struct {
 	relay       *relaySource    // nil = relay not yet injected / skipped
 }
 
-// newAgentConfigWriter creates the writer and initialises its sources
+// newAgentConfigWriter creates the writer and initializes its sources
 // from the existing agent-config.json file (written by the materialize
 // subcommand at boot). If the file is absent or corrupt, sources start
 // empty and the first Rebuild() creates a fresh file.
@@ -152,7 +152,7 @@ func (w *AgentConfigWriter) getRelayModels() []relayModel {
 // Merge semantics:
 //   - $schema is always set to "https://opencode.ai/config.json"
 //   - provider map = existing providers (from setProviders or loadExisting)
-//     + opencode-relay (if relay is set). No existing provider is removed.
+//   - opencode-relay (if relay is set). No existing provider is removed.
 //   - model = the model source (from setModel or loadExisting)
 //   - disabled_providers = ["opencode"] (only if relay is set)
 //
