@@ -928,7 +928,8 @@ func TestWebhookRegexAcceptsSameInputsAsSettingsPattern(t *testing.T) {
 			webhook:  cpuPattern,
 			settings: settings.CPUQuantityPattern,
 			probes: []string{
-				"500m", "1000m", "1.0", "0.5", "16.0", // valid
+				"500m", "1000m", "1.0", "0.5", "16.0", "1m", "0.001", // valid (positive)
+				"0m", "0.0", "0.00", "0", // zero-magnitude — both must reject
 				"banana", "1 core", "1000M", "", "-500m", // invalid
 			},
 		},

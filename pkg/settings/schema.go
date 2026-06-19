@@ -11,7 +11,12 @@ package settings
 // pattern on workspace.defaultStorageSize to reject zero-magnitude
 // values. The schema response shape exposed to the admin UI changed,
 // so clients caching the schema need to refresh.
-const SchemaVersion = 3
+//
+// Bumped to 4 (2026-06-19): tightened
+// workspace.defaultResources.cpu Pattern to reject zero-magnitude
+// values ("0m", "0.0", "0.00"). Closes the parallel zero-magnitude
+// gap that the memory and storage tightening in v3 missed.
+const SchemaVersion = 4
 
 // SettingType defines the data type of a setting.
 type SettingType string

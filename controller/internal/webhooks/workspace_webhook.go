@@ -107,10 +107,13 @@ func runtimeRefHasTraversal(s string) bool {
 var storageSizePattern = regexp.MustCompile(`^([1-9][0-9]*)(Gi|Mi)$`)
 
 // cpuPattern matches the CRD's spec.resources.cpu pattern. Accept-set
-// equals settings.CPUQuantityPattern (the parser-side capture groups
-// here are an implementation detail; the inputs accepted are
-// identical).
-var cpuPattern = regexp.MustCompile(`^([0-9]+)m$|^([0-9]+\.[0-9]+)$`)
+// equals settings.CPUQuantityPattern: positive millicores or positive
+// fractional cores. Three alternations: [1-9][0-9]*m,
+// [1-9][0-9]*\.[0-9]+, and 0\.[0-9]*[1-9][0-9]*. The parser-side
+// capture groups are an implementation detail; the inputs accepted
+// are identical to the canonical pattern. Drift caught by
+// TestWebhookRegexAcceptsSameInputsAsSettingsPattern.
+var cpuPattern = regexp.MustCompile(`^([1-9][0-9]*)m$|^([1-9][0-9]*\.[0-9]+|0\.[0-9]*[1-9][0-9]*)$`)
 
 // memoryPattern matches the CRD's spec.resources.memory pattern
 // (Ki|Mi|Gi) with magnitude > 0. Accept-set equals
@@ -122,7 +125,7 @@ var memoryPattern = regexp.MustCompile(`^([1-9][0-9]*)(Ki|Mi|Gi)$`)
 func parseCPUMillis(s string) (int64, error) {
 	m := cpuPattern.FindStringSubmatch(s)
 	if m == nil {
-		return -1, fmt.Errorf("cpu %q does not match ^[0-9]+m$ or ^[0-9]+\\.[0-9]+$", s)
+		return -1, fmt.Errorf("cpu %q does not match ^[1-9][0-9]*m$ or ^[1-9][0-9]*\\.[0-9]+|0\\.[0-9]*[1-9][0-9]*$ (positive only)", s)
 	}
 	if m[1] != "" {
 		n, err := strconv.ParseInt(m[1], 10, 64)

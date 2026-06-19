@@ -40,6 +40,15 @@ const (
 	StorageQuantityPattern = `^[1-9][0-9]*(Gi|Mi)$`
 
 	// CPUQuantityPattern matches valid CPU quantities for
-	// spec.resources.cpu: millicores ("500m") or fractional cores ("1.0").
-	CPUQuantityPattern = `^([0-9]+m|[0-9]+\.[0-9]+)$`
+	// spec.resources.cpu: positive millicores ("500m") or positive
+	// fractional cores ("1.0", "0.5"). Zero magnitude is rejected:
+	// "0m" and "0.0" are not useful for a workspace and would result
+	// in unschedulable pods (kubelet rejects requests.cpu == 0). The
+	// three alternations enumerate the positive-magnitude cases:
+	//   - [1-9][0-9]*m            → "1m", "500m", "1000m"
+	//   - [1-9][0-9]*\.[0-9]+     → "1.0", "1.5", "16.0"
+	//   - 0\.[0-9]*[1-9][0-9]*    → "0.5", "0.001" (zero whole part,
+	//                               but a non-zero digit somewhere
+	//                               in the fractional part)
+	CPUQuantityPattern = `^([1-9][0-9]*m|[1-9][0-9]*\.[0-9]+|0\.[0-9]*[1-9][0-9]*)$`
 )
