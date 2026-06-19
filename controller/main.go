@@ -99,8 +99,9 @@ func main() {
 	// US-43.19 / D20: the shared secret authenticating controller→API internal
 	// calls. Read from the same env var the API service uses
 	// (LLMSAFESPACES_INTERNAL_TOKEN) so a single mounted Secret configures both
-	// sides. Empty means no X-Internal-Token header is sent (the endpoint is
-	// then reachable only when the API side also has the env unset).
+	// sides. Empty means no X-Internal-Token header is sent; the API endpoint
+	// fails closed (403) in that case, so org-suspension is non-functional
+	// until both sides are configured (the chart wires both by default).
 	apiInternalToken := os.Getenv("LLMSAFESPACES_INTERNAL_TOKEN")
 
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))

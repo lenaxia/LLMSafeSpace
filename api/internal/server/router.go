@@ -108,8 +108,11 @@ type RouterConfig struct {
 	// InternalOrgStatusHandler, when non-nil, registers the cluster-internal
 	// GET /api/v1/internal/orgs/:orgID/status endpoint that the controller
 	// polls to drive org-suspension of workspaces (D20). It is intentionally
-	// NOT behind AuthMiddleware; access is gated by the X-Internal-Token
-	// header (see InternalOrgStatusHandler) and the cluster NetworkPolicy.
+	// NOT behind AuthMiddleware; access is gated by a mandatory X-Internal-Token
+	// shared-secret header (see InternalOrgStatusHandler — the endpoint FAILS
+	// CLOSED with 403 when LLMSAFESPACE_INTERNAL_TOKEN is unset). An optional
+	// API NetworkPolicy (chart value networkPolicy.apiIngressRestricted) adds
+	// L3/L4 defense-in-depth; the token is the load-bearing control.
 	InternalOrgStatusHandler *handlers.InternalOrgStatusHandler
 
 	CookieName string
@@ -374,7 +377,9 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 
 	// US-43.19 / D20: cluster-internal org-status endpoint polled by the
 	// workspace controller. NOT behind AuthMiddleware (the controller has no
-	// user identity); gated by the X-Internal-Token header + NetworkPolicy.
+	// user identity); gated by a mandatory X-Internal-Token shared-secret
+	// header (fail-closed 403 when unset). An optional API NetworkPolicy adds
+	// L3/L4 defense-in-depth.
 	if cfg.InternalOrgStatusHandler != nil {
 		router.GET("/api/v1/internal/orgs/:orgID/status", cfg.InternalOrgStatusHandler.GetOrgStatus)
 	}
