@@ -733,44 +733,59 @@ func TestProxyBuffer_BufferedSuccessRecordsMessageAndKeepsSession(t *testing.T) 
 }
 
 func TestProxyBuffer_FIFOOrderAcrossConcurrentMessages(t *testing.T) {
+	// This test verifies the drain loop's serial FIFO guarantee: when two
+	// requests are in the same workspace queue, they are forwarded in
+	// enqueue order regardless of how long each forward takes.
+	//
+	// The previous version sent two concurrent HTTP requests through the
+	// Gin test server with a 10ms sleep between goroutine launches, then
+	// asserted the backend received them in seq order. That was flaky
+	// because the 10ms sleep doesn't guarantee enqueue order — goroutine
+	// scheduling and HTTP processing are non-deterministic. The race was
+	// in the enqueue path, not the drain path.
+	//
+	// This version enqueues directly into the buffer with deterministic
+	// ordering and a forward function that fails N times before succeeding.
+	// This tests the actual FIFO guarantee (serial drain, documented at
+	// proxy_request_buffer.go:122) without the non-deterministic HTTP layer.
+
 	var arrivalMu sync.Mutex
 	var arrivals []string
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		_ = r.Body.Close()
-		arrivalMu.Lock()
-		arrivals = append(arrivals, string(body))
-		arrivalMu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	}))
-	t.Cleanup(func() { backend.Close() })
 
-	transport := &flapTransport{server: backend, failIP: "10.0.0.1:4096", failN: 5}
-	httpClient := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+	var sharedAttempts int32
+	const failN = 3
 
-	env := newBufferTestEnv(t, httpClient, "ws-buf-fifo", "10.0.0.1")
-	env.handler.requestBuffer = newRequestBuffer(10, 3*time.Second, 5*time.Millisecond, env.handler.logger)
-
-	var wg sync.WaitGroup
-	for i := 0; i < 2; i++ {
-		idx := i
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			env.doRequest(t, "POST", "/api/v1/workspaces/ws-buf-fifo/sessions/s1/message",
-				fmt.Sprintf(`{"seq":%d}`, idx))
-		}()
-		time.Sleep(10 * time.Millisecond)
+	makeForward := func(body string) func() error {
+		return func() error {
+			if atomic.AddInt32(&sharedAttempts, 1) <= failN {
+				return fmt.Errorf("dial tcp 10.0.0.1:4096: connection refused")
+			}
+			arrivalMu.Lock()
+			arrivals = append(arrivals, body)
+			arrivalMu.Unlock()
+			return nil
+		}
 	}
-	wg.Wait()
+
+	buf := newTestBuffer(10, 3*time.Second, 5*time.Millisecond)
+
+	// Enqueue seq:0 FIRST, then seq:1. No goroutines, no HTTP — deterministic.
+	req0 := makeBufferedReq(makeForward(`{"seq":0}`), time.Now().Add(3*time.Second))
+	req1 := makeBufferedReq(makeForward(`{"seq":1}`), time.Now().Add(3*time.Second))
+	require.True(t, buf.tryEnqueue("ws-fifo", req0), "seq:0 must be enqueued")
+	require.True(t, buf.tryEnqueue("ws-fifo", req1), "seq:1 must be enqueued")
+
+	// Wait for both to complete (forward returns nil = success).
+	<-req0.result
+	<-req1.result
 
 	arrivalMu.Lock()
 	defer arrivalMu.Unlock()
-	require.Len(t, arrivals, 2, "both messages must reach the backend")
-	assert.Equal(t, `{"seq":0}`, arrivals[0], "backend must receive messages in arrival (FIFO) order")
-	assert.Equal(t, `{"seq":1}`, arrivals[1])
+	require.Len(t, arrivals, 2, "both messages must reach the forward function")
+	assert.Equal(t, `{"seq":0}`, arrivals[0],
+		"drain loop must forward in FIFO enqueue order (seq:0 was enqueued first)")
+	assert.Equal(t, `{"seq":1}`, arrivals[1],
+		"drain loop must forward in FIFO enqueue order (seq:1 was enqueued second)")
 }
 
 func TestProxyBuffer_ParkedRequestsReleaseConnectionSlotGETAdmitted(t *testing.T) {
