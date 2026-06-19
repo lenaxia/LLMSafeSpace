@@ -167,15 +167,13 @@ func TestWorkspaceClient_ListModels_EndToEnd(t *testing.T) {
 	// resolves to it.
 	_, portStr, _ := net.SplitHostPort(srv.Listener.Addr().String())
 	testPort, _ := strconv.Atoi(portStr)
-	origPort := agentPort
-	agentPort = testPort
-	defer func() { agentPort = origPort }()
 
 	wcl := NewWorkspaceClient(
 		func(_ context.Context, _ string) (string, error) { return "e2e-pw", nil },
 		&mockPodIPResolver{ip: "127.0.0.1"},
 		zap.NewNop(),
 	)
+	wcl.agentPort = testPort
 
 	body, err := wcl.ListModels(context.Background(), "user-1", "ws-e2e")
 	require.NoError(t, err)

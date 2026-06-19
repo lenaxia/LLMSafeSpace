@@ -113,24 +113,6 @@ func TestSnapshot_ReturnsLatestValues(t *testing.T) {
 	assert.Equal(t, int64(2000), max)
 }
 
-// --- estimateSessionMemoryMB tests ---
-
-func TestEstimateSessionMemoryMB_ZeroTokens(t *testing.T) {
-	assert.Equal(t, int64(0), estimateSessionMemoryMB(0))
-}
-
-func TestEstimateSessionMemoryMB_TypicalSession(t *testing.T) {
-	assert.Equal(t, int64(0), estimateSessionMemoryMB(100000))
-}
-
-func TestEstimateSessionMemoryMB_HeavySession(t *testing.T) {
-	assert.Equal(t, int64(1), estimateSessionMemoryMB(600000))
-}
-
-func TestEstimateSessionMemoryMB_VeryHeavySession(t *testing.T) {
-	assert.Equal(t, int64(9), estimateSessionMemoryMB(5000000))
-}
-
 // --- config tests ---
 
 func TestMemoryWarningThreshold_Default(t *testing.T) {

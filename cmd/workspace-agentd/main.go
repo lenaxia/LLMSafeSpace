@@ -765,18 +765,6 @@ func buildStatuszHandler(
 			}
 		}
 
-		// US-44.6: enrich sessions with estimated memory from context tokens.
-		for i := range sessions {
-			tokens := int64(0)
-			if sessions[i].Tokens != nil {
-				tokens = sessions[i].Tokens.Input + sessions[i].Tokens.CacheRead + sessions[i].Tokens.CacheWrite
-			}
-			if tokens == 0 {
-				tokens = sessions[i].ContextUsed
-			}
-			sessions[i].EstimatedMemoryMB = estimateSessionMemoryMB(tokens)
-		}
-
 		// US-44.5: surface memory pressure state.
 		pressure, _, _ := pressureMon.snapshot()
 

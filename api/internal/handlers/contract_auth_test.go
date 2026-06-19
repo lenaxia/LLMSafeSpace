@@ -101,6 +101,20 @@ func (b *authRecordingBackend) records() []authRecord {
 	return cp
 }
 
+// recordsSince returns records added after the given index (exclusive).
+// Used by per-route subtests to assert auth on only the records generated
+// by that route's request.
+func (b *authRecordingBackend) recordsSince(idx int) []authRecord {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if idx >= len(b.requests) {
+		return nil
+	}
+	cp := make([]authRecord, len(b.requests)-idx)
+	copy(cp, b.requests[idx:])
+	return cp
+}
+
 // TestContract_ProxyRoutesSendBasicAuth (US-29.7) verifies that every
 // route proxied through ProxyHandler to opencode (port 4096) includes a
 // valid `Authorization: Basic` header. If a new route is added to the
@@ -165,28 +179,35 @@ func TestContract_ProxyRoutesSendBasicAuth(t *testing.T) {
 	}
 
 	routes := []struct {
-		method string
-		path   string
-		body   string
-		desc   string
+		method         string
+		path           string
+		body           string
+		desc           string
+		reachesBackend bool // false = route short-circuits before proxying in this test setup
 	}{
-		{"POST", "/api/v1/workspaces/ws-contract/sessions/ses_x/message", `{"content":"hi"}`, "SendMessage"},
-		{"POST", "/api/v1/workspaces/ws-contract/sessions/ses_x/prompt", `{"prompt":"hi"}`, "SendPromptAsync"},
-		{"POST", "/api/v1/workspaces/ws-contract/sessions/ses_x/queue", `{"content":"hi"}`, "EnqueueMessage"},
-		{"GET", "/api/v1/workspaces/ws-contract/sessions/ses_x/queue", "", "ListQueue"},
-		{"GET", "/api/v1/workspaces/ws-contract/sessions/ses_x/message", "", "GetHistory"},
-		{"GET", "/api/v1/workspaces/ws-contract/sessions/ses_x", "", "GetSession"},
-		{"POST", "/api/v1/workspaces/ws-contract/sessions/ses_x/abort", "", "AbortSession"},
-		{"DELETE", "/api/v1/workspaces/ws-contract/sessions/ses_x", "", "DeleteSession"},
-		{"GET", "/api/v1/workspaces/ws-contract/question", "", "ListQuestions"},
-		{"POST", "/api/v1/workspaces/ws-contract/question/req1/reply", `{"reply":"yes"}`, "QuestionReply"},
-		{"POST", "/api/v1/workspaces/ws-contract/question/req1/reject", "", "QuestionReject"},
-		{"GET", "/api/v1/workspaces/ws-contract/permission", "", "ListPermissions"},
-		{"POST", "/api/v1/workspaces/ws-contract/permission/req1/reply", `{"reply":"allow"}`, "PermissionReply"},
+		// These 5 routes reach the backend with the minimal test fixture:
+		{"POST", "/api/v1/workspaces/ws-contract/sessions/ses_x/message", `{"content":"hi"}`, "SendMessage", true},
+		{"GET", "/api/v1/workspaces/ws-contract/sessions/ses_x/message", "", "GetHistory", true},
+		{"GET", "/api/v1/workspaces/ws-contract/sessions/ses_x", "", "GetSession", true},
+		{"POST", "/api/v1/workspaces/ws-contract/sessions/ses_x/abort", "", "AbortSession", true},
+		{"DELETE", "/api/v1/workspaces/ws-contract/sessions/ses_x", "", "DeleteSession", true},
+		// These routes short-circuit before proxying (no session/queue/question/permission
+		// exists in the test fixture, so the handler returns early without hitting opencode).
+		// The aggregate assertion below still catches them if a future change makes them proxy.
+		{"POST", "/api/v1/workspaces/ws-contract/sessions/ses_x/prompt", `{"prompt":"hi"}`, "SendPromptAsync", false},
+		{"POST", "/api/v1/workspaces/ws-contract/sessions/ses_x/queue", `{"content":"hi"}`, "EnqueueMessage", false},
+		{"GET", "/api/v1/workspaces/ws-contract/sessions/ses_x/queue", "", "ListQueue", false},
+		{"GET", "/api/v1/workspaces/ws-contract/question", "", "ListQuestions", false},
+		{"POST", "/api/v1/workspaces/ws-contract/question/req1/reply", `{"reply":"yes"}`, "QuestionReply", false},
+		{"POST", "/api/v1/workspaces/ws-contract/question/req1/reject", "", "QuestionReject", false},
+		{"GET", "/api/v1/workspaces/ws-contract/permission", "", "ListPermissions", false},
+		{"POST", "/api/v1/workspaces/ws-contract/permission/req1/reply", `{"reply":"allow"}`, "PermissionReply", false},
 	}
 
 	for _, rt := range routes {
+		rt := rt
 		t.Run(rt.desc, func(t *testing.T) {
+			before := backend.count()
 			var body io.Reader
 			if rt.body != "" {
 				body = strings.NewReader(rt.body)
@@ -197,11 +218,21 @@ func TestContract_ProxyRoutesSendBasicAuth(t *testing.T) {
 			}
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
+
+			newRecords := backend.recordsSince(before)
+			if rt.reachesBackend {
+				require.NotEmpty(t, newRecords,
+					"%s: expected to reach the opencode backend but no backend request was recorded", rt.desc)
+				for _, rec := range newRecords {
+					assert.True(t, rec.hasAuth && rec.user == "opencode" && rec.pass != "",
+						"%s: proxied request to %s %s missing Basic auth: %+v",
+						rt.desc, rec.method, rec.path, rec)
+				}
+			}
 		})
 	}
 
-	// Assert that at least one route reached the backend and every backend
-	// request carried valid Basic auth.
+	// Cross-route sanity: every backend request across ALL subtests carried auth.
 	require.Greater(t, backend.count(), 0, "no routes reached the backend — test setup is broken")
 	assert.True(t, backend.allRequestsHadAuth(),
 		"one or more opencode-proxied requests were missing Basic auth; records: %+v", backend.records())

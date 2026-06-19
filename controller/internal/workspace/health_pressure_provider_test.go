@@ -242,15 +242,19 @@ func TestEnrichAgentStatus_MemoryPressure_DoesNotRestartPod(t *testing.T) {
 	assert.Equal(t, origRestarts, ws.Status.RestartCount)
 }
 
-// --- US-44.6 EstimatedMemoryMB pass-through test ---
+// TestEnrichAgentStatus_SessionContextUsed_PassedToCRD verifies that the
+// per-session ContextUsed field passes through from agentd statusz to the
+// CRD status. (Formerly also tested EstimatedMemoryMB — removed as
+// inaccurate in worklog 0375 H6-c; workspace-level MemoryPressure
+// condition is the operator-facing signal.)
 
-func TestEnrichAgentStatus_SessionMemoryMB_PassedToCRD(t *testing.T) {
+func TestEnrichAgentStatus_SessionContextUsed_PassedToCRD(t *testing.T) {
 	r, ws, server := setupHealthTest(t, agentd.StatuszResponse{
 		Healthy: true, Ready: true, Connected: []string{"opencode"},
 		ProvidersConfigured: 1,
 		Sessions: []agentd.SessionInfo{
-			{ID: "ses-1", Status: "idle", ContextUsed: 100000, EstimatedMemoryMB: 5},
-			{ID: "ses-2", Status: "busy", ContextUsed: 500000, EstimatedMemoryMB: 12},
+			{ID: "ses-1", Status: "idle", ContextUsed: 100000},
+			{ID: "ses-2", Status: "busy", ContextUsed: 500000},
 		},
 	})
 	defer server.Close()
@@ -258,6 +262,6 @@ func TestEnrichAgentStatus_SessionMemoryMB_PassedToCRD(t *testing.T) {
 	r.enrichAgentStatus(context.Background(), ws, 60*time.Second)
 
 	require.Len(t, ws.Status.Sessions, 2)
-	assert.Equal(t, int64(5), ws.Status.Sessions[0].EstimatedMemoryMB, "session 1 estimated memory must pass through")
-	assert.Equal(t, int64(12), ws.Status.Sessions[1].EstimatedMemoryMB, "session 2 estimated memory must pass through")
+	assert.Equal(t, int64(100000), ws.Status.Sessions[0].ContextUsed, "session 1 context used must pass through")
+	assert.Equal(t, int64(500000), ws.Status.Sessions[1].ContextUsed, "session 2 context used must pass through")
 }

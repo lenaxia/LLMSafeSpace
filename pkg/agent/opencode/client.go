@@ -47,6 +47,20 @@ func (e *nonRetryableError) Error() string {
 	return fmt.Sprintf("PUT /auth/%s (attempt %d): client error: HTTP %d", e.provider, e.attempt, e.statusCode)
 }
 
+// Option configures a Client at construction.
+type Option func(*Client)
+
+// WithHTTPClient injects a pre-configured *http.Client (e.g. one shared
+// across many workspaces for connection pooling — M11-a). When unset,
+// NewClient allocates a default client with a 10s timeout.
+func WithHTTPClient(hc *http.Client) Option {
+	return func(c *Client) {
+		if hc != nil {
+			c.httpClient = hc
+		}
+	}
+}
+
 // NewClient creates a Client targeting the given opencode base URL.
 //
 // password is the value mounted at /sandbox-cfg/password inside the
@@ -55,11 +69,11 @@ func (e *nonRetryableError) Error() string {
 // cmd/workspace-agentd/main.go OpenCodeClient). Passing the empty
 // string is allowed (so unit tests that don't need auth-gated paths
 // still work) but will fail against a real opencode server with 401.
-func NewClient(baseURL, password string, logger *zap.Logger) *Client {
+func NewClient(baseURL, password string, logger *zap.Logger, opts ...Option) *Client {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
-	return &Client{
+	c := &Client{
 		baseURL:  baseURL,
 		password: password,
 		httpClient: &http.Client{
@@ -67,6 +81,10 @@ func NewClient(baseURL, password string, logger *zap.Logger) *Client {
 		},
 		logger: logger,
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // PushCredentials writes each provider's API key to opencode's auth store
