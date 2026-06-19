@@ -497,47 +497,47 @@ func TestListModels_WrongPassword_Returns502(t *testing.T) {
 // --- Availability Classification Tests ---
 
 func TestClassifyAvailability_OpencodeZeroCost(t *testing.T) {
-	avail := classifyAvailability("opencode", providerCost{Input: 0, Output: 0})
+	avail := classifyAvailability("opencode", ProviderModelCost{Input: 0, Output: 0})
 	require.Equal(t, ModelFreeTier, avail)
 }
 
 func TestClassifyAvailability_OpencodeNoCostEntries(t *testing.T) {
 	// zero-value providerCost = input:0, output:0 → free tier
-	avail := classifyAvailability("opencode", providerCost{})
+	avail := classifyAvailability("opencode", ProviderModelCost{})
 	require.Equal(t, ModelFreeTier, avail)
 }
 
 func TestClassifyAvailability_OpencodeNilCost(t *testing.T) {
 	// zero-value is indistinguishable from "no cost data" → still free tier
-	avail := classifyAvailability("opencode", providerCost{})
+	avail := classifyAvailability("opencode", ProviderModelCost{})
 	require.Equal(t, ModelFreeTier, avail)
 }
 
 func TestClassifyAvailability_OpencodePaidCost(t *testing.T) {
-	avail := classifyAvailability("opencode", providerCost{Input: 3.0, Output: 15.0})
+	avail := classifyAvailability("opencode", ProviderModelCost{Input: 3.0, Output: 15.0})
 	require.Equal(t, ModelAvailable, avail)
 }
 
 // TestClassifyAvailability_OpencodeRelayZeroCost verifies that models with
 // providerID="opencode-relay" and zero cost are classified as ModelFreeTier.
 func TestClassifyAvailability_OpencodeRelayZeroCost(t *testing.T) {
-	avail := classifyAvailability("opencode-relay", providerCost{Input: 0, Output: 0})
+	avail := classifyAvailability("opencode-relay", ProviderModelCost{Input: 0, Output: 0})
 	require.Equal(t, ModelFreeTier, avail)
 }
 
 func TestClassifyAvailability_OpencodeRelayNoCostEntries(t *testing.T) {
-	avail := classifyAvailability("opencode-relay", providerCost{})
+	avail := classifyAvailability("opencode-relay", ProviderModelCost{})
 	require.Equal(t, ModelFreeTier, avail)
 }
 
 func TestClassifyAvailability_OpencodeRelayPaidCost(t *testing.T) {
 	// opencode-relay models with non-zero cost should be Available, not Free.
-	avail := classifyAvailability("opencode-relay", providerCost{Input: 1.0, Output: 2.0})
+	avail := classifyAvailability("opencode-relay", ProviderModelCost{Input: 1.0, Output: 2.0})
 	require.Equal(t, ModelAvailable, avail)
 }
 
 func TestClassifyAvailability_NonOpencodeLoaded(t *testing.T) {
-	avail := classifyAvailability("anthropic", providerCost{Input: 0, Output: 0})
+	avail := classifyAvailability("anthropic", ProviderModelCost{Input: 0, Output: 0})
 	require.Equal(t, ModelAvailable, avail)
 }
 
@@ -552,8 +552,9 @@ func TestAnnotateModels_RelayActive_OnlyRemapsOpencode(t *testing.T) {
 		]
 	}`
 
-	result, err := annotateModels([]byte(raw), true, true)
+	cat, err := NewOpencodeProviderParser().Parse([]byte(raw))
 	require.NoError(t, err)
+	result := annotateModels(cat, true, true)
 	require.Len(t, result, 2)
 
 	byID := make(map[string]annotatedModel)
@@ -582,8 +583,9 @@ func TestAnnotateModels_FullResponse(t *testing.T) {
 		]
 	}`
 
-	result, err := annotateModels([]byte(raw), false, false)
+	cat, err := NewOpencodeProviderParser().Parse([]byte(raw))
 	require.NoError(t, err)
+	result := annotateModels(cat, false, false)
 	require.Len(t, result, 3)
 
 	byID := make(map[string]annotatedModel)
@@ -603,23 +605,32 @@ func TestAnnotateModels_FullResponse(t *testing.T) {
 	require.False(t, byID["paid-model"].ProxyRequired, "paid model must have proxyRequired=false")
 }
 
-func TestAnnotateModels_InvalidJSON(t *testing.T) {
-	_, err := annotateModels([]byte("not json"), false, false)
-	require.Error(t, err)
+func TestAnnotateModels_NilCatalog(t *testing.T) {
+	// annotateModels on a nil catalog returns nil (defensive — the parser
+	// returns &Catalog{} for empty input, but nil guards the path).
+	result := annotateModels(nil, false, false)
+	require.Nil(t, result)
+}
+
+// parseAndAnnotate is a test helper that parses raw JSON via the opencode
+// parser then annotates. Replaces the old annotateModels([]byte, …) signature.
+func parseAndAnnotate(t *testing.T, raw string, relayActive, relayInjected bool) []annotatedModel {
+	t.Helper()
+	cat, err := NewOpencodeProviderParser().Parse([]byte(raw))
+	require.NoError(t, err)
+	return annotateModels(cat, relayActive, relayInjected)
 }
 
 func TestAnnotateModels_EmptyConnected(t *testing.T) {
 	// connected=[] → no models accessible → empty result
 	raw := `{"connected":[],"all":[{"id":"opencode","models":{"free":{"id":"free","cost":{"input":0,"output":0}}}}]}`
-	result, err := annotateModels([]byte(raw), false, false)
-	require.NoError(t, err)
+	result := parseAndAnnotate(t, raw, false, false)
 	require.Len(t, result, 0)
 }
 
 func TestAnnotateModels_PreservesProviderID(t *testing.T) {
 	raw := `{"connected":["anthropic"],"all":[{"id":"anthropic","models":{"claude":{"id":"claude","name":"Claude","cost":{"input":3,"output":15}}}}]}`
-	result, err := annotateModels([]byte(raw), false, false)
-	require.NoError(t, err)
+	result := parseAndAnnotate(t, raw, false, false)
 	require.Len(t, result, 1)
 	require.Equal(t, "anthropic", result[0].ProviderID)
 	require.Equal(t, "claude", result[0].ID)
@@ -688,8 +699,7 @@ func TestAnnotateModels_RelayActive_RemapsProviderID(t *testing.T) {
 		]
 	}`
 
-	result, err := annotateModels([]byte(raw), true /* relayGloballyEnabled */, true /* relayInjected */)
-	require.NoError(t, err)
+	result := parseAndAnnotate(t, raw, true, true)
 	require.Len(t, result, 3)
 
 	byID := make(map[string]annotatedModel)
@@ -720,8 +730,7 @@ func TestAnnotateModels_RelayInactive_DoesNotRemap(t *testing.T) {
 		"all": [{"id":"opencode","models":{"free-model":{"id":"free-model","name":"Free","cost":{"input":0,"output":0}}}}]
 	}`
 
-	result, err := annotateModels([]byte(raw), false /* relayGloballyEnabled */, false /* relayInjected */)
-	require.NoError(t, err)
+	result := parseAndAnnotate(t, raw, false, false)
 	require.Len(t, result, 1)
 
 	assert.Equal(t, "opencode", result[0].ProviderID,
@@ -745,8 +754,7 @@ func TestAnnotateModels_PersonalKey_NoRemap(t *testing.T) {
 		}}]
 	}`
 
-	result, err := annotateModels([]byte(raw), true /* relayGloballyEnabled */, false /* relayInjected — skipped */)
-	require.NoError(t, err)
+	result := parseAndAnnotate(t, raw, true, false)
 	require.Len(t, result, 1)
 
 	assert.Equal(t, "opencode", result[0].ProviderID,
@@ -767,8 +775,7 @@ func TestAnnotateModels_Phase1_NotRemapped(t *testing.T) {
 		}}]
 	}`
 
-	result, err := annotateModels([]byte(raw), true /* relayGloballyEnabled */, false /* relayInjected — not yet */)
-	require.NoError(t, err)
+	result := parseAndAnnotate(t, raw, true, false)
 	require.Len(t, result, 1)
 
 	// Phase 1: relayInjected=false → no remap. providerID stays "opencode".
@@ -909,17 +916,18 @@ func TestListModels_FiltersPaidOpencodeModels(t *testing.T) {
 	require.Len(t, resp.Models, 3)
 }
 
-// TestResolveModelFromCatalog_PrefixesProvider verifies that the model
-// resolution function returns providerID/modelID format.
+// TestCatalog_ResolveModel_PrefixesProvider verifies that the model
+// resolution method returns providerID/modelID format.
 // Regression test for the opencode 1.15.x ProviderModelNotFoundError bug.
-func TestResolveModelFromCatalog_PrefixesProvider(t *testing.T) {
-	rawCatalog := []byte(`{
+func TestCatalog_ResolveModel_PrefixesProvider(t *testing.T) {
+	cat, err := NewOpencodeProviderParser().Parse([]byte(`{
 		"connected": ["openai","anthropic"],
 		"all": [
 			{"id":"openai","models":{"gpt-5.5":{"id":"gpt-5.5","name":"GPT-5.5","cost":{"input":5,"output":15}}}},
 			{"id":"anthropic","models":{"claude-3":{"id":"claude-3","name":"Claude 3","cost":{"input":3,"output":15}}}}
 		]
-	}`)
+	}`))
+	require.NoError(t, err)
 
 	tests := []struct {
 		catalogID string
@@ -931,7 +939,7 @@ func TestResolveModelFromCatalog_PrefixesProvider(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.catalogID, func(t *testing.T) {
-			got := resolveModelFromCatalog(rawCatalog, tt.catalogID, false, nil, context.Background(), "", "")
+			got := cat.resolveModel(tt.catalogID, false, false)
 			require.Equal(t, tt.want, got)
 		})
 	}

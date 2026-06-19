@@ -26,6 +26,7 @@ type SecretsHandler struct {
 	logger           pkginterfaces.LoggerInterface
 	passwordVerifier PasswordVerifier
 	credStateWriter  CredentialStateWriter
+	modelCache       ModelCache
 }
 
 // OrgPolicyChecker is the minimal interface needed to filter models
@@ -118,6 +119,13 @@ func (h *SecretsHandler) SetSecretsManifestWriter(w SecretsManifestWriter) {
 // is exactly Bug 2 in worklog 0085 — do not leave nil in production).
 func (h *SecretsHandler) SetLogger(l pkginterfaces.LoggerInterface) {
 	h.logger = l
+}
+
+// SetModelCache injects the shared model cache so SecretsHandler can evict
+// a workspace's cache entry after credential binds (M2-a: replaces the
+// former package-level global defaultModelCache).
+func (h *SecretsHandler) SetModelCache(c ModelCache) {
+	h.modelCache = c
 }
 
 // CreateSecret handles POST /api/v1/secrets
@@ -533,7 +541,9 @@ func (h *SecretsHandler) doReload(ctx context.Context, userID, workspaceID strin
 	// any new or removed providers that the credential bind just activated.
 	// Without this, the 5s TTL means users see a stale model list for up to
 	// 5 seconds after a successful bind (Gap6 — worklog 0186).
-	defaultModelCache.Evict(workspaceID)
+	if h.modelCache != nil {
+		h.modelCache.Evict(workspaceID)
+	}
 
 	return &result, nil
 }
