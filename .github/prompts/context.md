@@ -28,8 +28,10 @@ Post a comment on the issue or PR using any of these commands:
 - `/explain <topic>` — explain code or architecture, posts explanation as a comment (no code changes)
 - `/security [text]` — security-focused review against design/SECURITY.md
 - `/triage [text]` — triage an issue: categorize, prioritize, suggest labels
+- `/design [text]` — iterate on a design document under `design/` before implementing: opens a PR, iterates through review, **holds for `/merge`** (never auto-merges)
+- `/merge` — explicitly merge an approved PR (squash). Use after `/design`, or after `/fix`/`/implement`/`/test`/`/security` invoked with `--no-merge`
 - `/help` — show full command reference
 
-Text after the command is appended to the prompt for custom tuning. All code-change commands (`/fix`, `/implement`, `/test`, `/security`) follow the review-iterate-approve-merge workflow: branch → PR → auto-review → fix → push → re-review → repeat until approved → merge.
+Text after the command is appended to the prompt for custom tuning. All code-change commands (`/fix`, `/implement`, `/test`, `/security`) follow the review-iterate-approve-merge workflow: branch → PR → auto-review → fix → push → re-review → repeat until approved → merge. Append `--no-merge` to any of them to hold the merge until you post `/merge`. `/design` always holds.
 
 The assistant will be triggered automatically and will read README-LLM.md and the full thread before responding.

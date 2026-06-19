@@ -18,8 +18,10 @@ jobs:
        startsWith(github.event.comment.body, '/security') ||
        startsWith(github.event.comment.body, '/explain') ||
        startsWith(github.event.comment.body, '/triage') ||
-       startsWith(github.event.comment.body, '/help') ||
-       contains(github.event.comment.body, ' /ai') ||
+        startsWith(github.event.comment.body, '/help') ||
+        startsWith(github.event.comment.body, '/design') ||
+        startsWith(github.event.comment.body, '/merge') ||
+        contains(github.event.comment.body, ' /ai') ||
        contains(github.event.comment.body, ' /review') ||
        contains(github.event.comment.body, ' /fix') ||
        contains(github.event.comment.body, ' /implement') ||
@@ -28,7 +30,9 @@ jobs:
        contains(github.event.comment.body, ' /security') ||
        contains(github.event.comment.body, ' /explain') ||
        contains(github.event.comment.body, ' /triage') ||
-       contains(github.event.comment.body, ' /help')) &&
+        contains(github.event.comment.body, ' /help') ||
+        contains(github.event.comment.body, ' /design') ||
+        contains(github.event.comment.body, ' /merge')) &&
       (github.event.comment.author_association == 'OWNER' ||
        github.event.comment.author_association == 'MEMBER' ||
        github.event.comment.author_association == 'COLLABORATOR')
@@ -58,6 +62,8 @@ jobs:
       #   /analyze [text]   → analyze.md + optional focus
       #   /explain [text]   → explain.md + required topic
       #   /triage [text]    → triage.md + optional context
+      #   /design [text]    → design.md + code-change-workflow.md + optional focus (HOLDS merge)
+      #   /merge            → merge.md (finalize an approved PR; no code changes)
       #   /help             → help.md (full command reference)
       #   /ai [text]        → original behavior (context-dependent)
       #   /ai on PR         → full re-review (pr-review.md)
@@ -86,6 +92,8 @@ jobs:
             /review\ *|/review)       COMMAND="/review" ;;
             /explain\ *|/explain)     COMMAND="/explain" ;;
             /triage\ *|/triage)       COMMAND="/triage" ;;
+            /design\ *|/design)       COMMAND="/design" ;;
+            /merge\ *|/merge)         COMMAND="/merge" ;;
             /test\ *|/test)           COMMAND="/test" ;;
             /fix\ *|/fix)             COMMAND="/fix" ;;
             /help\ *|/help)           COMMAND="/help" ;;
@@ -96,6 +104,8 @@ jobs:
             *" /review "*)    COMMAND="/review" ;;
             *" /explain "*)   COMMAND="/explain" ;;
             *" /triage "*)    COMMAND="/triage" ;;
+            *" /design "*)    COMMAND="/design" ;;
+            *" /merge "*)     COMMAND="/merge" ;;
             *" /test "*)      COMMAND="/test" ;;
             *" /fix "*)       COMMAND="/fix" ;;
             *" /help "*)      COMMAND="/help" ;;
@@ -104,6 +114,21 @@ jobs:
           esac
 
           NOTE="$(printf '%s' "$COMMENT_BODY" | sed "s|.*${COMMAND}||" | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')"
+
+          # Detect the --no-merge hold flag. It's a global modifier:
+          # strip it from NOTE for EVERY command (so it never pollutes the
+          # description/topic), but only ACT on it for the four auto-merging
+          # code-change commands. `/design` always holds (enforced in its prompt);
+          # `/merge` is the explicit merge and ignores the flag.
+          HOLD_MERGE=0
+          case "$COMMENT_BODY" in
+            *"--no-merge"*)
+              NOTE="$(printf '%s' "$NOTE" | sed -E 's/[[:space:]]*--no-merge[[:space:]]*/ /g; s/^[[:space:]]*//; s/[[:space:]]*$//')"
+              case "$COMMAND" in
+                /fix|/implement|/test|/security) HOLD_MERGE=1 ;;
+              esac
+              ;;
+          esac
 
           # Write context header + core rules
           cat "$CONTEXT_FILE" > "$OUT"
@@ -170,6 +195,17 @@ jobs:
                 printf '\n\nTriage context:\n\n> %s\n' "$NOTE" >> "$OUT"
               fi
               ;;
+            /design)
+              cat ".github/prompts/design.md" >> "$OUT"
+              printf '\n\n' >> "$OUT"
+              cat "$WORKFLOW_FILE" >> "$OUT"
+              if [ -n "$NOTE" ]; then
+                printf '\n\nDesign focus / topic:\n\n> %s\n' "$NOTE" >> "$OUT"
+              fi
+              ;;
+            /merge)
+              cat ".github/prompts/merge.md" >> "$OUT"
+              ;;
             /help)
               cat ".github/prompts/help.md" >> "$OUT"
               ;;
@@ -185,6 +221,14 @@ jobs:
               fi
               ;;
           esac
+
+          # If --no-merge was passed on a code-change command, override the
+          # Code Change Workflow's auto-merge (step 7). Placed last so it is the
+          # final, unambiguous instruction. `/design` holds via its own prompt;
+          # `/merge` is the explicit release and is never held.
+          if [ "$HOLD_MERGE" = "1" ]; then
+            printf '\n\n---\n\n**MERGE HOLD (`--no-merge`):** The collaborator passed `--no-merge` on this `%s`. Override Code Change Workflow step 7: after the automated review posts APPROVE, do NOT merge. Post a comment on the PR stating it is approved and awaiting an explicit `/merge` from a collaborator. Do not merge until `/merge` is received.\n' "$COMMAND" >> "$OUT"
+          fi
 
           # Export as multiline GITHUB_ENV entry
           {

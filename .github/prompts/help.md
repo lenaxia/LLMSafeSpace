@@ -17,14 +17,13 @@ The following commands are available in issue and PR comments:
 | `/explain <topic>` | Explain code, architecture, or data flow. Posts explanation as a comment. No code changes. | Required |
 | `/security [text]` | Security-focused review against design/SECURITY.md. Checks secrets, RBAC, CRD schemas, input validation, redaction. Fixes findings if code changes are warranted. | Optional |
 | `/triage [text]` | Triage an issue — categorize, prioritize, assess impact, suggest labels and related items. Posts assessment as a comment. | Optional |
+| `/design [text]` | Iterate on a design document under `design/` (or `design/stories/`) **before** implementing or fixing. Opens a PR, iterates through review until approved, then **holds** — it never auto-merges. Refine with further `/design` invocations, then `/merge`. | Optional |
+| `/merge` | Explicitly merge the current PR (squash, delete branch). Verifies the latest review is APPROVE and required CI is green first. Use after `/design`, or after a `--no-merge` run of `/fix`/`/implement`/`/test`/`/security`. | None |
 | `/help` | Show this command reference. | — |
 
 **All commands are available to repository owners, members, and collaborators.**
 
-**Code change commands** (`/fix`, `/implement`, `/test`, `/security`) **follow the review-iterate-approve workflow:**
-1. Create feature branch
-2. Open PR
-3. Automated review triggers
-4. Fix findings and push (re-review triggers)
-5. Repeat until approved
-6. Merge with squash
+**Merge control:**
+- `/fix`, `/implement`, `/test`, `/security`, and `/design` **follow the review-iterate-approve workflow:** branch → PR → automated review → fix → push → re-review → repeat until approved.
+- `/fix`, `/implement`, `/test`, `/security` **auto-merge** after approval by default. Append `--no-merge` (e.g. `/implement --no-merge add rate-limit cache`) to hold the merge until you post `/merge`.
+- `/design` **always holds** — design docs never auto-merge; post `/merge` to land an approved design.
