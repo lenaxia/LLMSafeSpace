@@ -264,10 +264,11 @@ controller:
         # WireGuard sidecar image. Must provide `wg`, `wg-quick`, `ip`
         # (wireguard-tools + iproute2), `jq` (to parse the peers ConfigMap),
         # and access to /dev/net/tun. The default is the project-published
-        # image (cmd/relay-wireguard/Dockerfile, built by CI). Any image with
-        # the listed tools works (e.g. linuxserver/wireguard + jq), but the
-        # project image also bundles wireguard-go for the userspace fallback
-        # used by detect_wg_impl in render-wg.sh.
+        # image (cmd/relay-wireguard/Dockerfile, built by CI) — kernel
+        # wireguard-tools only (Talos/modern Linux >=5.6). The userspace
+        # wireguard-go fallback used by detect_wg_impl is NOT bundled (Alpine
+        # 3.20 doesn't package it); operators on kernel-less systems build
+        # their own image. Any image with the listed tools works.
         image:
           repository: ghcr.io/lenaxia/llmsafespaces/relay-wireguard
           tag: ""
