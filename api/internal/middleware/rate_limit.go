@@ -60,19 +60,19 @@ func RateLimitMiddleware(rl interfaces.RateLimiterService, log pkginterfaces.Log
 		strategy := config.Strategy
 		window := config.DefaultWindow
 		if instanceSettings != nil {
-			if v, err := instanceSettings.GetBool(c.Request.Context(), "rateLimiting.enabled"); err == nil {
+			if v, err := instanceSettings.GetBool(c.Request.Context(), settings.KeyRateLimitingEnabled.Name()); err == nil {
 				enabled = v
 			}
-			if v, err := instanceSettings.GetInt(c.Request.Context(), "rateLimiting.defaultLimit"); err == nil && v > 0 {
+			if v, err := instanceSettings.GetInt(c.Request.Context(), settings.KeyRateLimitingDefaultLimit.Name()); err == nil && v > 0 {
 				limit = v
 			}
-			if v, err := instanceSettings.GetInt(c.Request.Context(), "rateLimiting.burstSize"); err == nil && v > 0 {
+			if v, err := instanceSettings.GetInt(c.Request.Context(), settings.KeyRateLimitingBurstSize.Name()); err == nil && v > 0 {
 				burst = v
 			}
-			if v, err := instanceSettings.GetString(c.Request.Context(), "rateLimiting.strategy"); err == nil && v != "" {
+			if v, err := instanceSettings.GetString(c.Request.Context(), settings.KeyRateLimitingStrategy.Name()); err == nil && v != "" {
 				strategy = v
 			}
-			if v, err := instanceSettings.GetInt(c.Request.Context(), "rateLimiting.windowMinutes"); err == nil && v > 0 {
+			if v, err := instanceSettings.GetInt(c.Request.Context(), settings.KeyRateLimitingWindowMinutes.Name()); err == nil && v > 0 {
 				window = time.Duration(v) * time.Minute
 			}
 		}
