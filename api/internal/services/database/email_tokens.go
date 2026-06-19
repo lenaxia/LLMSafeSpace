@@ -53,15 +53,27 @@ func (s *PgEmailTokenStore) GetEmailTokenByHash(ctx context.Context, hash string
 }
 
 func (s *PgEmailTokenStore) ConsumeEmailToken(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx,
+	result, err := s.db.ExecContext(ctx,
 		`UPDATE email_tokens SET consumed_at = NOW() WHERE id = $1 AND consumed_at IS NULL`,
 		id,
 	)
 	if err != nil {
 		return fmt.Errorf("consume email token: %w", err)
 	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("consume email token: rows check: %w", err)
+	}
+	if rows == 0 {
+		return ErrTokenAlreadyConsumed
+	}
 	return nil
 }
+
+// ErrTokenAlreadyConsumed is returned when ConsumeEmailToken affects 0 rows
+// (the token was consumed by a concurrent request between Get and Consume —
+// TOCTOU race). The handler maps this to 410 Gone.
+var ErrTokenAlreadyConsumed = fmt.Errorf("token already consumed")
 
 // staleTime returns a time 24h in the past, for periodic cleanup of old
 // consumed/expired tokens. Not yet wired (future cleanup job).

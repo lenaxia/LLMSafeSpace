@@ -825,56 +825,75 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 	// the session just won't be revocable in bulk (the token TTL bounds
 	// the exposure).
 	if jti != "" {
-		s.trackUserSession(ctx, user.ID, jti, tokenDur)
+		s.trackUserSession(ctx, user.ID, jti, token, tokenDur)
 	}
 
 	user.PasswordHash = ""
 	return &types.AuthResponse{Token: token, User: *user, TokenTTL: tokenDur}, nil
 }
 
-// trackUserSession records a jti in the per-user session set so
-// RevokeAllUserSessions can enumerate and revoke them. Best-effort:
+// trackUserSession records the session's Redis keys for bulk revocation.
+// Stores both the jti key and the hash key so RevokeAllUserSessions can
+// write "revoked" under both — matching RevokeToken's approach (the hash-key
+// fast-path in ValidateToken must also see the revocation). Best-effort:
 // errors are logged, never returned (login must not fail because session
-// tracking is unavailable). The set is capped at 50 entries to prevent
-// unbounded growth; the TTL matches the token duration so stale entries
-// self-expire.
-func (s *Service) trackUserSession(ctx context.Context, userID, jti string, ttl time.Duration) {
+// tracking is unavailable). The set is capped at 50 entries.
+func (s *Service) trackUserSession(ctx context.Context, userID, jti, token string, ttl time.Duration) {
 	if jti == "" {
 		return
 	}
 	key := "user-sessions:" + userID
-	var jtis []string
-	_ = s.cacheService.GetObject(ctx, key, &jtis)
-	jtis = append(jtis, jti)
-	if len(jtis) > 50 {
-		jtis = jtis[len(jtis)-50:]
+	hashKey := "token:" + pkgutil.HashString(token)
+	jtiKey := "token:" + jti
+	entry := jti + "|" + hashKey // compact encoding: jti|hashKey
+	var entries []string
+	_ = s.cacheService.GetObject(ctx, key, &entries)
+	entries = append(entries, entry)
+	if len(entries) > 50 {
+		entries = entries[len(entries)-50:]
 	}
-	if err := s.cacheService.SetObject(ctx, key, jtis, ttl); err != nil && s.logger != nil {
+	if err := s.cacheService.SetObject(ctx, key, entries, ttl); err != nil && s.logger != nil {
 		s.logger.Warn("Login: failed to track session for revocation", "user_id", userID)
 	}
+	_ = jtiKey // jtiKey is derived from jti at revoke time; only hashKey is stored
+}
+
+// maxSessionRevocationTTL returns the longest possible token TTL so the
+// revocation entry outlives the token. Uses RememberMeDuration if configured
+// (up to 30d), otherwise TokenDuration.
+func (s *Service) maxSessionRevocationTTL() time.Duration {
+	ttl := s.tokenDuration
+	if s.config.Auth.RememberMeDuration > ttl {
+		ttl = s.config.Auth.RememberMeDuration
+	}
+	return ttl
 }
 
 // RevokeAllUserSessions revokes all outstanding JWTs for a user by writing
-// "revoked" under each tracked jti key (the same mechanism RevokeToken uses,
-// which ValidateToken checks on every request). Used by password-reset
-// confirm (US-49.5) so a stolen JWT stops working after the victim resets
-// their password. Best-effort: errors during individual jti revocation are
-// logged but do not abort the loop; the token TTL bounds any unrevokeable
-// session.
+// "revoked" under each tracked jti key AND hash key (both paths that
+// ValidateToken checks). Used by password-reset confirm (US-49.5) so a
+// stolen JWT stops working after the victim resets their password.
 func (s *Service) RevokeAllUserSessions(userID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	key := "user-sessions:" + userID
-	var jtis []string
-	if err := s.cacheService.GetObject(ctx, key, &jtis); err != nil || len(jtis) == 0 {
+	var entries []string
+	if err := s.cacheService.GetObject(ctx, key, &entries); err != nil || len(entries) == 0 {
 		return nil
 	}
 
-	for _, jti := range jtis {
-		jtiKey := "token:" + jti
-		if err := s.cacheService.Set(ctx, jtiKey, "revoked", s.tokenDuration); err != nil && s.logger != nil {
-			s.logger.Warn("RevokeAllUserSessions: failed to revoke jti", "jti", jti, "error", err.Error())
+	revokedTTL := s.maxSessionRevocationTTL()
+	for _, entry := range entries {
+		parts := strings.SplitN(entry, "|", 2)
+		jti := parts[0]
+		// Write jti key — catches the jti-based revocation check in ValidateToken.
+		_ = s.cacheService.Set(ctx, "token:"+jti, "revoked", revokedTTL)
+		// Write hash key — catches the hash-key fast-path in ValidateToken
+		// (which returns the cached value as userID; "revoked" is not a valid
+		// userID so the middleware rejects the request).
+		if len(parts) > 1 {
+			_ = s.cacheService.Set(ctx, parts[1], "revoked", revokedTTL)
 		}
 	}
 	_ = s.cacheService.Delete(ctx, key)

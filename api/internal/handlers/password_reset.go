@@ -200,12 +200,15 @@ func (h *PasswordResetHandler) Confirm(c *gin.Context) {
 		c.JSON(http.StatusGone, gin.H{"error": "token expired"})
 		return
 	}
+	if tok.Kind != "password_reset" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "token not found"})
+		return
+	}
 
-	// Consume first — single-use. If subsequent steps fail, the token is
-	// still consumed (the user must request a new one). This is the correct
-	// tradeoff: allowing retry on a consumed token would break single-use.
+	// Consume first — single-use. If another request consumed the token
+	// between Get and Consume (TOCTOU race), return 410.
 	if err := h.store.ConsumeEmailToken(ctx, tok.ID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to consume token"})
+		c.JSON(http.StatusGone, gin.H{"error": "token already used"})
 		return
 	}
 

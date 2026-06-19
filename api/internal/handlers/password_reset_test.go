@@ -328,6 +328,27 @@ func TestPasswordReset_Confirm_ShortPassword_400(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestPasswordReset_Confirm_WrongKind_404(t *testing.T) {
+	// A token with kind="email_verify" must NOT work for password reset.
+	// Prevents token cross-use between flows (US-49.6 readiness).
+	store := newMemTokenStore()
+	tokenHash := hashTokenForTest("verify-token")
+	store.tokens[tokenHash] = &types.EmailToken{
+		ID:        "tok-5",
+		UserID:    "user-1",
+		Kind:      "email_verify",
+		TokenHash: tokenHash,
+		ExpiresAt: time.Now().Add(10 * time.Minute),
+	}
+
+	h := NewPasswordResetHandler(store, newMemUserStore(), &memKeyInit{}, &memPwUpdater{}, &memSessionRevoker{}, emailsvc.NewService(&fakeEmailProvider{}, "", ""), nil)
+	router := setupPasswordResetRouter(h)
+
+	w := doRequest(router, http.MethodPost, "/api/v1/auth/password-reset/confirm",
+		`{"token":"verify-token","newPassword":"newpass123"}`)
+	assert.Equal(t, http.StatusNotFound, w.Code, "email_verify token must not work for password reset")
+}
+
 func hashTokenForTest(token string) string {
 	return hashToken(token)
 }

@@ -81,8 +81,8 @@ func (s *Service) Ping(ctx context.Context) error {
 // GetUser gets a user by ID
 func (s *Service) GetUser(ctx context.Context, userID string) (*types.User, error) {
 	query := `
-        SELECT id, username, email, password_hash, created_at, updated_at, active, role, status
-        FROM users 
+        SELECT id, username, email, password_hash, created_at, updated_at, active, role, status, email_verified
+        FROM users
         WHERE id = $1
     `
 
@@ -98,6 +98,7 @@ func (s *Service) GetUser(ctx context.Context, userID string) (*types.User, erro
 		&user.Active,
 		&user.Role,
 		&user.Status,
+		&user.EmailVerified,
 	)
 
 	if err != nil {
@@ -113,7 +114,7 @@ func (s *Service) GetUser(ctx context.Context, userID string) (*types.User, erro
 // GetUserByEmail gets a user by email address
 func (s *Service) GetUserByEmail(ctx context.Context, email string) (*types.User, error) {
 	query := `
-        SELECT id, username, email, password_hash, created_at, updated_at, active, role, status
+        SELECT id, username, email, password_hash, created_at, updated_at, active, role, status, email_verified
         FROM users 
         WHERE email = $1
     `
@@ -130,6 +131,7 @@ func (s *Service) GetUserByEmail(ctx context.Context, email string) (*types.User
 		&user.Active,
 		&user.Role,
 		&user.Status,
+		&user.EmailVerified,
 	)
 
 	if err != nil {
