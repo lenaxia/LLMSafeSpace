@@ -2400,3 +2400,113 @@ func TestMonitoring_DashboardConfigMap_NotEmpty(t *testing.T) {
 			"dashboard %q must be non-trivial (>1000 chars); got %d", key, len(content))
 	}
 }
+
+// =============================================================================
+// Epic 49 — Email config (US-49.1): move email config out of env into helm
+// =============================================================================
+//
+// These tests guard the contract that email configuration is rendered into
+// the API ConfigMap (config.yaml) from helm values, rather than being
+// env-var-only. Pre-fix the only way to configure email was via
+// LLMSAFESPACES_EMAIL_* env vars, which was inconsistent with every other
+// config section (auth/rateLimiting/security are all helm-rendered).
+//
+// Contracts:
+//   1. By default (email.enabled=false), NO email block renders — the API
+//      falls back to NoopProvider (provider=""), matching today's behaviour.
+//   2. When email.enabled=true with provider=ses, the email block renders
+//      with all four fields (provider, sesRegion, fromAddress, baseUrl)
+//      that Config.Email reads via Viper mapstructure.
+//   3. When email.enabled=true but provider is empty, the block still
+//      renders with provider="" (NoopProvider path).
+//   4. Operator overrides flow through (region/from/baseUrl).
+
+// findAPIConfigMap returns the API service ConfigMap (config.yaml carrier).
+func findAPIConfigMap(t *testing.T, docs []map[string]any) map[string]any {
+	t.Helper()
+	for _, d := range docs {
+		if d["kind"] != "ConfigMap" {
+			continue
+		}
+		if strings.Contains(metaName(d), "-api-config") {
+			return d
+		}
+	}
+	return nil
+}
+
+// configYAML extracts the config.yaml string from an API ConfigMap. Fatals
+// if the ConfigMap has no data block or an empty config.yaml; callers have
+// already asserted the ConfigMap exists, so an empty result is a real failure.
+func configYAML(t *testing.T, cm map[string]any) string {
+	t.Helper()
+	data, _ := cm["data"].(map[string]any)
+	require.NotNil(t, data, "API ConfigMap must have a data block")
+	cfg, _ := data["config.yaml"].(string)
+	require.NotEmpty(t, cfg, "API ConfigMap data.config.yaml must be non-empty")
+	return cfg
+}
+
+// TestEmail_DefaultRender_OmitsEmailBlock asserts the email block is NOT
+// rendered by default. Without this, every install ships an email block
+// that the operator never asked for, which could confuse readers into
+// thinking email is enabled.
+func TestEmail_DefaultRender_OmitsEmailBlock(t *testing.T) {
+	docs := helmTemplate(t, "")
+	cm := findAPIConfigMap(t, docs)
+	require.NotNil(t, cm, "API config ConfigMap must be rendered by default")
+	cfg := configYAML(t, cm)
+	require.NotContains(t, cfg, "email:",
+		"email block must NOT render when email.enabled=false (default); config.yaml was:\n%s", cfg)
+}
+
+// TestEmail_EnabledSES_RendersEmailBlock asserts the email block renders
+// with all four fields when email.enabled=true + provider=ses.
+func TestEmail_EnabledSES_RendersEmailBlock(t *testing.T) {
+	docs := helmTemplate(t, `email:
+  enabled: true
+  provider: ses
+  sesRegion: us-east-1
+  fromAddress: noreply@example.com
+  baseUrl: https://app.example.com
+`)
+	cm := findAPIConfigMap(t, docs)
+	require.NotNil(t, cm)
+	cfg := configYAML(t, cm)
+	require.Contains(t, cfg, "email:\n  provider: \"ses\"",
+		"email block must render with provider=ses; config.yaml was:\n%s", cfg)
+	require.Contains(t, cfg, `sesRegion: "us-east-1"`)
+	require.Contains(t, cfg, `fromAddress: "noreply@example.com"`)
+	require.Contains(t, cfg, `baseUrl: "https://app.example.com"`)
+}
+
+// TestEmail_EnabledNoProvider_RendersEmptyProvider asserts that enabling
+// email without setting a provider renders provider="" — the NoopProvider
+// path. This is the dev/air-gapped default.
+func TestEmail_EnabledNoProvider_RendersEmptyProvider(t *testing.T) {
+	docs := helmTemplate(t, "email:\n  enabled: true\n")
+	cm := findAPIConfigMap(t, docs)
+	require.NotNil(t, cm)
+	cfg := configYAML(t, cm)
+	require.Contains(t, cfg, "email:\n  provider: \"\"",
+		"email block must render with provider=\"\"; config.yaml was:\n%s", cfg)
+}
+
+// TestEmail_OperatorOverride_FlowsThrough asserts operator-supplied values
+// override the rendered config. Guards against a regression that hardcodes
+// values or ignores overrides.
+func TestEmail_OperatorOverride_FlowsThrough(t *testing.T) {
+	docs := helmTemplate(t, `email:
+  enabled: true
+  provider: ses
+  sesRegion: eu-west-1
+  fromAddress: hello@acme.io
+  baseUrl: https://chat.acme.io
+`)
+	cm := findAPIConfigMap(t, docs)
+	require.NotNil(t, cm)
+	cfg := configYAML(t, cm)
+	require.Contains(t, cfg, `sesRegion: "eu-west-1"`)
+	require.Contains(t, cfg, `fromAddress: "hello@acme.io"`)
+	require.Contains(t, cfg, `baseUrl: "https://chat.acme.io"`)
+}
