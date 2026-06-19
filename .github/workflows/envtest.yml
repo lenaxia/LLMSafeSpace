@@ -48,8 +48,7 @@ jobs:
 
       - name: Setup envtest binaries
         run: |
-          setup-envtest use 1.31.x
-          ASSETS_PATH="$(setup-envtest path)"
+          ASSETS_PATH="$(setup-envtest use 1.31.x -p path)"
           echo "KUBEBUILDER_ASSETS=$ASSETS_PATH" >> $GITHUB_ENV
           echo "Using envtest assets at: $ASSETS_PATH"
 
