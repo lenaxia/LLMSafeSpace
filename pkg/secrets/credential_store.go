@@ -5,7 +5,9 @@ package secrets
 
 import (
 	"context"
-	"errors"
+	"net/http"
+
+	pkgerrors "github.com/lenaxia/llmsafespaces/pkg/errors"
 )
 
 // ErrAutoBindingProtected is returned when a caller attempts to Unbind a
@@ -14,12 +16,13 @@ import (
 // removed by deleting the underlying credential or the workspace.
 //
 // This sentinel lives in pkg/ (not api/internal/errors) because it is shared
-// between the API server and the agentd daemon. It cannot be converted to a
-// *apierrors.APIError because Go's internal-package visibility rule prevents
-// pkg/ packages from importing api/internal/. The API handler that surfaces
-// this to HTTP (user_provider_credentials.go) wraps it into an *APIError at
-// the boundary if centralized status mapping is needed.
-var ErrAutoBindingProtected = errors.New("auto-binding cannot be removed via unbind; delete the credential or workspace to remove it")
+// between the API server and the agentd daemon. It uses StatusError so the
+// generic error handler maps it to HTTP 409 automatically.
+var ErrAutoBindingProtected = &pkgerrors.StatusError{
+	Status:  http.StatusConflict,
+	Code:    "auto_binding_protected",
+	Message: "auto-binding cannot be removed via unbind; delete the credential or workspace to remove it",
+}
 
 // CredentialBinding is a joined row from workspace_credential_bindings + provider_credentials.
 type CredentialBinding struct {

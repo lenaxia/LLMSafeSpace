@@ -102,7 +102,7 @@ func TestWorkspaceClient_Resolve_EmptyPodIP_ReturnsCleanError(t *testing.T) {
 	)
 	_, err := wcl.resolve(context.Background(), "user-1", "ws-missing")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no running pod")
+	assert.ErrorIs(t, err, ErrNoRunningPod)
 	assert.NotContains(t, err.Error(), "%!w", "error must not contain fmt verb artifacts")
 }
 

@@ -138,7 +138,7 @@ func userIDFromContext(c *gin.Context) string {
 // category for the admin. US-49.4 requires errors are mapped, not leaked
 // verbatim — raw SES errors can contain AWS account IDs, region names, and
 // internal infrastructure details. The mapping is conservative: anything
-// unrecognised falls back to a generic "email send failed" with no detail.
+// unrecognized falls back to a generic "email send failed" with no detail.
 // The caller is responsible for logging the original error before mapping;
 // the generic fallback message points the admin to those logs.
 func mapSESError(err error) string {

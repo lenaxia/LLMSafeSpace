@@ -6,10 +6,12 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lenaxia/llmsafespaces/pkg/agent/opencode"
 	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
 	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
@@ -108,7 +110,7 @@ func (h *ModelsHandler) ListModels(c *gin.Context) {
 		// Fetch model catalog via ModelClient (resolves podIP + password internally).
 		body, err := h.agentClient.ListModels(c.Request.Context(), userID, workspaceID)
 		if err != nil {
-			if strings.Contains(err.Error(), "no running pod") {
+			if errors.Is(err, opencode.ErrNoRunningPod) {
 				c.JSON(http.StatusNotFound, gin.H{"error": "workspace pod not running"})
 				return
 			}

@@ -170,7 +170,7 @@ func TestEmailHandler_TestSend_SendError_UnknownMapsGeneric(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	errStr, _ := resp["error"].(string)
 	assert.Contains(t, errStr, "check API server logs",
-		"unrecognised errors must fall back to a generic message that points to logs")
+		"unrecognized errors must fall back to a generic message that points to logs")
 	assert.NotContains(t, errStr, "internal glitch #42",
 		"raw internal error detail must not leak")
 }
