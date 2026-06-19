@@ -52,7 +52,7 @@ func TestEnvtest_WorkspaceDefaultsAppliedByAPIServer(t *testing.T) {
 
 	// Start envtest with our CRDs installed.
 	testEnv := &envtest.Environment{
-		CRDDirectoryPaths: []string{"../../charts/llmsafespaces/crds"},
+		CRDDirectoryPaths: []string{"../../../charts/llmsafespaces/crds"},
 	}
 	cfg, err := testEnv.Start()
 	require.NoError(t, err, "envtest startup")
