@@ -272,10 +272,6 @@ spec:
                         type: integer
                         format: int64
                         description: "LLM prompt tokens consumed by this session in the last completed step."
-                      estimatedMemoryMB:
-                        type: integer
-                        format: int64
-                        description: "Approximate per-session memory estimate from agentd (US-44.6)."
                       lastActivityAt:
                         type: string
                         format: date-time

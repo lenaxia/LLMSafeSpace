@@ -165,15 +165,3 @@ func readCgroupMemoryMax() (int64, error) {
 	}
 	return strconv.ParseInt(s, 10, 64)
 }
-
-// estimateSessionMemoryMB computes an approximate memory estimate for a
-// session based on its context token count (US-44.6).
-// Formula: (contextTokens × 2 bytes) / 1MiB.
-// The 2 bytes/token factor is a rough approximation of the in-memory
-// representation overhead for tokenized context. This is NOT a precise
-// measurement — it gives users a relative signal to identify heavy sessions.
-func estimateSessionMemoryMB(contextTokens int64) int64 {
-	const bytesPerToken = 2
-	const bytesPerMiB = 1024 * 1024
-	return (contextTokens * bytesPerToken) / bytesPerMiB
-}
