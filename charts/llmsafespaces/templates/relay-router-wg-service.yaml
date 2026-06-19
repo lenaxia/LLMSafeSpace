@@ -4,7 +4,7 @@
 {{- $mode := $ingress.mode }}
 {{- /* The WireGuard UDP endpoint Service.
 
-       Network-agnostic per the Epic 42 Layer 2 redesign (worklog 0389):
+       Network-agnostic per the Epic 42 Layer 2 redesign (worklog 0395):
          mode=external     -> NO Service (operator wires UDP 51820 themselves)
          mode=loadBalancer -> Service type LoadBalancer on UDP 51820
          mode=nodePort     -> Service type NodePort on a pinned UDP port
