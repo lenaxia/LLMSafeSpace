@@ -138,6 +138,7 @@ func TestListModels_HappyPath(t *testing.T) {
 
 func TestListModels_NoPodRunning(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	clearModelCache()
 
 	handler := newTestModelsHandlerNoPod()
 
