@@ -111,6 +111,12 @@ linters:
       excludes:
         # G104 (audit errors not checked) duplicates errcheck.
         - G104
+        # G117 (struct field matches secret pattern): fires on any field
+        # named *Key/*Secret/*Token that has a json tag. Our credential
+        # DTOs (e.g. credentialProviderValue.APIKey) legitimately hold
+        # API keys for JSON transmission — they are never logged. gitleaks
+        # catches real hardcoded secrets.
+        - G117
         # G304 (file include via variable): too many false positives in
         # config-loading paths. Re-enable after a real incident.
         - G304
