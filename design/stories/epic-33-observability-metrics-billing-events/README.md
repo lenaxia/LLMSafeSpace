@@ -234,8 +234,9 @@ The WAL lives in agentd, not in the gateway.
 
 Fleet-level operational counters unchanged. Existing `controller/internal/metrics`
 package unchanged. Gains one new responsibility: gap detection and closure. Detects
-open `compute_periods` rows where `last_heartbeat_at` has gone stale, verifies the pod
-is actually gone, and closes the period.
+stale compute periods (open `usage_events` `compute_seconds` entries with no recent
+heartbeat) where agentd has gone silent, verifies the pod is actually gone, and closes
+the period by emitting a `compute_seconds` event via the gateway.
 
 ### vmagent
 
@@ -934,11 +935,9 @@ func (g *Gateway) handleIngest(c *gin.Context) {
     // Non-blocking — failure does not affect billing
     if len(req.ResourceSamples) > 0 {
         g.vmWriter.EnqueueSamples(req.ResourceSamples)
-        // update last_heartbeat_at for open compute_periods
-        g.pg.UpdateHeartbeats(req.ResourceSamples)
     }
 
-    // Inference events — async write to inference_events table
+    // Inference events — async write to usage_events (event_type='llm_tokens')
     if len(req.InferenceEvents) > 0 {
         g.asyncWriter.EnqueueInference(req.InferenceEvents)
     }
@@ -1212,15 +1211,18 @@ remote_write data from gateway. `go test ./cmd/events-gateway/...` passes.
 
 ### US-33.6 — Postgres event table migration
 
-~~Migration `000018_compute_periods.up.sql`~~ — **DROPPED.** The gateway writes to
+~~Migration for `compute_periods`~~ — **DROPPED.** The gateway writes to
 the existing `usage_events` table (Epic 12, migration 000024). No `compute_periods`
 table is created.
 
-~~Migration `000019_inference_events.up.sql`~~ — **DROPPED.** Same reason —
+~~Migration for `inference_events`~~ — **DROPPED.** Same reason —
 inference events go to `usage_events` with `event_type='llm_tokens'`.
 
-Migration `000020_workspace_events.up.sql` — `workspace_events` and
+Migration `000039_workspace_events.up.sql` — `workspace_events` and
 `workspace_events_dlq` tables, indexes, severity constraint.
+
+Migration `000040_usage_events_source_agentd.up.sql` — ALTER the `usage_events.source`
+CHECK constraint to add `'agentd'` to the permitted values.
 Synced to `charts/llmsafespaces/migrations/`.
 
 **Definition of done:** `make migrate-up` and `make migrate-down` clean. `workspace_events`
@@ -1274,9 +1276,10 @@ functions from `cmd/workspace-agentd/main.go`). Calls
 (same pattern as `RELAY_CONFIG_PATH` in `relay_injection.go`).
 
 **Definition of done:** After workspace reaches Active: `pod_ready` event in
-`workspace_events`, open row in `compute_periods`. After workspace suspended:
-`pod_suspended` event, row closed in `compute_periods` with correct `duration_secs`.
-`compute_periods.last_heartbeat_at` updated every second while pod is running.
+`workspace_events`, `compute_seconds` event in `usage_events` (`source='agentd'`).
+After workspace suspended: `pod_suspended` event, `compute_seconds` event in
+`usage_events` with the exact duration. Heartbeat (resource sample push) updates
+`usage_events` continuity every second while pod is running.
 `go test ./cmd/workspace-agentd/...` passes with `RecordingWriter`.
 
 ---
@@ -1288,11 +1291,12 @@ session.updated token delta. Push session_completed event (Tier 1) on
 `session.status = idle`. Push session_interrupted event (Tier 1) on SSE disconnect
 while session was busy.
 
-Gateway routes `InferenceEvent` to `inference_events` upsert (accumulates tokens)
-rather than `workspace_events` insert.
+Gateway routes `InferenceEvent` to `usage_events` insert (`event_type='llm_tokens'`,
+`source='agentd'`) — not `workspace_events`. Token deltas accumulate via
+idempotency-keyed inserts (same pattern as the existing `onInference` callback).
 
-**Definition of done:** After any inference session: row in `inference_events` with
-correct token counts and `duration_secs`. Multiple token deltas accumulate correctly.
+**Definition of done:** After any inference session: `llm_tokens` events in
+`usage_events` with correct token counts. Multiple token deltas accumulate correctly.
 Session interruption produces `session_interrupted` row in `workspace_events`.
 
 ---
@@ -1306,8 +1310,9 @@ Emits `workspace_failed`, `workspace_recovery_exhausted`, `workspace_safe_mode_e
 Tier 2 events. `user_id` resolved from `metadata.labels["llmsafespace.dev/user-id"]`
 — no database lookup.
 
-`reconcileStaleComputePeriods` runs every 60s. Detects open `compute_periods` rows with
-stale `last_heartbeat_at`. Verifies pod is actually gone before closing (prevents false
+`reconcileStaleComputePeriods` runs every 60s. Detects stale compute periods
+(open `usage_events` compute_seconds entries with no recent heartbeat) where agentd
+has gone silent. Verifies pod is actually gone before closing (prevents false
 positives when gateway is slow). Emits `pod_terminated` event via gateway with best
 available end time.
 
