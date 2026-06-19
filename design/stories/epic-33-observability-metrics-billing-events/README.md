@@ -259,6 +259,11 @@ Single-node. 90-day retention. Receives data from two sources:
 
 ### `compute_periods` — billing period ledger
 
+> **SUPERSEDED (2026-06-19).** This table is NOT created. The gateway writes to the
+> existing `usage_events` table with `event_type='compute_seconds'` and `source='agentd'`.
+> See the "Coexistence with Epic 12" section. The schema below is retained for historical
+> reference and for the query patterns (which map to `usage_events` queries).
+
 ```sql
 CREATE TABLE compute_periods (
     id               UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -336,6 +341,11 @@ WHERE tstzrange(cp.started_at, cp.ended_at) && tstzrange(:t1, :t2);
 ---
 
 ### `inference_events` — per-session token ledger
+
+> **SUPERSEDED (2026-06-19).** This table is NOT created. The gateway writes to the
+> existing `usage_events` table with `event_type='llm_tokens'` and `source='agentd'`.
+> See the "Coexistence with Epic 12" section. The schema below is retained for historical
+> reference.
 
 One row per inference session. Upserted as token deltas arrive, closed on session
 completion.
@@ -1215,7 +1225,8 @@ Synced to `charts/llmsafespaces/migrations/`.
 
 **Definition of done:** `make migrate-up` and `make migrate-down` clean. `workspace_events`
 table and indexes present. `usage_events` (already exists) is the billing table the gateway
-writes `compute_seconds` and `llm_tokens` events into — no schema change needed there.
+writes `compute_seconds` and `llm_tokens` events into with `source='agentd'` — requires a
+CHECK constraint migration to add `'agentd'` to the permitted `source` values.
 
 ---
 
@@ -1302,7 +1313,10 @@ available end time.
 
 **Definition of done:** Simulated workspace failure → `workspace_failed` in
 `workspace_events`. Simulated agentd crash (kill -9) followed by workspace deletion →
-open `compute_periods` row closed by controller with `source = 'controller_gap_close'`.
+open compute period in `usage_events` closed by controller with
+`source='reconciliation'` (the controller emits a `compute_seconds` event with
+the gap's duration). The original design referenced a `compute_periods` table,
+which has been dropped — see Coexistence section.
 Pod still running with stale heartbeat → controller does NOT close the period.
 `go test ./controller/...` passes with `RecordingWriter`.
 
@@ -1423,9 +1437,9 @@ The clean coexistence model:
 
 | Concern | Epic 12 (current) | Epic 33 (after) | Migration |
 |---------|-------------------|-----------------|-----------|
-| **Compute billing source** | `reconcileComputeTime` (CRD-watch, 5-min, 15s buckets) → `usage_events` | `compute_periods` (agentd push, exact boundaries) | **Deprecate `reconcileComputeTime`.** The gateway translates `pod_ready`/`pod_terminated` events into `compute_seconds` events in `usage_events` (same table, same schema, `source='controller'`). Requires a migration to add `'agentd'` to the `source` CHECK constraint (currently only `('api','controller','cron','reconciliation')`). The `/api/v1/usage` endpoint and Stripe exporter read `usage_events` unchanged. |
+| **Compute billing source** | `reconcileComputeTime` (CRD-watch, 5-min, 15s buckets) → `usage_events` | agentd push → gateway → `usage_events` | **Deprecate `reconcileComputeTime`.** The gateway translates `pod_ready`/`pod_terminated` events into `compute_seconds` events in `usage_events` (same table, same schema, `source='agentd'`). Requires a migration to add `'agentd'` to the `source` CHECK constraint (currently only `('api','controller','cron','reconciliation')`). The `/api/v1/usage` endpoint and Stripe exporter read `usage_events` unchanged. |
 | **Inference billing source** | SSE `onInference` callback → `usage_events` (`llm_tokens`) | agentd `session.updated` → gateway → `usage_events` (`llm_tokens`) | **Move inference emission from API server to agentd.** The gateway writes to the same `usage_events` table. The API server's SSE callback is removed (agentd sees the same stream at the source). |
-| **Billing tables** | `usage_events` (single table) | `usage_events` (unchanged) + `workspace_events` (operational log) | `compute_periods` and `inference_events` **are NOT created.** The gateway writes directly to `usage_events`. `workspace_events` is the new operational event log (not billing-critical). |
+| **Billing tables** | `usage_events` (single table) | `usage_events` (unchanged) + `workspace_events` (operational log) | `compute_periods` and `inference_events` **are NOT created.** The gateway writes directly to `usage_events` (`source='agentd'`). `workspace_events` is the new operational event log (not billing-critical). Requires a CHECK constraint migration to add `'agentd'` to `usage_events.source`. |
 | **Stripe export** | `BillingExporter` reads `usage_events` | Unchanged — same table, same exporter | No change. |
 | **DLQ** | `usage_events_dlq` | Unchanged — same table | No change. |
 | **Gap reconciliation** | `reconcileComputeTime` (5-min, CRD-watch) | Controller `reconcileStaleComputePeriods` (60s, pod-liveness) → emits `compute_seconds` to `usage_events` via gateway | Replace the API server's reconciliation with the controller's (more accurate — verifies pod is actually gone). |
