@@ -269,6 +269,9 @@ type AgentSessionStatus struct {
 	Title       string `json:"title,omitempty"`
 	Status      string `json:"status"` // "idle" | "busy"
 	ContextUsed int64  `json:"contextUsed"`
+	// EstimatedMemoryMB is agentd's approximate per-session memory
+	// estimate (US-44.6). Helps users identify heavy sessions.
+	EstimatedMemoryMB int64 `json:"estimatedMemoryMB,omitempty"`
 }
 
 // WorkspaceStatus defines the observed state of a Workspace.

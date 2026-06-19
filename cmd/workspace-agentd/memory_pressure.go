@@ -33,10 +33,17 @@ type memoryPressureMonitor struct {
 	pressure  bool  // true when usage > threshold
 	usedBytes int64 // last sampled usage
 	maxBytes  int64 // cgroup limit (0 if unlimited/unreadable)
+	// readCurrent and readMax are injectable for testing. Production
+	// uses the package-level readCgroupMemoryCurrent/readCgroupMemoryMax.
+	readCurrent func() (int64, error)
+	readMax     func() (int64, error)
 }
 
 func newMemoryPressureMonitor() *memoryPressureMonitor {
-	return &memoryPressureMonitor{}
+	return &memoryPressureMonitor{
+		readCurrent: readCgroupMemoryCurrent,
+		readMax:     readCgroupMemoryMax,
+	}
 }
 
 // isUnderPressure returns the current pressure state.
@@ -53,14 +60,14 @@ func (m *memoryPressureMonitor) snapshot() (pressure bool, usedBytes, maxBytes i
 	return m.pressure, m.usedBytes, m.maxBytes
 }
 
-// check reads cgroup v2 memory and updates the pressure state.
-// Returns true if the state changed (used for logging).
+// check reads memory via the injected readers and updates the pressure
+// state. Returns true if the state changed (used for logging).
 func (m *memoryPressureMonitor) check() bool {
-	used, err := readCgroupMemoryCurrent()
+	used, err := m.readCurrent()
 	if err != nil {
 		return false
 	}
-	max, err := readCgroupMemoryMax()
+	max, err := m.readMax()
 	if err != nil || max <= 0 {
 		return false
 	}

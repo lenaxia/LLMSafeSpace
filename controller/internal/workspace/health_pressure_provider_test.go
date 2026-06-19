@@ -183,3 +183,81 @@ func TestEnrichAgentStatus_ProviderReady_MessageContainsConnectedList(t *testing
 	assert.Contains(t, c.Message, "openai")
 	assert.Contains(t, c.Message, "anthropic")
 }
+
+// --- US-44.5 MemoryPressure condition tests ---
+
+func TestEnrichAgentStatus_MemoryPressure_True_SetsCondition(t *testing.T) {
+	r, ws, server := setupHealthTest(t, agentd.StatuszResponse{
+		Healthy: true, Ready: true, Connected: []string{"opencode"},
+		ProvidersConfigured: 1,
+		Memory:              &agentd.MemoryUsage{UsedBytes: 1800 * 1024 * 1024, TotalBytes: 2048 * 1024 * 1024},
+		MemoryPressure:      true,
+	})
+	defer server.Close()
+
+	r.enrichAgentStatus(context.Background(), ws, 60*time.Second)
+
+	c := findCondition(ws, v1.WorkspaceConditionMemoryPressure)
+	require.NotNil(t, c, "MemoryPressure condition must be set when agentd reports pressure")
+	assert.Equal(t, "True", c.Status)
+	assert.Equal(t, v1.ReasonMemoryPressure, c.Reason)
+	assert.Contains(t, c.Message, "memory usage high")
+}
+
+func TestEnrichAgentStatus_MemoryPressure_False_ClearsCondition(t *testing.T) {
+	r, ws, server := setupHealthTest(t, agentd.StatuszResponse{
+		Healthy: true, Ready: true, Connected: []string{"opencode"},
+		ProvidersConfigured: 1,
+		Memory:              &agentd.MemoryUsage{UsedBytes: 500 * 1024 * 1024, TotalBytes: 2048 * 1024 * 1024},
+		MemoryPressure:      false,
+	})
+	defer server.Close()
+
+	// Pre-set the condition so we can verify it clears.
+	ws.Status.Conditions = append(ws.Status.Conditions, v1.WorkspaceCondition{
+		Type: v1.WorkspaceConditionMemoryPressure, Status: "True",
+		Reason: v1.ReasonMemoryPressure, Message: "old",
+	})
+
+	r.enrichAgentStatus(context.Background(), ws, 60*time.Second)
+
+	c := findCondition(ws, v1.WorkspaceConditionMemoryPressure)
+	assert.Nil(t, c, "MemoryPressure condition must be cleared when agentd reports no pressure")
+}
+
+func TestEnrichAgentStatus_MemoryPressure_DoesNotRestartPod(t *testing.T) {
+	r, ws, server := setupHealthTest(t, agentd.StatuszResponse{
+		Healthy: true, Ready: true, Connected: []string{"opencode"},
+		ProvidersConfigured: 1,
+		Memory:              &agentd.MemoryUsage{UsedBytes: 2048 * 1024 * 1024, TotalBytes: 2048 * 1024 * 1024},
+		MemoryPressure:      true,
+	})
+	defer server.Close()
+
+	origPhase := ws.Status.Phase
+	origRestarts := ws.Status.RestartCount
+	r.enrichAgentStatus(context.Background(), ws, 60*time.Second)
+
+	assert.Equal(t, origPhase, ws.Status.Phase, "memory pressure must NOT restart the pod")
+	assert.Equal(t, origRestarts, ws.Status.RestartCount)
+}
+
+// --- US-44.6 EstimatedMemoryMB pass-through test ---
+
+func TestEnrichAgentStatus_SessionMemoryMB_PassedToCRD(t *testing.T) {
+	r, ws, server := setupHealthTest(t, agentd.StatuszResponse{
+		Healthy: true, Ready: true, Connected: []string{"opencode"},
+		ProvidersConfigured: 1,
+		Sessions: []agentd.SessionInfo{
+			{ID: "ses-1", Status: "idle", ContextUsed: 100000, EstimatedMemoryMB: 5},
+			{ID: "ses-2", Status: "busy", ContextUsed: 500000, EstimatedMemoryMB: 12},
+		},
+	})
+	defer server.Close()
+
+	r.enrichAgentStatus(context.Background(), ws, 60*time.Second)
+
+	require.Len(t, ws.Status.Sessions, 2)
+	assert.Equal(t, int64(5), ws.Status.Sessions[0].EstimatedMemoryMB, "session 1 estimated memory must pass through")
+	assert.Equal(t, int64(12), ws.Status.Sessions[1].EstimatedMemoryMB, "session 2 estimated memory must pass through")
+}

@@ -66,9 +66,8 @@ type SessionInfo struct {
 	Model       string         `json:"model,omitempty"` // model ID, e.g. "claude-sonnet-4-20250514"
 	ContextUsed int64          `json:"contextUsed"`
 	// EstimatedMemoryMB is an approximate per-session memory estimate
-	// computed by agentd (US-44.6). Formula: (contextTokens × 2 bytes +
-	// historyTurns × 10KB) / 1MiB. Helps users identify which session to
-	// drop when memory pressure is high.
+	// computed by agentd (US-44.6). Formula: (contextTokens × 2 bytes) / 1MiB.
+	// Helps users identify which session to drop when memory pressure is high.
 	EstimatedMemoryMB int64 `json:"estimatedMemoryMB,omitempty"`
 }
 
