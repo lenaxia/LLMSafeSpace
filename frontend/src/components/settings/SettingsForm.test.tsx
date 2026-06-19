@@ -410,4 +410,37 @@ describe("SettingsForm", () => {
       expect(input.value).toBe("  My Workspace  ");
     });
   });
+
+  describe("readOnly (helm-managed)", () => {
+    it("shows Managed by Helm badge for readOnly settings", () => {
+      const readOnlySchema: SettingDef[] = [
+        { key: "email.provider", tier: 2, type: "string", default: "", category: "Email", label: "Provider", description: "Email provider", readOnly: true },
+      ];
+      render(<SettingsForm schema={readOnlySchema} values={{ "email.provider": "ses" }} onSave={vi.fn()} />);
+      expect(screen.getByText("Managed by Helm")).toBeInTheDocument();
+    });
+
+    it("disables the control for readOnly settings", () => {
+      const readOnlySchema: SettingDef[] = [
+        { key: "email.provider", tier: 2, type: "string", default: "", category: "Email", label: "Provider", description: "Email provider", readOnly: true },
+      ];
+      render(<SettingsForm schema={readOnlySchema} values={{ "email.provider": "ses" }} onSave={vi.fn()} />);
+      const input = screen.getByDisplayValue("ses") as HTMLInputElement;
+      expect(input).toBeDisabled();
+    });
+
+    it("does not call onSave for readOnly settings", async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      const readOnlySchema: SettingDef[] = [
+        { key: "email.provider", tier: 2, type: "string", default: "", category: "Email", label: "Provider", description: "Email provider", readOnly: true },
+      ];
+      render(<SettingsForm schema={readOnlySchema} values={{ "email.provider": "ses" }} onSave={onSave} />);
+      expect(onSave).not.toHaveBeenCalled();
+    });
+
+    it("does not show badge for non-readOnly settings", () => {
+      render(<SettingsForm schema={mockSchema} values={{}} onSave={vi.fn()} />);
+      expect(screen.queryByText("Managed by Helm")).not.toBeInTheDocument();
+    });
+  });
 });

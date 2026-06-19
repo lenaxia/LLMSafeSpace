@@ -12,6 +12,7 @@ export interface SettingDef {
   category: string;
   label: string;
   description: string;
+  readOnly?: boolean;
 }
 
 export interface SettingsResponse {
