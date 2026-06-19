@@ -1,7 +1,23 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { WorkspaceSettingsDrawer } from "./WorkspaceSettingsDrawer";
 import type { WorkspaceListItem } from "../../api/types";
+
+vi.mock("../../api/secrets", () => ({
+  secretsApi: {
+    list: vi.fn(),
+  },
+}));
+
+vi.mock("../../api/client", () => ({
+  api: {
+    get: vi.fn(),
+  },
+}));
+
+import { secretsApi } from "../../api/secrets";
+import { api } from "../../api/client";
+
 
 const mockWorkspace: WorkspaceListItem = {
   id: "ws-1",
@@ -149,5 +165,59 @@ describe("WorkspaceSettingsDrawer", () => {
     );
     const content = screen.getByText("Workspace Settings").closest("[class*='max-w-full']");
     expect(content).not.toBeNull();
+  });
+});
+
+describe("WorkspaceSettingsDrawer – secret-type grouping (US-44.9)", () => {
+  const listMock = secretsApi.list as ReturnType<typeof vi.fn>;
+  const getMock = api.get as ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getMock.mockResolvedValue({ bindings: [] });
+  });
+
+  async function renderWithSecrets(secrets: Array<{ id: string; name: string; type: string }>) {
+    listMock.mockResolvedValue({ secrets });
+    render(
+      <WorkspaceSettingsDrawer
+        workspace={mockWorkspace}
+        open={true}
+        onOpenChange={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText("Attached Secrets")).toBeInTheDocument());
+  }
+
+  it("renders llm-provider secrets under the LLM Providers group (regression: previously silently dropped)", async () => {
+    await renderWithSecrets([
+      { id: "lp-1", name: "my-anthropic", type: "llm-provider" },
+    ]);
+
+    expect(screen.getByText(/LLM Providers/)).toBeInTheDocument();
+    expect(screen.getByText("my-anthropic")).toBeInTheDocument();
+  });
+
+  it("labels api-key secrets as legacy, not as LLM Providers (regression: previously mislabeled)", async () => {
+    await renderWithSecrets([
+      { id: "ak-1", name: "old-key", type: "api-key" },
+    ]);
+
+    expect(screen.getByText(/API Keys \(legacy\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/LLM Providers/)).not.toBeInTheDocument();
+    expect(screen.getByText("old-key")).toBeInTheDocument();
+  });
+
+  it("renders llm-provider and api-key secrets as separate groups when both exist", async () => {
+    await renderWithSecrets([
+      { id: "lp-1", name: "my-anthropic", type: "llm-provider" },
+      { id: "ak-1", name: "old-key", type: "api-key" },
+    ]);
+
+    expect(screen.getByText(/LLM Providers/)).toBeInTheDocument();
+    expect(screen.getByText(/API Keys \(legacy\)/)).toBeInTheDocument();
+    expect(screen.getByText("my-anthropic")).toBeInTheDocument();
+    expect(screen.getByText("old-key")).toBeInTheDocument();
   });
 });
