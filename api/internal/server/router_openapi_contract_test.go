@@ -367,6 +367,7 @@ func newContractFixture(t *testing.T) *gin.Engine {
 		Debug:               false,
 		SettingsHandler:     &handlers.SettingsHandler{},
 		SecretsHandler:      &handlers.SecretsHandler{},
+		ModelsHandler:       &handlers.ModelsHandler{},
 		WorkspaceEnvHandler: &handlers.WorkspaceEnvHandler{},
 		RotateKeyHandler:    &handlers.RotateKeyHandler{},
 		TerminalHandler:     &handlers.TerminalHandler{},

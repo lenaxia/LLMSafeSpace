@@ -55,6 +55,10 @@ type RouterConfig struct {
 	// SecretsHandler is the handler for secret management endpoints (optional)
 	SecretsHandler *handlers.SecretsHandler
 
+	// ModelsHandler handles model listing and selection (optional).
+	// Extracted from SecretsHandler (US-29.5).
+	ModelsHandler *handlers.ModelsHandler
+
 	// WorkspaceEnvHandler is the handler for workspace env-var endpoints (optional).
 	// Extracted from SecretsHandler (US-29.4).
 	WorkspaceEnvHandler *handlers.WorkspaceEnvHandler
@@ -349,8 +353,12 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		idGroup.PUT("/bindings", cfg.SecretsHandler.SetBindings)
 		idGroup.GET("/bindings", cfg.SecretsHandler.GetBindings)
 		idGroup.POST("/reload-secrets", cfg.SecretsHandler.ReloadSecrets)
-		idGroup.GET("/models", cfg.SecretsHandler.ListModels)
-		idGroup.PUT("/model", cfg.SecretsHandler.SetModel)
+	}
+
+	// Model routes (US-29.5: extracted from SecretsHandler)
+	if cfg.ModelsHandler != nil {
+		workspaceGroup.GET("/:id/models", cfg.ModelsHandler.ListModels)
+		workspaceGroup.PUT("/:id/model", cfg.ModelsHandler.SetModel)
 	}
 
 	// Workspace env-var routes (US-29.4: extracted from SecretsHandler).

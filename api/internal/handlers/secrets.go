@@ -25,22 +25,14 @@ type SecretsHandler struct {
 	manifestWriter   SecretsManifestWriter
 	logger           pkginterfaces.LoggerInterface
 	passwordVerifier PasswordVerifier
-	wsUpdater        ModelStore
 	credStateWriter  CredentialStateWriter
 	passwordGetter   func(ctx context.Context, workspaceID string) (string, error)
-	relayActive      bool
-	metricsRecorder  ModelSelectionRecorder
-	policyChecker    OrgPolicyChecker
 }
 
-// OrgPolicyChecker is the minimal interface ListModels needs to filter models
+// OrgPolicyChecker is the minimal interface needed to filter models
 // by org policy. The policy.Service implements it.
 type OrgPolicyChecker interface {
 	GetEffectivePolicy(ctx context.Context, orgID string) (*types.OrgPolicyValues, error)
-}
-
-func (h *SecretsHandler) SetPolicyChecker(pc OrgPolicyChecker) {
-	h.policyChecker = pc
 }
 
 // ModelSelectionRecorder records model selection events for billing/metering.
@@ -91,17 +83,6 @@ type PasswordVerifier interface {
 // NewSecretsHandler creates a new SecretsHandler.
 func NewSecretsHandler(svc *secrets.SecretService) *SecretsHandler {
 	return &SecretsHandler{svc: svc}
-}
-
-// SetMetricsRecorder installs the recorder for billing/metering events.
-func (h *SecretsHandler) SetMetricsRecorder(r ModelSelectionRecorder) {
-	h.metricsRecorder = r
-}
-
-// SetRelayActive configures whether the inference relay is active.
-// When true, ListModels remaps free-tier opencode models to providerID=opencode-relay.
-func (h *SecretsHandler) SetRelayActive(active bool) {
-	h.relayActive = active
 }
 
 // SetPasswordVerifier installs the verifier used to confirm the
