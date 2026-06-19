@@ -41,6 +41,20 @@ func (m *MockAuthMiddlewareService) RevokeToken(token string) error {
 	return args.Error(0)
 }
 
+// MarkUserSuspended records the F4 revocation-marker write for assertion. No-op
+// by default (returns nil) so tests that do not exercise the suspend path are
+// unaffected.
+func (m *MockAuthMiddlewareService) MarkUserSuspended(ctx context.Context, userID string) error {
+	args := m.Called(ctx, userID)
+	return args.Error(0)
+}
+
+// ClearUserSuspended records the F4 marker-clear on unsuspend.
+func (m *MockAuthMiddlewareService) ClearUserSuspended(ctx context.Context, userID string) error {
+	args := m.Called(ctx, userID)
+	return args.Error(0)
+}
+
 func (m *MockAuthMiddlewareService) GetUserID(c *gin.Context) string {
 	args := m.Called(c)
 	return args.String(0)

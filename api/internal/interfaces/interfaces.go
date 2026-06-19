@@ -34,6 +34,14 @@ type AuthService interface {
 	// call with an empty token (return nil) and with non-JWT inputs (the
 	// caller filters out API-key-shaped tokens before calling).
 	RevokeToken(token string) error
+	// MarkUserSuspended writes a per-user revocation marker so the auth
+	// middleware rejects the user's existing JWTs/API keys immediately,
+	// without a DB round-trip and during a DB outage (F4, US-43.19). Called
+	// by the platform-admin SuspendUser endpoint.
+	MarkUserSuspended(ctx context.Context, userID string) error
+	// ClearUserSuspended removes the marker so an unsuspended user's existing
+	// tokens work again without waiting for the marker TTL (F4).
+	ClearUserSuspended(ctx context.Context, userID string) error
 	AuthenticateAPIKey(ctx context.Context, apiKey string) (string, error)
 	Register(ctx context.Context, req types.RegisterRequest) (*types.AuthResponse, error)
 	Login(ctx context.Context, req types.LoginRequest) (*types.AuthResponse, error)
