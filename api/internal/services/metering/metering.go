@@ -1030,3 +1030,5 @@ func (s *Service) exportLoop() {
 		}
 	}
 }
+
+var _ interfaces.MeteringRecorder = (*Service)(nil)
