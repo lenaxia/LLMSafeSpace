@@ -3,17 +3,17 @@
 
 package tests
 
-// rate_limit_burst_test.go — US-46.12: Rate Limit bursting behaviour tests.
+// rate_limit_burst_test.go — US-46.12: Rate Limit bursting behavior tests.
 //
-// These tests cover the bursting behaviour documented in MISSINGTESTS.md
-// item 6: burst allowance honoured, burst exceeded → 429, and the IP
+// These tests cover the bursting behavior documented in MISSINGTESTS.md
+// item 6: burst allowance honored, burst exceeded → 429, and the IP
 // fallback path when no API key is in context (rate_limit.go:98-104).
 //
 // The existing rate_limit_test.go tests basic limit enforcement (limit=2,
 // 3rd request denied) but does NOT exercise:
 //   - Burst allowance distinctly from the limit
 //   - IP fallback key derivation when apiKey is absent
-//   - Window reset behaviour (after window, counter resets)
+//   - Window reset behavior (after window, counter resets)
 
 import (
 	"net/http"
@@ -162,7 +162,7 @@ func TestRateLimitBurst_IPFallback_WhenNoAPIKey(t *testing.T) {
 	mockRL.AssertExpectations(t)
 }
 
-// TestRateLimitBurst_WindowReset verifies window reset behaviour: after the
+// TestRateLimitBurst_WindowReset verifies window reset behavior: after the
 // rate limiter allows requests up to the limit, a subsequent Allow call
 // returns true again (simulating window reset in the backend).
 func TestRateLimitBurst_WindowReset(t *testing.T) {
