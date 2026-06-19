@@ -207,6 +207,28 @@ controller:
     # URL of the in-cluster relay-router for /metrics scraping.
     routerURL: "http://relay-router:8080"
 
+    # Upstream the relay fleet proxies to + the real API key the router injects
+    # (A23 fix, worklog 0420). Workspaces send Authorization: Bearer public,
+    # which opencode.ai/zen now rejects on /chat/completions (401 "Missing API
+    # key"). The router swaps in this key before forwarding, so the relay VMs
+    # stay dumb byte-pipes but inference works. The key transits the encrypted
+    # WireGuard tunnel; it is never persisted on a relay VM disk. Leave
+    # upstreamAuth.keySecret empty to disable injection (router forwards the
+    # client header unchanged — the pre-A23 behavior, which 401s on Zen).
+    upstreamURL: "https://opencode.ai/zen/v1"
+    upstreamAuth:
+      # K8s Secret (in the release namespace) holding the real upstream key.
+      # The chart mounts keySecret.name[keySecret.key] as UPSTREAM_AUTH_KEY.
+      # Create out-of-band, e.g.:
+      #   kubectl -n <ns> create secret generic relay-upstream-key \
+      #     --from-literal=key=sk-...
+      keySecret:
+        name: ""
+        key: "key"
+      # Header name to set; "" -> Authorization (sent as "Bearer <key>").
+      # Set to e.g. "x-api-key" for Anthropic-native upstreams.
+      header: ""
+
     # Relay-router Deployment + Service. The relay-router is a
     # lightweight Go proxy (cmd/relay-router/) that distributes
     # inference traffic across healthy relay VMs. It is deployed

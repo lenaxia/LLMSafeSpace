@@ -15,7 +15,41 @@ import (
 const (
 	fallbackHeader      = "X-Relay-Status"
 	fallbackHeaderValue = "fallback"
+	defaultAuthHeader   = "Authorization"
 )
+
+// upstreamAuth configures router-side injection of a real upstream API key,
+// overriding the client's Authorization header (which workspaces send as
+// `Bearer public`). Required since A23 (worklog 0420): opencode.ai/zen
+// rejects `public` on /chat/completions with 401, so the router must swap in
+// a real key before forwarding. Empty key = no-op (preserves prior behavior
+// when injection is unconfigured). The key transits the encrypted WireGuard
+// tunnel to the relay VM; it is never persisted on the VM's disk.
+type upstreamAuth struct {
+	key    string
+	header string // header name; "" → Authorization (sent as "Bearer <key>")
+}
+
+// applyUpstreamAuth rewrites dst's auth header with the configured upstream
+// key. No-op when key is empty. When header is the default Authorization, all
+// existing Authorization values are replaced with a single "Bearer <key>".
+// When a custom header is set, the Authorization header is removed entirely.
+func applyUpstreamAuth(dst http.Header, auth upstreamAuth) {
+	if auth.key == "" {
+		return
+	}
+	headerName := defaultAuthHeader
+	if auth.header != "" {
+		headerName = auth.header
+	}
+	if http.CanonicalHeaderKey(headerName) != defaultAuthHeader {
+		dst.Del(defaultAuthHeader)
+	}
+	dst.Set(headerName, auth.key)
+	if http.CanonicalHeaderKey(headerName) == defaultAuthHeader {
+		dst.Set(headerName, "Bearer "+auth.key)
+	}
+}
 
 var routerHopHeaders = map[string]struct{}{
 	"Connection":          {},
@@ -41,6 +75,8 @@ type routerProxy struct {
 	fallback       *fallbackProxy
 	fallbackActive bool
 	fallbackMu     sync.RWMutex
+
+	auth upstreamAuth
 }
 
 func newRouterProxy(fleet *relayFleet, detector *detector429, metrics *routerMetrics, relayPort int, fallback *fallbackProxy) *routerProxy {
@@ -52,6 +88,13 @@ func newRouterProxy(fleet *relayFleet, detector *detector429, metrics *routerMet
 		relayPort:  relayPort,
 		fallback:   fallback,
 	}
+}
+
+// withUpstreamAuth configures real-key injection (A23 fix). Builder so
+// existing callers/tests are unchanged when injection is unconfigured.
+func (rp *routerProxy) withUpstreamAuth(auth upstreamAuth) *routerProxy {
+	rp.auth = auth
+	return rp
 }
 
 func (rp *routerProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -79,6 +122,7 @@ func (rp *routerProxy) forwardToRelay(w http.ResponseWriter, r *http.Request, re
 	}
 	upstreamReq.ContentLength = r.ContentLength
 	copyRouterHeaders(upstreamReq.Header, r.Header)
+	applyUpstreamAuth(upstreamReq.Header, rp.auth)
 
 	rp.fleet.RecordStreamStart(relayID)
 	defer rp.fleet.RecordStreamEnd(relayID)
@@ -154,6 +198,8 @@ type fallbackProxy struct {
 	mu            sync.Mutex
 	lastRequest   time.Time
 	inFlight      int
+
+	auth upstreamAuth
 }
 
 func newFallbackProxy(upstreamURL string, rate float64, maxConcurrent int) (*fallbackProxy, error) {
@@ -185,6 +231,13 @@ func newFallbackProxy(upstreamURL string, rate float64, maxConcurrent int) (*fal
 		rateInterval:  interval,
 		maxConcurrent: maxConcurrent,
 	}, nil
+}
+
+// withUpstreamAuth configures real-key injection on the fallback path too
+// (A23 fix).
+func (fp *fallbackProxy) withUpstreamAuth(auth upstreamAuth) *fallbackProxy {
+	fp.auth = auth
+	return fp
 }
 
 func (fp *fallbackProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -231,6 +284,7 @@ func (fp *fallbackProxy) forward(w http.ResponseWriter, r *http.Request) {
 	}
 	upstreamReq.ContentLength = r.ContentLength
 	copyRouterHeaders(upstreamReq.Header, r.Header)
+	applyUpstreamAuth(upstreamReq.Header, fp.auth)
 
 	resp, err := fp.httpClient.Do(upstreamReq) //nolint:gosec // target is configured upstream
 	if err != nil {
