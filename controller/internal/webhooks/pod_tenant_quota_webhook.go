@@ -37,8 +37,8 @@ import (
 // scheduling is acceptable — workspace pods are long-lived; this guards
 // against gross overage, not precise concurrency control.
 type PodTenantQuotaValidator struct {
-	Decoder               admission.Decoder
-	Client                client.Client
+	Decoder                admission.Decoder
+	Client                 client.Client
 	MaxWorkspacesPerTenant int
 	MaxCPUMillisPerTenant  int64
 	MaxMemoryMiPerTenant   int64
@@ -127,8 +127,8 @@ func (v *PodTenantQuotaValidator) tenantUsage(ctx context.Context, tenantID, nam
 	opts := []client.ListOption{
 		client.InNamespace(namespace),
 		client.MatchingLabels{
-			tenantLabelKey:           tenantID,
-			workspaceComponentLabel:  "workspace",
+			tenantLabelKey:          tenantID,
+			workspaceComponentLabel: "workspace",
 		},
 	}
 	if err := v.Client.List(ctx, podList, opts...); err != nil {
