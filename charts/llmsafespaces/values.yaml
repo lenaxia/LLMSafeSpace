@@ -912,6 +912,40 @@ email:
   fromAddress: ""
   baseUrl: ""
 
+# ----------------------------------------------------------------------------
+# Per-org OIDC SSO plumbing (Epic 43 / US-43.10 / D17)
+# ----------------------------------------------------------------------------
+# INSTANCE-LEVEL wiring for the already-shipped per-org OIDC login flow.
+# This does NOT configure an identity provider — each org configures its own
+# IdP via the /api/v1/orgs/:id/sso API (see OrgSSOTab in the frontend, and
+# README-LLM.md §14). These three values control where the IdP redirects
+# back to and where the browser lands after SSO completes.
+#
+# redirectBaseUrl:
+#   Absolute origin the IdP redirects back to. The full callback URL is
+#   {redirectBaseUrl}/api/v1/auth/sso/:orgSlug/callback.
+#   SET THIS IN PRODUCTION. When empty, the start endpoint derives the
+#   callback URL from X-Forwarded-Proto + Host headers (F11 header-trust
+#   gap documented at api/internal/handlers/org_sso.go:245 — the IdP's
+#   registered-redirect-URI check is the only mitigation).
+#
+# frontendRedirectUrl:
+#   Where the browser lands after a successful or failed SSO callback
+#   (e.g. https://app.example.com). When empty, defaults to "/".
+#
+# stateCookieName:
+#   Signed PKCE/state cookie name. When empty, defaults to "lsp_sso_state"
+#   in the Go code (api/internal/services/sso/sso.go:132). Override only
+#   if a collision with another cookie exists.
+#
+# Env vars LLMSAFESPACES_OIDC_* remain as higher-precedence overrides
+# (Viper applies AutomaticEnv after reading config.yaml), but the
+# helm-rendered config.yaml is now the default configuration path.
+oidc:
+  redirectBaseUrl: ""
+  frontendRedirectUrl: ""
+  stateCookieName: ""
+
 # Cloudflare credentials for automated relay secret management.
 # When set, a post-install/post-upgrade Job pushes inferenceRelaySecret to
 # the CF Worker automatically, keeping the cluster and CF Worker in sync.

@@ -2,8 +2,8 @@
 
 > **Repository:** `github.com/lenaxia/llmsafespaces`
 
-**Version:** 1.15
-**Last Updated:** 2026-06-18
+**Version:** 1.17
+**Last Updated:** 2026-06-20
 **Project Status:** Active Development
 
 ---
@@ -23,6 +23,7 @@
 11. [PR Review Guide](#pr-review-guide)
 12. [Common Commands](#common-commands)
 13. [Testing Requirements](#testing-requirements)
+14. [Multi-Tenant OIDC SSO](#multi-tenant-oidc-sso)
 
 ---
 
@@ -1355,6 +1356,167 @@ Shell script against running server: `./local/test-auth.sh http://localhost:8080
 
 ---
 
+## Multi-Tenant OIDC SSO
+
+**Status:** Shipped — Epic 43, US-43.10, decisions D17 (see `design/stories/epic-43-organization-management/README.md`). Org owners (org admins) configure their own OIDC identity provider per organization. Login is Authorization Code + PKCE (`coreos/go-oidc/v3`). Each org's IdP config is isolated in its own row; there is no instance-level/global IdP.
+
+### Model
+
+One row per org in `org_sso_configs` (`api/migrations/000038_org_sso_configs.up.sql`), keyed by `org_id`. The org admin supplies the IdP wiring; the platform owns the client secret at rest.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `org_id` | `UUID` PK | FK → `organizations(id)` `ON DELETE CASCADE` |
+| `oidc_discovery_url` | `TEXT` | IdP `.well-known/openid-configuration` URL |
+| `oidc_client_id` | `TEXT` | Public client identifier |
+| `oidc_client_secret` | `BYTEA` | **Encrypted at rest with the server KEK** (D17-S4) — derived from `LLMSAFESPACES_MASTER_SECRET`, always decryptable, no org-DEK dependency |
+| `claimed_domains` | `TEXT[]` | Email domains that route to this org on the login page; GIN-indexed for domain→org lookup |
+| `auto_provision` | `BOOLEAN` | Create a new user on first SSO login if none exists for the email |
+| `group_role_mapping` | `JSONB` | `{groupId: "admin"|"member"}`; applied on every login |
+
+Go types in `pkg/types/orgs.go:174-215`:
+- `OrgSSOConfig` — DB shape (`ClientSecret []byte`, `json:"-"`)
+- `OrgSSOConfigResponse` — API shape (`HasSecret bool` replaces the secret)
+- `UpsertSSOConfigRequest` — `PUT` body (empty `ClientSecret` = "leave existing unchanged")
+- `SSODomain` — one entry in domain discovery (`domain`, `orgSlug`, `orgName`)
+
+### Endpoints
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| `GET` | `/api/v1/orgs/:id/sso` | Org admin | Read this org's SSO config (secret omitted) |
+| `PUT` | `/api/v1/orgs/:id/sso` | Org admin | Upsert SSO config; encrypts client secret, audits `sso.update` |
+| `DELETE` | `/api/v1/orgs/:id/sso` | Org admin | Remove SSO config; audits `sso.delete` |
+| `GET` | `/api/v1/auth/sso/domains` | Public | List all orgs' claimed domains (for login-page routing) |
+| `GET` | `/api/v1/auth/sso/:orgSlug/start` | Public | Begin PKCE flow; 302 to IdP, sets signed state cookie |
+| `GET` | `/api/v1/auth/sso/:orgSlug/callback` | Public | Complete flow; sets `lsp_session` JWT cookie, 302 to frontend |
+
+The CRUD routes are registered in `registerOrgRoutes` behind `OrgAdminGuard` (`api/internal/server/router.go:1192-1194`). The public login routes sit under the auth group (`router.go:599-601`). `/auth/config` advertises `oidcEnabled = (CountSSOConfigs > 0)` so the frontend can hide SSO UI when no org has configured it.
+
+### Login flow (PKCE)
+
+```
+Browser                  API (stateless)              IdP
+  │                         │                          │
+  │ 1. GET /auth/sso/<slug>/start                      │
+  │ ───────────────────────►│                          │
+  │                         │ load org_sso_configs[org] │
+  │                         │ oidc.NewProvider(discoveryURL)
+  │                         │ generate verifier + state │
+  │                         │ sign cookie {state, verifier, orgID, exp} HMAC-SHA256
+  │ 2. Set-Cookie: lsp_sso_state=<signed>; SameSite=Lax
+  │ 3. 302 Location: <IdP authorize URL>?code_challenge=S256&state=...
+  │ ◄───────────────────────│                          │
+  │                                                    │
+  │ 4. User authenticates at IdP                       │
+  │ ──────────────────────────────────────────────────►│
+  │ 5. 302 /auth/sso/<slug>/callback?code=...&state=...│
+  │ ◄──────────────────────────────────────────────────│
+  │ 6. GET /auth/sso/<slug>/callback                   │
+  │ ───────────────────────►│                          │
+  │                         │ verify state cookie (HMAC, exp, orgID bound to slug)
+  │                         │ token exchange (code + verifier) ─►│
+  │                         │ verify id_token (provider.Verifier, clientID aud)
+  │                         │ enforce email_verified == true (F8)
+  │                         │ resolveUser: lookup by email OR auto-provision
+  │                         │ resolveRole: highest-priv match in group_role_mapping
+  │                         │ ensureMembership: create/update role (last-admin guard)
+  │                         │ auth.Service.GenerateToken(userID) → JWT
+  │ 7. Set-Cookie: lsp_session=<jwt>; HttpOnly; Secure │
+  │ 8. 302 <frontend>/?sso=success                     │
+  │ ◄───────────────────────│                          │
+```
+
+The state cookie carries `{state, verifier, orgID, exp}` because the API is stateless — there is no server-side PKCE session store. The callback is bound to the org that started the flow (`org.ID == payload.OrgID`), so an attacker cannot start SSO for org A and replay the callback against org B.
+
+### Org admin config flow
+
+`PUT /api/v1/orgs/:id/sso` (`api/internal/handlers/org_sso.go:101`):
+1. Handler loads any existing config to capture the current encrypted secret (for the partial-update path).
+2. `sso.Service.ApplyConfigMutation` (`services/sso/sso.go:194`):
+   - Validates role values (`admin`/`member` only).
+   - If `ClientSecret` present → `EncryptClientSecret` with server KEK; if empty → reuse existing blob; if empty and no existing → `400 client secret is required`.
+   - `NormalizeDomains` lowercases, strips leading `@`, dedups.
+   - `UpsertSSOConfig` (`ON CONFLICT (org_id) DO UPDATE`).
+3. Emits `sso.update` to the org audit log.
+
+### Auto-provisioning and role mapping
+
+- **`resolveUser`** (`services/sso/sso.go:436`): lookup by lowercased email; if not found and `auto_provision=true`, create a user with a random unusable bcrypt hash (`$2a$12$<random>`) so password login is permanently blocked — the user has no password to derive a DEK from. Personal credential operations stay unavailable until they set a password; org workspaces still work via server-side injection.
+- **`resolveRole`** (`services/sso/sso.go:606`): walk IdP groups (OIDC `groups` ∪ Azure AD `memberOf`); the highest-privilege match wins; `admin` outranks `member`; unmapped/empty → `member` (safe default).
+- **`ensureMembership`** (`services/sso/sso.go:475`): create or update the membership row so IdP-driven role changes propagate on every re-login. A demotion `admin→member` is skipped when the user is the sole admin (last-admin protection; logged at WARN).
+
+### Security controls
+
+| Control | Implementation | Reference |
+|---------|----------------|-----------|
+| Client secret encryption at rest | Server KEK (`RootKeyProvider.Encrypt`), `BYTEA` column | D17-S4, `sso.go:163` |
+| PKCE S256 | `code_challenge` derived from random verifier, verifier carried in signed cookie | `sso.go:294,622` |
+| State cookie integrity | HMAC-SHA256 over `{state, verifier, orgID, exp}`; constant-time compare | `sso.go:534,553` |
+| State cookie expiry | 10-minute TTL (`DefaultStateTTL`) | `sso.go:111` |
+| Callback bound to start org | `org.ID == payload.OrgID` check on callback | `sso.go:346` |
+| `email_verified` enforcement (F8) | Absent/false → `ErrEmailUnverified` (403) | `sso.go:401` |
+| Email-claim trust | `email` only used for account binding when IdP-verified | `sso.go:395-403` |
+| Suspended-user block | `user.Status == suspended` → `ErrUserSuspended` | `sso.go:409` |
+| Last-admin protection | IdP demotion refused if user is sole org admin | `sso.go:491` |
+| Secret never in responses | `OrgSSOConfigResponse.HasSecret` replaces the blob | `orgs.go:189`, `org_sso.go:60` |
+| SameSite=Lax state cookie | Survives top-level IdP→callback redirect, blocked on cross-site POST | `org_sso.go:268` |
+| IdP-registered redirect URI | Primary mitigation when `redirectBaseURL` is derived from headers | `org_sso.go:245` |
+| Auto-provision off → 403 | `ErrAutoProvisionOff` mapped to `provisioning_disabled` | `sso.go:45`, `org_sso.go:300` |
+
+### Configuration
+
+**Instance plumbing** (cross-cutting, NOT per-org IdP config) in `api/internal/config/config.go:128-138`. Two configuration paths of equal validity:
+
+| Source | When to use |
+|--------|-------------|
+| Helm chart (`oidc:` block in `values.yaml`) | **Default for chart-managed deploys.** Rendered into the configmap by `charts/llmsafespaces/templates/configmap-api.yaml`. |
+| Env vars (`LLMSAFESPACES_OIDC_*`) | Higher precedence (Viper `AutomaticEnv`); useful for non-Helm deploys or per-pod overrides. |
+
+| Helm key | Env var | Default | Purpose |
+|----------|---------|---------|---------|
+| `oidc.redirectBaseUrl` | `LLMSAFESPACES_OIDC_REDIRECTBASEURL` | `""` | Absolute base for SSO callback URLs. **Set this in production** to remove header trust (F11). Full callback = `{redirectBaseUrl}/api/v1/auth/sso/:orgSlug/callback`. |
+| `oidc.frontendRedirectUrl` | `LLMSAFESPACES_OIDC_FRONTENDREDIRECTURL` | `""` | Browser landing URL after SSO callback (e.g. `https://app.example.com`). Empty → `/`. |
+| `oidc.stateCookieName` | `LLMSAFESPACES_OIDC_STATECOOKIENAME` | `""` (→ `lsp_sso_state` in Go) | PKCE/state cookie name. Override only on collision. |
+
+The state-cookie signing key is `deriveServerKey("oidc-state-cookie")` (`api/internal/app/app.go:396`), derived from the same master secret as the KEK. When unset, the SSO service constructs but rejects config mutation and login at runtime (`sso.go:259,329`).
+
+**Per-org IdP config** is not in `config.yaml`, `values.yaml`, or the settings system — it is entered by the org admin through the API and stored in `org_sso_configs`.
+
+### Frontend
+
+- **`frontend/src/components/org-admin/OrgSSOTab.tsx`** — org admin SSO config form (discovery URL, client ID, write-only client secret, claimed domains, auto-provision toggle, group→role textarea). Registered as the `sso` tab (admin-only) in `OrgAdminLayout.tsx:58`; routed at `router.tsx` `path: "sso"`.
+- **`frontend/src/pages/LoginPage.tsx`** — if `oidcEnabled`, fetches `/auth/sso/domains` and matches the typed email domain against claimed domains, surfacing a "Sign in with {orgName}" button. Surfaces the SSO outcome from the `?sso=` query param (`success|provisioning_disabled|suspended|state_invalid|email_unverified|error`).
+- **`frontend/src/api/sso.ts`** — `ssoApi` (`getConfig`, `upsert`, `remove`, `domains`, `ssoRedirectURL(orgSlug)`).
+
+### Known gaps and non-goals
+
+- **DNS verification of `claimed_domains`** — designed in D17 (Q-S2) but not shipped. Domains are stored as-entered; an org admin can claim any domain string. The mitigation is that org creation is platform-admin-only (`design/0031` D1) and org admins are trusted.
+- **No instance-level / platform-global OIDC** — every SSO login is org-scoped (`/auth/sso/:orgSlug/...`). A single-IdP-for-the-whole-deployment mode does not exist; `cfg.OIDC` carries only plumbing.
+- **No SAML or SCIM** — explicitly deferred per Epic 43 decision D3.
+- **No generic org-level settings tier** — org config lives in dedicated normalized tables (`org_policies`, `org_sso_configs`, `org_credentials`), not a key-value `org_settings` table.
+
+### File reference
+
+| Concern | File |
+|---------|------|
+| OIDC engine (PKCE, auto-provision, role mapping, encryption) | `api/internal/services/sso/sso.go` |
+| OIDC unit tests (fake IdP with JWKS) | `api/internal/services/sso/sso_test.go` |
+| HTTP handler (CRUD + login + discovery) | `api/internal/handlers/org_sso.go` |
+| Handler integration tests + fake IdP helpers | `api/internal/handlers/org_sso_test.go`, `org_sso_idp_helpers_test.go` |
+| Store interface + Postgres impl | `api/internal/services/database/pg_org_store.go` (interface `OrgStore:116-133`, SSO impl `1571-1680`) |
+| Store tests | `api/internal/services/database/pg_org_store_sso_test.go` |
+| Schema migration | `api/migrations/000038_org_sso_configs.up.sql` |
+| API DTOs | `pkg/types/orgs.go:174-215` |
+| Router registration | `api/internal/server/router.go:599-601, 1192-1194` |
+| Service wiring (KEK, state key) | `api/internal/app/app.go:395-413` |
+| Frontend admin UI | `frontend/src/components/org-admin/OrgSSOTab.tsx` |
+| Frontend login integration | `frontend/src/pages/LoginPage.tsx`, `frontend/src/api/sso.ts` |
+| Design doc (D17 decisions) | `design/stories/epic-43-organization-management/README.md` (Q-S1..Q-S4) |
+| Hardening history | worklogs `0372` (F8–F13), `0380` (F8/F9/F10/F11), `0386` (callback URL e2e) |
+
+---
+
 ## API Reference
 
 The complete REST API is documented in `README.md` under "REST API". The API has 83 routes covering:
@@ -1425,6 +1587,8 @@ The API service is configured via `api/config/config.yaml` with environment vari
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.17 | 2026-06-20 | Surfaced per-org OIDC SSO instance-plumbing config (`oidc.redirectBaseUrl`, `oidc.frontendRedirectUrl`, `oidc.stateCookieName`) in the Helm chart (`values.yaml` + `configmap-api.yaml`), closing the F11 header-trust gap in chart-managed deploys; updated §14 Configuration to document both chart and env-var paths |
+| 1.16 | 2026-06-20 | Added "Multi-Tenant OIDC SSO" section documenting the as-built per-org OIDC system (Epic 43 / US-43.10 / D17): data model, endpoints, PKCE login flow, org-admin config flow, auto-provisioning + role mapping, security controls, instance plumbing config, frontend, known gaps, and file reference |
 | 1.15 | 2026-06-18 | US-46.14/US-46.15: archived V1 design docs (`0001`–`0020`) to `design/archive/v1/`; repointed all V1 references in README-LLM.md to the archive path; fixed stale filenames (network doc was listed as `0007` but is `0020`; runtimeenv doc was listed as `0006` but is `0007`) |
 | 1.14 | 2026-06-18 | Reclassified annotateModels remap guard from "dead code (tech debt to remove)" to "intentional defense-in-depth" — aligns the doc with the code author's documented reasoning at `models.go:450-456` and the hardening history from worklogs 0178/0189 (see worklog 0341) |
 | 1.13 | 2026-06-12 | Removed redundant Bug Status, Confirmed Bugs, Implementation Status, Branch Management sections; simplified repo structure, worklog template, multi-agent workflow, PR adversarial assessment; folded scoring bullets into tables; compressed relay write sequences and version history; removed backwards compat; updated annotateModels remap note |
