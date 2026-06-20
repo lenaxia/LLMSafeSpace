@@ -63,6 +63,39 @@ func (f *fakeOrgStore) DeleteSSOConfig(_ context.Context, orgID string) error {
 	delete(f.configs, orgID)
 	return nil
 }
+func (f *fakeOrgStore) SetDomainVerified(_ context.Context, orgID, domain string) (bool, error) {
+	cfg, ok := f.configs[orgID]
+	if !ok || cfg == nil {
+		return false, nil
+	}
+	claimed := false
+	for _, d := range cfg.ClaimedDomains {
+		if strings.EqualFold(d, domain) {
+			claimed = true
+			break
+		}
+	}
+	if !claimed {
+		return false, nil
+	}
+	for _, d := range cfg.VerifiedDomains {
+		if strings.EqualFold(d, domain) {
+			return false, nil
+		}
+	}
+	cfg.VerifiedDomains = append(cfg.VerifiedDomains, domain)
+	return true, nil
+}
+func (f *fakeOrgStore) RotateVerificationToken(_ context.Context, orgID string) (string, error) {
+	cfg, ok := f.configs[orgID]
+	if !ok || cfg == nil {
+		return "", fmt.Errorf("no sso config for org %s", orgID)
+	}
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	cfg.VerificationToken = fmt.Sprintf("%x", b)
+	return cfg.VerificationToken, nil
+}
 func (f *fakeOrgStore) GetOrgMember(_ context.Context, orgID, userID string) (*types.OrgMember, error) {
 	if m, ok := f.members[orgID][userID]; ok {
 		return m, nil
@@ -130,6 +163,19 @@ func (f *fakeIssuer) GenerateToken(userID string) (string, error) {
 		return "", f.err
 	}
 	return f.tok, nil
+}
+
+// fakeDNSResolver returns a canned TXT record set for a given lookup name.
+type fakeDNSResolver struct {
+	records map[string][]string // lookup name -> TXT values
+	err     error
+}
+
+func (f *fakeDNSResolver) LookupTXT(_ context.Context, name string) ([]string, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.records[name], nil
 }
 
 // newTestService wires an SSO service with a real static key provider + state key.
@@ -851,4 +897,218 @@ func TestCallback_PKCEBinding_WrongVerifierRejected(t *testing.T) {
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode,
 		"a verifier that does not match the recorded challenge must be rejected (PKCE binding)")
+}
+
+// --- DNS domain verification (D17 Q-S2) ---
+
+// newVerifyTestService wires a service with a fake DNS resolver for domain-
+// verification tests. The resolver is returned so the test can preset TXT
+// records before calling VerifyDomain.
+func newVerifyTestService(t *testing.T) (*Service, *fakeOrgStore, *fakeDNSResolver) {
+	t.Helper()
+	orgs := newFakeOrgStore()
+	orgs.addOrg(&types.Organization{ID: "org-1", Slug: "acme"})
+	users := newFakeUserStore()
+	svc := newTestService(t, orgs, users, &fakeIssuer{tok: "jwt"}, "https://api.test")
+	dns := &fakeDNSResolver{records: map[string][]string{}}
+	svc.SetDNSResolver(dns)
+	return svc, orgs, dns
+}
+
+func TestVerifyDomain_Success_PromotesToVerified(t *testing.T) {
+	svc, orgs, dns := newVerifyTestService(t)
+	// Seed SSO config with a claimed domain + verification token.
+	orgs.configs["org-1"] = &types.OrgSSOConfig{
+		OrgID:             "org-1",
+		ClaimedDomains:    []string{"acme.com"},
+		VerificationToken: "tok-abc123",
+	}
+	// DNS TXT record matches the token.
+	dns.records["_llmsafespaces-verify.acme.com"] = []string{"tok-abc123"}
+
+	result, err := svc.VerifyDomain(context.Background(), "org-1", "acme.com")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.Verified)
+	require.Equal(t, "acme.com", result.Domain)
+	require.Contains(t, orgs.configs["org-1"].VerifiedDomains, "acme.com")
+}
+
+func TestVerifyDomain_DNSNotMatching_ReturnsErrDNSNotMatching(t *testing.T) {
+	svc, orgs, dns := newVerifyTestService(t)
+	orgs.configs["org-1"] = &types.OrgSSOConfig{
+		OrgID:             "org-1",
+		ClaimedDomains:    []string{"acme.com"},
+		VerificationToken: "correct-tok",
+	}
+	// TXT record has a different token.
+	dns.records["_llmsafespaces-verify.acme.com"] = []string{"wrong-tok"}
+
+	_, err := svc.VerifyDomain(context.Background(), "org-1", "acme.com")
+	require.ErrorIs(t, err, ErrDNSNotMatching)
+	require.NotContains(t, orgs.configs["org-1"].VerifiedDomains, "acme.com")
+}
+
+func TestVerifyDomain_NoTXTRecord_ReturnsErrDNSNotMatching(t *testing.T) {
+	svc, orgs, _ := newVerifyTestService(t)
+	orgs.configs["org-1"] = &types.OrgSSOConfig{
+		OrgID:             "org-1",
+		ClaimedDomains:    []string{"acme.com"},
+		VerificationToken: "tok",
+	}
+	// No DNS record preset → empty slice → no match.
+
+	_, err := svc.VerifyDomain(context.Background(), "org-1", "acme.com")
+	require.ErrorIs(t, err, ErrDNSNotMatching)
+}
+
+func TestVerifyDomain_DomainNotClaimed_ReturnsErrDomainNotClaimed(t *testing.T) {
+	svc, orgs, _ := newVerifyTestService(t)
+	orgs.configs["org-1"] = &types.OrgSSOConfig{
+		OrgID:             "org-1",
+		ClaimedDomains:    []string{"acme.com"},
+		VerificationToken: "tok",
+	}
+
+	_, err := svc.VerifyDomain(context.Background(), "org-1", "other.com")
+	require.ErrorIs(t, err, ErrDomainNotClaimed)
+}
+
+func TestVerifyDomain_NoVerificationToken_ReturnsErrNoVerificationToken(t *testing.T) {
+	svc, orgs, _ := newVerifyTestService(t)
+	orgs.configs["org-1"] = &types.OrgSSOConfig{
+		OrgID:          "org-1",
+		ClaimedDomains: []string{"acme.com"},
+		// VerificationToken empty
+	}
+
+	_, err := svc.VerifyDomain(context.Background(), "org-1", "acme.com")
+	require.ErrorIs(t, err, ErrNoVerificationToken)
+}
+
+func TestVerifyDomain_NoSSOConfig_ReturnsErrSSONotConfigured(t *testing.T) {
+	svc, _, _ := newVerifyTestService(t)
+	// No config seeded.
+
+	_, err := svc.VerifyDomain(context.Background(), "org-1", "acme.com")
+	require.ErrorIs(t, err, ErrSSONotConfigured)
+}
+
+func TestVerifyDomain_StripsLeadingAtAndLowercases(t *testing.T) {
+	svc, orgs, dns := newVerifyTestService(t)
+	orgs.configs["org-1"] = &types.OrgSSOConfig{
+		OrgID:             "org-1",
+		ClaimedDomains:    []string{"acme.com"},
+		VerificationToken: "tok",
+	}
+	dns.records["_llmsafespaces-verify.acme.com"] = []string{"tok"}
+
+	// Pass "@ACME.COM" — service normalizes to "acme.com".
+	result, err := svc.VerifyDomain(context.Background(), "org-1", "@ACME.COM")
+	require.NoError(t, err)
+	require.True(t, result.Verified)
+	require.Equal(t, "acme.com", result.Domain)
+}
+
+func TestVerifyDomain_Idempotent_AlreadyVerified(t *testing.T) {
+	svc, orgs, dns := newVerifyTestService(t)
+	orgs.configs["org-1"] = &types.OrgSSOConfig{
+		OrgID:             "org-1",
+		ClaimedDomains:    []string{"acme.com"},
+		VerifiedDomains:   []string{"acme.com"},
+		VerificationToken: "tok",
+	}
+	dns.records["_llmsafespaces-verify.acme.com"] = []string{"tok"}
+
+	result, err := svc.VerifyDomain(context.Background(), "org-1", "acme.com")
+	require.NoError(t, err)
+	require.True(t, result.Verified)
+	// Still exactly one entry (not duplicated).
+	require.Len(t, orgs.configs["org-1"].VerifiedDomains, 1)
+}
+
+func TestVerifyDomain_MultipleTXTRecords_OneMatches(t *testing.T) {
+	svc, orgs, dns := newVerifyTestService(t)
+	orgs.configs["org-1"] = &types.OrgSSOConfig{
+		OrgID:             "org-1",
+		ClaimedDomains:    []string{"acme.com"},
+		VerificationToken: "the-real-tok",
+	}
+	dns.records["_llmsafespaces-verify.acme.com"] = []string{
+		"some-other-verification=xyz",
+		"the-real-tok",
+		"google-site-verification=different",
+	}
+
+	result, err := svc.VerifyDomain(context.Background(), "org-1", "acme.com")
+	require.NoError(t, err)
+	require.True(t, result.Verified)
+}
+
+func TestRotateToken_GeneratesAndPersists(t *testing.T) {
+	svc, orgs, _ := newVerifyTestService(t)
+	orgs.configs["org-1"] = &types.OrgSSOConfig{
+		OrgID: "org-1",
+	}
+
+	token, err := svc.RotateToken(context.Background(), "org-1")
+	require.NoError(t, err)
+	require.Len(t, token, 32)
+	require.Equal(t, token, orgs.configs["org-1"].VerificationToken)
+}
+
+func TestRotateToken_NoSSOConfig_ReturnsError(t *testing.T) {
+	svc, _, _ := newVerifyTestService(t)
+	// No config seeded.
+
+	_, err := svc.RotateToken(context.Background(), "ghost-org")
+	require.Error(t, err)
+}
+
+func TestApplyConfigMutation_PreservesVerifiedForStillClaimedDomains(t *testing.T) {
+	svc, orgs, _ := newVerifyTestService(t)
+	kp := svc.keyProvider
+	require.NotNil(t, kp)
+	// Seed existing config with two verified domains.
+	enc, err := kp.Encrypt(context.Background(), []byte("secret"))
+	require.NoError(t, err)
+	orgs.configs["org-1"] = &types.OrgSSOConfig{
+		OrgID:           "org-1",
+		ClientSecret:    enc,
+		ClaimedDomains:  []string{"acme.com", "acme.io"},
+		VerifiedDomains: []string{"acme.com", "acme.io"},
+	}
+
+	// Admin updates config, keeping only acme.com in claimed.
+	req := types.UpsertSSOConfigRequest{
+		DiscoveryURL:   "https://idp",
+		ClientID:       "cid",
+		ClientSecret:   "keep",
+		ClaimedDomains: []string{"acme.com"},
+	}
+	_, err = svc.ApplyConfigMutation(context.Background(), "org-1", req, enc, []string{"acme.com", "acme.io"})
+	require.NoError(t, err)
+
+	cfg := orgs.configs["org-1"]
+	require.Equal(t, []string{"acme.com"}, cfg.ClaimedDomains)
+	// acme.io verification dropped (no longer claimed); acme.com preserved.
+	require.Equal(t, []string{"acme.com"}, cfg.VerifiedDomains)
+}
+
+func TestApplyConfigMutation_NewDomainsStartUnverified(t *testing.T) {
+	svc, orgs, _ := newVerifyTestService(t)
+
+	// First config: claim acme.com (no existing verified).
+	req := types.UpsertSSOConfigRequest{
+		DiscoveryURL:   "https://idp",
+		ClientID:       "cid",
+		ClientSecret:   "first",
+		ClaimedDomains: []string{"acme.com"},
+	}
+	_, err := svc.ApplyConfigMutation(context.Background(), "org-1", req, nil, nil)
+	require.NoError(t, err)
+
+	cfg := orgs.configs["org-1"]
+	require.Equal(t, []string{"acme.com"}, cfg.ClaimedDomains)
+	require.Empty(t, cfg.VerifiedDomains, "newly claimed domain must start unverified")
 }

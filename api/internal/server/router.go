@@ -1187,11 +1187,13 @@ func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *hand
 		orgAdminGroup.GET("/audit", middleware.FeatureGuard(h, "audit"), audH.List)
 	}
 
-	// US-43.10: org-admin SSO config CRUD.
+	// US-43.10: org-admin SSO config CRUD + domain verification (D17 Q-S2).
 	if ssoH != nil {
 		orgAdminGroup.GET("/sso", ssoH.Get)
 		orgAdminGroup.PUT("/sso", ssoH.Put)
 		orgAdminGroup.DELETE("/sso", ssoH.Delete)
+		orgAdminGroup.POST("/sso/domains/:domain/verify", ssoH.VerifyDomain)
+		orgAdminGroup.POST("/sso/verification-token/rotate", ssoH.RotateToken)
 	}
 
 	// Public invitation routes (token is the credential).

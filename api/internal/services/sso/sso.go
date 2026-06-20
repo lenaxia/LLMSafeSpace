@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -60,6 +61,8 @@ type orgStore interface {
 	GetSSOConfig(ctx context.Context, orgID string) (*types.OrgSSOConfig, error)
 	UpsertSSOConfig(ctx context.Context, config *types.OrgSSOConfig) error
 	DeleteSSOConfig(ctx context.Context, orgID string) error
+	SetDomainVerified(ctx context.Context, orgID, domain string) (bool, error)
+	RotateVerificationToken(ctx context.Context, orgID string) (string, error)
 	GetOrgMember(ctx context.Context, orgID, userID string) (*types.OrgMember, error)
 	// CountOrgAdmins prevents SSO-driven demotion from orphaning an org (the
 	// only admin being demoted to member). See ensureMembership.
@@ -67,6 +70,33 @@ type orgStore interface {
 	AddOrgMember(ctx context.Context, orgID, userID string, role types.OrgRole) error
 	UpdateOrgMemberRole(ctx context.Context, orgID, userID string, role types.OrgRole) error
 }
+
+// dnsResolver is the DNS lookup subset the SSO domain-verification flow
+// depends on. The production implementation uses net.LookupTXT; tests
+// inject a fake to avoid real DNS dependencies.
+type dnsResolver interface {
+	LookupTXT(ctx context.Context, name string) ([]string, error)
+}
+
+// netResolver wraps the package-level net.Resolver to satisfy dnsResolver.
+type netResolver struct{}
+
+func (netResolver) LookupTXT(ctx context.Context, name string) ([]string, error) {
+	return net.DefaultResolver.LookupTXT(ctx, name)
+}
+
+// ErrDomainNotClaimed is returned when VerifyDomain is called for a domain
+// the org has not claimed. Surfaced to handlers as a 400.
+var ErrDomainNotClaimed = errors.New("domain is not in claimed domains")
+
+// ErrNoVerificationToken is returned when VerifyDomain is called but the org
+// has no verification token configured. The org admin must rotate/generate
+// one first via RotateVerificationToken. Surfaced to handlers as a 409.
+var ErrNoVerificationToken = errors.New("no verification token configured; rotate one first")
+
+// ErrDNSNotMatching is returned when the TXT record at the verification host
+// does not contain the org's verification token. Surfaced to handlers as a 422.
+var ErrDNSNotMatching = errors.New("DNS TXT record does not contain the verification token")
 
 // userStore is the user-data subset (auto-provisioning + lookup).
 type userStore interface {
@@ -83,6 +113,7 @@ type TokenIssuer interface {
 type Service struct {
 	orgs         orgStore
 	users        userStore
+	dns          dnsResolver
 	issuer       TokenIssuer
 	keyProvider  secrets.RootKeyProvider
 	stateKey     []byte
@@ -134,6 +165,7 @@ func New(orgs orgStore, users userStore, cfg ServiceConfig) (*Service, error) {
 	return &Service{
 		orgs:         orgs,
 		users:        users,
+		dns:          netResolver{},
 		issuer:       cfg.TokenIssuer,
 		keyProvider:  cfg.KeyProvider,
 		stateKey:     cfg.StateKey,
@@ -148,6 +180,15 @@ func New(orgs orgStore, users userStore, cfg ServiceConfig) (*Service, error) {
 
 // CookieName returns the configured PKCE/state cookie name.
 func (s *Service) CookieName() string { return s.cookieName }
+
+// SetDNSResolver overrides the DNS resolver. Production code never calls this
+// (the default netResolver is set in New); tests inject a fake to avoid real
+// DNS dependencies.
+func (s *Service) SetDNSResolver(r dnsResolver) {
+	if r != nil {
+		s.dns = r
+	}
+}
 
 // StateTTL returns the state cookie lifetime (for Set-Cookie Max-Age).
 func (s *Service) StateTTL() time.Duration { return s.stateTTL }
@@ -190,8 +231,11 @@ func NormalizeDomains(in []string) []string {
 // ApplyConfigMutation validates and persists an SSO config upsert. clientSecret
 // is the plaintext IdP secret; an empty value means "leave the existing secret
 // unchanged" (the caller must pre-load the existing config and re-supply its
-// encrypted blob). Returns the encrypted blob actually stored.
-func (s *Service) ApplyConfigMutation(ctx context.Context, orgID string, req types.UpsertSSOConfigRequest, existingEncrypted []byte) ([]byte, error) {
+// encrypted blob). existingVerified is the org's current verified_domains —
+// the service intersects it with the new claimed_domains so verifications are
+// preserved for domains still claimed and dropped for removed domains (D17 Q-S2
+// invariant: verified ⊆ claimed). Returns the encrypted blob actually stored.
+func (s *Service) ApplyConfigMutation(ctx context.Context, orgID string, req types.UpsertSSOConfigRequest, existingEncrypted []byte, existingVerified []string) ([]byte, error) {
 	if s.keyProvider == nil {
 		return nil, errors.New("server key not configured")
 	}
@@ -222,12 +266,18 @@ func (s *Service) ApplyConfigMutation(ctx context.Context, orgID string, req typ
 		}
 	}
 
+	claimed := NormalizeDomains(req.ClaimedDomains)
+	// Preserve verifications only for domains still claimed. New domains start
+	// unverified (the subset invariant verified ⊆ claimed is enforced here).
+	verified := intersectDomains(existingVerified, claimed)
+
 	cfg := &types.OrgSSOConfig{
 		OrgID:            orgID,
 		DiscoveryURL:     strings.TrimSpace(req.DiscoveryURL),
 		ClientID:         strings.TrimSpace(req.ClientID),
 		ClientSecret:     secretBlob,
-		ClaimedDomains:   NormalizeDomains(req.ClaimedDomains),
+		ClaimedDomains:   claimed,
+		VerifiedDomains:  verified,
 		AutoProvision:    auto,
 		GroupRoleMapping: mapping,
 	}
@@ -235,6 +285,102 @@ func (s *Service) ApplyConfigMutation(ctx context.Context, orgID string, req typ
 		return nil, fmt.Errorf("persist sso config: %w", err)
 	}
 	return secretBlob, nil
+}
+
+// intersectDomains returns the elements of a that also appear in b, preserving
+// the order of a. Used to compute verified ⊆ claimed on config mutation.
+func intersectDomains(a, b []string) []string {
+	if len(a) == 0 || len(b) == 0 {
+		return []string{}
+	}
+	bset := make(map[string]struct{}, len(b))
+	for _, d := range b {
+		bset[strings.ToLower(strings.TrimSpace(d))] = struct{}{}
+	}
+	out := make([]string, 0, len(a))
+	for _, d := range a {
+		key := strings.ToLower(strings.TrimSpace(d))
+		if _, ok := bset[key]; ok {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// VerifyDomainResult is the outcome of VerifyDomain.
+type VerifyDomainResult struct {
+	Domain   string
+	Verified bool
+}
+
+// VerifyDomain checks the DNS TXT record at _llmsafespaces-verify.<domain>
+// for the org's verification token and, on match, promotes the domain to
+// verified. On-demand: the org admin triggers this after adding the TXT record.
+// Returns ErrDomainNotClaimed if the domain is not in the org's claimed list,
+// ErrNoVerificationToken if the org has no token (must rotate one first), or
+// ErrDNSNotMatching if the TXT record doesn't contain the token.
+func (s *Service) VerifyDomain(ctx context.Context, orgID, domain string) (*VerifyDomainResult, error) {
+	domain = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(domain), "@")))
+	if domain == "" {
+		return nil, errors.New("domain is required")
+	}
+	cfg, err := s.orgs.GetSSOConfig(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("load sso config: %w", err)
+	}
+	if cfg == nil {
+		return nil, ErrSSONotConfigured
+	}
+	// The domain must be claimed before it can be verified.
+	claimed := false
+	for _, d := range cfg.ClaimedDomains {
+		if strings.EqualFold(d, domain) {
+			claimed = true
+			break
+		}
+	}
+	if !claimed {
+		return nil, ErrDomainNotClaimed
+	}
+	if cfg.VerificationToken == "" {
+		return nil, ErrNoVerificationToken
+	}
+	// DNS lookup: TXT records at _llmsafespaces-verify.<domain>. The token is
+	// the record value (not the record name).
+	lookupName := "_llmsafespaces-verify." + domain
+	records, err := s.dns.LookupTXT(ctx, lookupName)
+	if err != nil {
+		// Transient DNS errors surface as a generic failure; the org admin
+		// can retry. NXDOMAIN (no record at all) is reported as no match.
+		return nil, fmt.Errorf("dns lookup for %s: %w", lookupName, err)
+	}
+	matched := false
+	for _, r := range records {
+		if strings.TrimSpace(r) == cfg.VerificationToken {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return &VerifyDomainResult{Domain: domain, Verified: false}, ErrDNSNotMatching
+	}
+	// SetDomainVerified is idempotent: a re-verify after rotation (same record)
+	// is a no-op. The domain is now verified regardless.
+	if _, err := s.orgs.SetDomainVerified(ctx, orgID, domain); err != nil {
+		return nil, fmt.Errorf("promote domain: %w", err)
+	}
+	return &VerifyDomainResult{Domain: domain, Verified: true}, nil
+}
+
+// RotateToken replaces the org's verification token with a fresh random value
+// and returns it. Used for both initial creation and rotation. Old tokens stop
+// matching immediately — admins must update their DNS TXT record after rotation.
+func (s *Service) RotateToken(ctx context.Context, orgID string) (string, error) {
+	token, err := s.orgs.RotateVerificationToken(ctx, orgID)
+	if err != nil {
+		return "", fmt.Errorf("rotate verification token: %w", err)
+	}
+	return token, nil
 }
 
 // StartResult is the outcome of StartLogin: the IdP authorization URL to

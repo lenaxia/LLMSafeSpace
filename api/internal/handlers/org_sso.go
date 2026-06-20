@@ -59,17 +59,22 @@ func NewSSOHandler(svc *sso.Service, store ssoStore, authSvc orgAuthService, ses
 // encrypted client secret (HasSecret replaces it).
 func toSSOResponse(cfg *types.OrgSSOConfig) types.OrgSSOConfigResponse {
 	resp := types.OrgSSOConfigResponse{
-		OrgID:            cfg.OrgID,
-		DiscoveryURL:     cfg.DiscoveryURL,
-		ClientID:         cfg.ClientID,
-		HasSecret:        len(cfg.ClientSecret) > 0,
-		ClaimedDomains:   cfg.ClaimedDomains,
-		AutoProvision:    cfg.AutoProvision,
-		GroupRoleMapping: cfg.GroupRoleMapping,
-		UpdatedAt:        cfg.UpdatedAt,
+		OrgID:             cfg.OrgID,
+		DiscoveryURL:      cfg.DiscoveryURL,
+		ClientID:          cfg.ClientID,
+		HasSecret:         len(cfg.ClientSecret) > 0,
+		ClaimedDomains:    cfg.ClaimedDomains,
+		VerifiedDomains:   cfg.VerifiedDomains,
+		VerificationToken: cfg.VerificationToken,
+		AutoProvision:     cfg.AutoProvision,
+		GroupRoleMapping:  cfg.GroupRoleMapping,
+		UpdatedAt:         cfg.UpdatedAt,
 	}
 	if resp.ClaimedDomains == nil {
 		resp.ClaimedDomains = []string{}
+	}
+	if resp.VerifiedDomains == nil {
+		resp.VerifiedDomains = []string{}
 	}
 	if resp.GroupRoleMapping == nil {
 		resp.GroupRoleMapping = map[string]types.OrgRole{}
@@ -87,10 +92,11 @@ func (h *SSOHandler) Get(c *gin.Context) {
 	}
 	if cfg == nil {
 		c.JSON(http.StatusOK, types.OrgSSOConfigResponse{
-			OrgID:            orgID,
-			ClaimedDomains:   []string{},
-			GroupRoleMapping: map[string]types.OrgRole{},
-			AutoProvision:    true,
+			OrgID:             orgID,
+			ClaimedDomains:    []string{},
+			VerifiedDomains:   []string{},
+			GroupRoleMapping:  map[string]types.OrgRole{},
+			AutoProvision:     true,
 		})
 		return
 	}
@@ -109,18 +115,21 @@ func (h *SSOHandler) Put(c *gin.Context) {
 	}
 
 	// Existing config provides the current encrypted secret for the
-	// "empty clientSecret = leave unchanged" partial-update path.
+	// "empty clientSecret = leave unchanged" partial-update path, and the
+	// current verified_domains for the intersection computation (D17 Q-S2).
 	existing, err := h.store.GetSSOConfig(c.Request.Context(), orgID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load existing sso config"})
 		return
 	}
 	var existingSecret []byte
+	var existingVerified []string
 	if existing != nil {
 		existingSecret = existing.ClientSecret
+		existingVerified = existing.VerifiedDomains
 	}
 
-	if _, err := h.svc.ApplyConfigMutation(c.Request.Context(), orgID, req, existingSecret); err != nil {
+	if _, err := h.svc.ApplyConfigMutation(c.Request.Context(), orgID, req, existingSecret, existingVerified); err != nil {
 		respondSSOMutationError(c, err)
 		return
 	}
@@ -151,6 +160,62 @@ func (h *SSOHandler) Delete(c *gin.Context) {
 		h.logger.Warn("audit log emission failed", "action", "sso.delete", "orgID", orgID, "error", err.Error())
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// VerifyDomain handles POST /api/v1/orgs/:id/sso/domains/:domain/verify (org
+// admin). On-demand DNS verification: checks the TXT record at
+// _llmsafespaces-verify.<domain> for the org's verification token and promotes
+// the domain to verified on match.
+func (h *SSOHandler) VerifyDomain(c *gin.Context) {
+	orgID := c.Param("id")
+	domain := c.Param("domain")
+	actorID := h.authSvc.GetUserID(c)
+
+	result, err := h.svc.VerifyDomain(c.Request.Context(), orgID, domain)
+	if err != nil {
+		respondVerifyError(c, err)
+		return
+	}
+	if err := h.store.LogOrgEvent(c.Request.Context(), orgID, actorID, "sso.domain.verify", domain, map[string]any{
+		"verified": result.Verified,
+	}); err != nil && h.logger != nil {
+		h.logger.Warn("audit log emission failed", "action", "sso.domain.verify", "orgID", orgID, "error", err.Error())
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+// RotateToken handles POST /api/v1/orgs/:id/sso/verification-token/rotate (org
+// admin). Replaces the DNS verification token with a fresh random value. Used
+// for both initial creation (when no token exists) and rotation.
+func (h *SSOHandler) RotateToken(c *gin.Context) {
+	orgID := c.Param("id")
+	actorID := h.authSvc.GetUserID(c)
+
+	token, err := h.svc.RotateToken(c.Request.Context(), orgID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to rotate verification token"})
+		return
+	}
+	if err := h.store.LogOrgEvent(c.Request.Context(), orgID, actorID, "sso.token.rotate", orgID, nil); err != nil && h.logger != nil {
+		h.logger.Warn("audit log emission failed", "action", "sso.token.rotate", "orgID", orgID, "error", err.Error())
+	}
+	c.JSON(http.StatusOK, gin.H{"verificationToken": token})
+}
+
+// respondVerifyError maps SSO service verification errors to HTTP responses.
+func respondVerifyError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, sso.ErrSSONotConfigured):
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+	case errors.Is(err, sso.ErrDomainNotClaimed):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	case errors.Is(err, sso.ErrNoVerificationToken):
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+	case errors.Is(err, sso.ErrDNSNotMatching):
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+	default:
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "domain verification is currently unavailable"})
+	}
 }
 
 // Start handles GET /api/v1/auth/sso/:orgSlug/start (public). Redirects the

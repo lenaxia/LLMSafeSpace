@@ -9,6 +9,8 @@ export interface OrgSSOConfig {
   clientId: string;
   hasSecret: boolean;
   claimedDomains: string[];
+  verifiedDomains: string[];
+  verificationToken: string;
   autoProvision: boolean;
   groupRoleMapping: Record<string, OrgRole>;
   updatedAt: string;
@@ -44,6 +46,10 @@ export const ssoApi = {
   upsert: (orgId: string, req: UpsertSSOConfigRequest) =>
     api.put<OrgSSOConfig>(`/orgs/${orgId}/sso`, req),
   remove: (orgId: string) => api.delete<void>(`/orgs/${orgId}/sso`),
-  /** Public: returns every claimed domain for login-page discovery. */
+  verifyDomain: (orgId: string, domain: string) =>
+    api.post<{ domain: string; verified: boolean }>(`/orgs/${orgId}/sso/domains/${encodeURIComponent(domain)}/verify`),
+  rotateToken: (orgId: string) =>
+    api.post<{ verificationToken: string }>(`/orgs/${orgId}/sso/verification-token/rotate`),
+  /** Public: returns every verified domain for login-page discovery. */
   domains: () => api.get<{ domains: SSODomain[] }>(`/auth/sso/domains`),
 };

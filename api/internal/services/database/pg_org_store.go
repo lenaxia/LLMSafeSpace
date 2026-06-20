@@ -5,7 +5,9 @@ package database
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -117,7 +119,11 @@ type OrgStore interface {
 	// GetSSOConfig returns the org's SSO config or (nil, nil) when none exists.
 	GetSSOConfig(ctx context.Context, orgID string) (*types.OrgSSOConfig, error)
 	// UpsertSSOConfig inserts or replaces the org's SSO config. ClientSecret is
-	// the already-encrypted blob (server KEK, D17-S4).
+	// the already-encrypted blob (server KEK, D17-S4). VerifiedDomains is the
+	// caller-computed subset of ClaimedDomains that remain verified after this
+	// update (the service layer intersects existing verified with new claimed).
+	// VerificationToken is generated on INSERT if empty; ON CONFLICT preserves
+	// the existing token (rotation is via RotateVerificationToken).
 	UpsertSSOConfig(ctx context.Context, config *types.OrgSSOConfig) error
 	// DeleteSSOConfig removes the org's SSO config.
 	DeleteSSOConfig(ctx context.Context, orgID string) error
@@ -125,12 +131,25 @@ type OrgStore interface {
 	// "@") to the owning org's SSO config. Returns (nil, nil) when no org has
 	// claimed the domain.
 	FindSSOConfigByDomain(ctx context.Context, domain string) (*types.OrgSSOConfig, error)
-	// ListSSODomains returns every claimed domain across all orgs with non-empty
-	// claimed_domains, for the login-page discovery endpoint.
+	// ListSSODomains returns every DNS-verified domain across all orgs, for
+	// the login-page discovery endpoint. Unverified claimed domains are NOT
+	// returned — they cannot auto-route until the org admin completes DNS
+	// verification (D17 Q-S2).
 	ListSSODomains(ctx context.Context) ([]types.SSODomain, error)
 	// CountSSOConfigs returns the number of orgs with an SSO config. Used by
 	// GET /auth/config to set the OIDCEnabled feature flag.
 	CountSSOConfigs(ctx context.Context) (int, error)
+	// SetDomainVerified atomically appends a domain to verified_domains. The
+	// domain MUST already be in claimed_domains (enforced by the WHERE clause);
+	// a domain not in claimed_domains is silently not added. Idempotent: adding
+	// an already-verified domain is a no-op. Returns (true, nil) if the domain
+	// was newly verified, (false, nil) if it was already verified or not claimed.
+	SetDomainVerified(ctx context.Context, orgID, domain string) (bool, error)
+	// RotateVerificationToken replaces the org's DNS verification token with a
+	// fresh random value and returns it. Used both for initial token creation
+	// (when verification_token is NULL) and for rotation. Old tokens stop
+	// matching after rotation — admins must update their DNS TXT record.
+	RotateVerificationToken(ctx context.Context, orgID string) (string, error)
 }
 
 // PgOrgStore implements OrgStore using database/sql.
@@ -1546,14 +1565,20 @@ func decodeGroupRoleMapping(b []byte) map[string]types.OrgRole {
 
 // scanSSOConfig scans one org_sso_configs row into a typed config. group_role_mapping
 // (JSONB) is scanned as raw bytes then decoded to map[string]OrgRole.
+// verification_token is a nullable TEXT column scanned into a *string then
+// dereferenced; empty/NULL becomes "".
 func scanSSOConfig(row *sql.Row, cfg *types.OrgSSOConfig) error {
 	var groupMappingBytes []byte
+	var verifiedDomains []string
+	var verificationToken sql.NullString
 	if err := row.Scan(
 		&cfg.OrgID,
 		&cfg.DiscoveryURL,
 		&cfg.ClientID,
 		&cfg.ClientSecret,
 		pq.Array(&cfg.ClaimedDomains),
+		pq.Array(&verifiedDomains),
+		&verificationToken,
 		&cfg.AutoProvision,
 		&groupMappingBytes,
 		&cfg.CreatedAt,
@@ -1565,6 +1590,11 @@ func scanSSOConfig(row *sql.Row, cfg *types.OrgSSOConfig) error {
 	if cfg.ClaimedDomains == nil {
 		cfg.ClaimedDomains = []string{}
 	}
+	cfg.VerifiedDomains = verifiedDomains
+	if cfg.VerifiedDomains == nil {
+		cfg.VerifiedDomains = []string{}
+	}
+	cfg.VerificationToken = verificationToken.String
 	return nil
 }
 
@@ -1572,7 +1602,8 @@ func (s *PgOrgStore) GetSSOConfig(ctx context.Context, orgID string) (*types.Org
 	var cfg types.OrgSSOConfig
 	if err := scanSSOConfig(s.db.QueryRowContext(ctx,
 		`SELECT org_id, oidc_discovery_url, oidc_client_id, oidc_client_secret,
-		        claimed_domains, auto_provision, group_role_mapping, created_at, updated_at
+		        claimed_domains, verified_domains, verification_token,
+		        auto_provision, group_role_mapping, created_at, updated_at
 		 FROM org_sso_configs WHERE org_id = $1`,
 		orgID,
 	), &cfg); err != nil {
@@ -1586,21 +1617,32 @@ func (s *PgOrgStore) GetSSOConfig(ctx context.Context, orgID string) (*types.Org
 
 func (s *PgOrgStore) UpsertSSOConfig(ctx context.Context, config *types.OrgSSOConfig) error {
 	groupMapping := encodeGroupRoleMapping(config.GroupRoleMapping)
+	verified := ssoDomainsParam(config.VerifiedDomains)
+	// On INSERT, generate a verification token if the caller didn't supply one
+	// so the org admin can immediately set up DNS verification. On CONFLICT,
+	// preserve the existing token (rotation is via RotateVerificationToken).
+	token := config.VerificationToken
+	if token == "" {
+		token = randomVerificationToken()
+	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO org_sso_configs
 		   (org_id, oidc_discovery_url, oidc_client_id, oidc_client_secret,
-		    claimed_domains, auto_provision, group_role_mapping, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+		    claimed_domains, verified_domains, verification_token,
+		    auto_provision, group_role_mapping, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
 		 ON CONFLICT (org_id) DO UPDATE SET
 		   oidc_discovery_url = EXCLUDED.oidc_discovery_url,
 		   oidc_client_id     = EXCLUDED.oidc_client_id,
 		   oidc_client_secret = EXCLUDED.oidc_client_secret,
 		   claimed_domains    = EXCLUDED.claimed_domains,
+		   verified_domains   = EXCLUDED.verified_domains,
 		   auto_provision     = EXCLUDED.auto_provision,
 		   group_role_mapping = EXCLUDED.group_role_mapping,
 		   updated_at         = NOW()`,
 		config.OrgID, config.DiscoveryURL, config.ClientID, config.ClientSecret,
-		pq.Array(ssoDomainsParam(config.ClaimedDomains)), config.AutoProvision, groupMapping,
+		pq.Array(ssoDomainsParam(config.ClaimedDomains)), pq.Array(verified), token,
+		config.AutoProvision, groupMapping,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert sso config: %w", err)
@@ -1621,7 +1663,8 @@ func (s *PgOrgStore) FindSSOConfigByDomain(ctx context.Context, domain string) (
 	var cfg types.OrgSSOConfig
 	if err := scanSSOConfig(s.db.QueryRowContext(ctx,
 		`SELECT c.org_id, c.oidc_discovery_url, c.oidc_client_id, c.oidc_client_secret,
-		        c.claimed_domains, c.auto_provision, c.group_role_mapping, c.created_at, c.updated_at
+		        c.claimed_domains, c.verified_domains, c.verification_token,
+		        c.auto_provision, c.group_role_mapping, c.created_at, c.updated_at
 		 FROM org_sso_configs c
 		 JOIN organizations o ON o.id = c.org_id AND o.deleted_at IS NULL
 		 WHERE $1 = ANY (c.claimed_domains)`,
@@ -1637,10 +1680,10 @@ func (s *PgOrgStore) FindSSOConfigByDomain(ctx context.Context, domain string) (
 
 func (s *PgOrgStore) ListSSODomains(ctx context.Context) ([]types.SSODomain, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT o.slug, o.name, c.claimed_domains
+		`SELECT o.slug, o.name, c.verified_domains
 		 FROM org_sso_configs c
 		 JOIN organizations o ON o.id = c.org_id AND o.deleted_at IS NULL
-		 WHERE array_length(c.claimed_domains, 1) IS NOT NULL
+		 WHERE array_length(c.verified_domains, 1) IS NOT NULL
 		 ORDER BY o.name`)
 	if err != nil {
 		return nil, fmt.Errorf("list sso domains: %w", err)
@@ -1681,6 +1724,56 @@ func (s *PgOrgStore) CountSSOConfigs(ctx context.Context) (int, error) {
 	return count, nil
 }
 
+// SetDomainVerified atomically appends a domain to verified_domains. The
+// domain must already be in claimed_domains (the WHERE clause enforces this);
+// a domain not claimed is a no-op. Idempotent: re-verifying an already-
+// verified domain returns (false, nil) without error. Returns (true, nil)
+// only when the domain was newly promoted.
+func (s *PgOrgStore) SetDomainVerified(ctx context.Context, orgID, domain string) (bool, error) {
+	tag, err := s.db.ExecContext(ctx,
+		`UPDATE org_sso_configs
+		    SET verified_domains = array_append(verified_domains, $2),
+		        updated_at = NOW()
+		  WHERE org_id = $1
+		    AND $2 = ANY (claimed_domains)
+		    AND $2 <> ALL (COALESCE(verified_domains, ARRAY[]::text[]))`,
+		orgID, domain,
+	)
+	if err != nil {
+		return false, fmt.Errorf("set domain verified: %w", err)
+	}
+	n, err := tag.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("set domain verified: rows affected: %w", err)
+	}
+	return n > 0, nil
+}
+
+// RotateVerificationToken replaces the org's verification token with a fresh
+// random 32-hex value and returns it. Used for both initial creation (when
+// verification_token is NULL) and rotation. Returns the new token.
+func (s *PgOrgStore) RotateVerificationToken(ctx context.Context, orgID string) (string, error) {
+	token := randomVerificationToken()
+	tag, err := s.db.ExecContext(ctx,
+		`UPDATE org_sso_configs
+		    SET verification_token = $2,
+		        updated_at = NOW()
+		  WHERE org_id = $1`,
+		orgID, token,
+	)
+	if err != nil {
+		return "", fmt.Errorf("rotate verification token: %w", err)
+	}
+	n, err := tag.RowsAffected()
+	if err != nil {
+		return "", fmt.Errorf("rotate verification token: rows affected: %w", err)
+	}
+	if n == 0 {
+		return "", fmt.Errorf("rotate verification token: org %s has no sso config", orgID)
+	}
+	return token, nil
+}
+
 // encodeGroupRoleMapping serializes the typed mapping to JSONB-ready bytes.
 func encodeGroupRoleMapping(m map[string]types.OrgRole) []byte {
 	if len(m) == 0 {
@@ -1710,4 +1803,18 @@ func ssoDomainsParam(domains []string) []string {
 		return []string{}
 	}
 	return domains
+}
+
+// randomVerificationToken generates a fresh 32-hex-char DNS verification token
+// for the _llmsafespaces-verify TXT record. Uses crypto/rand so tokens are
+// unpredictable (an attacker who can guess a token can forge verification).
+func randomVerificationToken() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		// rand.Read only errors on catastrophic system failure; panicking is
+		// the only safe response since the security of DNS verification
+		// depends on token unpredictability.
+		panic(fmt.Sprintf("crypto/rand failed: %v", err))
+	}
+	return hex.EncodeToString(b)
 }

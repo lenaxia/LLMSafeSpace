@@ -173,28 +173,36 @@ type OrgSummary struct {
 
 // OrgSSOConfig is the per-org OIDC SSO configuration. ClientSecret is the
 // encrypted blob stored in the DB; it is never serialized to JSON.
+// VerifiedDomains is a subset of ClaimedDomains that have passed DNS
+// verification (D17 Q-S2); only verified domains auto-route on the login
+// page. VerificationToken is the per-org random token the org admin places
+// as a TXT record at _llmsafespaces-verify.<domain> to prove ownership.
 type OrgSSOConfig struct {
-	OrgID            string             `json:"-"`
-	DiscoveryURL     string             `json:"discoveryUrl"`
-	ClientID         string             `json:"clientId"`
-	ClientSecret     []byte             `json:"-"`
-	ClaimedDomains   []string           `json:"claimedDomains"`
-	AutoProvision    bool               `json:"autoProvision"`
-	GroupRoleMapping map[string]OrgRole `json:"groupRoleMapping"`
-	CreatedAt        time.Time          `json:"createdAt"`
-	UpdatedAt        time.Time          `json:"updatedAt"`
+	OrgID             string             `json:"-"`
+	DiscoveryURL      string             `json:"discoveryUrl"`
+	ClientID          string             `json:"clientId"`
+	ClientSecret      []byte             `json:"-"`
+	ClaimedDomains    []string           `json:"claimedDomains"`
+	VerifiedDomains   []string           `json:"verifiedDomains"`
+	VerificationToken string             `json:"verificationToken"`
+	AutoProvision     bool               `json:"autoProvision"`
+	GroupRoleMapping  map[string]OrgRole `json:"groupRoleMapping"`
+	CreatedAt         time.Time          `json:"createdAt"`
+	UpdatedAt         time.Time          `json:"updatedAt"`
 }
 
 // OrgSSOConfigResponse is the API response shape — omits the encrypted secret.
 type OrgSSOConfigResponse struct {
-	OrgID            string             `json:"orgId"`
-	DiscoveryURL     string             `json:"discoveryUrl"`
-	ClientID         string             `json:"clientId"`
-	HasSecret        bool               `json:"hasSecret"`
-	ClaimedDomains   []string           `json:"claimedDomains"`
-	AutoProvision    bool               `json:"autoProvision"`
-	GroupRoleMapping map[string]OrgRole `json:"groupRoleMapping"`
-	UpdatedAt        time.Time          `json:"updatedAt"`
+	OrgID             string             `json:"orgId"`
+	DiscoveryURL      string             `json:"discoveryUrl"`
+	ClientID          string             `json:"clientId"`
+	HasSecret         bool               `json:"hasSecret"`
+	ClaimedDomains    []string           `json:"claimedDomains"`
+	VerifiedDomains   []string           `json:"verifiedDomains"`
+	VerificationToken string             `json:"verificationToken"`
+	AutoProvision     bool               `json:"autoProvision"`
+	GroupRoleMapping  map[string]OrgRole `json:"groupRoleMapping"`
+	UpdatedAt         time.Time          `json:"updatedAt"`
 }
 
 // UpsertSSOConfigRequest is the API request body for creating/updating SSO config.
