@@ -539,3 +539,71 @@ func TestRecoveryKeyFlow(t *testing.T) {
 		t.Error("DEK after recovery + re-wrap should match original")
 	}
 }
+
+// ---- DeriveSealedKEK (US-50.11) ----
+
+func TestDeriveSealedKEKProduces32Bytes(t *testing.T) {
+	password := []byte("correct-horse-battery-staple")
+	salt := make([]byte, 32)
+	for i := range salt {
+		salt[i] = byte(i)
+	}
+	kek, err := DeriveSealedKEK(password, salt, sealedKeyInfoStr)
+	require.NoError(t, err)
+	require.Len(t, kek, 32)
+}
+
+func TestDeriveSealedKEK_DifferentInfoProducesDifferentKeys(t *testing.T) {
+	password := []byte("correct-horse-battery-staple")
+	salt := make([]byte, 32)
+	for i := range salt {
+		salt[i] = byte(i)
+	}
+
+	kekA, err := DeriveSealedKEK(password, salt, sealedKeyInfoStr)
+	require.NoError(t, err)
+	kekB, err := DeriveSealedKEK(password, salt, "other-purpose")
+	require.NoError(t, err)
+
+	require.Len(t, kekA, 32)
+	require.Len(t, kekB, 32)
+	require.NotEqual(t, kekA, kekB, "different HKDF info strings must produce independent KEKs")
+
+	// Deterministic for identical inputs.
+	kekA2, err := DeriveSealedKEK(password, salt, sealedKeyInfoStr)
+	require.NoError(t, err)
+	require.Equal(t, kekA, kekA2)
+}
+
+func TestDeriveSealedKEK_DistinctFromPlainArgon(t *testing.T) {
+	// The info-mixed sub-salt must yield a KEK different from the legacy
+	// Argon2id-without-info derivation, proving domain separation.
+	password := []byte("correct-horse-battery-staple")
+	salt := make([]byte, 32)
+	for i := range salt {
+		salt[i] = byte(i)
+	}
+
+	plain, err := DeriveKEKFromPassword(password, salt)
+	require.NoError(t, err)
+	seal, err := DeriveSealedKEK(password, salt, sealedKeyInfoStr)
+	require.NoError(t, err)
+	require.NotEqual(t, plain, seal, "info-mixed KEK must differ from plain Argon2id KEK")
+}
+
+func TestDeriveSealedKEK_DifferentPasswords(t *testing.T) {
+	salt := make([]byte, 32)
+	kek1, err := DeriveSealedKEK([]byte("password-1"), salt, sealedKeyInfoStr)
+	require.NoError(t, err)
+	kek2, err := DeriveSealedKEK([]byte("password-2"), salt, sealedKeyInfoStr)
+	require.NoError(t, err)
+	require.NotEqual(t, kek1, kek2, "different passwords must produce different KEKs")
+}
+
+func TestDeriveSealedKEKRejectsWrongSaltLength(t *testing.T) {
+	shortSalts := [][]byte{nil, make([]byte, 16), make([]byte, 64)}
+	for _, s := range shortSalts {
+		_, err := DeriveSealedKEK([]byte("password"), s, sealedKeyInfoStr)
+		require.ErrorIs(t, err, ErrInvalidSaltLength, "salt len %d must be rejected", len(s))
+	}
+}

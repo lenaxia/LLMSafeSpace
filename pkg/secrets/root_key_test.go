@@ -1,6 +1,7 @@
 package secrets
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/hex"
@@ -258,8 +259,78 @@ func TestSealRootKey_DeterministicFormat(t *testing.T) {
 	data, err := os.ReadFile(sealedPath)
 	require.NoError(t, err)
 
-	// Format: salt(32) || nonce(12) || ciphertext(32+16) = 92 bytes minimum
-	// GCM adds 16-byte tag to 32-byte plaintext = 48 bytes ciphertext
-	// Total: 32 + 12 + 48 = 92
-	assert.GreaterOrEqual(t, len(data), 92, "sealed key should contain salt + nonce + ciphertext")
+	// V1 format (US-50.11): magic "LSKP-S"(6) || salt(32) || nonce(12) || ciphertext(32+16)
+	// GCM adds a 16-byte tag to the 32-byte root key = 48 bytes ciphertext.
+	// Total minimum: 6 + 32 + 12 + 48 = 98 bytes.
+	assert.True(t, bytes.HasPrefix(data, []byte(sealedMagicV1)), "sealed key must start with the V1 magic prefix")
+	assert.GreaterOrEqual(t, len(data), 98, "sealed key should contain magic + salt + nonce + ciphertext")
+}
+
+// writeLegacyV0SealedKey writes a sealed-key file in the pre-US-50.11 format
+// (salt || ciphertext; KEK = Argon2id(passphrase, salt) with no HKDF info
+// string). It exists only to prove the unseal path still reads old files.
+func writeLegacyV0SealedKey(t *testing.T, path string, passphrase, rootKey []byte) {
+	t.Helper()
+	salt := make([]byte, sealedSaltSize)
+	for i := range salt {
+		salt[i] = byte(i + 1)
+	}
+	kek, err := DeriveKEKFromPassword(passphrase, salt)
+	require.NoError(t, err)
+	ct, err := EncryptSecret(kek, rootKey)
+	require.NoError(t, err)
+	sealed := append(append([]byte{}, salt...), ct...)
+	require.NoError(t, os.WriteFile(path, sealed, 0600))
+}
+
+func TestSealedKeyProvider_UnsealLegacyV0Format(t *testing.T) {
+	tmpDir := t.TempDir()
+	sealedPath := filepath.Join(tmpDir, "sealed")
+	passPath := filepath.Join(tmpDir, "passphrase")
+	passphrase := []byte("legacy-passphrase")
+	require.NoError(t, os.WriteFile(passPath, passphrase, 0600))
+
+	rootKey := make([]byte, 32)
+	for i := range rootKey {
+		rootKey[i] = byte(i)
+	}
+	writeLegacyV0SealedKey(t, sealedPath, passphrase, rootKey)
+
+	p, err := NewSealedKeyProvider(sealedPath, passPath)
+	require.NoError(t, err, "legacy V0 sealed key must still unseal after US-50.11")
+
+	plaintext := []byte("lsp_legacy_v0_roundtrip")
+	ct, err := p.Encrypt(context.Background(), plaintext)
+	require.NoError(t, err)
+	dec, err := p.Decrypt(context.Background(), ct)
+	require.NoError(t, err)
+	assert.Equal(t, plaintext, dec)
+}
+
+func TestSealedKeyProvider_RoundTrip_V1Format(t *testing.T) {
+	tmpDir := t.TempDir()
+	sealedPath := filepath.Join(tmpDir, "sealed")
+	passPath := filepath.Join(tmpDir, "passphrase")
+	passphrase := []byte("v1-passphrase")
+	require.NoError(t, os.WriteFile(passPath, passphrase, 0600))
+
+	rootKey := make([]byte, 32)
+	for i := range rootKey {
+		rootKey[i] = byte(i)
+	}
+	require.NoError(t, SealRootKey(sealedPath, passphrase, rootKey))
+
+	data, err := os.ReadFile(sealedPath)
+	require.NoError(t, err)
+	assert.True(t, bytes.HasPrefix(data, []byte(sealedMagicV1)), "newly sealed keys must use the V1 (LSKP-S) format")
+
+	p, err := NewSealedKeyProvider(sealedPath, passPath)
+	require.NoError(t, err)
+
+	plaintext := []byte("lsp_v1_format_roundtrip")
+	ct, err := p.Encrypt(context.Background(), plaintext)
+	require.NoError(t, err)
+	dec, err := p.Decrypt(context.Background(), ct)
+	require.NoError(t, err)
+	assert.Equal(t, plaintext, dec)
 }

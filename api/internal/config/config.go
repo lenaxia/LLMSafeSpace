@@ -76,11 +76,12 @@ type Config struct {
 	} `mapstructure:"auth"`
 
 	Security struct {
-		AllowedOrigins   []string `mapstructure:"allowedOrigins"`
-		AllowCredentials bool     `mapstructure:"allowCredentials"`
-		RootKeyProvider  string   `mapstructure:"rootKeyProvider"`
-		SealedKeyPath    string   `mapstructure:"sealedKeyPath"`
-		PassphrasePath   string   `mapstructure:"passphrasePath"`
+		AllowedOrigins       []string `mapstructure:"allowedOrigins"`
+		AllowCredentials     bool     `mapstructure:"allowCredentials"`
+		RootKeyProvider      string   `mapstructure:"rootKeyProvider"`
+		SealedKeyPath        string   `mapstructure:"sealedKeyPath"`
+		PassphrasePath       string   `mapstructure:"passphrasePath"`
+		SkipMasterKeyWarning bool     `mapstructure:"skipMasterKeyWarning"`
 	} `mapstructure:"security"`
 
 	Logging struct {
@@ -240,6 +241,9 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("LLMSAFESPACES_SECURITY_PASSPHRASEPATH"); v != "" {
 		config.Security.PassphrasePath = v
+	}
+	if v := os.Getenv("LLMSAFESPACES_SECURITY_SKIPMASTERKEYWARNING"); v == "true" {
+		config.Security.SkipMasterKeyWarning = true
 	}
 
 	if v := os.Getenv("LLMSAFESPACES_RATELIMITING_ENABLED"); v == "true" {

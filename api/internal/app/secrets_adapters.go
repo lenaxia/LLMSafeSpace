@@ -436,8 +436,8 @@ func newRootKeyProvider(cfg *config.Config, log *logger.Logger) secrets.RootKeyP
 			log.Error("failed to initialize static root key provider", err)
 			return nil
 		}
-		if provider == "static" {
-			log.Warn("using static root key provider — intended for development only; use sealed/kms/vault in production")
+		if !cfg.Security.SkipMasterKeyWarning {
+			log.Warn("using static root key provider — intended for development only; use the sealed provider in production (see pkg/secrets/README.md)")
 		}
 		return p
 	default:

@@ -61,6 +61,24 @@ func DeriveKEKFromKey(keyMaterial, salt []byte, info string) ([]byte, error) {
 	return kek, nil
 }
 
+// DeriveSealedKEK derives the KEK used to wrap the sealed root-key file's
+// root key. It domain-separates via HKDF: Argon2id has no native info/context
+// parameter, so HKDF derives a 32-byte sub-salt from the stored salt bound to
+// info, and that sub-salt feeds Argon2id's salt input. Different info values
+// therefore produce cryptographically independent KEKs for an identical
+// passphrase + salt, while retaining Argon2id's memory-hardness against the
+// (typically low-entropy) passphrase. See US-50.11.
+func DeriveSealedKEK(password, salt []byte, info string) ([]byte, error) {
+	if len(salt) != saltSize {
+		return nil, ErrInvalidSaltLength
+	}
+	subSalt, err := DeriveKEKFromKey(salt, nil, info)
+	if err != nil {
+		return nil, err
+	}
+	return argon2.IDKey(password, subSalt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen), nil
+}
+
 func GenerateDEK() ([]byte, error) {
 	dek := make([]byte, dekSize)
 	if _, err := rand.Read(dek); err != nil {
