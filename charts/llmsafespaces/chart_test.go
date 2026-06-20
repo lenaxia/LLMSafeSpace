@@ -2775,10 +2775,12 @@ func TestRelayRouter_UpstreamAuth_OmittedWhenSecretEmpty(t *testing.T) {
 //      request" (redirectBaseUrl) and "/" (frontendRedirectUrl).
 //   2. Custom operator values flow through verbatim for all three keys.
 //   3. stateCookieName is OMITTED from the default render — the {{- with }}
-//      guard in configmap-api.yaml deliberately omits it when empty, so the
-//      Go default of "lsp_sso_state" (sso.go:132) takes effect. Rendering
-//      stateCookieName: "" would shadow that default with an empty string
-//      via Viper Unmarshal.
+//      guard in configmap-api.yaml deliberately omits it when empty. This is
+//      a cleaner-YAML / belt-and-suspenders design choice, not a load-bearing
+//      correctness guard: sso.go:130-133 handles empty strings via Go fallback
+//      (if cookieName == "" { cookieName = "lsp_sso_state" }), so an empty
+//      render would still produce a working cookie. We omit the line anyway
+//      to (a) produce cleaner rendered YAML and (b) not rely on the fallback.
 
 // TestOIDC_DefaultRender_IncludesEmptyBlock asserts the oidc: block is
 // rendered by default with empty redirectBaseUrl and frontendRedirectUrl.
