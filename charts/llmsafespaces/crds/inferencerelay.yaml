@@ -39,8 +39,8 @@ spec:
               properties:
                 upstreamURL:
                   type: string
-                  description: "LLM provider endpoint the relays proxy to. Defaults to the maintainer's gateway (ai.thekao.cloud); operators should override to their own endpoint. opencode.ai/zen's anonymous `public` key no longer authorizes inference (A23, worklog 0420)."
-                  default: "https://ai.thekao.cloud/v1"
+                  description: "LLM provider endpoint the relays proxy to. Defaults to opencode.ai/zen/v1 so a default deploy produces working free-model inference via the anonymous `public` key (authorizes inference for any model Zen flags `allowAnonymous` — verified 2026-06-20, worklog 0420 correction). Operators pointing the fleet at a paid gateway or non-Zen upstream should override this and configure upstreamAuth.keySecret if that upstream requires a real key. The earlier default to ai.thekao.cloud (PR #298) was based on the now-disproven A23 premise; reverted."
+                  default: "https://opencode.ai/zen/v1"
                 providers:
                   type: array
                   description: "Relay VM cloud providers. Default fleet: 1 AWS (paid primary) + 1 OCI (free secondary). GCP optional paid tertiary."
@@ -73,26 +73,6 @@ spec:
                       shape:
                         type: string
                         description: "Override default shape. aws: t4g.micro, oci: VM.Standard.A1.Flex, gcp: e2-micro."
-                wireGuard:
-                  type: object
-                  description: "WireGuard mesh config between router and relay VMs."
-                  required:
-                    - routerEndpoint
-                  properties:
-                    routerPrivateKeyRef:
-                      type: string
-                      description: "K8s Secret key for router WireGuard private key. Auto-generated if unset."
-                    cidr:
-                      type: string
-                      default: "10.42.42.0/24"
-                      description: "WireGuard mesh network CIDR."
-                    port:
-                      type: integer
-                      default: 51820
-                      description: "WireGuard UDP port."
-                    routerEndpoint:
-                      type: string
-                      description: "Routable DNS name relay VMs connect to. Must be DNS, not bare IP."
                 healthCheck:
                   type: object
                   description: "Active health-checking of relay VMs."
@@ -157,7 +137,6 @@ spec:
                       - id
                       - provider
                       - region
-                      - wgIP
                       - publicIP
                       - state
                       - healthy
@@ -167,8 +146,6 @@ spec:
                       provider:
                         type: string
                       region:
-                        type: string
-                      wgIP:
                         type: string
                       publicIP:
                         type: string

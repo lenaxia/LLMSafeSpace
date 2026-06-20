@@ -79,6 +79,22 @@ spec:
             {{- if hasKey .Values.webhooks "maxWorkspaceMemoryMi" }}
             - --max-workspace-memory-mi={{ .Values.webhooks.maxWorkspaceMemoryMi }}
             {{- end }}
+            {{- if .Values.controller.inferenceRelay.enabled }}
+            {{- /* Fleet enabled: workspace pods route through the in-cluster
+                   relay-router (Design Principle 6, Epic 42), NOT the external
+                   CF Worker. Post-WG-removal (worklog 0442) the router reaches
+                   relay VMs over HTTP with per-VM token auth, so
+                   --inference-relay-secret is intentionally omitted here
+                   (pod_builder embeds the secret as a path segment only when
+                   InferenceRelaySecret != "", which the controller leaves empty
+                   in this mode).
+                   The URL MUST be the cross-namespace FQDN: workspace pods may
+                   run in any namespace (controller watches cluster-wide by
+                   default), while the relay-router Service lives in the release
+                   namespace — a short name would fail to resolve cross-ns.
+                   workspaceRouterURL overrides for the separate-ns-router case. */}}
+            - --inference-relay-url={{ .Values.controller.inferenceRelay.workspaceRouterURL | default (printf "http://relay-router.%s.svc.cluster.local:8080" .Release.Namespace) }}
+            {{- else }}
             {{- with .Values.inferenceRelayURL }}
             - --inference-relay-url={{ . }}
             {{- end }}
@@ -91,9 +107,13 @@ spec:
             {{- /* Fallback for operators not using the managed Secret. */ -}}
             - --inference-relay-secret={{ .Values.inferenceRelaySecret }}
             {{- end }}
+            {{- end }}
             {{- if .Values.controller.inferenceRelay.enabled }}
             - --enable-inference-relay=true
             - --relay-router-url={{ .Values.controller.inferenceRelay.routerURL | default "http://relay-router:8080" }}
+            - --relay-artifact-url={{ join "," .Values.controller.inferenceRelay.artifact.urls }}
+            - --relay-artifact-sha256-arm64={{ .Values.controller.inferenceRelay.artifact.sha256Arm64 | required "controller.inferenceRelay.artifact.sha256Arm64 is required when inferenceRelay.enabled (the arm64 relay-proxy binary checksum — see Makefile relay-bin target)" }}
+            - --relay-artifact-sha256-amd64={{ .Values.controller.inferenceRelay.artifact.sha256Amd64 | required "controller.inferenceRelay.artifact.sha256Amd64 is required when inferenceRelay.enabled (the amd64 relay-proxy binary checksum — see Makefile relay-bin target)" }}
             {{- end }}
             {{/* F1 (worklog 0372): wire --api-service-url so org-suspension is
                   functional in Helm deployments. The internal-token env below

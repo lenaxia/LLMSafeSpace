@@ -89,6 +89,20 @@ func main() {
 	var relayRouterURL string
 	flag.StringVar(&relayRouterURL, "relay-router-url", "http://relay-router:8080",
 		"URL of the in-cluster relay-router for /metrics scraping (Epic 42).")
+	var relayArtifactURL string
+	flag.StringVar(&relayArtifactURL, "relay-artifact-url", "",
+		"Comma-separated base mirror URLs for the relay-proxy binary download (Epic 42). "+
+			"The controller embeds these into each relay VM's cloud-init; the VM appends "+
+			"\"/relay-proxy-<arch>\" and tries each mirror in order. Required when "+
+			"--enable-inference-relay=true: without it the provisioned VM cannot obtain the binary.")
+	var relayArtifactSHA256Arm64 string
+	flag.StringVar(&relayArtifactSHA256Arm64, "relay-artifact-sha256-arm64", "",
+		"Hex SHA-256 of the arm64 relay-proxy binary (Epic 42). Verified by cloud-init before exec. "+
+			"Required when --enable-inference-relay=true and provisioning arm64 shapes (AWS t4g, OCI A1).")
+	var relayArtifactSHA256Amd64 string
+	flag.StringVar(&relayArtifactSHA256Amd64, "relay-artifact-sha256-amd64", "",
+		"Hex SHA-256 of the amd64 relay-proxy binary (Epic 42). Verified by cloud-init before exec. "+
+			"Required when --enable-inference-relay=true and provisioning amd64 shapes (GCP e2, AWS t3).")
 	var apiServiceURL string
 	flag.StringVar(&apiServiceURL, "api-service-url", "",
 		"Root URL of the in-cluster API service (e.g. http://llmsafespaces-api.llmsafespaces.svc:8080) "+
@@ -196,7 +210,11 @@ func main() {
 	if relayNamespace == "" {
 		relayNamespace = "llmsafespaces"
 	}
-	if err := controller.SetupRelayController(mgr, relayNamespace, relayRouterURL, enableRelayController); err != nil {
+	if err := controller.SetupRelayController(mgr, relayNamespace, relayRouterURL, enableRelayController, controller.RelayArtifactConfig{
+		URLs:        splitNonEmpty(relayArtifactURL, ","),
+		SHA256Arm64: relayArtifactSHA256Arm64,
+		SHA256Amd64: relayArtifactSHA256Amd64,
+	}); err != nil {
 		setupLog.Error(err, "unable to set up InferenceRelay controller")
 		os.Exit(1)
 	}

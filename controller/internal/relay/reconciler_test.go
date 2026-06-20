@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -81,9 +82,6 @@ func makeRelayCR() *v1.InferenceRelay {
 			Providers: []v1.RelayProviderSpec{
 				{Provider: "oci", Region: "us-ashburn-1", CredentialsRef: corev1.LocalObjectReference{Name: "oci-credentials"}},
 			},
-			WireGuard: v1.WireGuardConfig{
-				RouterEndpoint: "relay-gw.example.com:51820",
-			},
 		},
 	}
 }
@@ -92,7 +90,7 @@ func makeRelayCRWithInstance(provider string) *v1.InferenceRelay {
 	relay := makeRelayCR()
 	relay.Status = v1.InferenceRelayStatus{
 		Instances: []v1.RelayInstanceStatus{
-			{ID: "existing-vm", Provider: provider, Region: "us-ashburn-1", State: "healthy", Healthy: true, WgIP: wgIPForProvider(provider)},
+			{ID: "existing-vm", Provider: provider, Region: "us-ashburn-1", State: "healthy", Healthy: true, PublicIP: "203.0.113.10"},
 		},
 		HealthyReplicas: 1,
 	}
@@ -115,6 +113,11 @@ func newTestReconciler(t *testing.T, objs ...runtime.Object) (*InferenceRelayRec
 			"aws": &AWSDriver{},
 			"oci": &stubDriver{},
 		},
+		ArtifactURLs: []string{
+			"https://github.com/lenaxia/llmsafespace/releases/latest/download",
+		},
+		ArtifactSHA256Arm64: strings.Repeat("a", 64),
+		ArtifactSHA256Amd64: strings.Repeat("b", 64),
 	}
 	return r, builder
 }
@@ -158,9 +161,7 @@ func TestReconcile_Paused_SkipsProvisioning(t *testing.T) {
 
 func TestReconcile_AddsFinalizer(t *testing.T) {
 	relay := makeRelayCR()
-	r, _ := newTestReconciler(t, relay, makeOCISecret(), &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: routerWGSecret, Namespace: "test-ns"},
-	})
+	r, _ := newTestReconciler(t, relay, makeOCISecret())
 
 	_, err := r.Reconcile(context.Background(), ctrl.Request{
 		NamespacedName: types.NamespacedName{Name: "relay-fleet"},
@@ -278,6 +279,48 @@ func TestReconcileFleet_UnknownProvider_FailsFastWithConfigError(t *testing.T) {
 	assert.Contains(t, updated.Status.Instances[0].LastProvisionError, "no driver for provider gcp")
 }
 
+// TestReconcileFleet_MissingArtifactSHA_FailsProvisioning verifies that when
+// the controller's artifact SHA-256 for the target arch is unset, provisioning
+// fails with a clear ErrConfig message — not a silent success that would
+// produce a VM with a non-downloadable binary.
+func TestReconcileFleet_MissingArtifactSHA_FailsProvisioning(t *testing.T) {
+	relay := makeRelayCR()
+	common.AddFinalizer(relay, InferenceRelayFinalizer)
+
+	scheme := testScheme(t)
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithRuntimeObjects(relay, makeOCISecret()).
+		WithStatusSubresource(&v1.InferenceRelay{}).
+		Build()
+
+	r := &InferenceRelayReconciler{
+		Client:    fakeClient,
+		Scheme:    scheme,
+		Namespace: "test-ns",
+		Drivers:   map[string]ProviderDriver{"oci": &stubDriver{}},
+		ArtifactURLs: []string{
+			"https://github.com/lenaxia/llmsafespace/releases/latest/download",
+		},
+		ArtifactSHA256Arm64: "",
+		ArtifactSHA256Amd64: "",
+	}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "relay-fleet"},
+	})
+	require.NoError(t, err)
+
+	updated := &v1.InferenceRelay{}
+	_ = r.Get(context.Background(), types.NamespacedName{Name: "relay-fleet"}, updated)
+	require.NotEmpty(t, updated.Status.Instances,
+		"missing artifact SHA must still create a status entry so the operator sees the failure")
+	assert.Equal(t, string(v1.RelayStateProvisioningFailed), updated.Status.Instances[0].State,
+		"missing artifact SHA must mark the instance ProvisioningFailed")
+	assert.Contains(t, updated.Status.Instances[0].LastProvisionError, "artifact SHA-256",
+		"the error message must mention the artifact SHA so the operator knows what to fix")
+}
+
 func TestReconcileFleet_CapacityError_DoesNotMarkFailed(t *testing.T) {
 	relay := makeRelayCR()
 	common.AddFinalizer(relay, InferenceRelayFinalizer)
@@ -295,6 +338,11 @@ func TestReconcileFleet_CapacityError_DoesNotMarkFailed(t *testing.T) {
 		Scheme:    scheme,
 		Namespace: "test-ns",
 		Drivers:   map[string]ProviderDriver{"oci": ociDriver},
+		ArtifactURLs: []string{
+			"https://github.com/lenaxia/llmsafespace/releases/latest/download",
+		},
+		ArtifactSHA256Arm64: strings.Repeat("a", 64),
+		ArtifactSHA256Amd64: strings.Repeat("b", 64),
 	}
 
 	_, err := r.Reconcile(context.Background(), ctrl.Request{
@@ -347,7 +395,7 @@ func TestReconcileFleet_PartialHealth_SetsDegraded(t *testing.T) {
 		Provider: "gcp", Region: "us-west1", CredentialsRef: corev1.LocalObjectReference{Name: "gcp-credentials"},
 	})
 	relay.Status.Instances = append(relay.Status.Instances, v1.RelayInstanceStatus{
-		ID: "gcp-vm", Provider: "gcp", State: "unhealthy", Healthy: false, WgIP: wgGCPRelay,
+		ID: "gcp-vm", Provider: "gcp", State: "unhealthy", Healthy: false, PublicIP: "203.0.113.99",
 	})
 	common.AddFinalizer(relay, InferenceRelayFinalizer)
 
@@ -460,7 +508,7 @@ func TestSyncPeerConfigMap_CreatesConfigMap(t *testing.T) {
 		Build()
 
 	peers := []PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy", PublicKey: "pub123"},
+		{ID: "oci-1", Endpoint: "203.0.113.2:8080", Provider: "oci", State: "healthy", Token: "tok123"},
 	}
 
 	err := syncPeerConfigMap(context.Background(), fakeClient, "test-ns", nil, peers)
@@ -469,13 +517,13 @@ func TestSyncPeerConfigMap_CreatesConfigMap(t *testing.T) {
 	cm := &corev1.ConfigMap{}
 	_ = fakeClient.Get(context.Background(), types.NamespacedName{Name: routerPeersConfigMap, Namespace: "test-ns"}, cm)
 	assert.Contains(t, cm.Data["peers.json"], "oci-1")
-	assert.Contains(t, cm.Data["peers.json"], "pub123")
+	assert.Contains(t, cm.Data["peers.json"], "tok123")
 }
 
 func TestSyncPeerConfigMap_NoOpWhenSame(t *testing.T) {
 	scheme := testScheme(t)
 	peers := []PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "oci-1", Endpoint: "203.0.113.2:8080", Provider: "oci", State: "healthy", Token: "tok123"},
 	}
 	data, _ := json.Marshal(PeerConfig{Relays: peers})
 
@@ -527,7 +575,11 @@ func TestProvisioningAttempts_AccumulateAcrossReconciles(t *testing.T) {
 		"should accumulate from 2 to 3")
 }
 
-func TestEnsureRouterWGKey_GeneratesIfMissing(t *testing.T) {
+// TestRelayToken_ReadWriteRoundTrip verifies that per-VM tokens persist across
+// controller restarts: writeRelayTokens then readRelayTokens returns the same
+// values. Critical so a controller pod restart doesn't desync from a running
+// VM (which was cloud-init'd with the original token).
+func TestRelayToken_ReadWriteRoundTrip(t *testing.T) {
 	scheme := testScheme(t)
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -539,15 +591,38 @@ func TestEnsureRouterWGKey_GeneratesIfMissing(t *testing.T) {
 		Namespace: "test-ns",
 	}
 
-	pubKey, err := r.ensureRouterWGKey(context.Background(), makeRelayCR())
-	require.NoError(t, err)
-	assert.NotEmpty(t, pubKey)
+	tokens := map[string]string{
+		"aws": "aws-token-abc",
+		"oci": "oci-token-def",
+	}
+	require.NoError(t, r.writeRelayTokens(context.Background(), tokens))
 
-	// Verify the secret was created
+	got := r.readRelayTokens(context.Background())
+	assert.Equal(t, tokens, got,
+		"tokens written then read back must match (controller-restart persistence)")
+
+	// Verify the underlying Secret exists with the expected keys
 	secret := &corev1.Secret{}
-	err = fakeClient.Get(context.Background(), types.NamespacedName{Name: routerWGSecret, Namespace: "test-ns"}, secret)
+	err := fakeClient.Get(context.Background(), types.NamespacedName{Name: relayTokensSecret, Namespace: "test-ns"}, secret)
 	require.NoError(t, err)
-	assert.Equal(t, pubKey, string(secret.Data["publicKey"]))
+	assert.Equal(t, "aws-token-abc", string(secret.Data["aws"]))
+	assert.Equal(t, "oci-token-def", string(secret.Data["oci"]))
+}
+
+// TestGenerateRelayToken_RandomAndHex verifies the token generator produces
+// 64-char hex strings (32 bytes entropy) and that two calls differ.
+func TestGenerateRelayToken_RandomAndHex(t *testing.T) {
+	t1, err := generateRelayToken()
+	require.NoError(t, err)
+	t2, err := generateRelayToken()
+	require.NoError(t, err)
+
+	assert.Len(t, t1, 64, "token must be 64 hex chars (32 bytes)")
+	assert.Len(t, t2, 64)
+	assert.NotEqual(t, t1, t2, "two generated tokens must differ (randomness)")
+	for _, c := range t1 {
+		assert.Contains(t, "0123456789abcdef", string(c), "token must be hex")
+	}
 }
 
 // TestReconcileFleet_HealthReportApplied verifies that health data from

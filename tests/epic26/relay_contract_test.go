@@ -136,9 +136,15 @@ func TestOpencodeZenV1_BearerPublicAccepted(t *testing.T) {
 
 	respBody, _ := io.ReadAll(resp.Body)
 
-	// Must not be 401/403 — Bearer public is the free-tier mechanism
+	// Must not be 401/403 — Bearer public is the free-tier mechanism.
+	// NOTE (2026-06-20): Zen gates free-model inference on a per-model
+	// `allowAnonymous` flag (opencode handler.ts:599-603 + model.ts:26), not on
+	// the key or source IP. This test pins a model known to be allowAnonymous
+	// (deepseek-v4-flash-free). A 401 here means EITHER Zen retired this
+	// model's allowAnonymous flag OR the key path changed — re-probe before
+	// treating as a key death (A23 was the false-positive version of this).
 	assert.NotEqual(t, 401, resp.StatusCode,
-		"Bearer public returned 401 — opencode no longer accepts public key")
+		"Bearer public returned 401 — either this model lost allowAnonymous or opencode changed the public-key path")
 	assert.NotEqual(t, 403, resp.StatusCode,
 		"Bearer public returned 403 — opencode blocked public key")
 

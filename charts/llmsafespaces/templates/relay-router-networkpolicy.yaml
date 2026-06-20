@@ -1,21 +1,17 @@
 {{- if and .Values.controller.enabled .Values.controller.inferenceRelay.enabled .Values.networkPolicy.enabled }}
-{{- $wg := .Values.controller.inferenceRelay.router.wireGuard }}
-# US-42.8: NetworkPolicy isolating the relay-router (Epic 42 Layer 2 redesign).
+# US-42.8: NetworkPolicy isolating the relay-router.
 # Gated on networkPolicy.enabled (the master toggle) for parity with the other
 # chart NetworkPolicies (workspace/datastore), so operators who disable the
 # policy controller stay consistent. Applies once the relay subsystem is
-# enabled. Posture:
+# enabled. Posture (post-WG-removal, worklog 0442):
 #
 #   - TCP 8080 ingress from workspace pods (the proxy path) and the controller
-#     pod (router /metrics scrape — the controller is NOT in the WG mesh; it
-#     reads fleet health from the router). Workspace pods live in the workspace
-#     namespace (defaults to the release namespace).
-#   - UDP 51820 ingress from ANYWHERE. Relay VMs dial in from public cloud IPs
-#     that are not knowable in advance; WireGuard public-key pinning is the
-#     authentication, so the network layer must let the handshake through.
-#   - Egress is effectively unrestricted: the router dials relays over the WG
-#     tunnel (10.42.42.x:8080), needs DNS, and falls back to Zen-direct when
-#     all relays are down.
+#     pod (router /metrics scrape — the controller reads fleet health from the
+#     router). Workspace pods live in the workspace namespace (defaults to the
+#     release namespace).
+#   - Egress is effectively unrestricted: the router dials relays over HTTP
+#     on their public IPs (the per-VM token is the auth, not the network
+#     layer), needs DNS, and falls back to Zen-direct when all relays are down.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -43,7 +39,7 @@ spec:
         - protocol: TCP
           port: 8080
     # Controller pod → router /metrics scrape on 8080 (the controller reads
-    # fleet health from the router; it is not in the WG mesh).
+    # fleet health from the router).
     - from:
         - namespaceSelector:
             matchLabels:
@@ -54,13 +50,8 @@ spec:
       ports:
         - protocol: TCP
           port: 8080
-    # Relay VMs → WireGuard UDP 51820 from anywhere. The WG handshake is the
-    # auth; restricting by source IP is impossible (cloud VM public IPs are
-    # not known ahead of time and change on rotation).
-    - ports:
-        - protocol: UDP
-          port: {{ $wg.listenPort }}
   egress:
-    # All egress: WG tunnel traffic to relay VMs, DNS, and Zen-direct fallback.
+    # All egress: HTTP to relay VM public IPs (per-VM token auth), DNS, and
+    # Zen-direct fallback when all relays are down.
     - {}
 {{- end }}

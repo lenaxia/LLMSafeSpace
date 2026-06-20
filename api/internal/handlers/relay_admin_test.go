@@ -71,7 +71,6 @@ func makeRelayCR(name string, instances []v1.RelayInstanceStatus, healthy int) *
 				{Provider: "oci", Region: "us-ashburn-1", Shape: "VM.Standard.A1.Flex"},
 				{Provider: "gcp", Region: "us-west1", Shape: "e2-micro"},
 			},
-			WireGuard: v1.WireGuardConfig{RouterEndpoint: "relay-gw.example.com:51820"},
 		},
 		Status: v1.InferenceRelayStatus{
 			Instances:       instances,
@@ -240,7 +239,7 @@ func TestRelaySetup_RouterNamespaceIgnoresWorkspaceNS(t *testing.T) {
 	assert.False(t, resp.RouterDeployed, "deployment in ws-ns must not be found when routerNS is router-ns")
 }
 
-func TestRelaySetup_FleetDeployed_WireGuardEndpoint(t *testing.T) {
+func TestRelaySetup_FleetDeployed(t *testing.T) {
 	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
 	overrideList(relayMock, &v1.InferenceRelayList{Items: []v1.InferenceRelay{*makeRelayCR("relay-fleet", nil, 0)}}, nil)
 
@@ -250,7 +249,6 @@ func TestRelaySetup_FleetDeployed_WireGuardEndpoint(t *testing.T) {
 	var resp setupResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.True(t, resp.Deployed)
-	assert.Equal(t, "relay-gw.example.com:51820", resp.WireGuardEndpoint)
 }
 
 // ─── US-43.1: GetStatus tests ───────────────────────────────────────────────
@@ -269,8 +267,8 @@ func TestRelayStatus_NotDeployed(t *testing.T) {
 func TestRelayStatus_HealthyFleet(t *testing.T) {
 	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
 	instances := []v1.RelayInstanceStatus{
-		{ID: "oci-1", Provider: "oci", Region: "us-ashburn-1", State: "healthy", Healthy: true, WgIP: "10.42.42.2", PublicIP: "1.2.3.4"},
-		{ID: "gcp-1", Provider: "gcp", Region: "us-west1", State: "healthy", Healthy: true, WgIP: "10.42.42.3", PublicIP: "5.6.7.8"},
+		{ID: "oci-1", Provider: "oci", Region: "us-ashburn-1", State: "healthy", Healthy: true, PublicIP: "1.2.3.4"},
+		{ID: "gcp-1", Provider: "gcp", Region: "us-west1", State: "healthy", Healthy: true, PublicIP: "5.6.7.8"},
 	}
 	overrideList(relayMock, &v1.InferenceRelayList{Items: []v1.InferenceRelay{*makeRelayCR("relay-fleet", instances, 2)}}, nil)
 
@@ -286,6 +284,28 @@ func TestRelayStatus_HealthyFleet(t *testing.T) {
 	require.Len(t, resp.Instances, 2)
 	assert.Equal(t, "oci-1", resp.Instances[0].ID)
 	assert.Equal(t, "gcp-1", resp.Instances[1].ID)
+}
+
+// TestRelayStatus_ResponseShape_NoWGFields is the WG-removal regression guard
+// (worklog 0442). The /admin/relay/status response must NOT contain any WG-era
+// fields — specifically `wgIP` on instance entries. A stale struct field would
+// serialize as `"wgIP":""` and confuse API consumers into thinking the field
+// is meaningful.
+func TestRelayStatus_ResponseShape_NoWGFields(t *testing.T) {
+	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
+	instances := []v1.RelayInstanceStatus{
+		{ID: "oci-1", Provider: "oci", Region: "us-ashburn-1", State: "healthy", Healthy: true, PublicIP: "1.2.3.4"},
+	}
+	overrideList(relayMock, &v1.InferenceRelayList{Items: []v1.InferenceRelay{*makeRelayCR("relay-fleet", instances, 1)}}, nil)
+
+	w := doRelayRequest(r, "GET", "/api/v1/admin/relay/status")
+	require.Equal(t, http.StatusOK, w.Code)
+
+	body := w.Body.String()
+	assert.NotContains(t, body, "wgIP",
+		"status response must NOT serialize wgIP (removed in worklog 0442 — relay VMs are dialed by public IP, not WG IP)")
+	assert.NotContains(t, body, "wireGuard",
+		"status response must NOT serialize any wireGuard field")
 }
 
 func TestRelayStatus_IncludesShapeFromSpec(t *testing.T) {
@@ -520,7 +540,7 @@ func TestRelayDeploy_Create_Success(t *testing.T) {
 	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, notFoundError()).Maybe()
 	relayMock.On("Create", mock.Anything, mock.Anything).Return(makeRelayCR("relay-fleet", nil, 0), nil).Maybe()
 
-	body := `{"upstreamURL":"https://opencode.ai/zen/v1","routerEndpoint":"relay-gw.example.com:51820","providers":["oci","gcp"]}`
+	body := `{"upstreamURL":"https://opencode.ai/zen/v1","providers":["oci","gcp"]}`
 	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/deploy", body)
 
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -556,7 +576,7 @@ func TestRelayDeploy_Create_RealClientNotFoundSemantics(t *testing.T) {
 	relayMock.On("Update", mock.Anything, mock.Anything).
 		Return((*v1.InferenceRelay)(nil), notFoundError()).Maybe()
 
-	body := `{"routerEndpoint":"relay-gw.example.com:51820","providers":["oci"]}`
+	body := `{"providers":["oci"]}`
 	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/deploy", body)
 
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -570,7 +590,7 @@ func TestRelayDeploy_Update_Existing(t *testing.T) {
 	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(existing, nil).Maybe()
 	relayMock.On("Update", mock.Anything, mock.Anything).Return(existing, nil).Maybe()
 
-	body := `{"upstreamURL":"https://new.example.com","routerEndpoint":"new-gw.example.com:51820","providers":["oci"]}`
+	body := `{"upstreamURL":"https://new.example.com","providers":["oci"]}`
 	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/deploy", body)
 
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -581,7 +601,7 @@ func TestRelayDeploy_AcceptsAWS_Success(t *testing.T) {
 	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, notFoundError()).Maybe()
 	relayMock.On("Create", mock.Anything, mock.Anything).Return(makeRelayCR("relay-fleet", nil, 0), nil).Maybe()
 
-	body := `{"upstreamURL":"https://example.com","routerEndpoint":"gw:51820","providers":["aws","oci"]}`
+	body := `{"upstreamURL":"https://example.com","providers":["aws","oci"]}`
 	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/deploy", body)
 
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -594,8 +614,8 @@ func TestRelayDeploy_MissingFields_400(t *testing.T) {
 		name string
 		body string
 	}{
-		{"missing routerEndpoint", `{"upstreamURL":"https://x.com","providers":["oci"]}`},
-		{"empty providers", `{"upstreamURL":"https://x.com","routerEndpoint":"gw:51820","providers":[]}`},
+		{"empty providers", `{"upstreamURL":"https://x.com","providers":[]}`},
+		{"missing providers", `{"upstreamURL":"https://x.com"}`},
 		{"empty body", `{}`},
 	}
 
@@ -611,13 +631,58 @@ func TestRelayDeploy_Defaults_UpstreamURL(t *testing.T) {
 	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
 	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, notFoundError()).Maybe()
 	relayMock.On("Create", mock.Anything, mock.MatchedBy(func(r *v1.InferenceRelay) bool {
-		return r.Spec.UpstreamURL == "https://ai.thekao.cloud/v1"
+		return r.Spec.UpstreamURL == "https://opencode.ai/zen/v1"
 	})).Return(makeRelayCR("relay-fleet", nil, 0), nil)
 
-	body := `{"routerEndpoint":"gw:51820","providers":["oci"]}`
+	body := `{"providers":["oci"]}`
 	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/deploy", body)
 
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+}
+
+// TestRelayDeploy_CRHasNoWireGuardField verifies the deploy handler creates an
+// InferenceRelay CR with NO WireGuard configuration (worklog 0442 removed the
+// field entirely). Pre-WG-removal the handler wrote spec.wireGuard.routerEndpoint
+// from a required request field; that field is gone.
+func TestRelayDeploy_CRHasNoWireGuardField(t *testing.T) {
+	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
+	var captured *v1.InferenceRelay
+	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, notFoundError()).Maybe()
+	relayMock.On("Create", mock.Anything, mock.MatchedBy(func(relay *v1.InferenceRelay) bool {
+		captured = relay
+		return true
+	})).Return(makeRelayCR("relay-fleet", nil, 0), nil)
+
+	body := `{"upstreamURL":"https://opencode.ai/zen/v1","providers":["oci"]}`
+	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/deploy", body)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	require.NotNil(t, captured, "deploy must create an InferenceRelay CR")
+	// The WireGuard field is gone from the struct; this compiles only because
+	// it's removed. The assertion is the absence of any wireGuard-related
+	// configuration in the marshaled spec.
+	specJSON, err := json.Marshal(captured.Spec)
+	require.NoError(t, err)
+	assert.NotContains(t, string(specJSON), "wireGuard",
+		"deployed InferenceRelay Spec must NOT contain any wireGuard field (removed in worklog 0442)")
+	assert.NotContains(t, string(specJSON), "routerEndpoint",
+		"deployed InferenceRelay Spec must NOT contain routerEndpoint (was WG-era, removed in worklog 0442)")
+}
+
+// TestRelayDeploy_IgnoresRouterEndpointIfExists verifies backwards-compat: a
+// client that still sends routerEndpoint (e.g. an old UX build) gets a 200,
+// not a 400 — the field is silently ignored. This avoids breaking existing
+// callers during the rollout window.
+func TestRelayDeploy_IgnoresRouterEndpointIfExists(t *testing.T) {
+	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
+	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, notFoundError()).Maybe()
+	relayMock.On("Create", mock.Anything, mock.Anything).Return(makeRelayCR("relay-fleet", nil, 0), nil).Maybe()
+
+	body := `{"upstreamURL":"https://opencode.ai/zen/v1","routerEndpoint":"legacy-gw:51820","providers":["oci"]}`
+	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/deploy", body)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String(),
+		"a client sending the now-ignored routerEndpoint must still get 200 (backwards-compat)")
 }
 
 func TestRelayDeploy_OCIOnly_Success(t *testing.T) {
@@ -625,7 +690,7 @@ func TestRelayDeploy_OCIOnly_Success(t *testing.T) {
 	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, notFoundError()).Maybe()
 	relayMock.On("Create", mock.Anything, mock.Anything).Return(makeRelayCR("relay-fleet", nil, 0), nil).Maybe()
 
-	body := `{"upstreamURL":"https://opencode.ai/zen/v1","routerEndpoint":"relay-gw.example.com:51820","providers":["oci"]}`
+	body := `{"upstreamURL":"https://opencode.ai/zen/v1","providers":["oci"]}`
 	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/deploy", body)
 
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -636,7 +701,7 @@ func TestRelayDeploy_GCPOnly_Success(t *testing.T) {
 	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, notFoundError()).Maybe()
 	relayMock.On("Create", mock.Anything, mock.Anything).Return(makeRelayCR("relay-fleet", nil, 0), nil).Maybe()
 
-	body := `{"upstreamURL":"https://opencode.ai/zen/v1","routerEndpoint":"relay-gw.example.com:51820","providers":["gcp"]}`
+	body := `{"upstreamURL":"https://opencode.ai/zen/v1","providers":["gcp"]}`
 	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/deploy", body)
 
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
@@ -746,7 +811,7 @@ func TestRelayDeploy_NetworkError_500(t *testing.T) {
 	r, _, relayMock := setupRelayRouter(t, fake.NewSimpleClientset())
 	relayMock.On("Get", mock.Anything, "relay-fleet", mock.Anything).Return(nil, testError("connection refused")).Maybe()
 
-	body := `{"upstreamURL":"https://example.com","routerEndpoint":"gw:51820","providers":["oci"]}`
+	body := `{"upstreamURL":"https://example.com","providers":["oci"]}`
 	w := doRelayRequest(r, "POST", "/api/v1/admin/relay/deploy", body)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }

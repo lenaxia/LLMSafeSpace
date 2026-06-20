@@ -1,6 +1,4 @@
 {{- if and .Values.controller.enabled .Values.controller.inferenceRelay.enabled }}
-{{- $wg := .Values.controller.inferenceRelay.router.wireGuard }}
-{{- $ingressMode := $wg.ingress.mode }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -19,22 +17,14 @@ spec:
         {{- include "llmsafespaces.relayRouter.selectorLabels" . | nindent 8 }}
     spec:
       automountServiceAccountToken: false
-      {{- if eq $ingressMode "hostNetwork" }}
-      hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
-      nodeSelector:
-        {{ $wg.ingress.hostNetworkNodeSelectorLabel }}: "true"
-      {{- else }}
       {{- with .Values.controller.inferenceRelay.router.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- end }}
       securityContext:
-        # fsGroup keeps the wg-config emptyDir readable by the (root) WG
-        # sidecar. runAsNonRoot is intentionally NOT set at the pod level so
-        # the root WG sidecar (runAsUser: 0) can manage wg0; the router main
-        # container enforces non-root for itself.
+        # Post-WG-removal (worklog 0442): no privileged sidecar, no NET_ADMIN,
+        # no /dev/net/tun hostPath. The pod is PSA `restricted`-compliant.
+        runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -91,96 +81,22 @@ spec:
             - name: peer-config
               mountPath: /etc/relay-router
               readOnly: true
-        - name: wireguard
-          image: "{{ $wg.image.repository }}:{{ default .Chart.AppVersion $wg.image.tag }}"
-          imagePullPolicy: {{ $wg.image.pullPolicy }}
-          # Brings up wg0 (10.42.42.1/24) and hot-syncs relay peers. Needs
-          # NET_ADMIN to create/manage the wg0 interface and NET_RAW for raw
-          # socket ops. Runs as root because netlink/tun operations require it;
-          # the WG key-pinning is the real auth boundary, not uid.
-          securityContext:
-            runAsUser: 0
-            runAsGroup: 0
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              # Drop ALL then add back only the two this sidecar needs. Note
-              # NET_ADMIN/NET_RAW (and runAsUser: 0, hostPath /dev/net/tun,
-              # and hostNetwork in that mode) make this pod NON-compliant with
-              # the PSA `restricted` profile. The chart auto-widens the
-              # chart-created namespace to `privileged` when inferenceRelay is
-              # enabled (see namespace.yaml); for namespace.create=false,
-              # NOTES.txt prints the operator kubectl label command. See
-              # worklog 0410.
-              drop:
-                - ALL
-              add:
-                - NET_ADMIN
-                - NET_RAW
-          command:
-            - /scripts/render-wg.sh
-          ports:
-            - name: wg-udp
-              containerPort: {{ $wg.listenPort }}
-              protocol: UDP
-          env:
-            - name: WG_ADDRESS
-              value: {{ $wg.address | quote }}
-            - name: WG_LISTEN_PORT
-              value: {{ $wg.listenPort | quote }}
-            - name: WG_SYNC_INTERVAL
-              value: {{ $wg.syncIntervalSeconds | quote }}
-          resources:
-            {{- toYaml $wg.resources | nindent 12 }}
-          volumeMounts:
-            - name: wg-scripts
-              mountPath: /scripts
-              readOnly: true
-            - name: wg-config
-              mountPath: /etc/wireguard
-            - name: wg-secret
-              mountPath: /etc/wireguard/secret
-              readOnly: true
-            - name: peer-config
-              mountPath: /etc/relay-router
-              readOnly: true
-            - name: dev-tun
-              mountPath: /dev/net/tun
-            # Writable /tmp + /var/run for the userspace wireguard-go fallback
-            # (taken when the kernel WG module is absent — see detect_wg_impl).
-            # The kernel path (Talos) doesn't need these; the userspace path
-            # uses /var/run/wireguard for its socket. Matches the /tmp mount
-            # every other readOnlyRootFilesystem chart pod carries.
-            - name: wg-run
+            # /tmp writable for any internal scratch (the router is
+            # readOnlyRootFilesystem; without this the Go runtime can fail on
+            # temp-file operations under load).
+            - name: tmp
               mountPath: /tmp
-            - name: wg-run
-              mountPath: /var/run/wireguard
       volumes:
+        # relay-router-peers holds peers.json (topology + per-VM tokens). It is
+        # created by the controller (syncPeerConfigMap) on first provision and
+        # may not exist at chart-install time, so it is optional.
         - name: peer-config
           configMap:
             name: relay-router-peers
             optional: true
-        - name: wg-scripts
-          configMap:
-            name: relay-router-wg-scripts
-            defaultMode: 0755
-        - name: wg-config
-          emptyDir: {}
-        - name: wg-run
+        - name: tmp
           emptyDir:
             medium: Memory
-        # relay-router-wg holds the router's WG private/public keypair. It is
-        # created by the controller (ensureRouterWGKey) on first provision and
-        # may not exist at chart-install time, so it is optional.
-        - name: wg-secret
-          secret:
-            secretName: relay-router-wg
-            optional: true
-        - name: dev-tun
-          hostPath:
-            path: /dev/net/tun
-            type: CharDevice
-      {{- if ne $ingressMode "hostNetwork" }}
       {{- with .Values.controller.inferenceRelay.router.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
@@ -188,6 +104,5 @@ spec:
       {{- with .Values.controller.inferenceRelay.router.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
-      {{- end }}
       {{- end }}
 {{- end }}

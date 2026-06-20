@@ -204,18 +204,56 @@ controller:
   # added to the cluster-scoped ClusterRole when this is enabled.
   inferenceRelay:
     enabled: false
-    # URL of the in-cluster relay-router for /metrics scraping.
+    # URL of the in-cluster relay-router for /metrics scraping (used by the
+    # CONTROLLER, which runs in this release namespace — short name is fine).
     routerURL: "http://relay-router:8080"
+    # URL workspace pods use to reach the relay-router for free-model
+    # inference (Design Principle 6, Epic 42). Empty → the chart derives the
+    # cross-namespace FQDN `http://relay-router.<release-ns>.svc.cluster.local:8080`
+    # so it resolves from workspace pods in ANY namespace (the controller
+    # watches cluster-wide by default). Set this only if you deploy the router
+    # in a namespace other than the release namespace (the documented
+    # out-of-band privileged-namespace case).
+    workspaceRouterURL: ""
 
-    # Upstream the relay fleet proxies to + the real API key the router injects
-    # (A23 fix, worklog 0420). Workspaces send Authorization: Bearer public,
-    # which opencode.ai/zen now rejects on /chat/completions (401 "Missing API
-    # key"). The router swaps in this key before forwarding, so the relay VMs
-    # stay dumb byte-pipes but inference works. The key transits the encrypted
-    # WireGuard tunnel; it is never persisted on a relay VM disk. Leave
-    # upstreamAuth.keySecret empty to disable injection (router forwards the
-    # client header unchanged — the pre-A23 behavior, which 401s on Zen).
-    upstreamURL: "https://ai.thekao.cloud/v1"
+    # Relay-proxy binary distribution. The controller embeds these into each
+    # relay VM's cloud-init so the VM can download + verify the binary. Without
+    # this, a provisioned VM boots but crash-loops relay-proxy (file not found)
+    # — the cloud-init has no download step.
+    # See design/stories/epic-42.../README.md Layer 7 + Security §7.
+    #
+    # Build the binaries locally with `make relay-bin`, publish them to one or
+    # more mirrors (GitHub Release asset is the default), then compute the
+    # SHA-256 of each:
+    #   sha256sum deploy/relay-proxy-arm64 deploy/relay-proxy-amd64
+    artifact:
+      # Base mirror URLs (cloud-init appends "/relay-proxy-<arch>" and tries
+      # each in order). At least one is required; multiple give cross-cloud
+      # resilience (e.g. GitHub + S3 + GCS).
+      urls:
+        - "https://github.com/lenaxia/llmsafespace/releases/latest/download"
+      # Hex SHA-256 of the arm64 binary. REQUIRED when enabled. Verified by
+      # cloud-init before exec (supply-chain integrity, Security §7).
+      sha256Arm64: ""
+      # Hex SHA-256 of the amd64 binary. REQUIRED when enabled.
+      sha256Amd64: ""
+
+    # Upstream the relay fleet proxies to. Defaults to opencode.ai/zen/v1 so a
+    # default deploy produces working free-model inference via the anonymous
+    # `public` key (which authorizes inference for any model Zen flags
+    # `allowAnonymous` — verified 2026-06-20, worklog 0420 correction; the A23
+    # claim that `public` is dead was disproven). The earlier default to
+    # ai.thekao.cloud (PR #298) was based on that false premise; reverted.
+    #
+    # The OPTIONAL upstreamAuth.keySecret below configures router-side injection
+    # of a real API key — leave it empty (the default) for a Zen free-model
+    # fleet (the router forwards the client's `Authorization: Bearer public`
+    # unchanged). Set it only when pointing the fleet at an upstream that
+    # requires a real key (e.g. a paid gateway). When configured, the injected
+    # key transits the router→relay HTTP path (per-VM token auth, worklog
+    # 0442) and is never persisted on a relay VM disk. See worklog 0430/0435
+    # supersession notes.
+    upstreamURL: "https://opencode.ai/zen/v1"
     upstreamAuth:
       # K8s Secret (in the release namespace) holding the real upstream key.
       # The chart mounts keySecret.name[keySecret.key] as UPSTREAM_AUTH_KEY.
@@ -253,89 +291,6 @@ controller:
       nodeSelector: {}
       tolerations: []
       affinity: {}
-
-      # WireGuard sidecar + network-agnostic ingress (US-42.8, Epic 42 Layer 2
-      # redesign, worklog 0395). The sidecar brings up wg0 (10.42.42.1/24) in
-      # the router pod's network namespace so the router main container can
-      # dial relay VMs at 10.42.42.x:8080. The chart NEVER installs MetalLB or
-      # any other LB controller — that is an operator responsibility, like
-      # Postgres and Redis.
-      #
-      # IMPORTANT — Pod Security Admission (PSA): the WireGuard sidecar runs as
-      # root (runAsUser: 0), adds NET_ADMIN + NET_RAW, mounts /dev/net/tun via
-      # hostPath, and (in hostNetwork mode) uses hostNetwork. These are REQUIRED
-      # for in-pod WireGuard but make the relay-router pod NON-compliant with
-      # the PSA `restricted` profile — which is this chart's default when
-      # namespace.create is true (see namespace.podSecurityEnforce above).
-      #
-      # The chart handles this automatically when it creates the namespace:
-      # namespace.yaml widens the chart-created namespace's PSA labels
-      # (enforce/audit/warn) from `restricted` to `privileged` when this
-      # subsystem is enabled. The chart's other pods (API, controller,
-      # frontend, migration) remain individually hardened regardless, so the
-      # wider profile only admits the relay-router sidecar. See worklog 0410.
-      #
-      # Operators who set namespace.create=false (pre-existing namespace) must
-      # relax that namespace themselves — NOTES.txt prints the exact kubectl
-      # label command on install. Operators who want the namespace to STAY
-      # restricted can deploy relay-router into a separate privileged namespace
-      # out-of-band; this is the same posture as any other privileged network
-      # sidecar. The privilege is scoped to the sidecar container and WG
-      # public-key pinning remains the auth boundary.
-      wireGuard:
-        # WireGuard sidecar image. Must provide `wg`, `wg-quick`, `ip`
-        # (wireguard-tools + iproute2), `jq` (to parse the peers ConfigMap),
-        # and access to /dev/net/tun. The default is the project-published
-        # image (cmd/relay-wireguard/Dockerfile, built by CI) — kernel
-        # wireguard-tools only (Talos/modern Linux >=5.6). The userspace
-        # wireguard-go fallback used by detect_wg_impl is NOT bundled (Alpine
-        # 3.20 doesn't package it); operators on kernel-less systems build
-        # their own image. Any image with the listed tools works.
-        image:
-          repository: ghcr.io/lenaxia/llmsafespaces/relay-wireguard
-          tag: ""
-          pullPolicy: IfNotPresent
-        # WireGuard mesh addressing. Router is .1, OCI relay .2, AWS .4.
-        # (.3 reserved for optional GCP.) Must match the controller's
-        # wgIPForProvider contract (controller/internal/relay).
-        address: "10.42.42.1/24"
-        listenPort: 51820
-        # How often (seconds) the sidecar re-renders wg0.conf from the mounted
-        # Secret + ConfigMap and applies peer changes via `wg syncconf`. This
-        # is what lets the pod pick up relay VMs provisioned AFTER the pod
-        # started (the controller never restarts the router on topology
-        # changes) without an extra restart mechanism.
-        syncIntervalSeconds: 5
-        resources:
-          requests:
-            cpu: 50m
-            memory: 32Mi
-          limits:
-            cpu: 200m
-            memory: 128Mi
-        # Network-agnostic WireGuard ingress. The CRD's spec.wireGuard.
-        # routerEndpoint is ALWAYS the operator's authoritative public
-        # host:port; this only controls what (if any) Service/ pod scheduling
-        # the chart creates to expose UDP 51820.
-        ingress:
-          # external | loadBalancer | nodePort | hostNetwork
-          # Default `external`: the chart creates NO WG ingress resources —
-          # the operator wires UDP 51820 themselves (cloud LB, MetalLB, kube-
-          # vip, DNAT, …). This guarantees `helm install` succeeds on any K8s
-          # distribution, including ones with no LB controller.
-          mode: external
-          # mode=loadBalancer: optional pinned VIP / LB class / annotations.
-          # Works with ANY controller that satisfies LoadBalancer Services
-          # (cloud LB, MetalLB, kube-vip, Cilium L2) — the chart does NOT
-          # assume or install MetalLB.
-          loadBalancerIP: ""
-          loadBalancerClass: ""
-          annotations: {}
-          # mode=nodePort: pinned UDP port for stable DNS.
-          nodePort: 31820
-          # mode=hostNetwork: the operator must label the chosen node, e.g.
-          #   kubectl label node <name> llmsafespaces.dev/relay-router=true
-          hostNetworkNodeSelectorLabel: "llmsafespaces.dev/relay-router"
 
   resources:
     requests:

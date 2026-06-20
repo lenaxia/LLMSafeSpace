@@ -1,5 +1,18 @@
 # Worklog 0430 — Router Upstream Auth-Key Injection (A23 fix, decision-independent)
 
+> **⚠️ PREMISE SUPERSEDED 2026-06-20.** This PR's *mechanism* (router-side
+> upstream-key injection via `applyUpstreamAuth`) is sound and unchanged. Its
+> *rationale* — "A23 showed `public` gets 401 on `/chat/completions` from every
+> IP, so a relay forwarding `Bearer public` cannot produce inference" — is
+> **unfounded**: A23 was disproven (worklog 0420 correction). `public` still
+> authorizes inference for any model Zen flags `allowAnonymous` (`big-pickle`
+> → HTTP 200 from residential IP `24.18.52.209`). Whether router-side key
+> injection should be the *default* posture is now an open operator decision,
+> not the necessity this worklog framed it as. The code shipped here remains
+> valuable as an *optional* capability (e.g. operators pointing at a non-Zen
+> upstream that requires a real key). Read the Objective and Key Decisions
+> below with that correction in mind.
+
 **Date:** 2026-06-19
 **Epic:** 42 (Multi-Cloud Inference Relay)
 **Status:** Complete — unblocks inference regardless of which upstream the operator chooses

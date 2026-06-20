@@ -1,8 +1,62 @@
 # Epic 42: Multi-Cloud Inference Relay
 
+> **⚠ SUPERSESSION NOTICE (2026-06-20, worklog 0442):** The WireGuard mesh
+> described throughout this document was **removed** and replaced with
+> **HTTPS + per-VM shared-secret token auth**. The change was driven by:
+>
+> 1. **Operational fragility** — the `render-wg.sh` WG sidecar (the most
+>    intricate piece, never validated live in CI) carried the entire auth
+>    burden; a single shell-script regression took down the fleet.
+> 2. **Unjustified complexity for the threat model** — WG's defense-in-depth
+>    (network isolation, in-kernel encryption, per-VM asymmetric keypairs)
+>    protected a low-value asset (free-tier Zen access). The CF Worker relay
+>    shipped in Epic 26 has the identical exposure (URL/token obscurity) and is
+>    an accepted baseline.
+> 3. **Operator friction** — WG required a public UDP endpoint
+>    (`spec.wireGuard.routerEndpoint`), 4-mode ingress selection, UDP
+>    LoadBalancer/NodePort/hostNetwork plumbing, and a privileged sidecar that
+>    forced the namespace PSA profile to `privileged`. All of that is gone.
+>
+> **What changed in code:**
+> - `controller/internal/relay/wireguard.go` — **deleted** (keypair gen,
+>   wg0.conf rendering).
+> - `charts/.../relay-router-wg-scripts.yaml`, `relay-router-wg-service.yaml`
+>   — **deleted** (the `render-wg.sh` ConfigMap + UDP LB/NodePort Service).
+> - `cmd/relay-wireguard/` — **deleted** (the privileged sidecar image).
+> - `cmd/relay-proxy/auth.go` — **new**: `requireToken` middleware validates
+>   `X-Relay-Token` via `crypto/subtle.ConstantTimeCompare`. `/healthz` and
+>   `/metrics` are exempt (router health probes need them).
+> - `cmd/relay-proxy/main.go` — `--listen` default changed from
+>   `10.42.42.2:8080` (OCI WG IP) to `0.0.0.0:8080`; added `--token` /
+>   `RELAY_TOKEN` flag.
+> - `cmd/relay-router/proxy.go` — dials `http://<public-ip>` instead of
+>   `http://<wgIP>:8080`; injects `X-Relay-Token` per-relay (mirrors the
+>   `applyUpstreamAuth` pattern).
+> - `PeerEntry` (both sides) — `WgIP`/`PublicKey` → `Endpoint` (public IP)
+>   + `Token` (per-VM).
+> - Controller `provisionRelay` — drops keypair/WG render; generates a
+>   per-VM 32-byte hex token via `crypto/rand`, persists in the `relay-vm-tokens`
+>   Secret, embeds in cloud-init.
+> - `InferenceRelaySpec.WireGuard` and `RelayInstanceStatus.WgIP` — **removed**.
+> - Helm: `relay-router` Deployment loses the privileged sidecar + 5 WG
+>   volumes + hostNetwork branch; namespace stays PSA `restricted`.
+>
+> **What's preserved from the WG design:** weighted provider preference
+> (AWS→OCI→GCP), 429-storm detection + destroy-and-recreate rotation,
+> rate-limited Zen-direct fallback, the relay-router as a single in-cluster
+> proxy, the controller-driven provisioning model, and the cloud-init binary
+> artifact distribution + SHA-256 verification (worklog 0441).
+>
+> **The rest of this document is the original WG-era design and is retained as
+> historical context.** Where it conflicts with the as-built (above), the
+> as-built wins. A full rewrite is deferred — see worklog 0442 for the
+> authoritative change record.
+
+---
+
 **Status:** Planning
 **Created:** 2026-06-13
-**Depends on:** Epic 26 (Client-Proxied Inference — CF Worker relay shipped), Epic 32 (VPN sidecar patterns — WireGuard reference)
+**Depends on:** Epic 26 (Client-Proxied Inference — CF Worker relay shipped)
 **Supersedes:** None (extends Epic 26's relay architecture from single-cloudflare to multi-cloud)
 
 ---
@@ -14,6 +68,8 @@
 Epic 26 deployed a single Cloudflare Worker (`workers/inference-relay/`) as a transparent path-secret-authenticated proxy to `opencode.ai/zen/v1`. The relay distributes free-tier LLM traffic across Cloudflare's 300+ edge POPs, avoiding per-IP throttling from the platform's own server IPs.
 
 This is now **broken in production**: `opencode.ai/zen` is IP-blocking Cloudflare's egress ranges. The relay architecture is correct (worklog `0184` confirmed the `public` key itself is not throttled — a laptop can reach Zen fine), but the Cloudflare IP ranges are blocked. Free-tier inference for all workspace pods is dead until we move the relay off Cloudflare.
+
+> **Update 2026-06-19 (A23, worklog 0420):** ⚠️ **SUPERSEDED 2026-06-20 — A23 was disproven.** The 2026-06-19 note (below, struck through) claimed `public` returns 401 on `/chat/completions` from every IP/header and concluded "free-tier inference is dead." That was an artifact of probing only models that happen to have `allowAnonymous` unset in Zen's deploy-time config. A free model that IS `allowAnonymous` (`big-pickle`, resolves to `deepseek-v4-flash`) returns **HTTP 200** with `Bearer public` from the same residential IP (`24.18.52.209`) that produced the original 401s. ~~`public` now returns 401 on `/chat/completions` from every IP/header.~~ The actual mechanism is **per-model** (Zen handler `packages/console/app/src/routes/zen/util/handler.ts:599-603` + `model.ts:26`: `allowAnonymous: z.boolean().optional()`), not a global key death and not IP-based. **A0 (per-IP throttling for anonymous free-tier traffic) is restored as the relay's foundational premise.** The router upstream-auth injection (#297) and default→thekao (#298) remain valid *mechanisms* but their stated rationale is unfounded; see A23 row for the operator decision on whether to keep them as defaults. Relay scope is unchanged: free-model traffic only; paid-model traffic goes direct to the user's provider.
 
 ```
 Workspace Pod (opencode) → relay.safespaces.dev → CF Worker → opencode.ai/zen/v1
@@ -630,6 +686,43 @@ Shared across providers. Renders a single `user-data` script that:
 6. Configures UFW: allow SSH (WG-only or disabled), allow UDP 51820 (WG), deny everything else
 7. Enables unattended-upgrades
 
+**Implementation** (`controller/internal/relay/cloudinit.go`): the cloud-init is a
+`#cloud-config` document (not a bare bash script). `RenderCloudInit` takes a
+`CloudInitConfig` struct with all fields required and validated:
+
+| Field | Purpose |
+|---|---|
+| `WgConfig` | Rendered `wg0.conf` content (private key + router peer) |
+| `WgIP` | This relay's WG IP → rendered as `--listen={{WgIP}}:8080` |
+| `UpstreamURL` | Zen default → rendered as `--upstream=` |
+| `RouterEndpoint` | WG endpoint the relay dials back to |
+| `ArtifactURLs` | Base mirror URLs; cloud-init appends `/relay-proxy-<arch>` and tries each |
+| `ArtifactSHA256` | Hex SHA-256 of the binary; cloud-init verifies before exec (Security §7) |
+| `BinaryName` | Arch-resolved artifact name (`relay-proxy-arm64` / `relay-proxy-amd64`) |
+
+The controller resolves architecture via `archForShape(shape, provider)` (AWS
+Graviton `t4g`/`c7g`/`m6g` → arm64; OCI Ampere `A1`/`E1` → arm64; GCP → amd64;
+unknown defaults arm64) and selects the matching checksum from the per-arch
+flags (`--relay-artifact-sha256-arm64`, `--relay-artifact-sha256-amd64`).
+
+The download is a `runcmd` step that runs BEFORE `systemctl start relay-proxy`:
+
+```bash
+sh -c 'set -e; bin=/usr/local/bin/relay-proxy; ok=0;
+  for base in <mirror1> <mirror2>; do
+    if curl -fsSL --connect-timeout 10 "$base/relay-proxy-arm64" -o "$bin"; then
+      echo "<sha256>  $bin" | sha256sum -c - && chmod +x "$bin" && ok=1 && break
+    fi
+  done
+  if [ "$ok" != "1" ]; then echo "FATAL: could not download/verify relay-proxy" >&2; exit 1; fi'
+```
+
+The controller flag `--relay-artifact-url` (comma-separated) and the two
+`--relay-artifact-sha256-*` flags are set by the Helm chart from
+`controller.inferenceRelay.artifact.{urls,sha256Arm64,sha256Amd64}`. Operators
+build the binaries (`make relay-bin`), publish to one or more mirrors (GitHub
+Release is the default), and set the checksums.
+
 ```bash
 #!/bin/bash
 set -euo pipefail
@@ -747,8 +840,8 @@ All assumptions below were validated against provider documentation and technica
 | A19 | WireGuard is available in standard Linux kernels ≥5.6 (no DKMS needed) | ✅ Verified | WireGuard was merged into the Linux kernel in 5.6 (2020-03). OCI Oracle Linux 8/9 and GCP Ubuntu 20.04+ images ship kernels ≥5.6. |
 | A20 | WireGuard UDP hole-punching works through cloud NAT with PersistentKeepalive | ✅ Verified | wireguard.com quickstart: "A sensible interval that works with a wide variety of firewalls is 25 seconds." `PersistentKeepalive = 25` is the documented standard NAT-traversal mechanism. Per-provider NAT behavior still needs live verification during US-42.5/42.6. |
 | A21 | Cluster can expose a reachable UDP endpoint for WG via at least one of: cloud LB, MetalLB, kube-vip, NodePort, hostNetwork, or operator-supplied DNAT | ✅ Verified (multi-mode) | The chart ships four operator-selectable ingress modes (`external`, `loadBalancer`, `nodePort`, `hostNetwork`); see Layer 2 redesign. The chart does **not** install MetalLB or any other LB controller — that's an operator responsibility (same model as Postgres/Redis). Default mode is `external`: the chart creates no ingress resources, the operator points DNS at whatever they already run. This guarantees `helm install` works on any K8s distribution. |
-| A22 | OCI and AWS IPs are not blocked by opencode.ai/zen | ✅ Validated (AWS, /models) / ⚠️ OCI pending | **AWS IP-reachability validated (worklog 0410):** deployed a t4g.micro (us-east-1b, public IP 34.205.17.204), `curl https://opencode.ai/zen/v1/models` returned **HTTP 200** with a 4020-byte model list in 0.12s — the AWS IP reaches Zen and gets application-layer responses (not IP-blocked). **BUT** a follow-up inference probe (worklog 0420) found `public` returns **401 "Missing API key"** on `/chat/completions` from the same IP — IP-not-blocked does **not** mean the relay path works. See **A23** (new BLOCKER). **OCI still pending** operator action. |
-| A23 | The `public` anonymous key authorizes inference on opencode.ai/zen | ❌ DISPROVED (2026-06-19) — **RESOLVED 2026-06-19: option (2) chosen** | **New finding (worklog 0420).** `public` returns **401 "Missing API key"** on `/chat/completions` (and `/responses`) from **both** a residential IP (24.18.52.209) **and** an AWS IP (13.221.103.1), via `Authorization: Bearer`, `x-api-key`, `api-key`, and no-auth — identical 401 in ~0.2s (application-layer auth rejection, not an IP block). The same key still returns **200** on `/models` (read-only listing). Both relays forward headers **unchanged** (`workers/inference-relay/src/index.ts:64`, `cmd/relay-proxy/proxy.go:134`) — no key injection — so a relay forwarding `Bearer public` gets 401 on inference **regardless of source IP**. This contradicts A0's premise ("the `public` key works from a residential IP"). Trajectory: 2026-06-07 `public`→429 `FreeUsageLimitError` (key accepted, quota exhausted); 2026-06-13 owner said it worked residentially; 2026-06-19 `public`→401 everywhere (key now scoped to listing). **Resolution (worklog 0435): operator chose option (2)** — re-point the relay at the operator-owned gateway. Defaults flipped from `opencode.ai/zen/v1` to `ai.thekao.cloud/v1` (handler, CRD type + chart CRD schema, router const, chart values); the router injects a real upstream key from a K8s Secret (#297, worklog 0430). `ai.thekao.cloud`'s model list includes `bedrock-claude-sonnet-4.6`, so a Claude path survives via Bedrock (free-tier `claude-opus/fable/etc.` from Zen is gone — that access was dead regardless). Relay VMs see the real key in transit (fleet-wide blast radius; see Security §2). |
+| A22 | OCI and AWS IPs are not blocked by opencode.ai/zen | ✅ Validated (AWS, /models) / ⚠️ OCI pending | **AWS IP-reachability validated (worklog 0410):** deployed a t4g.micro (us-east-1b, public IP 34.205.17.204), `curl https://opencode.ai/zen/v1/models` returned **HTTP 200** with a 4020-byte model list in 0.12s — the AWS IP reaches Zen and gets application-layer responses (not IP-blocked). **A 2026-06-19 follow-up (worklog 0420) claimed a deeper blocker (A23: `public` 401s on inference from the same IP); that claim is SUPERSEDED 2026-06-20 — A23 was disproven, see A23 row.** Per-IP reachability + per-model `allowAnonymous` together mean the relay path works from AWS for any model Zen flags `allowAnonymous`. **OCI still pending** operator action. |
+| A23 | The `public` anonymous key authorizes inference on opencode.ai/zen | ⚠️ **PER-MODEL (2026-06-20 correction)** — original "DISPROVED" finding was itself wrong | **Original 2026-06-19 finding (worklog 0420) is SUPERSEDED — see correction block in that worklog.** The 2026-06-19 probe sampled only models without `allowAnonymous` (`claude-fable-5`, `claude-sonnet-4`, `gemini-3.5-flash`, `claude-haiku-4-5`, `claude-opus-4-8`) and wrongly generalized the resulting 401s to "`public` is dead everywhere." **2026-06-20 re-probe (residential IP `24.18.52.209`):** `POST /v1/chat/completions` model=`big-pickle` + `Authorization: Bearer public` → **HTTP 200**, real completion (`model: deepseek-v4-flash`, 111 tokens). Same key + same IP + `claude-fable-5` → **HTTP 401**. **Mechanism (opencode `handler.ts:599-603` + `model.ts:26`):** `public`→`undefined`; `authenticate()` returns OK iff `modelInfo.allowAnonymous` (a per-model flag in ZenData, loaded from deploy-time SST secrets — not in the repo, so not visible to the 06-19 probe). Inference authorization is **per-model**, not per-key, not per-IP. **Implications:** (1) A0 (per-IP throttling for anonymous free-tier traffic) is the relay's valid foundational premise, restored. (2) #297 (router auth injection) and #298 (default→thekao) remain valid *mechanisms* but their rationale ("public 401s everywhere so we must inject a real key") is unfounded — keep, revert, or repurpose is an **open operator decision**. (3) Relay scope unchanged: free-model traffic only; paid goes direct. (4) Free-tier `claude-*` still 401 via `public` today, but that is a Zen per-model config choice that could change without notice — the relay architecture must not assume either way. |
 
 ---
 
@@ -789,7 +882,7 @@ OCI will reclaim Always Free instances where CPU utilization (95th percentile), 
 | Story | Title | Effort | Depends On |
 |-------|-------|--------|------------|
 | US-42.1 | Portable relay Go binary (proxy + health + metrics incl. egress bytes + keepalive) | Small-Medium (1d) | None |
-| US-42.2 | Cloud-init template + artifact publishing (with SHA-256 verification) + **day-one validation** (deploy VM on AWS, OCI; curl Zen, verify not blocked — A22; verify `@ai-sdk/openai-compatible` headers support) — **AWS IP-reachability confirmed (/models 200, worklog 0410), BUT day-one validation surfaced BLOCKER A23: `public` inference returns 401. OCI pending.** | Small (0.5-1d) | US-42.1 |
+| US-42.2 | Cloud-init template + artifact publishing (with SHA-256 verification) + **day-one validation** (deploy VM on AWS, OCI; curl Zen, verify not blocked — A22; verify `@ai-sdk/openai-compatible` headers support) — **AWS IP-reachability confirmed (/models 200, worklog 0410). A23 blocker (worklog 0420) SUPERSEDED 2026-06-20: per-model `allowAnonymous` governs `public` inference, not a global key death — see A23 row. OCI pending.** | Small (0.5-1d) | US-42.1 |
 | US-42.3 | InferenceRelay CRD + types + deepcopy + RBAC + **validating webhook** (CredentialsRef Secret existence + keys) | Medium (1d) | None |
 | US-42.4 | WireGuard keypair generation + config rendering | Small (0.5d) | None |
 | US-42.5 | OCI provider driver (provision, destroy, status) — **blocked by 7-day reclamation validation gate** | Medium (1-2d) | US-42.2, US-42.4 |
@@ -804,7 +897,7 @@ OCI will reclaim Always Free instances where CPU utilization (95th percentile), 
 
 **Total estimated effort:** 12.5-16.5 days
 
-**Day-one gate (US-42.2):** Before any controller work, manually deploy a relay VM on AWS, OCI, and GCP; curl `opencode.ai/zen/v1` from each. If any provider's IPs are blocked by Zen, remove that provider from the fleet. This is the cheapest possible validation. **AWS half: IP-reachability VALIDATED** (worklog 0410 — `/models` HTTP 200 from t4g.micro 34.205.17.204). **BUT day-one validation surfaced a deeper BLOCKER (A23, worklog 0420): the `public` key returns 401 "Missing API key" on `/chat/completions` from both residential and AWS IPs, so the relay-forwarding-`public` architecture cannot produce inference regardless of IP diversity.** **OCI half: still pending** operator action. **Epic 42's IP-diversity premise (A0) is now insufficient — see A23 for the operator decision (real Zen key vs. operator-owned gateway vs. confirm-with-Zen).**
+**Day-one gate (US-42.2):** Before any controller work, manually deploy a relay VM on AWS, OCI, and GCP; curl `opencode.ai/zen/v1` from each. If any provider's IPs are blocked by Zen, remove that provider from the fleet. This is the cheapest possible validation. **AWS half: IP-reachability VALIDATED** (worklog 0410 — `/models` HTTP 200 from t4g.micro 34.205.17.204). **A 2026-06-19 follow-up (worklog 0420) claimed a deeper blocker (A23: `public` 401s on inference regardless of IP); that claim is SUPERSEDED 2026-06-20 — re-probe found `big-pickle` + `Bearer public` → HTTP 200 from the same residential IP. Per-model `allowAnonymous` governs inference auth, not a global key death. The relay-forwarding-`public` architecture produces inference for any model Zen flags `allowAnonymous`.** **OCI half: still pending** operator action. **Epic 42's IP-diversity premise (A0) stands — see A23 for the open operator decision on whether to keep #297/#298's default-upstream change.**
 
 ---
 
@@ -976,7 +1069,7 @@ The controller and router expose Prometheus metrics and CR conditions. The follo
 
 1. **WireGuard is the only auth.** Relay VMs reject all non-WG traffic. The relay binary listens on the WG interface IP only (`10.42.42.x:8080`), not `0.0.0.0`. Public internet sees one UDP port; unauthenticated packets are dropped by WG before reaching any application code.
 
-2. **Upstream API key transits relay VMs (NOT at rest).** Since A23 (worklog 0420), `public` no longer authorizes Zen inference, so the router injects a **real** upstream key (from a K8s Secret) before forwarding. The relay VMs forward that key in memory over the WG tunnel; it is **never written to VM disk** and is not present in cloud-init. **However, the blast radius of a compromised relay VM is now fleet-wide, not per-VM:** a compromised VM can observe the upstream key in transit and impersonate the whole fleet's inference credential (unlike the per-VM WG private key in §3, whose compromise affects only one tunnel). Mitigations: destroy-and-recreate rotation limits exposure windows; the WG-only listener (§1, §4) means only an authenticated WG peer (i.e. the router) can reach the relay; and operators who cannot accept fleet-wide key exposure should place a rate-limited/quota-capped gateway key upstream rather than their primary key. There are still **no cluster credentials and no user data** on relay VMs.
+2. **Upstream API key transits relay VMs (NOT at rest).** ⚠️ **(2026-06-20: the A23 rationale for this is unfounded — see below.)** The 2026-06-19 framing was: since A23, `public` no longer authorizes Zen inference, so the router must inject a **real** upstream key. **A23 is disproven** (worklog 0420 correction): `public` still authorizes inference for any model Zen flags `allowAnonymous` (`big-pickle` → 200 from residential IP). The relay-forwarding-`public` architecture produces inference without key injection. **Whether the router SHOULD inject a real upstream key is now an open operator decision** (keep #297's mechanism for cases where operators point at a non-Zen upstream that needs a real key; revert the default to Zen+`public`; or repurpose). If key injection IS enabled, the key transits relay VMs in memory over the WG tunnel — **never written to VM disk**, not present in cloud-init — but a compromised VM can observe it in transit, and the blast radius is **fleet-wide** (not per-VM like the WG private key in §3). Mitigations: destroy-and-recreate rotation limits exposure windows; the WG-only listener (§1, §4) means only an authenticated WG peer (the router) can reach the relay; operators who cannot accept fleet-wide key exposure should place a rate-limited/quota-capped gateway key upstream rather than their primary key. There are still **no cluster credentials and no user data** on relay VMs.
 
 3. **WG keypairs are per-VM, generated by the controller.** A compromised relay VM's private key compromises only that tunnel. Destroy-and-recreate generates a fresh keypair. The router's private key is in a K8s Secret.
 

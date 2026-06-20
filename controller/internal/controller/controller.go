@@ -55,9 +55,24 @@ func SetupControllers(mgr ctrl.Manager, inferenceRelayURL, inferenceRelaySecret,
 	return nil
 }
 
+// RelayArtifactConfig holds the relay-proxy binary distribution settings the
+// controller embeds into each relay VM's cloud-init. All fields are required
+// when the relay controller is enabled: a VM without a download path produces
+// a structurally provisioned but non-functional relay (systemd unit references
+// a binary that never arrives).
+type RelayArtifactConfig struct {
+	// URLs are the base mirror URLs (cloud-init appends "/<binary>"). At least
+	// one is required; multiple provide cross-cloud resilience.
+	URLs []string
+	// SHA256Arm64 is the hex SHA-256 of the arm64 relay-proxy binary.
+	SHA256Arm64 string
+	// SHA256Amd64 is the hex SHA-256 of the amd64 relay-proxy binary.
+	SHA256Amd64 string
+}
+
 // SetupRelayController registers the InferenceRelay reconciler.
 // It is feature-gated and only activated when enableRelay is true.
-func SetupRelayController(mgr ctrl.Manager, namespace, routerURL string, enableRelay bool) error {
+func SetupRelayController(mgr ctrl.Manager, namespace, routerURL string, enableRelay bool, artifact RelayArtifactConfig) error {
 	if !enableRelay {
 		return nil
 	}
@@ -78,6 +93,9 @@ func SetupRelayController(mgr ctrl.Manager, namespace, routerURL string, enableR
 			"aws": "aws-relay-irwa",
 			"oci": "oci-credentials",
 		},
+		ArtifactURLs:        artifact.URLs,
+		ArtifactSHA256Arm64: artifact.SHA256Arm64,
+		ArtifactSHA256Amd64: artifact.SHA256Amd64,
 	}
 
 	if err := relayReconciler.SetupWithManager(mgr); err != nil {

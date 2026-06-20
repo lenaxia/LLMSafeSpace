@@ -5,6 +5,8 @@ package relay
 
 import (
 	"context"
+	cryptorand "crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -23,8 +25,16 @@ import (
 	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
-// relayWGKeysSecret is where relay WG public keys are persisted across restarts.
-const relayWGKeysSecret = "relay-wg-keys"
+// generateRelayToken returns a fresh per-VM shared-secret token (32 random
+// bytes, hex-encoded → 64 chars). Used by provisionRelay when no existing token
+// is persisted for the provider slot.
+func generateRelayToken() (string, error) {
+	b := make([]byte, relayTokenBytes)
+	if _, err := cryptorand.Read(b); err != nil {
+		return "", fmt.Errorf("read random bytes: %w", err)
+	}
+	return hex.EncodeToString(b), nil
+}
 
 // InferenceRelayReconciler reconciles InferenceRelay CRs to manage the
 // full lifecycle of relay VMs across cloud providers.
@@ -45,6 +55,21 @@ type InferenceRelayReconciler struct {
 	// the driver reads credentials from. The reconciler validates that
 	// spec.providers[].credentialsRef.Name matches this value.
 	ExpectedCredentialSecrets map[string]string
+
+	// ArtifactURLs are the base mirror URLs the controller embeds into each
+	// relay VM's cloud-init so it can download the relay-proxy binary. Set
+	// via the --relay-artifact-url controller flag (comma-separated), sourced
+	// from the operator's Helm values. The cloud-init appends "/<binary>"
+	// (arch-resolved) and tries each mirror in order.
+	ArtifactURLs []string
+
+	// ArtifactSHA256Arm64 is the hex SHA-256 of the arm64 relay-proxy binary.
+	// Required when provisioning any arm64 shape (AWS t4g, OCI A1).
+	ArtifactSHA256Arm64 string
+
+	// ArtifactSHA256Amd64 is the hex SHA-256 of the amd64 relay-proxy binary.
+	// Required when provisioning any amd64 shape (GCP e2, AWS t3).
+	ArtifactSHA256Amd64 string
 }
 
 // Reconcile handles the InferenceRelay CR lifecycle.
@@ -144,8 +169,8 @@ func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1
 		}
 	}
 
-	// Read relay WG public keys from persistent Secret
-	relayPubKeys := r.readRelayWGKeys(ctx)
+	// Read relay per-VM tokens from persistent Secret
+	relayTokens := r.readRelayTokens(ctx)
 
 	// Provision missing VMs for each provider in spec
 	instances := make([]v1.RelayInstanceStatus, 0, len(relay.Spec.Providers))
@@ -171,7 +196,7 @@ func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1
 		}
 
 		// Need to provision a new VM
-		result, pubKey, err := r.provisionRelay(ctx, relay, providerSpec)
+		result, token, err := r.provisionRelay(ctx, relay, providerSpec, relayTokens[provider])
 		if err != nil {
 			logger.Error(err, "provisioning failed", "provider", provider)
 			if IsConfigError(err) {
@@ -203,17 +228,18 @@ func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1
 			continue
 		}
 
-		// Persist relay WG public key
-		relayPubKeys[provider] = pubKey
-		if err := r.writeRelayWGKeys(ctx, relayPubKeys); err != nil {
-			logger.Error(err, "failed to persist relay WG key")
+		// Persist the per-VM token (so a controller restart uses the same token
+		// the running VM was cloud-init'd with; a fresh token would 401 at the
+		// router until the VM is destroyed + recreated).
+		relayTokens[provider] = token
+		if err := r.writeRelayTokens(ctx, relayTokens); err != nil {
+			logger.Error(err, "failed to persist relay token")
 		}
 
 		instances = append(instances, v1.RelayInstanceStatus{
 			ID:       result.InstanceID,
 			Provider: provider,
 			Region:   providerSpec.Region,
-			WgIP:     wgIPForProvider(provider),
 			PublicIP: result.PublicIP,
 			State:    string(v1.RelayStateProvisioning),
 			Healthy:  false,
@@ -239,7 +265,7 @@ func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1
 		setRelayQuotaExhausted(inst.Provider, inst.State == string(v1.RelayStateQuotaExhausted))
 	}
 
-	// Build peer entries for ConfigMap (include WG public keys)
+	// Build peer entries for ConfigMap (include per-VM tokens)
 	peers := make([]PeerEntry, 0, len(instances))
 	for _, inst := range instances {
 		state := inst.State
@@ -247,11 +273,11 @@ func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1
 			state = string(v1.RelayStateHealthy)
 		}
 		peers = append(peers, PeerEntry{
-			ID:        inst.ID,
-			WgIP:      inst.WgIP,
-			Provider:  inst.Provider,
-			State:     state,
-			PublicKey: relayPubKeys[inst.Provider],
+			ID:       inst.ID,
+			Endpoint: endpointForInstance(inst),
+			Provider: inst.Provider,
+			State:    state,
+			Token:    relayTokens[inst.Provider],
 		})
 	}
 
@@ -316,7 +342,10 @@ func (r *InferenceRelayReconciler) updateConditions(relay *v1.InferenceRelay, he
 
 // provisionRelay creates a new relay VM for the given provider.
 // Returns the provision result, WG public key, and error.
-func (r *InferenceRelayReconciler) provisionRelay(ctx context.Context, relay *v1.InferenceRelay, providerSpec v1.RelayProviderSpec) (*ProvisionResult, string, error) {
+// provisionRelay creates a new relay VM for the given provider.
+// Returns the provision result, the per-VM token (read from existingToken or
+// freshly generated), and error.
+func (r *InferenceRelayReconciler) provisionRelay(ctx context.Context, relay *v1.InferenceRelay, providerSpec v1.RelayProviderSpec, existingToken string) (*ProvisionResult, string, error) {
 	driver, ok := r.Drivers[providerSpec.Provider]
 	if !ok {
 		return nil, "", fmt.Errorf("%w: no driver for provider %s", ErrConfig, providerSpec.Provider)
@@ -332,137 +361,102 @@ func (r *InferenceRelayReconciler) provisionRelay(ctx context.Context, relay *v1
 		}
 	}
 
-	// Generate WireGuard keypair for this relay VM
-	kp, err := GenerateKeypair()
-	if err != nil {
-		return nil, "", fmt.Errorf("generate WG keypair: %w", err)
-	}
-
-	// Read or generate router's WG public key
-	routerPubKey, err := r.ensureRouterWGKey(ctx, relay)
-	if err != nil {
-		return nil, "", fmt.Errorf("ensure router WG key: %w", err)
-	}
-
-	// Render WG config for the relay VM
-	wgConf, err := RenderRelayConfig(RelayWGConfig{
-		PrivateKey:      kp.PrivateKeyB64,
-		WgIP:            wgIPForProvider(providerSpec.Provider),
-		RouterPublicKey: routerPubKey,
-		RouterEndpoint:  relay.Spec.WireGuard.RouterEndpoint,
-	})
-	if err != nil {
-		return nil, "", fmt.Errorf("render WG config: %w", err)
+	// Token: reuse the existing per-VM token if present (so a controller
+	// restart doesn't desync from a running VM), otherwise generate a fresh
+	// one for this new VM. Per-VM scope means a compromised VM's token cannot
+	// be used against sibling relays.
+	token := existingToken
+	if token == "" {
+		var err error
+		token, err = generateRelayToken()
+		if err != nil {
+			return nil, "", fmt.Errorf("generate relay token: %w", err)
+		}
 	}
 
 	// Render cloud-init
+	shape := providerSpec.Shape
+	if shape == "" {
+		shape = defaultShapeForProvider(providerSpec.Provider)
+	}
+	arch := archForShape(shape, providerSpec.Provider)
+	artifactSHA := r.ArtifactSHA256Arm64
+	if arch == "amd64" {
+		artifactSHA = r.ArtifactSHA256Amd64
+	}
+	if artifactSHA == "" {
+		return nil, "", fmt.Errorf("%w: relay artifact SHA-256 for arch %s is not set on the controller — set --relay-artifact-sha256-%s (the cloud-init cannot verify the binary download without it)", ErrConfig, arch, arch)
+	}
+
 	cloudInit, err := RenderCloudInit(CloudInitConfig{
-		WgConfig:       wgConf,
 		UpstreamURL:    relay.Spec.UpstreamURL,
-		RouterEndpoint: relay.Spec.WireGuard.RouterEndpoint,
+		Token:          token,
+		ArtifactURLs:   r.ArtifactURLs,
+		ArtifactSHA256: artifactSHA,
+		BinaryName:     binaryNameForArch(arch),
 	})
 	if err != nil {
 		return nil, "", fmt.Errorf("render cloud-init: %w", err)
 	}
 
-	shape := providerSpec.Shape
-	if shape == "" {
-		shape = defaultShapeForProvider(providerSpec.Provider)
-	}
-
 	// Call the provider driver
 	start := time.Now()
 	result, err := driver.Provision(ctx, ProvisionRequest{
-		Name:        fmt.Sprintf("relay-%s", providerSpec.Provider),
-		Region:      providerSpec.Region,
-		Shape:       shape,
-		CloudInit:   cloudInit,
-		WireGuardIP: wgIPForProvider(providerSpec.Provider),
+		Name:      fmt.Sprintf("relay-%s", providerSpec.Provider),
+		Region:    providerSpec.Region,
+		Shape:     shape,
+		CloudInit: cloudInit,
 	})
 	if err != nil {
 		return nil, "", fmtError("provision", providerSpec.Provider, err)
 	}
 
 	observeProvisionDuration(providerSpec.Provider, time.Since(start).Seconds())
-	return result, kp.PublicKeyB64, nil
+	return result, token, nil
 }
 
-// ensureRouterWGKey reads or generates the router's WG keypair from the
-// secret referenced in spec.wireGuard.routerPrivateKeyRef (or default).
-// Returns the public key and an error if the key could not be persisted.
-func (r *InferenceRelayReconciler) ensureRouterWGKey(ctx context.Context, relay *v1.InferenceRelay) (string, error) {
-	secretName := routerWGSecret
-	if relay.Spec.WireGuard.RouterPrivateKeyRef != "" {
-		secretName = relay.Spec.WireGuard.RouterPrivateKeyRef
-	}
-	routerSecret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: r.Namespace}, routerSecret); err == nil {
-		if pub := string(routerSecret.Data["publicKey"]); pub != "" {
-			return pub, nil
-		}
-	}
-
-	// Auto-generate if missing
-	kp, err := GenerateKeypair()
-	if err != nil {
-		return "", fmt.Errorf("generate router WG keypair: %w", err)
-	}
-
-	routerSecret.ObjectMeta = metav1.ObjectMeta{Name: secretName, Namespace: r.Namespace}
-	routerSecret.Data = map[string][]byte{
-		"publicKey":  []byte(kp.PublicKeyB64),
-		"privateKey": []byte(kp.PrivateKeyB64),
-	}
-
-	if err := r.Create(ctx, routerSecret); err != nil {
-		if apierrors.IsAlreadyExists(err) {
-			existing := &corev1.Secret{}
-			if getErr := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: r.Namespace}, existing); getErr != nil {
-				return "", fmt.Errorf("get existing router WG secret: %w", getErr)
-			}
-			existing.Data = routerSecret.Data
-			if updateErr := r.Update(ctx, existing); updateErr != nil {
-				return "", fmt.Errorf("update router WG secret: %w", updateErr)
-			}
-		} else {
-			return "", fmt.Errorf("create router WG secret: %w", err)
-		}
-	}
-
-	return kp.PublicKeyB64, nil
-}
-
-// readRelayWGKeys reads the relay WG public keys from the persistent Secret.
-func (r *InferenceRelayReconciler) readRelayWGKeys(ctx context.Context) map[string]string {
-	keys := make(map[string]string)
+// readRelayTokens reads the per-VM relay tokens from the persistent Secret.
+// Keyed by provider name (one VM per provider slot).
+func (r *InferenceRelayReconciler) readRelayTokens(ctx context.Context) map[string]string {
+	tokens := make(map[string]string)
 	secret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: relayWGKeysSecret, Namespace: r.Namespace}, secret); err != nil {
-		return keys
+	if err := r.Get(ctx, types.NamespacedName{Name: relayTokensSecret, Namespace: r.Namespace}, secret); err != nil {
+		return tokens
 	}
 	for provider, data := range secret.Data {
 		if len(data) > 0 {
-			keys[provider] = string(data)
+			tokens[provider] = string(data)
 		}
 	}
-	return keys
+	return tokens
 }
 
-// writeRelayWGKeys persists relay WG public keys to a Secret.
-func (r *InferenceRelayReconciler) writeRelayWGKeys(ctx context.Context, keys map[string]string) error {
+// writeRelayTokens persists per-VM relay tokens to a Secret.
+func (r *InferenceRelayReconciler) writeRelayTokens(ctx context.Context, tokens map[string]string) error {
 	secret := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{Name: relayWGKeysSecret, Namespace: r.Namespace}, secret)
-	data := make(map[string][]byte, len(keys))
-	for provider, key := range keys {
-		data[provider] = []byte(key)
+	err := r.Get(ctx, types.NamespacedName{Name: relayTokensSecret, Namespace: r.Namespace}, secret)
+	data := make(map[string][]byte, len(tokens))
+	for provider, token := range tokens {
+		data[provider] = []byte(token)
 	}
 
 	if err == nil {
 		secret.Data = data
 		return r.Update(ctx, secret)
 	}
-	secret.ObjectMeta = metav1.ObjectMeta{Name: relayWGKeysSecret, Namespace: r.Namespace}
+	secret.ObjectMeta = metav1.ObjectMeta{Name: relayTokensSecret, Namespace: r.Namespace}
 	secret.Data = data
 	return r.Create(ctx, secret)
+}
+
+// endpointForInstance returns the dialable endpoint (host:port) for a relay
+// instance status. The router dials http://<endpoint><path>. The default port
+// 8080 matches the relay-proxy's --listen default.
+func endpointForInstance(inst v1.RelayInstanceStatus) string {
+	if inst.PublicIP == "" {
+		return ""
+	}
+	return inst.PublicIP + ":8080"
 }
 
 // handleRotation destroys the specified relay VM and marks it for reprovisioning.

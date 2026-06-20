@@ -156,9 +156,7 @@ func TestSetDefaults_InferenceRelaySpec(t *testing.T) {
 		getValue  func(InferenceRelaySpec) any
 		wantAfter any
 	}{
-		{"UpstreamURL", InferenceRelaySpec{}, func(s InferenceRelaySpec) any { return s.UpstreamURL }, "https://ai.thekao.cloud/v1"},
-		{"WireGuard.CIDR", InferenceRelaySpec{}, func(s InferenceRelaySpec) any { return s.WireGuard.CIDR }, "10.42.42.0/24"},
-		{"WireGuard.Port", InferenceRelaySpec{}, func(s InferenceRelaySpec) any { return s.WireGuard.Port }, 51820},
+		{"UpstreamURL", InferenceRelaySpec{}, func(s InferenceRelaySpec) any { return s.UpstreamURL }, "https://opencode.ai/zen/v1"},
 		{"HealthCheck.UnhealthyThreshold", InferenceRelaySpec{}, func(s InferenceRelaySpec) any { return s.HealthCheck.UnhealthyThreshold }, 3},
 		{"Fallback.Enabled", InferenceRelaySpec{}, func(s InferenceRelaySpec) any { return s.Fallback.Enabled }, true},
 		{"Rotation.Enabled", InferenceRelaySpec{}, func(s InferenceRelaySpec) any { return s.Rotation.Enabled }, true},
