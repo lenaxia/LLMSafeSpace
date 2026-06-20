@@ -36,14 +36,14 @@ func ssoColumns() []string {
 
 // Distinctive, escaped regex fragments matching each store query.
 const (
-	qGetSSO        = `FROM org_sso_configs WHERE org_id = \$1`
-	qUpsertSSO     = `INSERT INTO org_sso_configs`
-	qDeleteSSO     = `DELETE FROM org_sso_configs WHERE org_id = \$1`
-	qFindByDom     = `WHERE \$1 = ANY \(c\.claimed_domains\)`
-	qListDomains   = `array_length\(c\.verified_domains, 1\) IS NOT NULL`
-	qCountSSO      = `COUNT\(\*\) FROM org_sso_configs`
-	qSetVerified   = `verified_domains = array_append\(verified_domains, \$2\)`
-	qRotateToken   = `verification_token = \$2`
+	qGetSSO      = `FROM org_sso_configs WHERE org_id = \$1`
+	qUpsertSSO   = `INSERT INTO org_sso_configs`
+	qDeleteSSO   = `DELETE FROM org_sso_configs WHERE org_id = \$1`
+	qFindByDom   = `WHERE \$1 = ANY \(c\.claimed_domains\)`
+	qListDomains = `array_length\(c\.verified_domains, 1\) IS NOT NULL`
+	qCountSSO    = `COUNT\(\*\) FROM org_sso_configs`
+	qSetVerified = `verified_domains = array_append\(verified_domains, \$2\)`
+	qRotateToken = `verification_token = \$2`
 )
 
 func TestGetSSOConfig_Found(t *testing.T) {

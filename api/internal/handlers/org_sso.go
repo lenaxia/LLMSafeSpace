@@ -92,11 +92,11 @@ func (h *SSOHandler) Get(c *gin.Context) {
 	}
 	if cfg == nil {
 		c.JSON(http.StatusOK, types.OrgSSOConfigResponse{
-			OrgID:             orgID,
-			ClaimedDomains:    []string{},
-			VerifiedDomains:   []string{},
-			GroupRoleMapping:  map[string]types.OrgRole{},
-			AutoProvision:     true,
+			OrgID:            orgID,
+			ClaimedDomains:   []string{},
+			VerifiedDomains:  []string{},
+			GroupRoleMapping: map[string]types.OrgRole{},
+			AutoProvision:    true,
 		})
 		return
 	}
