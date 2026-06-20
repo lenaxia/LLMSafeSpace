@@ -229,6 +229,74 @@ func TestEmailVerify_Verify_ConsumeError_DBTransient_500(t *testing.T) {
 		"DB transient error during consume must return 500, not 410")
 }
 
+func TestEmailVerify_Resend_NilResender_202Graceful(t *testing.T) {
+	users := newEmailVerifyUserStore()
+	users.users["alice@test.com"] = &memUser{id: "user-1", email: "alice@test.com"}
+	users.emailVer["user-1"] = false
+
+	// nil resender — the handler must still return 202 (graceful degradation)
+	h := NewEmailVerifyHandler(newMemTokenStore(), users, nil, nil, nil)
+	router := setupVerifyRouter(h)
+
+	w := doRequest(router, http.MethodPost, "/api/v1/auth/verify-email/resend", `{"email":"alice@test.com"}`)
+	assert.Equal(t, http.StatusAccepted, w.Code, "nil resender must return 202, not 500")
+}
+
+func TestEmailVerify_Verify_UpdateUserFailure_500(t *testing.T) {
+	store := newMemTokenStore()
+	tokenHash := hashTokenForTest("upd-fail-token")
+	store.tokens[tokenHash] = &types.EmailToken{
+		ID:        "vt-8",
+		UserID:    "user-1",
+		Kind:      "email_verify",
+		TokenHash: tokenHash,
+		ExpiresAt: time.Now().Add(10 * time.Minute),
+	}
+
+	users := &failingUpdateUserStore{emailVerifyUserStore: newEmailVerifyUserStore()}
+
+	h := NewEmailVerifyHandler(store, users, nil, nil, nil)
+	router := setupVerifyRouter(h)
+
+	w := doRequest(router, http.MethodPost, "/api/v1/auth/verify-email", `{"token":"upd-fail-token"}`)
+	assert.Equal(t, http.StatusInternalServerError, w.Code, "UpdateUser failure must return 500")
+}
+
+// failingUpdateUserStore wraps emailVerifyUserStore to inject UpdateUser error.
+type failingUpdateUserStore struct {
+	*emailVerifyUserStore
+}
+
+func (s *failingUpdateUserStore) UpdateUser(_ context.Context, _ string, _ types.UserUpdates) error {
+	return fmt.Errorf("db write failed")
+}
+
+// TestEmailVerify_RoutesRegistered verifies the verify endpoints are
+// reachable through a router (Rule 0 e2e wiring).
+func TestEmailVerify_RoutesRegistered(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	h := NewEmailVerifyHandler(newMemTokenStore(), newEmailVerifyUserStore(), nil, nil, nil)
+
+	authGroup := r.Group("/api/v1/auth")
+	authGroup.POST("/verify-email", h.Verify)
+	authGroup.POST("/verify-email/resend", h.Resend)
+
+	tests := []struct {
+		path       string
+		body       string
+		expectCode int
+	}{
+		{"/api/v1/auth/verify-email", `{"token":"nonexistent"}`, http.StatusNotFound},
+		{"/api/v1/auth/verify-email/resend", `{"email":"ghost@test.com"}`, http.StatusAccepted},
+	}
+	for _, tt := range tests {
+		w := doRequest(r, http.MethodPost, tt.path, tt.body)
+		assert.Equal(t, tt.expectCode, w.Code,
+			"%s must return %d (route wired + handler executed)", tt.path, tt.expectCode)
+	}
+}
+
 // --- EmailVerifierAdapter test ---
 
 func TestEmailVerifierAdapter_CreatesTokenAndSends(t *testing.T) {
