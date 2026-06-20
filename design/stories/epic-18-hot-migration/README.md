@@ -53,7 +53,7 @@ Implement zero-downtime live migration of workspace pods across nodes, enabling:
 | Default access mode | RWX for all new workspaces | Migration requires RWX; no reason to keep RWO as default |
 | Sandbox runtime (prod) | gVisor | Kernel-level isolation for RWX attack surface |
 | Sandbox runtime (dev) | runc | gVisor is security hardening, not functional requirement |
-| Tenant isolation | Capsule + EFS access points (prod) | API-level + AWS-enforced storage isolation |
+| Tenant isolation | Capsule + EFS access points (prod) | API-level + AWS-enforced storage isolation — **⛔ Capsule superseded by Epic 51; EFS access points remain in S18.8 (reduced)** |
 | Compute (prod) | Graviton Spot 80% + On-Demand 20% | 60-70% cost savings |
 | Pod naming for migration | Target pod: `{workspace}-{uid[:8]}-mig`; after cutover, `Status.PodName` updated | Migration controller creates pod directly; workspace reconciler adopts via `Status.PodName` |
 | Pod lookup in reconciler | Always use `workspace.Status.PodName` (not `podName()` derivation) | Simpler, no conditional; `Status.PodName` is always set (A11) |
@@ -123,9 +123,9 @@ Implement zero-downtime live migration of workspace pods across nodes, enabling:
 
 | Layer | Control | Environment |
 |-------|---------|-------------|
-| Container escape prevention | gVisor RuntimeClass | Production |
-| Cross-tenant API isolation | Capsule namespaces | Production (multi-tenant) |
-| Cross-tenant storage isolation | EFS access points (AWS-enforced root dir + UID/GID) | Production (multi-tenant) |
+| Container escape prevention | gVisor RuntimeClass | Production — **➡️ Moved to Epic 51 (S51.1)** |
+| Cross-tenant API isolation | ~~Capsule namespaces~~ Shared namespace + gVisor + network policy | Production (multi-tenant) — **⛔ Capsule superseded by Epic 51** |
+| Cross-tenant storage isolation | EFS access points (AWS-enforced root dir + UID/GID) | Production (multi-tenant) — **remains in S18.8 (reduced)** |
 | Migration sequencing | Controller-driven phases; no concurrent-write window | All |
 | Spot reclamation | Node termination handler → triggers migration | Production |
 
@@ -354,7 +354,14 @@ status:
 
 ---
 
-### S18.7 — gVisor RuntimeClass (Production)
+### S18.7 — gVisor RuntimeClass — ➡️ MOVED TO EPIC 51
+
+**Status:** Moved to [Epic 51: Tenant Isolation — gVisor + Resource Quotas](../epic-51-tenant-isolation/README.md) (story S51.1).
+
+gVisor is the primary container-escape control for multi-tenancy and is not dependent on hot migration, RWX, or Karpenter. It was promoted out of Epic 18 Phase C to a first-class multi-tenancy prerequisite. The original acceptance criteria are preserved below for reference; implementation now lives in Epic 51.
+
+<details>
+<summary>Original acceptance criteria (now in Epic 51 S51.1)</summary>
 
 **Goal:** gVisor as container runtime for workspace pods in production.
 
@@ -373,9 +380,31 @@ status:
 
 **Estimated Effort:** 5 points
 
+</details>
+
 ---
 
-### S18.8 — Tenant Namespace Isolation (Capsule)
+### S18.8 — Tenant Storage Isolation (EFS Access Points) — REDUCED
+
+**Status:** Reduced from "Tenant Namespace Isolation (Capsule)". The namespace, proxy refactor, NetworkPolicy, and cascade-deletion items moved to or are satisfied by [Epic 51](../epic-51-tenant-isolation/README.md). What remains here is **EFS storage isolation only**, which genuinely depends on the RWX storage migration (Epic 18 Phase A / S18.1) and therefore stays in this epic.
+
+**Why the reduction:** Per-tenant namespaces don't solve the primary threat (container escape — that's gVisor, now in Epic 51) and don't scale to 1,000+ tenants (namespace-count limits). The proxy namespace refactor (`h.namespace` → JWT `tenant_id`) is no longer needed since Epic 51 keeps a shared namespace. NetworkPolicy cross-tenant deny is already shipped via chart-level default-deny ingress + RFC1918/CGNAT-filtered egress. Tenant deletion cascade is handled by existing user/org deletion flows. See Epic 51 "Why not namespaces" for the full rationale.
+
+**Goal:** Per-workspace EFS access points enforcing storage root directory and UID/GID isolation.
+
+**Acceptance Criteria:**
+- [ ] EFS access points: one per workspace, root `/tenants/{tenant_id}/workspaces/{workspace_id}`
+- [ ] Tenant context flows to EFS CSI via PVC annotations: workspace reconciler sets `efs.csi.aws.com/rootDirectory` and `efs.csi.aws.com/uid`/`gid` annotations on PVC based on workspace owner's tenant_id. CSI driver reads these during dynamic provisioning.
+- [ ] Integration test: workspace A cannot read workspace B's EFS root via access point boundary
+
+**Implementation Notes:**
+- Depends on S18.1 (RWX storage migration) — access points are an EFS feature.
+- `tenant_id` resolution matches Epic 51 S51.3: `WorkspaceOwner.OrgID` if set, else `WorkspaceOwner.UserID`.
+
+**Estimated Effort:** 3 points (down from 8)
+
+<details>
+<summary>Original S18.8 scope (superseded — do not implement)</summary>
 
 **Goal:** Multi-tenant isolation via Capsule namespaces.
 
@@ -398,6 +427,8 @@ status:
 - Proxy refactor: `ProxyHandler` methods accept `namespace` from auth middleware context.
 
 **Estimated Effort:** 8 points
+
+</details>
 
 ---
 
@@ -439,12 +470,12 @@ Phase B (Triggers — local multi-node):
   S18.6 (Load Balancing)
 
 Phase C (Production hardening):
-  S18.7 (gVisor)
   S18.9 (Karpenter)
   S18.5 (Spot Handler)
+  (S18.7 gVisor — ➡️ moved to Epic 51)
 
 Phase D (Multi-tenancy):
-  S18.8 (Capsule + proxy namespace refactor)
+  (S18.8 Capsule — ⛔ superseded by Epic 51; S18.8 reduced to EFS storage isolation, depends on S18.1)
 ```
 
 Phase 0 requires no infrastructure changes — S18.10 runs against the live cluster
@@ -454,7 +485,7 @@ a latency baseline and removing the worst resume bottleneck before migration wor
 Phase A delivers a working migration system testable on any multi-node cluster with
 RWX storage. Phase B adds automated triggers. Phase C/D are production-only.
 
-**Total: 50 points (~4 sprints)**
+**Total: 40 points (~3 sprints)** — reduced from 50: S18.7 (gVisor, 5pts) moved to Epic 51; S18.8 (Capsule, 8pts → EFS storage only, 3pts).
 
 ---
 
@@ -490,8 +521,8 @@ vs current (Longhorn + On-Demand): ~$28,000/mo → **57% savings**
 
 | # | Question | Status | Resolution |
 |---|----------|--------|------------|
-| Q1 | vCluster vs Capsule? | ✅ | Capsule (vCluster overhead prohibitive) |
-| Q2 | gVisor + Java JIT? | 🔶 | Benchmark in S18.7 |
+| Q1 | vCluster vs Capsule? | ⛔ | **Moot** — both superseded by Epic 51 (shared namespace + gVisor; per-tenant namespaces don't scale to 1000+ tenants and don't solve container escape) |
+| Q2 | gVisor + Java JIT? | 🔶 | Benchmark in Epic 51 S51.1 (moved from S18.7) |
 | Q3 | EFS throughput mode? | 🔶 | Start elastic; switch if p99 > 10ms |
 | Q4 | Session state size? | ✅ | <50KB (routing table only) |
 | Q5 | Migration SLO? | ✅ | p99 handoff gap < 15s, p99 total < 30s |
@@ -502,7 +533,7 @@ vs current (Longhorn + On-Demand): ~$28,000/mo → **57% savings**
 | Q10 | User-visible disruption during migration? | ✅ | 5-10s of `503 Retry-After` during opencode handoff. SDK retries transparently. vs 22s hard downtime with RWO. |
 | Q11 | What is the dominant gate in 2-min resume? | 🔶 | Hypothesis: Gate 5 (provider connectivity in readyz). S18.10 benchmark will confirm. S18.11 addresses it. |
 | Q12 | What is the remaining latency floor after S18.11? | 🔶 | Expected ~15–25s: 10s InitialDelaySeconds + 5–10s opencode startup + 5s requeueCreating. Addressable in future story (startup probe tuning, probe interval reduction). |
-| Q13 | gVisor checkpoint/restore for sub-10s resume? | 🔶 | Requires S18.7 (gVisor) complete first. Checkpoint taken post-startup, stored on PVC. SQLite WAL safety: SIGTERM opencode before checkpoint. Design in S18.12 (future story). |
+| Q13 | gVisor checkpoint/restore for sub-10s resume? | 🔶 | Requires Epic 51 S51.1 (gVisor) complete first. Checkpoint taken post-startup, stored on PVC. SQLite WAL safety: SIGTERM opencode before checkpoint. Design in S18.12 (future story). |
 
 ---
 
@@ -518,7 +549,7 @@ vs current (Longhorn + On-Demand): ~$28,000/mo → **57% savings**
 | Spot reclamation success | — | > 95% | S18.5 |
 | Requests dropped (not retried) | — | 0 | S18.4 |
 | Cost per workspace/month | ~$28 | < $25 | S18.9 |
-| gVisor I/O overhead | — | < 20% | S18.7 |
+| gVisor I/O overhead | — | < 20% | Epic 51 S51.1 (moved from S18.7) |
 
 ---
 
@@ -529,8 +560,8 @@ vs current (Longhorn + On-Demand): ~$28,000/mo → **57% savings**
 | **Robustness** | 5 | Write-ahead phases; rollback at every step; fallback to suspension; no data loss (shared PVC) |
 | **Reliability** | 5 | Failure = suspend + auto-resume (proven path); client retries; no SPOF |
 | **Maintainability** | 5 | `BuildPod()` extracted to shared package (DRY); migration controller is isolated new component; workspace reconciler change is replacing `podName()` calls with `Status.PodName` reads (simpler, not more complex) |
-| **Scalability** | 5 | Stateless controller; bounded concurrency; Capsule + Karpenter to 1000+ tenants |
-| **Security** | 5 | Defense-in-depth: gVisor + EFS access points + Capsule + NetworkPolicy; sequential phases prevent concurrent-write |
+| **Scalability** | 5 | Stateless controller; bounded concurrency; shared namespace + gVisor + admission webhook quotas scale to 1000+ tenants (per Epic 51; Capsule dropped) |
+| **Security** | 5 | Defense-in-depth: gVisor (Epic 51) + EFS access points (S18.8 reduced) + NetworkPolicy; sequential phases prevent concurrent-write |
 | **Performance** | 4 | 5-10s handoff gap (opencode restart) vs 22s RWO migration — 2-4x improvement. EFS +1-3ms vs EBS. gVisor ~5% CPU. -1: handoff gap is user-visible (503 retries) |
 | **SOLID** | 5 | SRP: migration controller migrates, workspace reconciler manages pods. OCP: new triggers via CRD. DIP: migration controller uses `BuildPod()` interface, not reconciler internals |
 | **Idiomatic** | 5 | CRD + reconciler, status subresource, write-ahead, OwnerReferences, leader election |

@@ -334,7 +334,7 @@ All of the above ─► US-11.12 (Integration tests)
 | Org-to-org federation / SSO | Enterprise tier |
 | Transferring workspace ownership from user to org | Complex migration; separate story if needed |
 | Audit log for org key events | Uses existing `secret_audit_log` table with `user_id` for now; add `org_id` column later |
-| `virtual namespace` isolation per org-member | Stays per-user per Epic 10 design; org members each keep separate namespaces |
+| `virtual namespace` isolation per org-member | **⛔ Superseded by Epic 51** — tenant isolation now uses gVisor + admission webhook quotas in a shared namespace; no per-tenant namespaces. Org members are isolated by gVisor (container escape) + network policy (pod-to-pod) + per-tenant quotas, not namespace topology |
 | Billing rollup by org | Epic 12 concern; `resolveBillingOwner` implementation is in Epic 12 and uses `workspaces.org_id` column added here |
 
 ---
