@@ -20,33 +20,109 @@ package webhooks
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
+	"fmt"
 	"net"
+	"net/http"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
-	admissionv1 "k8s.io/api/admissionregistration/v1"
+	admissionv1 "k8s.io/api/admission/v1"
+	admissionregv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
-	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
-// quotaWebhookPath is the path the API server sends admission requests to.
 const quotaWebhookPath = "/validate-pod-tenant-quota"
+
+// startQuotaWebhookServer starts a raw HTTPS server serving the
+// PodTenantQuotaValidator at the given host:port using the envtest-generated
+// TLS certs. Returns a shutdown function.
+//
+// We use a raw http.Server instead of the controller-runtime webhook.Server
+// to avoid manager-dependent initialization quirks that make standalone
+// usage fragile in tests. The admission handler is just an HTTP handler.
+func startQuotaWebhookServer(t *testing.T, wopts envtest.WebhookInstallOptions, scheme *runtime.Scheme, k8sClient client.Client, maxWorkspaces int) func() {
+	t.Helper()
+	certFile := filepath.Join(wopts.LocalServingCertDir, "tls.crt")
+	keyFile := filepath.Join(wopts.LocalServingCertDir, "tls.key")
+
+	decoder := admission.NewDecoder(scheme)
+	handler := &PodTenantQuotaValidator{
+		Decoder:                decoder,
+		Client:                 k8sClient,
+		MaxWorkspacesPerTenant: maxWorkspaces,
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle(quotaWebhookPath, &admissionHandler{decoder: decoder, handler: handler})
+
+	server := &http.Server{
+		Addr:    fmt.Sprintf("%s:%d", wopts.LocalServingHost, wopts.LocalServingPort),
+		Handler: mux,
+		TLSConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		},
+	}
+
+	ln, err := net.Listen("tcp", server.Addr)
+	require.NoError(t, err, "failed to listen on %s", server.Addr)
+
+	go func() {
+		_ = server.ServeTLS(ln, certFile, keyFile)
+	}()
+
+	return func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}
+}
+
+// admissionHandler wraps the admission.Decoder + admission.Handler into a
+// standard net/http.Handler. This is what controller-runtime's webhook
+// Admission type does internally, reproduced here to avoid depending on
+// the internal webhook server machinery.
+type admissionHandler struct {
+	decoder admission.Decoder
+	handler admission.Handler
+}
+
+func (h *admissionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Content-Type") != "application/json" {
+		http.Error(w, "invalid content-type", http.StatusUnsupportedMediaType)
+		return
+	}
+
+	var review admissionv1.AdmissionReview
+	if err := json.NewDecoder(r.Body).Decode(&review); err != nil {
+		http.Error(w, fmt.Sprintf("failed to decode: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	req := admission.Request{AdmissionRequest: *review.Request}
+	resp := h.handler.Handle(r.Context(), req)
+
+	review.Response = &resp.AdmissionResponse
+	review.Response.UID = req.UID
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(review)
+}
 
 // TestEnvtest_QuotaWebhook_RejectsPodOverLimit starts an envtest API server
 // with the PodTenantQuotaValidator registered as a real admission webhook,
 // creates workspace pods until the limit is exceeded, and verifies the API
-// server rejects the over-limit pod. This proves the end-to-end admission
-// chain: ValidatingWebhookConfiguration → webhook server → handler → deny.
+// server rejects the over-limit pod.
 func TestEnvtest_QuotaWebhook_RejectsPodOverLimit(t *testing.T) {
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
 		t.Skip("KUBEBUILDER_ASSETS not set — run via setup-envtest or the envtest workflow")
@@ -55,97 +131,61 @@ func TestEnvtest_QuotaWebhook_RejectsPodOverLimit(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))
 
-	// Define the ValidatingWebhookConfiguration programmatically. envtest
-	// will rewrite the clientConfig to point at its local webhook server.
-	sideEffectNone := admissionv1.SideEffectClassNone
-	failPolicy := admissionv1.Fail
+	sideEffectNone := admissionregv1.SideEffectClassNone
+	failPolicy := admissionregv1.Fail
 	timeout10 := int32(10)
 	port443 := int32(443)
 	pathVal := quotaWebhookPath
-	namespacedScope := admissionv1.NamespacedScope
+	namespacedScope := admissionregv1.NamespacedScope
 
-	webhookCfg := &admissionv1.ValidatingWebhookConfiguration{
+	webhookCfg := &admissionregv1.ValidatingWebhookConfiguration{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-quota-webhook"},
-		Webhooks: []admissionv1.ValidatingWebhook{{
+		Webhooks: []admissionregv1.ValidatingWebhook{{
 			Name:                    "vpodtenantquota.test.local",
 			AdmissionReviewVersions: []string{"v1"},
 			SideEffects:             &sideEffectNone,
 			FailurePolicy:           &failPolicy,
 			TimeoutSeconds:          &timeout10,
-			ClientConfig: admissionv1.WebhookClientConfig{
-				Service: &admissionv1.ServiceReference{
-					Name:      "webhook-service",
-					Namespace: "default",
-					Path:      &pathVal,
-					Port:      &port443,
+			ClientConfig: admissionregv1.WebhookClientConfig{
+				Service: &admissionregv1.ServiceReference{
+					Path: &pathVal,
+					Port: &port443,
 				},
 			},
-			Rules: []admissionv1.RuleWithOperations{{
-				Rule: admissionv1.Rule{
+			Rules: []admissionregv1.RuleWithOperations{{
+				Rule: admissionregv1.Rule{
 					APIGroups:   []string{""},
 					APIVersions: []string{"v1"},
 					Resources:   []string{"pods"},
 					Scope:       &namespacedScope,
 				},
-				Operations: []admissionv1.OperationType{admissionv1.Create},
+				Operations: []admissionregv1.OperationType{admissionregv1.Create},
 			}},
 		}},
 	}
 
-	// Start envtest with webhook install options. envtest generates TLS
-	// certs, picks a local port, and installs the VWC pointing the API
-	// server at our local webhook listener.
 	testEnv := &envtest.Environment{
 		WebhookInstallOptions: envtest.WebhookInstallOptions{
-			ValidatingWebhooks: []*admissionv1.ValidatingWebhookConfiguration{webhookCfg},
+			ValidatingWebhooks: []*admissionregv1.ValidatingWebhookConfiguration{webhookCfg},
 		},
 	}
 	cfg, err := testEnv.Start()
 	require.NoError(t, err, "envtest startup")
 	defer func() { _ = testEnv.Stop() }()
 
-	// Build the controller-runtime client.
 	k8sClient, err := client.New(cfg, client.Options{Scheme: scheme})
 	require.NoError(t, err)
 
-	// Start the webhook server using the certs envtest generated.
+	shutdown := startQuotaWebhookServer(t, testEnv.WebhookInstallOptions, scheme, k8sClient, 2)
+	defer shutdown()
+
+	// Wait for webhook server to be reachable.
 	wopts := testEnv.WebhookInstallOptions
-
-	// Register the handler.
-	server := webhook.NewServer(webhook.Options{
-		Port:    wopts.LocalServingPort,
-		Host:    wopts.LocalServingHost,
-		CertDir: wopts.LocalServingCertDir,
-	})
-	server.Register(quotaWebhookPath, &webhook.Admission{
-		Handler: &PodTenantQuotaValidator{
-			Decoder:                admission.NewDecoder(scheme),
-			Client:                 k8sClient,
-			MaxWorkspacesPerTenant: 2,
-		},
-	})
-
-	// Start the webhook server in the background. Use a dedicated context
-	// so the server lifecycle is independent from the test-operations ctx.
-	serverCtx, serverCancel := context.WithCancel(context.Background())
-	var startErr error
-	go func() {
-		startErr = server.Start(serverCtx)
-	}()
-	defer func() {
-		serverCancel()
-		time.Sleep(500 * time.Millisecond) // allow graceful shutdown
-	}()
-
-	// Wait for the webhook server to be reachable.
 	require.Eventually(t, func() bool {
-		if startErr != nil {
-			t.Fatalf("webhook server failed to start: %v", startErr)
-		}
-		conn, err := net.DialTimeout("tcp",
-			net.JoinHostPort(wopts.LocalServingHost, intToStr(wopts.LocalServingPort)),
+		conn, derr := net.DialTimeout("tcp",
+			net.JoinHostPort(wopts.LocalServingHost, fmt.Sprintf("%d", wopts.LocalServingPort)),
 			1*time.Second)
-		if err != nil {
+		if derr != nil {
 			return false
 		}
 		_ = conn.Close()
@@ -181,26 +221,21 @@ func TestEnvtest_QuotaWebhook_RejectsPodOverLimit(t *testing.T) {
 		}
 	}
 
-	// Pod 1: should succeed (count 1, limit 2)
 	require.NoError(t, k8sClient.Create(ctx, makePod("ws-pod-1", "tenant-a")),
 		"first pod for tenant-a should be allowed")
-
-	// Pod 2: should succeed (count 2 = limit)
 	require.NoError(t, k8sClient.Create(ctx, makePod("ws-pod-2", "tenant-a")),
 		"second pod (at limit) should be allowed")
 
-	// Pod 3: should be REJECTED (count 3 > limit 2)
 	err = k8sClient.Create(ctx, makePod("ws-pod-3", "tenant-a"))
 	require.Error(t, err,
 		"third pod for tenant-a must be rejected by quota webhook (count 3 > limit 2)")
 
-	// Verify a different tenant is NOT affected.
 	require.NoError(t, k8sClient.Create(ctx, makePod("ws-pod-b1", "tenant-b")),
 		"tenant-b pod must not be affected by tenant-a's quota")
 }
 
 // TestEnvtest_QuotaWebhook_AllowsNonWorkspacePod verifies that pods without
-// the tenant label pass the webhook (objectSelector/handler-level filtering).
+// the tenant label pass through the webhook.
 func TestEnvtest_QuotaWebhook_AllowsNonWorkspacePod(t *testing.T) {
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
 		t.Skip("KUBEBUILDER_ASSETS not set — run via setup-envtest or the envtest workflow")
@@ -209,36 +244,34 @@ func TestEnvtest_QuotaWebhook_AllowsNonWorkspacePod(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))
 
-	sideEffectNone2 := admissionv1.SideEffectClassNone
-	failPolicy2 := admissionv1.Fail
-	pathVal2 := quotaWebhookPath
+	sideEffectNone := admissionregv1.SideEffectClassNone
+	failPolicy := admissionregv1.Fail
+	pathVal := quotaWebhookPath
 
-	webhookCfg2 := &admissionv1.ValidatingWebhookConfiguration{
+	webhookCfg := &admissionregv1.ValidatingWebhookConfiguration{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-quota-webhook-2"},
-		Webhooks: []admissionv1.ValidatingWebhook{{
+		Webhooks: []admissionregv1.ValidatingWebhook{{
 			Name:                    "vpodtenantquota2.test.local",
 			AdmissionReviewVersions: []string{"v1"},
-			SideEffects:             &sideEffectNone2,
-			FailurePolicy:           &failPolicy2,
-			ClientConfig: admissionv1.WebhookClientConfig{
-				Service: &admissionv1.ServiceReference{
-					Path: &pathVal2,
-				},
+			SideEffects:             &sideEffectNone,
+			FailurePolicy:           &failPolicy,
+			ClientConfig: admissionregv1.WebhookClientConfig{
+				Service: &admissionregv1.ServiceReference{Path: &pathVal},
 			},
-			Rules: []admissionv1.RuleWithOperations{{
-				Rule: admissionv1.Rule{
+			Rules: []admissionregv1.RuleWithOperations{{
+				Rule: admissionregv1.Rule{
 					APIGroups:   []string{""},
 					APIVersions: []string{"v1"},
 					Resources:   []string{"pods"},
 				},
-				Operations: []admissionv1.OperationType{admissionv1.Create},
+				Operations: []admissionregv1.OperationType{admissionregv1.Create},
 			}},
 		}},
 	}
 
 	testEnv := &envtest.Environment{
 		WebhookInstallOptions: envtest.WebhookInstallOptions{
-			ValidatingWebhooks: []*admissionv1.ValidatingWebhookConfiguration{webhookCfg2},
+			ValidatingWebhooks: []*admissionregv1.ValidatingWebhookConfiguration{webhookCfg},
 		},
 	}
 	cfg, err := testEnv.Start()
@@ -248,32 +281,13 @@ func TestEnvtest_QuotaWebhook_AllowsNonWorkspacePod(t *testing.T) {
 	k8sClient, err := client.New(cfg, client.Options{Scheme: scheme})
 	require.NoError(t, err)
 
+	shutdown := startQuotaWebhookServer(t, testEnv.WebhookInstallOptions, scheme, k8sClient, 1)
+	defer shutdown()
+
 	wopts := testEnv.WebhookInstallOptions
-	server := webhook.NewServer(webhook.Options{
-		Port:    wopts.LocalServingPort,
-		Host:    wopts.LocalServingHost,
-		CertDir: wopts.LocalServingCertDir,
-	})
-	server.Register(quotaWebhookPath, &webhook.Admission{
-		Handler: &PodTenantQuotaValidator{
-			Decoder:                admission.NewDecoder(scheme),
-			Client:                 k8sClient,
-			MaxWorkspacesPerTenant: 1,
-		},
-	})
-
-	serverCtx2, serverCancel2 := context.WithCancel(context.Background())
-	go func() {
-		_ = server.Start(serverCtx2)
-	}()
-	defer func() {
-		serverCancel2()
-		time.Sleep(500 * time.Millisecond)
-	}()
-
 	require.Eventually(t, func() bool {
 		conn, derr := net.DialTimeout("tcp",
-			net.JoinHostPort(wopts.LocalServingHost, intToStr(wopts.LocalServingPort)),
+			net.JoinHostPort(wopts.LocalServingHost, fmt.Sprintf("%d", wopts.LocalServingPort)),
 			1*time.Second)
 		if derr != nil {
 			return false
@@ -285,17 +299,12 @@ func TestEnvtest_QuotaWebhook_AllowsNonWorkspacePod(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	// Pod without tenant label should be allowed even when limit is 1.
 	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "non-workspace-pod",
-			Namespace: "default",
-		},
+		ObjectMeta: metav1.ObjectMeta{Name: "non-workspace-pod", Namespace: "default"},
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{Name: "main", Image: "busybox:latest"}},
 		},
 	}
-
 	require.NoError(t, k8sClient.Create(ctx, pod),
 		"pod without tenant label must be allowed")
 
@@ -303,15 +312,3 @@ func TestEnvtest_QuotaWebhook_AllowsNonWorkspacePod(t *testing.T) {
 	require.NoError(t, k8sClient.Get(ctx,
 		types.NamespacedName{Name: "non-workspace-pod", Namespace: "default"}, fetched))
 }
-
-// intToStr converts int to string without importing strconv (avoids unused
-// import if we later remove this helper).
-func intToStr(i int) string {
-	return string(rune('0'+i/10%10)) + string(rune('0'+i%10))
-}
-
-// _ ensures tls import is used (the webhook server uses it internally).
-var _ = tls.Config{}
-
-// _ ensures intstr import is available for future webhook config construction.
-var _ = intstr.FromInt
