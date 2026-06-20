@@ -28,7 +28,7 @@
 | Compromised API server | Memory + DB access | All credentials in active sessions | DEKs for active sessions only; inactive users safe |
 | Compromised database | Postgres dump | N/A (creds in K8s today) | Ciphertext + wrapped DEKs (useless without passwords) |
 | Compromised node (kubelet) | Secrets mounted to pods on that node | Plaintext for pods on that node | Same (unavoidable — pod needs plaintext to function) |
-| Other tenant | Their own workspace pod | Nothing (network policy) | Nothing (virtual namespace + network policy) |
+| Other tenant | Their own workspace pod | Nothing (network policy) | Nothing (gVisor + network policy — see Epic 51) |
 
 ### Design Principles
 
@@ -198,8 +198,8 @@ Physical cluster:
 
 Controller RBAC:
   - ClusterRole for CRD watches (Workspace, RuntimeEnvironment)
-  - Namespaced Role per virtual namespace for pod/secret/pvc operations
-  - Label selector on informer: llmsafespace.dev/tenant={user_id}
+  - Namespaced Role in the shared workspace namespace for pod/secret/pvc operations (already shipped — `rbac.scope=namespace` default)
+  - (Per-virtual-namespace Roles dropped — superseded by Epic 51; no per-tenant namespaces)
 ```
 
 ### API Surface
@@ -358,7 +358,23 @@ Audit:
 
 ---
 
-### US-10.6: Virtual Namespace Tenant Isolation
+### US-10.6: Virtual Namespace Tenant Isolation — ⛔ SUPERSEDED BY EPIC 51
+
+**Status:** Superseded by [Epic 51: Tenant Isolation — gVisor + Resource Quotas](../epic-51-tenant-isolation/README.md).
+
+The original design (per-tenant virtual namespaces) was the wrong control for the actual threat (container escape via kernel exploitation) and does not scale to 1,000+ tenants. Most of the original scope is already satisfied by shipped code:
+
+- **Cross-tenant network isolation** — shipped via chart-level default-deny ingress + RFC1918/CGNAT-filtered egress (Epics 17/30).
+- **Controller secret scoping** — shipped via namespace-scoped `Role` (`rbac.scope=namespace` default since Epic 17).
+- **Tenant identity model** — `WorkspaceOwner{UserID, OrgID}` on the CRD.
+- **Account deletion cleanup** — existing user/org deletion flows.
+
+What was genuinely missing — **container-runtime isolation (gVisor)** and **per-tenant resource quotas** — is delivered in Epic 51 via gVisor RuntimeClass + an admission webhook keyed on a tenant pod label. No per-tenant namespaces required.
+
+The original scope text is preserved below for historical reference.
+
+<details>
+<summary>Original scope (superseded — do not implement)</summary>
 
 **Goal:** Isolate tenant workloads using virtual namespaces. Prevent cross-tenant network access and resource visibility.
 
@@ -377,6 +393,8 @@ Audit:
 - Resource quota prevents one tenant from starving others
 - Virtual namespace creation adds <2s to first workspace creation
 - Integration test: create workspaces for two users → verify network isolation → verify secret isolation
+
+</details>
 
 ---
 
@@ -467,7 +485,7 @@ US-10.4 (Pod Injection) ──────────────────�
     ▼                                                                │
 US-10.9 (Legacy Compat)                                              │
                                                                      │
-US-10.6 (Virtual Namespaces) ── independent, can parallel ───────────┤
+US-10.6 (Virtual Namespaces) ── ⛔ SUPERSEDED BY EPIC 51 ─────────────┤
                                                                      │
 US-10.7 (S3 Shared Folder) ── independent, can parallel ─────────────┤
                                                                      │
@@ -476,7 +494,7 @@ US-10.8 (Lazy Rotation) ── requires US-10.1 + US-10.2 ───────�
 
 **Critical path:** US-10.1 → US-10.2 → US-10.3 → US-10.4 → US-10.9
 
-**Parallelizable:** US-10.5, US-10.6, US-10.7 can proceed independently after US-10.1.
+**Parallelizable:** US-10.5, US-10.7 can proceed independently after US-10.1. (US-10.6 superseded by Epic 51.)
 
 ---
 
@@ -527,7 +545,7 @@ Epic 10 is user-scoped. Organizations layer on top without restructuring:
 
 **What does NOT change when orgs are added:**
 - User secrets remain user-scoped and user-encrypted
-- Virtual namespace isolation remains per-user (org members still get separate namespaces)
+- Virtual namespace isolation remains per-user (org members still get separate namespaces) — **⛔ Superseded**: see Epic 51; tenant isolation now uses gVisor + admission webhook quotas in a shared namespace, not per-tenant namespaces
 - Pod startup flow is identical (just more secrets to materialize)
 - Audit logging schema works as-is (already has `user_id` + `workspace_id`; add `org_id` column later)
 

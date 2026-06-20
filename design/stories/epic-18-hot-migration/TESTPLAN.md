@@ -173,7 +173,9 @@
 
 ---
 
-## S18.7 — gVisor RuntimeClass
+## S18.7 — gVisor RuntimeClass — ➡️ MOVED TO EPIC 51
+
+> Test plan moved to Epic 51 (story S51.1). Tests below preserved for reference; implementation and execution now tracked under Epic 51.
 
 ### Integration Tests
 
@@ -191,27 +193,16 @@
 
 ---
 
-## S18.8 — Tenant Namespace Isolation
+## S18.8 — Tenant Storage Isolation (EFS Access Points) — REDUCED
 
-### Unit Tests
-
-| ID | Test | Type | What It Validates |
-|----|------|------|-------------------|
-| U8.1 | Proxy resolves namespace from JWT `tenant_id` claim | Happy | Namespace routing |
-| U8.2 | Request with missing `tenant_id` → 401 | Security | Auth enforcement |
-| U8.3 | Request with `tenant_id` for non-existent namespace → 404 | Unhappy | Graceful error |
-| U8.4 | Tenant A cannot access Tenant B's workspace via API | Security | Cross-tenant isolation |
+> Reduced from "Tenant Namespace Isolation (Capsule)". Namespace/proxy/NetworkPolicy/cascade tests moved to or satisfied by Epic 51. What remains: EFS access point storage isolation tests.
 
 ### Integration Tests
 
 | ID | Test | Type | What It Validates |
 |----|------|------|-------------------|
-| I8.1 | Create tenant → namespace created with ResourceQuota + LimitRange + NetworkPolicy | Happy | Onboarding |
-| I8.2 | Workspace created in tenant namespace → PVC has EFS access point annotation with correct tenant_id | Happy | EFS isolation |
-| I8.3 | Pod in tenant-A namespace cannot reach pod in tenant-B namespace (NetworkPolicy) | Security | Network isolation |
-| I8.4 | Delete tenant → all workspaces, PVCs, pods cascade-deleted | Happy | Cleanup |
-| I8.5 | 100 tenants × 10 workspaces → controller reconcile p99 < 500ms | Performance | Scale |
-| I8.6 | Migration within tenant namespace works (Migration CR scoped to tenant ns) | Happy | Migration + tenancy |
+| I8.2 | Workspace created → PVC has EFS access point annotation with correct tenant_id | Happy | EFS isolation |
+| I8.3 | Workspace A cannot read workspace B's EFS root via access point boundary | Security | Storage isolation |
 
 ---
 
