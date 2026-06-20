@@ -24,6 +24,7 @@ func TestDeriveServerKey_AbsentEnv_ReturnsNil(t *testing.T) {
 }
 
 func TestDeriveServerKey_EmptyEnv_ReturnsNil(t *testing.T) {
+	t.Setenv(masterSecretFileEnv, "")
 	t.Setenv("LLMSAFESPACES_MASTER_SECRET", "")
 	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "")
 	if deriveServerKey("test") != nil {
@@ -42,6 +43,7 @@ func TestDeriveServerKey_ShortRawBytes_ReturnsNil(t *testing.T) {
 }
 
 func TestDeriveServerKey_Exactly32RawBytes_Returns32ByteKey(t *testing.T) {
+	t.Setenv(masterSecretFileEnv, "")
 	// 32 non-hex chars → 32 raw bytes → meets minimum
 	t.Setenv("LLMSAFESPACES_MASTER_SECRET", "abcdefghijklmnopqrstuvwxyz012345")
 	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "")
@@ -69,6 +71,7 @@ func TestDeriveServerKey_AlphanumericHelmFormat_Returns32ByteKey(t *testing.T) {
 }
 
 func TestDeriveServerKey_ValidHex64Chars_Returns32ByteKey(t *testing.T) {
+	t.Setenv(masterSecretFileEnv, "")
 	// 64 lowercase hex chars → 32 decoded bytes
 	t.Setenv("LLMSAFESPACES_MASTER_SECRET", "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20")
 	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "")
@@ -92,6 +95,7 @@ func TestDeriveServerKey_ShortHex_ReturnsNil(t *testing.T) {
 }
 
 func TestDeriveServerKey_InvalidHexLongEnough_FallsBackToRawBytes(t *testing.T) {
+	t.Setenv(masterSecretFileEnv, "")
 	// Non-hex but 32+ chars → raw bytes path → should succeed
 	t.Setenv("LLMSAFESPACES_MASTER_SECRET", "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ") // 32 uppercase Z — not valid hex
 	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "")
@@ -115,6 +119,7 @@ func TestDeriveServerKey_LegacyEnvVar_Accepted(t *testing.T) {
 }
 
 func TestDeriveServerKey_PrimaryEnvTakesPrecedence(t *testing.T) {
+	t.Setenv(masterSecretFileEnv, "")
 	primary := "abcdefghijklmnopqrstuvwxyz012345" // 32 chars
 	legacy := "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"  // different 32 chars
 	t.Setenv("LLMSAFESPACES_MASTER_SECRET", primary)
@@ -203,6 +208,7 @@ func TestValidateMasterSecret_TooShort_LogsWarnAndReturnsError(t *testing.T) {
 }
 
 func TestValidateMasterSecret_TooShort_DoesNotLogSecret(t *testing.T) {
+	t.Setenv(masterSecretFileEnv, "")
 	secret := "shortkey"
 	t.Setenv("LLMSAFESPACES_MASTER_SECRET", secret)
 	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "")
@@ -231,6 +237,7 @@ func TestValidateMasterSecret_AlphanumericHelmFormat_Succeeds(t *testing.T) {
 }
 
 func TestValidateMasterSecret_HexFormat_Succeeds(t *testing.T) {
+	t.Setenv(masterSecretFileEnv, "")
 	t.Setenv("LLMSAFESPACES_MASTER_SECRET", "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20")
 	t.Setenv("LLMSAFESPACES_DEK_MASTER_KEY", "")
 	log, _ := logger.NewObserved()
@@ -551,5 +558,50 @@ func TestValidateMasterSecret_FileSource_NoDeprecationWarning(t *testing.T) {
 	}
 	if logs.FilterMessageSnippet("deprecated").Len() != 0 {
 		t.Error("file source must not emit the env deprecation warning")
+	}
+}
+
+// TestValidateMasterSecret_MultiFile_BotchedRotation_ActiveShortFails (US-50.1):
+// in the rotation window, if the active (last) file is too short while an
+// earlier file is valid, validateMasterSecret must fail closed on the active
+// material rather than silently using the earlier one.
+func TestValidateMasterSecret_MultiFile_BotchedRotation_ActiveShortFails(t *testing.T) {
+	tmpDir := t.TempDir()
+	goodFile := tmpDir + "/master-old"
+	badFile := tmpDir + "/master-new"
+	writeFileHelper(t, goodFile, "abcdefghijklmnopqrstuvwxyz012345") // valid 32 raw bytes (earlier/old)
+	writeFileHelper(t, badFile, "shortkey")                          // 8 bytes (active/last — botched)
+
+	clearMasterSecretSources(t)
+	t.Setenv(masterSecretFileEnv, goodFile+":"+badFile)
+
+	log, logs := logger.NewObserved()
+	err := validateMasterSecret(log)
+	if err == nil {
+		t.Fatal("expected error when the active (last) rotation file is too short")
+	}
+	if !strings.Contains(err.Error(), "too short") && !strings.Contains(err.Error(), "minimum is 32") {
+		t.Errorf("error should report the too-short active material, got: %v", err)
+	}
+	if logs.FilterMessageSnippet("too short for AES-256-GCM").Len() == 0 {
+		t.Error("expected a too-short Warn for the active rotation file")
+	}
+}
+
+// TestDeriveServerKey_MultiFile_ActiveShortFailsClosed (US-50.1): when the
+// active (last) file is too short, deriveServerKey returns nil (fails closed)
+// rather than deriving from a weak key or silently using an earlier file.
+func TestDeriveServerKey_MultiFile_ActiveShortFailsClosed(t *testing.T) {
+	tmpDir := t.TempDir()
+	goodFile := tmpDir + "/master-old"
+	badFile := tmpDir + "/master-new"
+	writeFileHelper(t, goodFile, "abcdefghijklmnopqrstuvwxyz012345")
+	writeFileHelper(t, badFile, "shortkey")
+
+	clearMasterSecretSources(t)
+	t.Setenv(masterSecretFileEnv, goodFile+":"+badFile)
+
+	if key := deriveServerKey("test-purpose"); key != nil {
+		t.Errorf("deriveServerKey must return nil when the active file is too short, got %d bytes", len(key))
 	}
 }

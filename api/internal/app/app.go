@@ -968,9 +968,14 @@ func validateMasterSecret(log *logger.Logger) error {
 		}
 		// File source is healthy. If a legacy value env var is ALSO set, warn: it
 		// is unused at runtime (the file wins) but still exposes the KEK value in
-		// /proc/1/environ, defeating H1. Operators should remove it.
+		// /proc/1/environ, defeating H1. Operators should remove it. Check BOTH
+		// legacy var names so a migration from either is flagged.
 		if v := os.Getenv(masterSecretValueEnv); v != "" {
 			log.Warn("LLMSAFESPACES_MASTER_SECRET env var is set but ignored because the file mount takes precedence; remove it to avoid exposing the KEK in /proc/1/environ",
+				"source", masterSecretFileEnv)
+		}
+		if v := os.Getenv(masterSecretLegacyEnv); v != "" {
+			log.Warn("LLMSAFESPACES_DEK_MASTER_KEY env var is set but ignored because the file mount takes precedence; remove it to avoid exposing the KEK in /proc/1/environ",
 				"source", masterSecretFileEnv)
 		}
 		return nil
