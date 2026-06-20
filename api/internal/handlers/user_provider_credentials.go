@@ -256,7 +256,7 @@ func (h *UserProviderCredentialsHandler) Delete(c *gin.Context) {
 	// the next pod restart writes a secrets manifest without this credential.
 	if h.credStateWriter != nil {
 		for _, wsID := range boundWSIDs {
-			_ = h.credStateWriter.MarkCredentialChanged(c.Request.Context(), wsID)
+			_ = h.credStateWriter.MarkCredentialChanged(c.Request.Context(), wsID) //nolint:errcheck // best-effort: controller re-syncs on next reconcile
 		}
 	}
 
@@ -296,7 +296,7 @@ func (h *UserProviderCredentialsHandler) Bind(c *gin.Context) {
 	}
 
 	if h.credStateWriter != nil {
-		_ = h.credStateWriter.MarkCredentialChanged(c.Request.Context(), wsID)
+		_ = h.credStateWriter.MarkCredentialChanged(c.Request.Context(), wsID) //nolint:errcheck // best-effort: controller re-syncs on next reconcile
 	}
 
 	c.JSON(http.StatusOK, gin.H{"bound": true})
@@ -340,7 +340,7 @@ func (h *UserProviderCredentialsHandler) Unbind(c *gin.Context) {
 	}
 
 	if h.credStateWriter != nil {
-		_ = h.credStateWriter.MarkCredentialChanged(c.Request.Context(), wsID)
+		_ = h.credStateWriter.MarkCredentialChanged(c.Request.Context(), wsID) //nolint:errcheck // best-effort: controller re-syncs on next reconcile
 	}
 
 	c.Status(http.StatusNoContent)

@@ -165,6 +165,8 @@ func (h *ProxyHandler) proxyToWorkspace(c *gin.Context, targetPath string, isWri
 // (opencode restarting), the request is parked in the per-workspace request
 // buffer and retried until the upstream recovers or the buffer timeout elapses,
 // instead of returning 503 immediately. Only SendMessage sets bufferable.
+//
+//nolint:gocyclo // proxy path has many independent guard clauses; complexity is inherent
 func (h *ProxyHandler) proxyToWorkspaceWithErrBody(
 	c *gin.Context,
 	targetPath string,
@@ -274,17 +276,8 @@ func (h *ProxyHandler) proxyToWorkspaceWithErrBody(
 	podIP := workspace.Status.PodIP
 
 	if h.meteringSvc != nil && workspaceID != "" {
-		userID, _ := extractAuth(c)
-		if userID != "" && workspace.Labels["llmsafespaces.dev/canary"] != "true" {
-			owner := types.BillingOwner{ID: userID, Type: types.OwnerTypeUser}
-			allowed, _, qerr := h.meteringSvc.CheckQuota(c.Request.Context(), owner, "llm_request")
-			if qerr != nil {
-				h.logger.Warn("Quota check failed, allowing request", "error", qerr, "user_id", userID)
-			} else if !allowed {
-				metrics.RecordQuotaExceeded("llm_request")
-				c.JSON(http.StatusTooManyRequests, gin.H{"error": "quota exceeded", "event_type": "llm_request"})
-				return
-			}
+		if !h.checkProxyQuota(c, workspace) {
+			return
 		}
 	}
 
@@ -564,4 +557,34 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 	}
 
 	return nil
+}
+
+// checkProxyQuota verifies the caller has not exceeded their LLM request
+// quota. Returns true if the request should proceed, false if it was
+// rejected (quota exceeded — 429 already written to the response).
+// Quota check failures (DB errors) are logged and the request is allowed
+// (fail-open) so a transient DB issue doesn't block all traffic.
+func (h *ProxyHandler) checkProxyQuota(c *gin.Context, workspace *v1.Workspace) bool {
+	if h.meteringSvc == nil {
+		return true
+	}
+	userID, _ := extractAuth(c)
+	if userID == "" {
+		return true
+	}
+	if workspace.Labels["llmsafespaces.dev/canary"] == "true" {
+		return true
+	}
+	owner := types.BillingOwner{ID: userID, Type: types.OwnerTypeUser}
+	allowed, _, qerr := h.meteringSvc.CheckQuota(c.Request.Context(), owner, "llm_request")
+	if qerr != nil {
+		h.logger.Warn("Quota check failed, allowing request", "error", qerr, "user_id", userID)
+		return true
+	}
+	if !allowed {
+		metrics.RecordQuotaExceeded("llm_request")
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "quota exceeded", "event_type": "llm_request"})
+		return false
+	}
+	return true
 }

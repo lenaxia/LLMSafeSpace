@@ -129,7 +129,9 @@ func (s *Service) drain() {
 			for len(s.queue) > 0 {
 				ev := <-s.queue
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				_ = s.db.UpsertSessionMessage(ctx, ev.workspaceID, ev.sessionID, ev.at)
+				if err := s.db.UpsertSessionMessage(ctx, ev.workspaceID, ev.sessionID, ev.at); err != nil {
+					s.logger.Warn("Failed to flush session message on shutdown", "error", err, "workspaceID", ev.workspaceID, "sessionID", ev.sessionID)
+				}
 				cancel()
 			}
 			return

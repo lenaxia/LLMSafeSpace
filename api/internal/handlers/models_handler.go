@@ -152,7 +152,11 @@ func (h *ModelsHandler) ListModels(c *gin.Context) {
 	// Include current model selection + resolve providerID.
 	currentModel := ""
 	if h.wsUpdater != nil {
-		currentModel, _ = h.wsUpdater.GetDefaultModel(c.Request.Context(), workspaceID)
+		var err error
+		currentModel, err = h.wsUpdater.GetDefaultModel(c.Request.Context(), workspaceID)
+		if err != nil && h.logger != nil {
+			h.logger.Warn("Failed to get default model", "error", err, "workspaceID", workspaceID)
+		}
 	}
 	currentModelProviderID := resolveProviderID(annotated, currentModel)
 	markSelected(annotated, currentModel)
