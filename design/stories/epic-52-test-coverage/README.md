@@ -53,7 +53,7 @@ production-coverage signal.
 | Controller workspace | `reconciler.go`, 5× `phase_*.go`, `recovery.go`, `secrets.go`, `pvc.go`, `runtime_resolver.go`, `helpers.go`, `network_policy.go`, `constants.go` — no direct unit tests; only integration-via-fake-client coverage exists | State-machine regressions are caught only at e2e; the workspace lifecycle is the product | US-52.1 |
 | Controller relay | `cloudinit.go`, `oci_driver.go`, `router_configmap.go`, `rsa.go`, `health.go`, `constants.go` — no tests; `aws_driver.go`/`driver.go`/`wireguard.go`/`reconciler.go` have only happy-path tests | Cloud VM provisioning failures hit production undetected | US-52.2 |
 | API services | `kubernetes/` service — 0 tests; `eventbroker/broker.go` — only `user_broker` tested; `ratelimit`, `metering`, `msgqueue`, `policy`, `sessionindex` — 1 test file each, narrow scope | These are cross-cutting services; bugs cascade across every handler | US-52.3 |
-| `pkg/` leaf modules | `pkg/email/` (SES provider) — 0 tests; `pkg/types/` (13 files) — 2 tests; `pkg/interfaces/`, `pkg/config/` — 0 tests | Public/shared types are the contract surface for the whole codebase | US-52.4 |
+| `pkg/` leaf modules | `pkg/types/` (13 files) — 2 tests; `pkg/interfaces/`, `pkg/config/` — 0 tests; `pkg/email/` covered by Epic 49 (#306, 8 tests) | Public/shared types are the contract surface for the whole codebase | US-52.4 |
 | `cmd/` binaries | `cmd/mcp`, `cmd/redact`, `cmd/repolint`, `cmd/relay-proxy`, `cmd/relay-router` — 0 or near-0 tests (only `seal-key` and `workspace-agentd` are covered) | CLI entry points are untested; flag parsing and signal handling regress silently | US-52.5 |
 | Integration harness | Each service test file builds its own Postgres + miniredis + migration setup; no shared helper | Integration tests drift, repeat setup, and are expensive to author — so they aren't written | US-52.6 |
 | Nightly e2e | `local/test.sh` — single linear shell script, 9 opaque steps, no isolation, no coverage | A regression in step 4 hides steps 5–9; coverage is invisible | US-52.7 |
@@ -143,7 +143,7 @@ codebase's history.
 story is "done" because coverage hit a threshold. A story is done when the
 intent-declared tests pass, the adversarial review (Phase 2 of Rule 11)
 finds zero real gaps, and the canary/e2e layer would have caught the same
-bug class. Coverage thresholds are tracked in US-52.13's measurement story
+bug class. Coverage thresholds are tracked in the epic's acceptance criteria
 as a *regression* guard, not a completion gate.
 
 ---
