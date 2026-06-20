@@ -128,8 +128,9 @@ func TestEnvtest_QuotaWebhook_RejectsPodOverLimit(t *testing.T) {
 	// Start the webhook server in the background. Use a dedicated context
 	// so the server lifecycle is independent from the test-operations ctx.
 	serverCtx, serverCancel := context.WithCancel(context.Background())
+	var startErr error
 	go func() {
-		_ = server.Start(serverCtx)
+		startErr = server.Start(serverCtx)
 	}()
 	defer func() {
 		serverCancel()
@@ -138,6 +139,9 @@ func TestEnvtest_QuotaWebhook_RejectsPodOverLimit(t *testing.T) {
 
 	// Wait for the webhook server to be reachable.
 	require.Eventually(t, func() bool {
+		if startErr != nil {
+			t.Fatalf("webhook server failed to start: %v", startErr)
+		}
 		conn, err := net.DialTimeout("tcp",
 			net.JoinHostPort(wopts.LocalServingHost, intToStr(wopts.LocalServingPort)),
 			1*time.Second)

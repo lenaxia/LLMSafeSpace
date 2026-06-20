@@ -204,12 +204,12 @@ func TestS51_2_ControllerFlag_QuotaFlags(t *testing.T) {
 
 	var foundWS, foundCPU, foundMem bool
 	for _, a := range args {
-		switch {
-		case a == "--max-workspaces-per-tenant=10":
+		switch a {
+		case "--max-workspaces-per-tenant=10":
 			foundWS = true
-		case a == "--max-cpu-millis-per-tenant=8000":
+		case "--max-cpu-millis-per-tenant=8000":
 			foundCPU = true
-		case a == "--max-memory-mi-per-tenant=16384":
+		case "--max-memory-mi-per-tenant=16384":
 			foundMem = true
 		}
 	}
