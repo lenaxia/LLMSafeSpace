@@ -92,7 +92,7 @@ spec:
                    run in any namespace (controller watches cluster-wide by
                    default), while the relay-router Service lives in the release
                    namespace — a short name would fail to resolve cross-ns.
-                   workspaceRouterURL overrides for the separate-ns-router case. */ -}}
+                   workspaceRouterURL overrides for the separate-ns-router case. */}}
             - --inference-relay-url={{ .Values.controller.inferenceRelay.workspaceRouterURL | default (printf "http://relay-router.%s.svc.cluster.local:8080" .Release.Namespace) }}
             {{- else }}
             {{- with .Values.inferenceRelayURL }}
