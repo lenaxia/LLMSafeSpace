@@ -11,7 +11,7 @@ async function run(run: Runner, cfg: Config): Promise<void> {
   const password = 'canary-email-pwd-123456';
 
   // P1: Register
-  const [regStatus] = await rawDo('POST', base + '/auth/register', '', Buffer.from(JSON.stringify({ username: 'canaryemail', email, password })));
+  const [regStatus] = await rawDo('POST', base + '/auth/register', '', Buffer.from(JSON.stringify({ username: `canaryemail${unique}`, email, password })));
   run.assert(regStatus === 201 || regStatus === 409, `register: 201 or 409 (got ${regStatus})`, '');
 
   // P2: Login
@@ -50,9 +50,9 @@ async function run(run: Runner, cfg: Config): Promise<void> {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const run = new Runner('email-reset', 'typescript-sdk');
+  const r = new Runner('email-reset', 'typescript-sdk');
   const cfg = configFromEnv();
-  await run(run, cfg);
-  const res = run.print();
+  await run(r, cfg);
+  const res = r.print();
   if (res.failed > 0) process.exit(1);
 }

@@ -22,7 +22,7 @@ def run(run: Runner, cfg: Config) -> None:
     password = "canary-email-pwd-123456"
 
     # P1: Register
-    reg_body = json.dumps({"username": "canaryemail", "email": email, "password": password}).encode()
+    reg_body = json.dumps({"username": f"canaryemail{unique}", "email": email, "password": password}).encode()
     status, _ = raw_do("POST", base + "/auth/register", "", reg_body)
     run.assert_(status in (201, 409), f"register: 201 or 409 (got {status})")
 

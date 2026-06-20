@@ -53,10 +53,11 @@ func runEmailReset(ctx context.Context, run *canary.Runner, cfg canary.Config) {
 
 	// Unique email per run so concurrent canaries don't collide.
 	uniqueEmail := fmt.Sprintf("canary-email-%d@llmsafespaces.test", time.Now().UnixNano())
+	uniqueUsername := fmt.Sprintf("canaryemail%d", time.Now().UnixNano())
 	password := "canary-email-pwd-123456"
 
 	// P1: Register → 201 or 409 (if collision). Either is acceptable.
-	regBody := []byte(fmt.Sprintf(`{"username":"canaryemail","email":"%s","password":"%s"}`, uniqueEmail, password))
+	regBody := []byte(fmt.Sprintf(`{"username":"%s","email":"%s","password":"%s"}`, uniqueUsername, uniqueEmail, password))
 	regStatus, regResp, err := canary.RawDo(ctx, "POST", baseURL+"/auth/register", "", regBody)
 	if !run.AssertNoError(err, "register: HTTP request succeeds") {
 		return
