@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { ToastProvider } from "../providers/ToastProvider";
+import { ApiClientError } from "../api/client";
 
 // Mock must be self-contained (vitest hoists vi.mock before imports)
 vi.mock("../api/settings", () => ({
@@ -29,6 +30,12 @@ function renderPage() {
   );
 }
 
+function fillAndSend(recipient: string) {
+  const input = screen.getByPlaceholderText("recipient@example.com");
+  fireEvent.change(input, { target: { value: recipient } });
+  fireEvent.click(screen.getByText("Send Test Email"));
+}
+
 describe("AdminSettingsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -55,40 +62,64 @@ describe("AdminSettingsPage", () => {
     expect(screen.queryByText("Email Test")).not.toBeInTheDocument();
   });
 
-  it("calls testEmailSend and shows success toast", async () => {
+  it("calls testEmailSend and shows success toast on ses success", async () => {
     vi.mocked(settingsApi.testEmailSend).mockResolvedValueOnce({ sent: true, provider: "ses" });
     renderPage();
     await waitFor(() => {
       expect(screen.getByText("Send Test Email")).toBeInTheDocument();
     });
 
-    const input = screen.getByPlaceholderText("recipient@example.com");
-    fireEvent.change(input, { target: { value: "ops@test.com" } });
-    fireEvent.click(screen.getByText("Send Test Email"));
+    fillAndSend("ops@test.com");
 
     await waitFor(() => {
       expect(settingsApi.testEmailSend).toHaveBeenCalledWith("ops@test.com");
     });
+    await waitFor(() => {
+      expect(screen.getByText(/Test email sent to ops@test.com via ses/)).toBeInTheDocument();
+    });
   });
 
-  it("shows error toast when testEmailSend fails", async () => {
-    vi.mocked(settingsApi.testEmailSend).mockRejectedValueOnce({
-      status: 502,
-      body: { error: "sender not verified in SES" },
-      message: "sender not verified in SES",
-      name: "ApiClientError",
-    });
+  it("shows noop toast when provider is noop", async () => {
+    vi.mocked(settingsApi.testEmailSend).mockResolvedValueOnce({ sent: false, provider: "noop" });
     renderPage();
     await waitFor(() => {
       expect(screen.getByText("Send Test Email")).toBeInTheDocument();
     });
 
-    const input = screen.getByPlaceholderText("recipient@example.com");
-    fireEvent.change(input, { target: { value: "ops@test.com" } });
+    fillAndSend("ops@test.com");
+
+    await waitFor(() => {
+      expect(screen.getByText(/noop.*configure SES/i)).toBeInTheDocument();
+    });
+  });
+
+  it("shows error toast from ApiClientError when testEmailSend fails", async () => {
+    vi.mocked(settingsApi.testEmailSend).mockRejectedValueOnce(
+      new ApiClientError(502, { error: "sender not verified in SES; verify the fromAddress domain" }),
+    );
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText("Send Test Email")).toBeInTheDocument();
+    });
+
+    fillAndSend("ops@test.com");
+
+    await waitFor(() => {
+      expect(screen.getByText(/sender not verified in SES/)).toBeInTheDocument();
+    });
+  });
+
+  it("shows error toast when recipient is empty", async () => {
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText("Send Test Email")).toBeInTheDocument();
+    });
+
     fireEvent.click(screen.getByText("Send Test Email"));
 
     await waitFor(() => {
-      expect(settingsApi.testEmailSend).toHaveBeenCalledWith("ops@test.com");
+      expect(screen.getByText(/Enter a recipient email address/i)).toBeInTheDocument();
     });
+    expect(settingsApi.testEmailSend).not.toHaveBeenCalled();
   });
 });
