@@ -1659,6 +1659,16 @@ func (s *PgOrgStore) DeleteSSOConfig(ctx context.Context, orgID string) error {
 	return nil
 }
 
+// FindSSOConfigByDomain resolves a claimed email domain (without leading
+// "@") to the owning org's SSO config. Returns (nil, nil) when no org has
+// claimed the domain.
+//
+// NOTE: this matches on claimed_domains (NOT verified_domains). It is intended
+// for internal lookups where the org has been identified by other means and
+// its full config is needed regardless of verification status. The login-page
+// auto-routing path uses ListSSODomains (which filters on verified_domains).
+// If you wire this into login routing, you MUST add a verified_domains check
+// or you bypass the DNS verification gate this migration introduces.
 func (s *PgOrgStore) FindSSOConfigByDomain(ctx context.Context, domain string) (*types.OrgSSOConfig, error) {
 	var cfg types.OrgSSOConfig
 	if err := scanSSOConfig(s.db.QueryRowContext(ctx,

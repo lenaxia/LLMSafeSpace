@@ -764,11 +764,11 @@ func TestSSOHandler_RotateToken_Success(t *testing.T) {
 	require.Len(t, resp["verificationToken"], 32)
 }
 
-func TestSSOHandler_RotateToken_NoSSOConfig_500(t *testing.T) {
+func TestSSOHandler_RotateToken_NoSSOConfig_404(t *testing.T) {
 	_, _, r, _ := buildVerifyHandler(t)
 
 	w := doRequest(r, "POST", "/api/v1/orgs/ghost/sso/verification-token/rotate", "")
-	require.Equal(t, http.StatusInternalServerError, w.Code)
+	require.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestSSOHandler_Get_ReturnsVerifiedDomainsAndToken(t *testing.T) {

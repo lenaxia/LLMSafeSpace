@@ -193,6 +193,10 @@ func (h *SSOHandler) RotateToken(c *gin.Context) {
 
 	token, err := h.svc.RotateToken(c.Request.Context(), orgID)
 	if err != nil {
+		if errors.Is(err, sso.ErrSSONotConfigured) {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to rotate verification token"})
 		return
 	}

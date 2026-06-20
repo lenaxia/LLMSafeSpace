@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -962,6 +963,38 @@ func TestVerifyDomain_NoTXTRecord_ReturnsErrDNSNotMatching(t *testing.T) {
 	require.ErrorIs(t, err, ErrDNSNotMatching)
 }
 
+func TestVerifyDomain_NXDOMAIN_ReturnsErrDNSNotMatching(t *testing.T) {
+	svc, orgs, dns := newVerifyTestService(t)
+	orgs.configs["org-1"] = &types.OrgSSOConfig{
+		OrgID:             "org-1",
+		ClaimedDomains:    []string{"acme.com"},
+		VerificationToken: "tok",
+	}
+	// Simulate production net.LookupTXT behavior for NXDOMAIN: returns an error
+	// (not an empty slice). This is the most common first-time scenario — admin
+	// clicks Verify before adding the TXT record.
+	dns.err = &net.DNSError{Err: "no such host", Name: "_llmsafespaces-verify.acme.com", IsNotFound: true}
+
+	_, err := svc.VerifyDomain(context.Background(), "org-1", "acme.com")
+	require.ErrorIs(t, err, ErrDNSNotMatching)
+}
+
+func TestVerifyDomain_TransientDNSError_ReturnsGenericError(t *testing.T) {
+	svc, orgs, dns := newVerifyTestService(t)
+	orgs.configs["org-1"] = &types.OrgSSOConfig{
+		OrgID:             "org-1",
+		ClaimedDomains:    []string{"acme.com"},
+		VerificationToken: "tok",
+	}
+	// Transient DNS error (timeout, server failure) — NOT NXDOMAIN. Should
+	// surface as a generic wrapped error, NOT ErrDNSNotMatching.
+	dns.err = &net.DNSError{Err: "i/o timeout", Name: "_llmsafespaces-verify.acme.com", IsTimeout: true}
+
+	_, err := svc.VerifyDomain(context.Background(), "org-1", "acme.com")
+	require.Error(t, err)
+	require.NotErrorIs(t, err, ErrDNSNotMatching, "transient DNS errors must NOT be treated as no-match")
+}
+
 func TestVerifyDomain_DomainNotClaimed_ReturnsErrDomainNotClaimed(t *testing.T) {
 	svc, orgs, _ := newVerifyTestService(t)
 	orgs.configs["org-1"] = &types.OrgSSOConfig{
@@ -1057,12 +1090,12 @@ func TestRotateToken_GeneratesAndPersists(t *testing.T) {
 	require.Equal(t, token, orgs.configs["org-1"].VerificationToken)
 }
 
-func TestRotateToken_NoSSOConfig_ReturnsError(t *testing.T) {
+func TestRotateToken_NoSSOConfig_ReturnsErrSSONotConfigured(t *testing.T) {
 	svc, _, _ := newVerifyTestService(t)
 	// No config seeded.
 
 	_, err := svc.RotateToken(context.Background(), "ghost-org")
-	require.Error(t, err)
+	require.ErrorIs(t, err, ErrSSONotConfigured)
 }
 
 func TestApplyConfigMutation_PreservesVerifiedForStillClaimedDomains(t *testing.T) {

@@ -350,8 +350,14 @@ func (s *Service) VerifyDomain(ctx context.Context, orgID, domain string) (*Veri
 	lookupName := "_llmsafespaces-verify." + domain
 	records, err := s.dns.LookupTXT(ctx, lookupName)
 	if err != nil {
-		// Transient DNS errors surface as a generic failure; the org admin
-		// can retry. NXDOMAIN (no record at all) is reported as no match.
+		// NXDOMAIN (no TXT record published yet — the most common first-time
+		// scenario) is treated as "no match" rather than a server error. Go's
+		// net.LookupTXT returns *net.DNSError with IsNotFound=true for this.
+		// Truly transient errors (timeout, server failure) surface as 503.
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
+			return &VerifyDomainResult{Domain: domain, Verified: false}, ErrDNSNotMatching
+		}
 		return nil, fmt.Errorf("dns lookup for %s: %w", lookupName, err)
 	}
 	matched := false
@@ -375,7 +381,16 @@ func (s *Service) VerifyDomain(ctx context.Context, orgID, domain string) (*Veri
 // RotateToken replaces the org's verification token with a fresh random value
 // and returns it. Used for both initial creation and rotation. Old tokens stop
 // matching immediately — admins must update their DNS TXT record after rotation.
+// Returns ErrSSONotConfigured if the org has no SSO config (so the handler can
+// map it to 404 rather than 500).
 func (s *Service) RotateToken(ctx context.Context, orgID string) (string, error) {
+	cfg, err := s.orgs.GetSSOConfig(ctx, orgID)
+	if err != nil {
+		return "", fmt.Errorf("load sso config: %w", err)
+	}
+	if cfg == nil {
+		return "", ErrSSONotConfigured
+	}
 	token, err := s.orgs.RotateVerificationToken(ctx, orgID)
 	if err != nil {
 		return "", fmt.Errorf("rotate verification token: %w", err)
