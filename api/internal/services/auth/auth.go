@@ -728,8 +728,10 @@ func (s *Service) Register(ctx context.Context, req types.RegisterRequest) (*typ
 		verified := true
 		if err := s.dbService.UpdateUser(ctx, userID, types.UserUpdates{EmailVerified: &verified}); err != nil {
 			s.logger.Error("Register: failed to persist email_verified", err, "user_id", userID)
+			user.EmailVerified = false
+		} else {
+			user.EmailVerified = true
 		}
-		user.EmailVerified = true
 	}
 
 	user.PasswordHash = ""

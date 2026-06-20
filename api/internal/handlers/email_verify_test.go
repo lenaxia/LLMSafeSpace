@@ -5,6 +5,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -201,6 +202,31 @@ func TestEmailVerify_Resend_InvalidEmail_400(t *testing.T) {
 
 	w := doRequest(router, http.MethodPost, "/api/v1/auth/verify-email/resend", `{"email":"not-an-email"}`)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestEmailVerify_Verify_ConsumeError_DBTransient_500(t *testing.T) {
+	// DB transient error during consume must return 500, not 410 (same
+	// pattern as the password-reset handler). Distinguishes TOCTOU race
+	// (token consumed by another request) from DB unavailability.
+	store := &memTokenStore{
+		tokens:     map[string]*types.EmailToken{},
+		consumeErr: fmt.Errorf("connection refused"),
+	}
+	tokenHash := hashTokenForTest("db-err-vtoken")
+	store.tokens[tokenHash] = &types.EmailToken{
+		ID:        "vt-7",
+		UserID:    "user-1",
+		Kind:      "email_verify",
+		TokenHash: tokenHash,
+		ExpiresAt: time.Now().Add(10 * time.Minute),
+	}
+
+	h := NewEmailVerifyHandler(store, newEmailVerifyUserStore(), nil, nil, nil)
+	router := setupVerifyRouter(h)
+
+	w := doRequest(router, http.MethodPost, "/api/v1/auth/verify-email", `{"token":"db-err-vtoken"}`)
+	assert.Equal(t, http.StatusInternalServerError, w.Code,
+		"DB transient error during consume must return 500, not 410")
 }
 
 // --- EmailVerifierAdapter test ---
