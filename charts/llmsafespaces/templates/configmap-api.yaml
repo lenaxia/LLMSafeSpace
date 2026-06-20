@@ -62,3 +62,11 @@ data:
       fromAddress: {{ .Values.email.fromAddress | quote }}
       baseUrl: {{ .Values.email.baseUrl | quote }}
     {{- end }}
+    {{- if .Values.oidc }}
+    oidc:
+      redirectBaseUrl: {{ .Values.oidc.redirectBaseUrl | quote }}
+      frontendRedirectUrl: {{ .Values.oidc.frontendRedirectUrl | quote }}
+      {{- with .Values.oidc.stateCookieName }}
+      stateCookieName: {{ . | quote }}
+      {{- end }}
+    {{- end }}
