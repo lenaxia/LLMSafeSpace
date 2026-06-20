@@ -63,7 +63,7 @@ func TestForwardToRelay_ClientCanceled(t *testing.T) {
 	rec := httptest.NewRecorder()
 	proxy.ServeHTTP(rec, req)
 
-	// When context is already cancelled, forwardToRelay returns silently
+	// When context is already canceled, forwardToRelay returns silently
 	// (no 502 written — the early-return on r.Context().Err() path).
 	// Default httptest recorder status is 200.
 	assert.Equal(t, http.StatusOK, rec.Code,

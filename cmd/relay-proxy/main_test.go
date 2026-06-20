@@ -39,7 +39,7 @@ func TestLoadConfig_UpstreamFlagEqualsForm(t *testing.T) {
 	}
 }
 
-// TestLoadConfig_UpstreamEnvWhenNoFlag verifies env is honoured when the flag
+// TestLoadConfig_UpstreamEnvWhenNoFlag verifies env is honored when the flag
 // is absent (backwards-compatible with any operator running the binary without
 // args but with UPSTREAM_URL set).
 func TestLoadConfig_UpstreamEnvWhenNoFlag(t *testing.T) {
@@ -87,7 +87,7 @@ func TestLoadConfig_ListenAndKeepaliveFlags(t *testing.T) {
 
 // TestLoadConfig_DefaultListenIsAllInterfaces verifies the default listen
 // address is 0.0.0.0:8080, not the old WG-only 10.42.42.2:8080. The WG-only
-// bind was defence-in-depth when WG was the transport; with plaintext HTTP +
+// bind was defense-in-depth when WG was the transport; with plaintext HTTP +
 // token auth (worklog 0442), binding to the WG interface would be
 // EADDRNOTAVAIL on every non-OCI VM and there is no WG interface at all.
 func TestLoadConfig_DefaultListenIsAllInterfaces(t *testing.T) {

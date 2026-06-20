@@ -660,7 +660,7 @@ func TestRelayDeploy_CRHasNoWireGuardField(t *testing.T) {
 	require.NotNil(t, captured, "deploy must create an InferenceRelay CR")
 	// The WireGuard field is gone from the struct; this compiles only because
 	// it's removed. The assertion is the absence of any wireGuard-related
-	// configuration in the marshalled spec.
+	// configuration in the marshaled spec.
 	specJSON, err := json.Marshal(captured.Spec)
 	require.NoError(t, err)
 	assert.NotContains(t, string(specJSON), "wireGuard",

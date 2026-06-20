@@ -1721,18 +1721,6 @@ func podSpecMap(deploy map[string]any) map[string]any {
 }
 
 // capSet returns the capabilities.add list (as a string slice) of a container.
-func capSet(c map[string]any) []string {
-	sc, _ := c["securityContext"].(map[string]any)
-	caps, _ := sc["capabilities"].(map[string]any)
-	add, _ := caps["add"].([]any)
-	out := make([]string, 0, len(add))
-	for _, a := range add {
-		if s, ok := a.(string); ok {
-			out = append(out, s)
-		}
-	}
-	return out
-}
 
 // toInt coerces a YAML-decoded number to int. sigs.k8s.io/yaml unmarshals
 // numeric scalars as float64 (via encoding/json), so a bare .(int) assertion
@@ -2334,13 +2322,6 @@ func findAPIConfigMap(t *testing.T, docs []map[string]any) map[string]any {
 
 // nsPSAEnforce returns the pod-security.kubernetes.io/enforce label value
 // on a Namespace doc, or "" if unset.
-func nsPSAEnforce(ns map[string]any) string {
-	meta, _ := ns["metadata"].(map[string]any)
-	labels, _ := meta["labels"].(map[string]any)
-	v, _ := labels["pod-security.kubernetes.io/enforce"].(string)
-	return v
-}
-
 func TestEmail_DefaultRender_OmitsEmailBlock(t *testing.T) {
 	docs := helmTemplate(t, "")
 	cm := findAPIConfigMap(t, docs)

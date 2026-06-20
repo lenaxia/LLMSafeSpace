@@ -67,12 +67,6 @@ func extractPort(url string) int {
 	return port
 }
 
-func extractHost(url string) string {
-	url = strings.TrimPrefix(url, "http://")
-	url = strings.TrimPrefix(url, "https://")
-	parts := strings.Split(url, ":")
-	return parts[0]
-}
 
 // extractEndpoint returns the host:port of a httptest.Server URL — what the
 // router dials as http://<endpoint><path> when forwarding to a relay.
