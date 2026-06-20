@@ -100,6 +100,12 @@ spec:
                   authenticates the controller→API call (the endpoint fails
                   closed without it). */}}
             - --api-service-url={{ $apiServiceURL }}
+            {{- /* Epic 51 S51.1: default RuntimeClass for workspace pods.
+                    Set to "gvisor" when .Values.gvisor.enabled is true.
+                    Empty means runc (default K8s runtime, used in dev/single-tenant). */}}
+            {{- if .Values.gvisor.enabled }}
+            - --default-runtime-class={{ .Values.gvisor.defaultRuntimeClass | default "gvisor" }}
+            {{- end }}
           ports:
             - name: metrics
               containerPort: {{ $metricsAddr | regexFind "[0-9]+$" | atoi }}

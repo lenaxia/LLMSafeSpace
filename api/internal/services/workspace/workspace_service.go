@@ -852,13 +852,22 @@ func buildWorkspaceCRD(workspaceID, userID string, req types.CreateWorkspaceRequ
 		"app":     "llmsafespaces",
 		"user-id": userID,
 	}
-	for k, v := range req.Labels {
-		labels[k] = v
-	}
 
 	owner := v1.WorkspaceOwner{UserID: userID}
 	if req.OrgID != nil {
 		owner.OrgID = *req.OrgID
+	}
+
+	// Epic 51 S51.3: tenant label for quota enforcement + audit attribution.
+	// tenant_id = org_id if set (Design 0031 D4), else user_id.
+	tenantIDVal := userID
+	if owner.OrgID != "" {
+		tenantIDVal = owner.OrgID
+	}
+	labels["llmsafespaces.dev/tenant"] = tenantIDVal
+
+	for k, v := range req.Labels {
+		labels[k] = v
 	}
 
 	spec := v1.WorkspaceSpec{

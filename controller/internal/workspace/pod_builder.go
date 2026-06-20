@@ -45,6 +45,7 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		LabelComponent: ComponentWorkspace,
 		LabelWorkspace: workspace.Name,
 		LabelRuntime:   sanitizeLabelValue(workspace.Spec.Runtime),
+		LabelTenant:    sanitizeLabelValue(tenantID(workspace.Spec.Owner)),
 	}
 
 	annotations := map[string]string{
@@ -191,6 +192,15 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 	volumes = append(volumes, pwVolume)
 	volumes = append(volumes, userSecretsVol)
 
+	// Epic 51 S51.1: Runtime class resolution. Per-workspace opt-out
+	// (spec.runtimeClass) takes precedence; otherwise use the controller's
+	// DefaultRuntimeClass (typically "gvisor" in production multi-tenant).
+	// Empty string = runc (K8s default).
+	runtimeClassName := r.DefaultRuntimeClass
+	if workspace.Spec.RuntimeClass != nil {
+		runtimeClassName = *workspace.Spec.RuntimeClass
+	}
+
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        name,
@@ -221,6 +231,9 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 			EnableServiceLinks: &falseVal,
 			SecurityContext:    buildPodSecurityContext(workspace),
 		},
+	}
+	if runtimeClassName != "" {
+		pod.Spec.RuntimeClassName = &runtimeClassName
 	}
 	return pod, nil
 }

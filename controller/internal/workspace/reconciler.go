@@ -49,6 +49,16 @@ type WorkspaceReconciler struct {
 	// cached (30s TTL); a lookup failure fails open (workspace keeps running).
 	OrgStatusClient OrgStatusClient
 
+	// DefaultRuntimeClass is the container runtime class applied to all
+	// workspace pods (Epic 51 S51.1). Typically "gvisor" for production
+	// multi-tenant deployments to provide kernel-level isolation against
+	// container escape. Empty means use the default (runc). Set via
+	// --default-runtime-class controller flag, sourced from Helm
+	// .Values.gvisor.defaultRuntimeClass (only set when .Values.gvisor.enabled
+	// is true). Individual workspaces can override via spec.runtimeClass for
+	// compatibility opt-out (admin-gated).
+	DefaultRuntimeClass string
+
 	// lastDeepStatus tracks the last time enrichAgentStatus was called per
 	// workspace. In-memory only — lost on controller restart (acceptable;
 	// the next reconcile will just call it immediately).

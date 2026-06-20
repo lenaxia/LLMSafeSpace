@@ -3,7 +3,11 @@
 
 package workspace
 
-import "time"
+import (
+	"time"
+
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+)
 
 const WorkspaceFinalizer = "workspace.llmsafespaces.dev/finalizer"
 
@@ -26,6 +30,7 @@ const (
 	LabelComponent = "component"
 	LabelWorkspace = "llmsafespaces.dev/workspace"
 	LabelRuntime   = "runtime"
+	LabelTenant    = "llmsafespaces.dev/tenant"
 
 	AppName            = "llmsafespaces"
 	ComponentWorkspace = "workspace"
@@ -43,4 +48,14 @@ func podName(workspaceName string, uid string) string {
 		suffix = suffix[:podNameSuffix]
 	}
 	return workspaceName + "-" + suffix
+}
+
+// tenantID resolves the tenant identity for a workspace (Epic 51 S51.3).
+// Per Design 0031 D4, org members' workspaces are org-attributed.
+// tenant_id = Owner.OrgID if set, else Owner.UserID.
+func tenantID(owner v1.WorkspaceOwner) string {
+	if owner.OrgID != "" {
+		return owner.OrgID
+	}
+	return owner.UserID
 }

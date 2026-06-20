@@ -1,0 +1,26 @@
+{{/*
+Epic 51 S51.1 — gVisor RuntimeClass for multi-tenant container isolation.
+
+Gated on .Values.gvisor.enabled (default false). When enabled, creates a
+RuntimeClass named "gvisor" (or .Values.gvisor.defaultRuntimeClass) with
+handler "runsc". Workspace pods will use this RuntimeClass by default,
+providing kernel-level isolation against container escape.
+
+Prerequisites (operator must provision separately):
+  - gVisor (runsc) installed on all workspace nodes
+  - Container runtime (containerd/CRI-O) configured with runsc handler
+
+For EKS + Karpenter, this is done via EC2NodeClass userData
+(see Epic 18 S18.9). For manual clusters, see:
+  https://gvisor.dev/docs/user_guide/install/
+*/}}
+{{- if .Values.gvisor.enabled }}
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: {{ .Values.gvisor.defaultRuntimeClass | default "gvisor" }}
+  labels:
+    {{- include "llmsafespaces.labels" . | nindent 4 }}
+    app.kubernetes.io/component: runtime-class
+handler: runsc
+{{- end }}

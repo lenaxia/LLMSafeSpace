@@ -146,6 +146,10 @@ spec:
                       format: int64
                     seccompProfile:
                       type: string
+                runtimeClass:
+                  type: string
+                  nullable: true
+                  description: "Override the container runtime for this workspace (Epic 51). Set to 'runc' to opt out of the default gVisor sandbox. Empty means use the controller default."
                 autoApprovePermissions:
                   type: boolean
                   default: false
