@@ -848,11 +848,6 @@ func (s *Service) verifyOwner(ctx context.Context, userID, workspaceID string) e
 
 // buildWorkspaceCRD constructs a v1.Workspace CRD from an API request.
 func buildWorkspaceCRD(workspaceID, userID string, req types.CreateWorkspaceRequest, namespace string) *v1.Workspace {
-	labels := map[string]string{
-		"app":     "llmsafespaces",
-		"user-id": userID,
-	}
-
 	owner := v1.WorkspaceOwner{UserID: userID}
 	if req.OrgID != nil {
 		owner.OrgID = *req.OrgID
@@ -865,12 +860,16 @@ func buildWorkspaceCRD(workspaceID, userID string, req types.CreateWorkspaceRequ
 		tenantIDVal = owner.OrgID
 	}
 
-	// Merge user-supplied labels first, then set system labels — system
-	// labels must always win so users cannot spoof the tenant identity
-	// (which would undermine audit attribution and future quota enforcement).
+	// Merge user-supplied labels first into an empty map, then set system
+	// labels — system labels must always win so users cannot spoof identity
+	// attributes (tenant, user-id, app). This prevents cross-tenant
+	// information disclosure and quota bypass via label spoofing.
+	labels := make(map[string]string)
 	for k, v := range req.Labels {
 		labels[k] = v
 	}
+	labels["app"] = "llmsafespaces"
+	labels["user-id"] = userID
 	labels["llmsafespaces.dev/tenant"] = tenantIDVal
 
 	spec := v1.WorkspaceSpec{

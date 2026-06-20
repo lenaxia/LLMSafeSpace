@@ -55,3 +55,24 @@ func TestS51_3_BuildCRD_TenantLabel_CannotBeSpoofed(t *testing.T) {
 	require.Equal(t, "user-abc", crd.Labels["llmsafespaces.dev/tenant"],
 		"system tenant label must not be overridable by user-supplied labels")
 }
+
+func TestS51_3_BuildCRD_SystemLabels_CannotBeSpoofed(t *testing.T) {
+	req := types.CreateWorkspaceRequest{
+		Name: "my-ws",
+		Labels: map[string]string{
+			"app":                       "malicious",
+			"user-id":                   "victim-user",
+			"llmsafespaces.dev/tenant":  "victim-org",
+			"llmsafespaces.dev/workspace": "stolen-id",
+		},
+	}
+
+	crd := buildWorkspaceCRD("ws-123", "user-abc", req, "default")
+
+	require.Equal(t, "llmsafespaces", crd.Labels["app"],
+		"system 'app' label must not be overridable")
+	require.Equal(t, "user-abc", crd.Labels["user-id"],
+		"system 'user-id' label must not be overridable (prevents cross-tenant info disclosure)")
+	require.Equal(t, "user-abc", crd.Labels["llmsafespaces.dev/tenant"],
+		"system tenant label must not be overridable")
+}
