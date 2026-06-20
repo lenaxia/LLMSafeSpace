@@ -717,15 +717,16 @@ func (s *Service) Register(ctx context.Context, req types.RegisterRequest) (*typ
 	// US-49.6: Send email verification. When an email verifier is wired
 	// (SES in production), the user starts unverified and must click the
 	// link before they can log in. When no verifier is wired (dev/air-gapped),
-	// mark the user verified immediately so local development isn't blocked.
+	// persist email_verified=true immediately so Login (which reads from DB)
+	// doesn't permanently lock the user out.
 	if s.emailVerifier != nil {
 		if err := s.emailVerifier.SendVerification(ctx, userID, user.Email); err != nil {
 			s.logger.Warn("Register: failed to send verification email", "user_id", userID, "error", err.Error())
-			// Non-fatal: the user can request a resend. Registration must not
-			// fail because the email send had a transient blip.
 		}
 		user.EmailVerified = false
 	} else {
+		verified := true
+		_ = s.dbService.UpdateUser(ctx, userID, types.UserUpdates{EmailVerified: &verified})
 		user.EmailVerified = true
 	}
 

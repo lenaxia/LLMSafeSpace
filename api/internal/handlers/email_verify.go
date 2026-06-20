@@ -7,15 +7,17 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
+	emailsvc "github.com/lenaxia/llmsafespaces/api/internal/services/email"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/database"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	emailsvc "github.com/lenaxia/llmsafespaces/api/internal/services/email"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 const (
@@ -105,7 +107,14 @@ func (h *EmailVerifyHandler) Verify(c *gin.Context) {
 	}
 
 	if err := h.store.ConsumeEmailToken(ctx, tok.ID); err != nil {
-		c.JSON(http.StatusGone, gin.H{"error": "token already used"})
+		if errors.Is(err, database.ErrTokenAlreadyConsumed) {
+			c.JSON(http.StatusGone, gin.H{"error": "token already used"})
+			return
+		}
+		if h.log != nil {
+			h.log.Error("verify-email: consume token DB error", err)
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to consume token"})
 		return
 	}
 
