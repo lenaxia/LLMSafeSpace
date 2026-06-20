@@ -1,40 +1,30 @@
+// Copyright (C) 2026 Michael Kao
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
 //go:build integration
-// +build integration
 
 package database
 
 import (
-	"context"
-	"os"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/lenaxia/llmsafespaces/api/internal/testharness"
 )
 
-func getIntegrationPool(t *testing.T) *pgxpool.Pool {
-	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		dsn = "postgres://postgres:testpass@localhost:5433/llmsafespaces_test?sslmode=disable"
-	}
-	pool, err := pgxpool.New(context.Background(), dsn)
-	if err != nil {
-		t.Skipf("Skipping PG integration test: %v", err)
-	}
-	if err := pool.Ping(context.Background()); err != nil {
-		t.Skipf("Skipping PG integration test: %v", err)
-	}
-	return pool
-}
+// These tests exercise the session_index.context_used column against real
+// Postgres. They use the shared integration-test harness
+// (api/internal/testharness) for connection + migration setup; the pool is
+// closed by the harness via t.Cleanup, so tests no longer manage teardown.
 
 func TestIntegration_UpsertContextUsed_RoundTrip(t *testing.T) {
-	pool := getIntegrationPool(t)
-	defer pool.Close()
+	h := testharness.New(t)
+	pool := h.Pool()
+	ctx := h.NewContext()
 
-	ctx := context.Background()
 	wsID := "int-test-ws-context"
 	sesID := "int-test-ses-context"
 
@@ -87,10 +77,10 @@ func TestIntegration_UpsertContextUsed_RoundTrip(t *testing.T) {
 }
 
 func TestIntegration_ListSessionIndex_ReturnsContextUsed(t *testing.T) {
-	pool := getIntegrationPool(t)
-	defer pool.Close()
+	h := testharness.New(t)
+	pool := h.Pool()
+	ctx := h.NewContext()
 
-	ctx := context.Background()
 	wsID := "int-test-ws-list"
 	now := time.Now()
 

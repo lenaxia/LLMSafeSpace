@@ -2,68 +2,33 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 //go:build integration
-// +build integration
 
 package database
 
 import (
-	"context"
-	"database/sql"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/lenaxia/llmsafespaces/api/internal/testharness"
 	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
-// newIntegrationDB constructs a *sql.DB connected to the integration-test
-// Postgres (same pattern as getIntegrationPool, but via database/sql for
-// compatibility with PgEmailTokenStore).
-func newIntegrationDB(t *testing.T) *sql.DB {
-	t.Helper()
-	host := os.Getenv("POSTGRES_HOST")
-	if host == "" {
-		host = "localhost"
-	}
-	port := os.Getenv("POSTGRES_PORT")
-	if port == "" {
-		port = "5432"
-	}
-	user := os.Getenv("POSTGRES_USER")
-	if user == "" {
-		user = "llmsafespaces"
-	}
-	pw := os.Getenv("POSTGRES_PASSWORD")
-	if pw == "" {
-		pw = "testpass"
-	}
-	db := os.Getenv("POSTGRES_DB")
-	if db == "" {
-		db = "llmsafespaces"
-	}
-	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", host, port, user, pw, db)
-	sqlDB, err := sql.Open("pgx", dsn)
-	if err != nil {
-		t.Skipf("Skipping email integration test: %v", err)
-	}
-	if err := sqlDB.PingContext(context.Background()); err != nil {
-		t.Skipf("Skipping email integration test: %v", err)
-	}
-	t.Cleanup(func() { sqlDB.Close() })
-	return sqlDB
-}
+// These tests exercise PgEmailTokenStore against real PostgreSQL via the shared
+// integration-test harness. The *sql.DB is provided by h.SQLDB() (the store is
+// built on database/sql); the connection is closed by the harness.
 
 // TestIntegration_EmailToken_CRUD exercises the full token lifecycle against
 // real PostgreSQL: create → get → consume → get (consumed). Catches column
 // mismatches, type errors, and constraint violations that sqlmock cannot.
 func TestIntegration_EmailToken_CRUD(t *testing.T) {
-	db := newIntegrationDB(t)
+	h := testharness.New(t)
+	db := h.SQLDB()
 	store := NewPgEmailTokenStore(db)
-	ctx := context.Background()
+	ctx := h.NewContext()
 
 	// Create a unique token for this test run
 	tokenID := fmt.Sprintf("integ-crud-%d", time.Now().UnixNano())
@@ -118,9 +83,10 @@ func TestIntegration_EmailToken_CRUD(t *testing.T) {
 // TestIntegration_EmailToken_KindConstraint verifies the CHECK constraint on
 // the kind column rejects invalid values at the DB level.
 func TestIntegration_EmailToken_KindConstraint(t *testing.T) {
-	db := newIntegrationDB(t)
+	h := testharness.New(t)
+	db := h.SQLDB()
 	store := NewPgEmailTokenStore(db)
-	ctx := context.Background()
+	ctx := h.NewContext()
 
 	userID := fmt.Sprintf("integ-kind-%d", time.Now().UnixNano())
 	_, err := db.ExecContext(ctx,
@@ -143,10 +109,10 @@ func TestIntegration_EmailToken_KindConstraint(t *testing.T) {
 // TestIntegration_EmailToken_NotFound verifies GetEmailTokenByHash returns
 // nil, nil for a nonexistent hash (not an error).
 func TestIntegration_EmailToken_NotFound(t *testing.T) {
-	db := newIntegrationDB(t)
-	store := NewPgEmailTokenStore(db)
+	h := testharness.New(t)
+	store := NewPgEmailTokenStore(h.SQLDB())
 
-	got, err := store.GetEmailTokenByHash(context.Background(), "nonexistent-hash-xyz")
+	got, err := store.GetEmailTokenByHash(h.NewContext(), "nonexistent-hash-xyz")
 	require.NoError(t, err, "not-found must return nil, nil — not an error")
 	assert.Nil(t, got)
 }
@@ -154,9 +120,10 @@ func TestIntegration_EmailToken_NotFound(t *testing.T) {
 // TestIntegration_EmailToken_EmailVerify_Kind verifies the email_verify kind
 // works through the same store (same table, same lifecycle).
 func TestIntegration_EmailToken_EmailVerify_Kind(t *testing.T) {
-	db := newIntegrationDB(t)
+	h := testharness.New(t)
+	db := h.SQLDB()
 	store := NewPgEmailTokenStore(db)
-	ctx := context.Background()
+	ctx := h.NewContext()
 
 	userID := fmt.Sprintf("integ-verify-%d", time.Now().UnixNano())
 	tokenID := fmt.Sprintf("integ-verify-tok-%d", time.Now().UnixNano())
@@ -189,8 +156,9 @@ func TestIntegration_EmailToken_EmailVerify_Kind(t *testing.T) {
 // scenario where migration 000040 was applied but the column name or type
 // doesn't match what the Go code expects.
 func TestIntegration_EmailVerifiedColumn(t *testing.T) {
-	db := newIntegrationDB(t)
-	ctx := context.Background()
+	h := testharness.New(t)
+	db := h.SQLDB()
+	ctx := h.NewContext()
 	userID := fmt.Sprintf("integ-col-%d", time.Now().UnixNano())
 
 	_, err := db.ExecContext(ctx,
@@ -220,9 +188,10 @@ func TestIntegration_EmailVerifiedColumn(t *testing.T) {
 // TestIntegration_EmailToken_CascadeDelete verifies the FK ON DELETE CASCADE
 // works: deleting a user removes their email tokens.
 func TestIntegration_EmailToken_CascadeDelete(t *testing.T) {
-	db := newIntegrationDB(t)
+	h := testharness.New(t)
+	db := h.SQLDB()
 	store := NewPgEmailTokenStore(db)
-	ctx := context.Background()
+	ctx := h.NewContext()
 
 	userID := fmt.Sprintf("integ-cascade-%d", time.Now().UnixNano())
 	tokenID := fmt.Sprintf("integ-cascade-tok-%d", time.Now().UnixNano())
