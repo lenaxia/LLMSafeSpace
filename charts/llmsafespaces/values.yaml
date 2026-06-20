@@ -742,6 +742,32 @@ webhooks:
   maxWorkspaceMemoryMi: 65536
 
 
+# ----------------------------------------------------------------------------
+# gVisor — Container runtime isolation (Epic 51)
+# ----------------------------------------------------------------------------
+# gVisor (runsc) provides kernel-level isolation for workspace pods by
+# intercepting syscalls in userspace. This is the primary control against
+# container escape for multi-tenant deployments where tenants run arbitrary
+# code. Without gVisor, a kernel exploit in a tenant pod can reach the host
+# node and access other tenants' data.
+#
+# PREREQUISITES (operator must provision):
+#   - gVisor (runsc) installed on all workspace nodes
+#   - Container runtime configured with runsc handler
+#   For EKS + Karpenter: install runsc via EC2NodeClass userData.
+#   For manual clusters: https://gvisor.dev/docs/user_guide/install/
+#
+# When enabled, the chart:
+#   1. Creates a RuntimeClass named "gvisor" (handler: runsc)
+#   2. Sets --default-runtime-class=gvisor on the controller
+# Workspace pods will then run under gVisor by default. Individual workspaces
+# can opt out via spec.runtimeClass: "runc" (admin-gated, for gVisor-
+# incompatible workloads like ptrace debuggers).
+gvisor:
+  enabled: false
+  # RuntimeClass name. Change if you have a custom gVisor RuntimeClass.
+  defaultRuntimeClass: "gvisor"
+
 
 # --- Runtime Environments (seeded CRDs) ---
 runtimeEnvironments:

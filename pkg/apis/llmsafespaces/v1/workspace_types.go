@@ -148,6 +148,19 @@ type WorkspaceSpec struct {
 
 	PodSecurityContext *PodSecurityContext `json:"podSecurityContext,omitempty"`
 
+	// RuntimeClass overrides the container runtime for this workspace
+	// (Epic 51 S51.1). Used for per-workspace gVisor opt-out: set to "runc"
+	// to disable the default gVisor sandbox for workloads incompatible with
+	// gVisor (ptrace debuggers, certain seccomp filters). Empty means use
+	// the controller's DefaultRuntimeClass (typically "gvisor" in production,
+	// empty/runc in dev).
+	//
+	// Enforcement: webhook validation to prevent tenants from setting this
+	// field via direct kubectl is deferred to S51.2. Today the API's
+	// CreateWorkspaceRequest does not expose the field (mitigating the API
+	// path), but direct kubectl users can set it.
+	RuntimeClass *string `json:"runtimeClass,omitempty"`
+
 	// AutoApprovePermissions controls whether permission requests from the agent
 	// are automatically approved without user interaction. When true, the backend
 	// replies "always" to all permission.asked events. Default: false.

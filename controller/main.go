@@ -94,6 +94,12 @@ func main() {
 		"Root URL of the in-cluster API service (e.g. http://llmsafespaces-api.llmsafespaces.svc:8080) "+
 			"used to poll org status for D20 org-level workspace suspension. "+
 			"Empty disables org-suspension (the controller never org-suspends).")
+	var defaultRuntimeClass string
+	flag.StringVar(&defaultRuntimeClass, "default-runtime-class", "",
+		"Default RuntimeClass for workspace pods (Epic 51 S51.1). "+
+			"Set to 'gvisor' for production multi-tenant isolation. "+
+			"Empty means runc (default K8s runtime). "+
+			"Individual workspaces can override via spec.runtimeClass.")
 	flag.Parse()
 
 	// US-43.19 / D20: the shared secret authenticating controller→API internal
@@ -180,7 +186,7 @@ func main() {
 	})
 
 	// Set up controllers
-	if err := controller.SetupControllers(mgr, inferenceRelayURL, inferenceRelaySecret, apiServiceURL, apiInternalToken); err != nil {
+	if err := controller.SetupControllers(mgr, inferenceRelayURL, inferenceRelaySecret, apiServiceURL, apiInternalToken, defaultRuntimeClass); err != nil {
 		setupLog.Error(err, "unable to set up controllers")
 		os.Exit(1)
 	}

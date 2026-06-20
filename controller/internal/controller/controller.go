@@ -24,7 +24,7 @@ func init() {
 // status fetch per org per window).
 const orgStatusCacheTTL = 30 * time.Second
 
-func SetupControllers(mgr ctrl.Manager, inferenceRelayURL, inferenceRelaySecret, apiServiceURL, apiInternalToken string) error {
+func SetupControllers(mgr ctrl.Manager, inferenceRelayURL, inferenceRelaySecret, apiServiceURL, apiInternalToken, defaultRuntimeClass string) error {
 	logger := log.Log.WithName("controller")
 	logger.Info("Setting up controllers")
 
@@ -46,6 +46,7 @@ func SetupControllers(mgr ctrl.Manager, inferenceRelayURL, inferenceRelaySecret,
 		InferenceRelayURL:    inferenceRelayURL,
 		InferenceRelaySecret: inferenceRelaySecret,
 		OrgStatusClient:      orgStatusClient,
+		DefaultRuntimeClass:  defaultRuntimeClass,
 	}).SetupWithManager(mgr); err != nil {
 		logger.Error(err, "unable to create Workspace controller")
 		return err
