@@ -56,25 +56,22 @@ func (h *RelayAdminHandler) SetHTTPClient(client *http.Client) {
 // ─── US-43.2: Setup checklist ───────────────────────────────────────────────
 
 type setupResponse struct {
-	Deployed          bool   `json:"deployed"`
-	RouterDeployed    bool   `json:"routerDeployed"`
-	CRDInstalled      bool   `json:"crdInstalled"`
-	AWSConfigured     bool   `json:"awsConfigured"`
-	OCIConfigured     bool   `json:"ociConfigured"`
-	GCPConfigured     bool   `json:"gcpConfigured"`
-	WireGuardEndpoint string `json:"wireGuardEndpoint"`
+	Deployed       bool `json:"deployed"`
+	RouterDeployed bool `json:"routerDeployed"`
+	CRDInstalled   bool `json:"crdInstalled"`
+	AWSConfigured  bool `json:"awsConfigured"`
+	OCIConfigured  bool `json:"ociConfigured"`
+	GCPConfigured  bool `json:"gcpConfigured"`
 }
 
 // GetSetup returns the prerequisite checklist state for the relay setup wizard.
 //
 // The checklist is network-stack agnostic: it verifies LLMSafeSpaces-owned
 // prerequisites (relay-router Deployment, InferenceRelay CRD, provider
-// credentials) but does NOT probe the load-balancer implementation. The WireGuard
-// endpoint's reachability is an operator responsibility — supplied as
-// routerEndpoint in the Deploy step and verified downstream via instance health
-// in GetStatus. Coupling a specific LB (MetalLB, kube-vip, cloud LB, hostNetwork)
-// here would break the documented hostNetwork fallback and any non-MetalLB
-// cluster.
+// credentials) but does NOT probe the network path between the router and
+// relay VMs. Post-WG-removal (worklog 0442) the router dials relay VMs by
+// public IP over HTTP with per-VM token auth; reachability is verified
+// downstream via instance health in GetStatus.
 func (h *RelayAdminHandler) GetSetup(c *gin.Context) {
 	ctx := c.Request.Context()
 	resp := setupResponse{}
@@ -90,7 +87,6 @@ func (h *RelayAdminHandler) GetSetup(c *gin.Context) {
 	h.checkAWSSecret(ctx, &resp)
 	h.checkOCISecret(ctx, &resp)
 	h.checkGCPSecret(ctx, &resp)
-	h.fillWireGuardEndpoint(ctx, &resp)
 	resp.Deployed = h.isFleetDeployed(ctx)
 
 	c.JSON(http.StatusOK, resp)
@@ -140,14 +136,6 @@ func (h *RelayAdminHandler) checkGCPSecret(ctx context.Context, resp *setupRespo
 	resp.GCPConfigured = err == nil
 }
 
-func (h *RelayAdminHandler) fillWireGuardEndpoint(ctx context.Context, resp *setupResponse) {
-	relays, err := h.llmClient.InferenceRelays().List(ctx, metav1.ListOptions{Limit: 1})
-	if err != nil || len(relays.Items) == 0 {
-		return
-	}
-	resp.WireGuardEndpoint = relays.Items[0].Spec.WireGuard.RouterEndpoint
-}
-
 func (h *RelayAdminHandler) isFleetDeployed(ctx context.Context) bool {
 	relays, err := h.llmClient.InferenceRelays().List(ctx, metav1.ListOptions{Limit: 1})
 	if err != nil {
@@ -163,7 +151,6 @@ type instanceStatus struct {
 	Provider           string          `json:"provider"`
 	Region             string          `json:"region"`
 	Shape              string          `json:"shape"`
-	WgIP               string          `json:"wgIP"`
 	PublicIP           string          `json:"publicIP"`
 	State              string          `json:"state"`
 	Healthy            bool            `json:"healthy"`
@@ -279,7 +266,6 @@ func (h *RelayAdminHandler) GetStatus(c *gin.Context) {
 			Provider: inst.Provider,
 			Region:   inst.Region,
 			Shape:    shapeByProvider[inst.Provider],
-			WgIP:     inst.WgIP,
 			PublicIP: inst.PublicIP,
 			State:    inst.State,
 			Healthy:  inst.Healthy,
@@ -434,10 +420,8 @@ func (h *RelayAdminHandler) SaveAWSCreds(c *gin.Context) {
 // ─── US-43.6: Deploy relay fleet ────────────────────────────────────────────
 
 type deployRequest struct {
-	UpstreamURL    string   `json:"upstreamURL,omitempty"`
-	WireGuardPort  int      `json:"wireGuardPort,omitempty"`
-	RouterEndpoint string   `json:"routerEndpoint" binding:"required"`
-	Providers      []string `json:"providers" binding:"required"`
+	UpstreamURL string   `json:"upstreamURL,omitempty"`
+	Providers   []string `json:"providers" binding:"required"`
 }
 
 // Deploy creates or updates the InferenceRelay CR.
@@ -447,12 +431,12 @@ func (h *RelayAdminHandler) Deploy(c *gin.Context) {
 
 	var req deployRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "routerEndpoint and providers are required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "providers is required"})
 		return
 	}
 
 	if req.UpstreamURL == "" {
-		req.UpstreamURL = "https://ai.thekao.cloud/v1"
+		req.UpstreamURL = "https://opencode.ai/zen/v1"
 	}
 
 	if len(req.Providers) == 0 {
@@ -487,11 +471,6 @@ func (h *RelayAdminHandler) Deploy(c *gin.Context) {
 		}
 	}
 
-	wgPort := req.WireGuardPort
-	if wgPort == 0 {
-		wgPort = 51820
-	}
-
 	relay := &v1.InferenceRelay{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "llmsafespaces.dev/v1",
@@ -503,11 +482,6 @@ func (h *RelayAdminHandler) Deploy(c *gin.Context) {
 		Spec: v1.InferenceRelaySpec{
 			UpstreamURL: req.UpstreamURL,
 			Providers:   providers,
-			WireGuard: v1.WireGuardConfig{
-				CIDR:           "10.42.42.0/24",
-				Port:           wgPort,
-				RouterEndpoint: req.RouterEndpoint,
-			},
 		},
 	}
 

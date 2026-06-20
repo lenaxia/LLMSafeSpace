@@ -35,13 +35,13 @@ package chart_test
 import (
 	"bytes"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"sigs.k8s.io/yaml"
 )
@@ -337,6 +337,19 @@ func secretValue(t *testing.T, sec map[string]any, key string) string {
 		}
 	}
 	return ""
+}
+
+// configYAML extracts the "config.yaml" entry from a rendered ConfigMap doc.
+// Used by email-block tests (and any future test that asserts on the API's
+// rendered config.yaml contents).
+func configYAML(t *testing.T, cm map[string]any) string {
+	t.Helper()
+	data, _ := cm["data"].(map[string]any)
+	if data == nil {
+		return ""
+	}
+	s, _ := data["config.yaml"].(string)
+	return s
 }
 
 // TestG26_DefaultRender_PostgresPasswordIsGenerated proves that a fresh
@@ -1629,7 +1642,7 @@ func TestRelay_APIInferenceRelayClusterRole_DisabledByDefault(t *testing.T) {
 // ServiceAccount in the release namespace). The InferenceRelay CRD is
 // cluster-scoped, so a namespace Role is insufficient.
 func TestRelay_APIInferenceRelayClusterRole_RendersWhenEnabled(t *testing.T) {
-	docs := helmTemplate(t, "controller:\n  inferenceRelay:\n    enabled: true\n")
+	docs := helmTemplate(t, relayEnabledValues)
 
 	leastPrivilege := []string{"get", "list", "create", "update"}
 
@@ -1684,19 +1697,20 @@ func TestRelay_APIInferenceRelayClusterRole_RendersWhenEnabled(t *testing.T) {
 }
 
 // =============================================================================
-// InferenceRelay — US-42.8 router WireGuard sidecar + network-agnostic ingress
+// InferenceRelay — relay-router chart rendering
 // =============================================================================
 //
-// These tests guard the US-42.8 chart implementation (worklog 0395 / Epic 42
-// Layer 2 redesign): the relay-router Deployment gains a WireGuard sidecar
-// that brings up wg0 (10.42.42.1/24), and a second Service template renders
-// the WireGuard UDP
-// endpoint in one of four operator-selectable ingress modes. The chart NEVER
-// installs MetalLB. Default mode is `external` (no WG Service at all).
+// These tests guard the relay-router chart rendering. Post-WG-removal
+// (worklog 0442) the relay-router is a single non-privileged container —
+// no WireGuard sidecar, no UDP Service, no hostPath /dev/net/tun, no NET_ADMIN.
+// The regression guards for that posture live in the
+// "WireGuard removal regression guards" section below.
 
 // relayEnabledValues is the minimal values that enable the relay-router
-// subsystem (it is disabled by default).
-const relayEnabledValues = "controller:\n  inferenceRelay:\n    enabled: true\n"
+// subsystem (it is disabled by default). Includes the required artifact
+// checksums so the controller-deployment render does not fail on `required`.
+const relayArtifactVals = "    artifact:\n      sha256Arm64: \"aaa\"\n      sha256Amd64: \"bbb\"\n"
+const relayEnabledValues = "controller:\n  inferenceRelay:\n    enabled: true\n" + relayArtifactVals
 
 // podSpecMap returns the .spec.template.spec (PodSpec) of a Deployment doc.
 func podSpecMap(deploy map[string]any) map[string]any {
@@ -1735,269 +1749,13 @@ func toInt(v any) int {
 	return 0
 }
 
-// hasWGUDPPort reports whether a Service doc exposes a UDP port on 51820
-// (the WireGuard endpoint). This is what distinguishes the WG Service from
-// the always-present TCP 8080 ClusterIP Service.
-func hasWGUDPPort(svc map[string]any) bool {
-	spec, _ := svc["spec"].(map[string]any)
-	ports, _ := spec["ports"].([]any)
-	for _, p := range ports {
-		pm, _ := p.(map[string]any)
-		port := toInt(pm["port"])
-		proto, _ := pm["protocol"].(string)
-		if port == 51820 && (proto == "UDP" || proto == "") {
-			return true
-		}
-	}
-	return false
-}
-
-// svcType returns spec.type of a Service doc.
-func svcType(svc map[string]any) string {
-	spec, _ := svc["spec"].(map[string]any)
-	t, _ := spec["type"].(string)
-	return t
-}
-
-// TestRelayRouter_WGSidecar_HiddenWhenInferenceRelayDisabled asserts the
-// relay-router Deployment (and thus its WG sidecar) does NOT render when
-// controller.inferenceRelay.enabled is false (the chart default). Preserves
-// the existing gated behavior from worklog 0299.
-func TestRelayRouter_WGSidecar_HiddenWhenInferenceRelayDisabled(t *testing.T) {
-	docs := helmTemplate(t, "")
-	require.Nil(t, findDeploymentByNameSubstr(docs, "relay-router"),
-		"relay-router Deployment must NOT render when controller.inferenceRelay.enabled is false (default)")
-}
-
-// TestRelayRouter_WGSidecar_RendersWhenInferenceRelayEnabled asserts the
-// relay-router Deployment renders with a WireGuard sidecar container when
-// the relay subsystem is enabled. The sidecar must carry NET_ADMIN + NET_RAW
-// (the minimum to create/manage the wg0 interface) and mount the
-// controller-managed relay-router-wg Secret (router private key).
-func TestRelayRouter_WGSidecar_RendersWhenInferenceRelayEnabled(t *testing.T) {
-	docs := helmTemplate(t, relayEnabledValues)
-
-	deploy := findDeploymentByNameSubstr(docs, "relay-router")
-	require.NotNil(t, deploy, "relay-router Deployment must render when inferenceRelay is enabled")
-
-	wg := containerByName(deploy, "wireguard")
-	require.NotNil(t, wg, "relay-router pod must have a 'wireguard' sidecar container")
-	require.Contains(t, capSet(wg), "NET_ADMIN",
-		"wireguard sidecar needs NET_ADMIN to create/manage wg0")
-	require.Contains(t, capSet(wg), "NET_RAW",
-		"wireguard sidecar needs NET_RAW for raw-socket operations")
-
-	// The router private key lives in the controller-managed relay-router-wg
-	// Secret (controller/internal/relay/reconciler.go ensureRouterWGKey). The
-	// sidecar must mount it.
-	mounts, _ := wg["volumeMounts"].([]any)
-	var mountedSecret bool
-	for _, m := range mounts {
-		mm, _ := m.(map[string]any)
-		if mm["mountPath"] == "/etc/wireguard/secret" {
-			mountedSecret = true
-		}
-	}
-	require.True(t, mountedSecret,
-		"wireguard sidecar must mount the relay-router-wg Secret at /etc/wireguard/secret")
-
-	// The main router container must remain non-root with ALL caps dropped —
-	// the WG sidecar absorbs the privileged work, the router does not.
-	router := containerByName(deploy, "relay-router")
-	require.NotNil(t, router, "relay-router pod must keep its 'relay-router' main container")
-	require.Empty(t, capSet(router),
-		"relay-router main container must drop ALL capabilities (WG sidecar owns net admin)")
-
-	// The pod-level securityContext must not force runAsNonRoot, otherwise the
-	// root WG sidecar (runAsUser: 0) is rejected by the kubelet. Non-root is
-	// enforced at the router container instead.
-	psc := podSecCtx(deploy)
-	if _, ok := psc["runAsNonRoot"]; ok {
-		require.False(t, psc["runAsNonRoot"].(bool),
-			"pod-level runAsNonRoot must be false so the root WG sidecar can start; the router container enforces non-root itself")
-	}
-
-	// The relay-router-wg Secret (router private key) is created by the
-	// controller on first provision, which happens AFTER the pod starts at
-	// chart-install time. Its volume must therefore be optional, or the pod
-	// would block on a Secret that does not exist yet.
-	ps := podSpecMap(deploy)
-	volumes, _ := ps["volumes"].([]any)
-	var wgSecretOptional bool
-	for _, v := range volumes {
-		vm, _ := v.(map[string]any)
-		if name, _ := vm["name"].(string); name == "wg-secret" {
-			sec, _ := vm["secret"].(map[string]any)
-			wgSecretOptional, _ = sec["optional"].(bool)
-		}
-	}
-	require.True(t, wgSecretOptional,
-		"wg-secret volume must be optional:true (controller creates relay-router-wg after the pod starts)")
-
-	// The render-wg.sh entrypoint is shipped as a ConfigMap so the sidecar
-	// can run it without a custom image. Assert it renders + is mounted.
-	var sawScriptsCM bool
-	for _, d := range findByKind(docs, "ConfigMap") {
-		if strings.Contains(metaName(d), "relay-router-wg-scripts") {
-			data, _ := d["data"].(map[string]any)
-			if _, ok := data["render-wg.sh"]; ok {
-				sawScriptsCM = true
-			}
-		}
-	}
-	require.True(t, sawScriptsCM,
-		"relay-router-wg-scripts ConfigMap with render-wg.sh must render when inferenceRelay is enabled")
-}
-
-// TestRelayRouter_WGIngress_ExternalMode_RendersNoUDPService asserts that the
-// default ingress mode (`external`) renders NO WireGuard Service — the
-// operator wires UDP 51820 to the router pod out-of-band. Only the existing
-// TCP 8080 ClusterIP Service should be present. This guarantees `helm
-// install` succeeds on any K8s distribution, including ones with no LB
-// controller.
-func TestRelayRouter_WGIngress_ExternalMode_RendersNoUDPService(t *testing.T) {
-	docs := helmTemplate(t, relayEnabledValues)
-
-	for _, d := range findByKind(docs, "Service") {
-		if strings.Contains(metaName(d), "relay-router") {
-			require.False(t, hasWGUDPPort(d),
-				"mode=external must render no WG UDP Service (found UDP 51820 on %s)", metaName(d))
-		}
-	}
-}
-
-// TestRelayRouter_WGIngress_LoadBalancerMode_RendersLBService asserts that
-// mode=loadBalancer renders exactly one Service of type LoadBalancer on UDP
-// 51820, and that loadBalancerIP / loadBalancerClass / annotations are
-// propagated when set.
-func TestRelayRouter_WGIngress_LoadBalancerMode_RendersLBService(t *testing.T) {
-	vals := `controller:
-  inferenceRelay:
-    enabled: true
-    router:
-      wireGuard:
-        ingress:
-          mode: loadBalancer
-          loadBalancerIP: "203.0.113.10"
-          loadBalancerClass: "metallb"
-          annotations:
-            metallb.io/address-pool: "relay-pool"
-`
-	docs := helmTemplate(t, vals)
-
-	var wgSvc map[string]any
-	for _, d := range findByKind(docs, "Service") {
-		if strings.Contains(metaName(d), "relay-router") && hasWGUDPPort(d) {
-			wgSvc = d
-			break
-		}
-	}
-	require.NotNil(t, wgSvc, "mode=loadBalancer must render a WG Service")
-	require.Equal(t, "LoadBalancer", svcType(wgSvc),
-		"mode=loadBalancer WG Service must be type LoadBalancer")
-
-	spec, _ := wgSvc["spec"].(map[string]any)
-	require.Equal(t, "203.0.113.10", spec["loadBalancerIP"],
-		"loadBalancerIP must propagate to the WG Service")
-	require.Equal(t, "metallb", spec["loadBalancerClass"],
-		"loadBalancerClass must propagate to the WG Service")
-
-	meta, _ := wgSvc["metadata"].(map[string]any)
-	ann, _ := meta["annotations"].(map[string]any)
-	require.Equal(t, "relay-pool", ann["metallb.io/address-pool"],
-		"WG Service annotations must propagate")
-
-	// Exactly one WG Service (the LB), in addition to the TCP 8080 ClusterIP.
-	count := 0
-	for _, d := range findByKind(docs, "Service") {
-		if strings.Contains(metaName(d), "relay-router") && hasWGUDPPort(d) {
-			count++
-		}
-	}
-	require.Equal(t, 1, count, "exactly one WG UDP Service expected in loadBalancer mode")
-}
-
-// TestRelayRouter_WGIngress_NodePortMode_RendersNodePortService asserts that
-// mode=nodePort renders a Service of type NodePort on UDP 51820 with the
-// pinned nodePort.
-func TestRelayRouter_WGIngress_NodePortMode_RendersNodePortService(t *testing.T) {
-	vals := `controller:
-  inferenceRelay:
-    enabled: true
-    router:
-      wireGuard:
-        ingress:
-          mode: nodePort
-          nodePort: 31820
-`
-	docs := helmTemplate(t, vals)
-
-	var wgSvc map[string]any
-	for _, d := range findByKind(docs, "Service") {
-		if strings.Contains(metaName(d), "relay-router") && hasWGUDPPort(d) {
-			wgSvc = d
-			break
-		}
-	}
-	require.NotNil(t, wgSvc, "mode=nodePort must render a WG Service")
-	require.Equal(t, "NodePort", svcType(wgSvc),
-		"mode=nodePort WG Service must be type NodePort")
-
-	spec, _ := wgSvc["spec"].(map[string]any)
-	ports, _ := spec["ports"].([]any)
-	var np any
-	for _, p := range ports {
-		pm, _ := p.(map[string]any)
-		if toInt(pm["port"]) == 51820 {
-			np = pm["nodePort"]
-		}
-	}
-	require.Equal(t, 31820, toInt(np),
-		"mode=nodePort WG Service must pin nodePort to 31820 for stable DNS")
-}
-
-// TestRelayRouter_WGIngress_HostNetworkMode_RendersHostNetworkPod asserts
-// that mode=hostNetwork sets pod.spec.hostNetwork: true, applies a
-// nodeSelector keyed on the operator-applied label, and renders NO WG Service
-// (the router is dialed directly by node IP).
-func TestRelayRouter_WGIngress_HostNetworkMode_RendersHostNetworkPod(t *testing.T) {
-	vals := `controller:
-  inferenceRelay:
-    enabled: true
-    router:
-      wireGuard:
-        ingress:
-          mode: hostNetwork
-`
-	docs := helmTemplate(t, vals)
-
-	deploy := findDeploymentByNameSubstr(docs, "relay-router")
-	require.NotNil(t, deploy)
-
-	ps := podSpecMap(deploy)
-	hn, _ := ps["hostNetwork"].(bool)
-	require.True(t, hn,
-		"mode=hostNetwork must set pod.spec.hostNetwork: true")
-
-	sel, _ := ps["nodeSelector"].(map[string]any)
-	require.Equal(t, "true", sel["llmsafespaces.dev/relay-router"],
-		"mode=hostNetwork must select the operator-labeled node via llmsafespaces.dev/relay-router=true")
-
-	for _, d := range findByKind(docs, "Service") {
-		if strings.Contains(metaName(d), "relay-router") {
-			require.False(t, hasWGUDPPort(d),
-				"mode=hostNetwork must render no WG Service (router is on hostNetwork, dialed by node IP)")
-		}
-	}
-}
-
 // TestRelayRouter_NetworkPolicy_RendersWhenEnabled asserts that enabling the
 // relay subsystem renders a NetworkPolicy that (a) selects the relay-router
 // pod, (b) allows TCP 8080 ingress from workspace pods (the proxy path) and
-// the controller pod (metrics scrape), (c) allows UDP 51820 ingress from
-// anywhere (relay VMs dial in from public cloud IPs — WG key-pinning is the
-// auth), and (d) allows unrestricted egress (tunnel + DNS + Zen-direct
-// fallback).
+// the controller pod (metrics scrape), and (c) allows unrestricted egress
+// (HTTP to relay VM public IPs — per-VM token is the auth — plus DNS and
+// Zen-direct fallback). Post-WG-removal (worklog 0442) there is no UDP 51820
+// ingress rule.
 func TestRelayRouter_NetworkPolicy_RendersWhenEnabled(t *testing.T) {
 	docs := helmTemplate(t, relayEnabledValues)
 
@@ -2021,7 +1779,7 @@ func TestRelayRouter_NetworkPolicy_RendersWhenEnabled(t *testing.T) {
 	require.Contains(t, types, "Egress", "policy must govern egress")
 
 	ingress, _ := spec["ingress"].([]any)
-	var saw8080, saw51820Any bool
+	var saw8080 bool
 	for _, rule := range ingress {
 		rm, _ := rule.(map[string]any)
 		ports, _ := rm["ports"].([]any)
@@ -2029,26 +1787,18 @@ func TestRelayRouter_NetworkPolicy_RendersWhenEnabled(t *testing.T) {
 			pm, _ := p.(map[string]any)
 			port := toInt(pm["port"])
 			proto, _ := pm["protocol"].(string)
-			if port == 8080 {
+			if port == 8080 && proto == "TCP" {
 				saw8080 = true
 			}
-			if port == 51820 && proto == "UDP" {
-				// "Allow from anywhere" means the rule has NO `from` key
-				// (an absent/empty from permits all sources). relay VMs
-				// connect from public cloud IPs that are not knowable ahead
-				// of time — WG key-pinning is the auth.
-				_, hasFrom := rm["from"]
-				if !hasFrom {
-					saw51820Any = true
-				}
+			if port == 51820 {
+				t.Fatalf("NetworkPolicy must NOT include UDP 51820 post-WG-removal (worklog 0442); got rule port=51820")
 			}
 		}
 	}
 	require.True(t, saw8080, "NetworkPolicy must allow TCP 8080 ingress (workspace proxy + controller metrics)")
-	require.True(t, saw51820Any, "NetworkPolicy must allow UDP 51820 ingress from anywhere (relay VMs dial in from public IPs)")
 
-	// Egress must be effectively unrestricted for the router to reach
-	// 10.42.42.x over the tunnel, DNS, and Zen-direct fallback.
+	// Egress must be effectively unrestricted for the router to reach relay
+	// VMs over HTTP (per-VM token auth), DNS, and Zen-direct fallback.
 	egress, _ := spec["egress"].([]any)
 	require.NotEmpty(t, egress, "NetworkPolicy must include egress rules")
 }
@@ -2058,7 +1808,7 @@ func TestRelayRouter_NetworkPolicy_RendersWhenEnabled(t *testing.T) {
 // (parity with the workspace/datastore policies) — it must NOT render when the
 // policy controller is disabled, even if inferenceRelay is enabled.
 func TestRelayRouter_NetworkPolicy_HiddenWhenNetworkPolicyDisabled(t *testing.T) {
-	docs := helmTemplate(t, "controller:\n  inferenceRelay:\n    enabled: true\nnetworkPolicy:\n  enabled: false\n")
+	docs := helmTemplate(t, "controller:\n  inferenceRelay:\n    enabled: true\n"+relayArtifactVals+"networkPolicy:\n  enabled: false\n")
 	for _, d := range findByKind(docs, "NetworkPolicy") {
 		require.NotContains(t, metaName(d), "relay-router",
 			"relay-router NetworkPolicy must NOT render when networkPolicy.enabled is false (master-toggle contract)")
@@ -2403,14 +2153,15 @@ func TestMonitoring_DashboardConfigMap_NotEmpty(t *testing.T) {
 }
 
 // =============================================================================
-// InferenceRelay — US-42.8 Pod Security Admission (PSA) namespace relaxation
+// InferenceRelay — WireGuard removal regression guards (worklog 0442)
 // =============================================================================
 //
-// The relay-router WireGuard sidecar (root + NET_ADMIN + hostPath /dev/net/tun
-// + hostNetwork in that mode) cannot be admitted under the PSA `restricted`
-// profile. When inferenceRelay is enabled AND the chart creates the namespace,
-// the namespace template auto-widens the profile to `privileged` so the pod
-// actually starts (worklog 0410). These tests guard that contract.
+// These tests guard the post-WG-removal chart contract: the relay-router
+// Deployment must have NO privileged sidecar / NET_ADMIN / WG volumes; the
+// namespace must stay PSA `restricted` (no auto-widening to `privileged`);
+// no `relay-wireguard` image may be referenced anywhere; no UDP WG Service
+// or render-wg.sh ConfigMap may render. A regression that re-introduces any
+// of these would fail loudly here.
 
 // findNamespace returns the Namespace doc rendered by the chart, or nil.
 func findNamespace(docs []map[string]any) map[string]any {
@@ -2420,6 +2171,131 @@ func findNamespace(docs []map[string]any) map[string]any {
 		}
 	}
 	return nil
+}
+
+// TestRelayRouter_Deployment_NoPrivilegedSidecar verifies the relay-router
+// pod has exactly ONE container (the router itself) — no WG sidecar, no
+// NET_ADMIN/NET_RAW capabilities, no runAsUser:0. Pre-WG-removal this pod
+// had a root sidecar + 5 WG volumes + hostPath /dev/net/tun; all gone.
+func TestRelayRouter_Deployment_NoPrivilegedSidecar(t *testing.T) {
+	docs := helmTemplate(t, relayEnabledValues)
+
+	deploy := findDeploymentByNameSubstr(docs, "relay-router")
+	require.NotNil(t, deploy, "relay-router Deployment must render when inferenceRelay is enabled")
+
+	ps := podSpecMap(deploy)
+	containers, _ := ps["containers"].([]any)
+	require.Len(t, containers, 1,
+		"relay-router must have exactly ONE container post-WG-removal (the WG sidecar was deleted, worklog 0442)")
+
+	c, _ := containers[0].(map[string]any)
+	assert.Equal(t, "relay-router", c["name"], "the single container must be the router itself")
+
+	sc, _ := c["securityContext"].(map[string]any)
+	if sc != nil {
+		// Capabilities: must drop ALL, must NOT add NET_ADMIN or NET_RAW.
+		caps, _ := sc["capabilities"].(map[string]any)
+		if caps != nil {
+			add, _ := caps["add"].([]any)
+			for _, a := range add {
+				s, _ := a.(string)
+				assert.NotContains(t, []string{"NET_ADMIN", "NET_RAW"}, s,
+					"relay-router must NOT add NET_ADMIN/NET_RAW post-WG-removal")
+			}
+		}
+		// runAsUser: must NOT be 0 (root).
+		if u, ok := sc["runAsUser"].(float64); ok {
+			assert.NotEqual(t, float64(0), u, "relay-router must NOT run as root (uid 0)")
+		}
+	}
+
+	// Volumes: no wg-scripts / wg-config / wg-secret / dev-tun.
+	volumes, _ := ps["volumes"].([]any)
+	for _, v := range volumes {
+		vm, _ := v.(map[string]any)
+		name, _ := vm["name"].(string)
+		for _, bad := range []string{"wg-scripts", "wg-config", "wg-secret", "dev-tun", "wg-run"} {
+			assert.NotEqual(t, bad, name,
+				"relay-router must NOT mount WG volume %q post-WG-removal", bad)
+		}
+	}
+
+	// hostNetwork: must NOT be set (the hostNetwork ingress mode is gone).
+	hn, _ := ps["hostNetwork"].(bool)
+	assert.False(t, hn, "relay-router must NOT use hostNetwork post-WG-removal")
+}
+
+// TestRelayRouter_NoRelayWireguardImageReference verifies no rendered doc
+// references the deleted `relay-wireguard` image. The image build was removed
+// from CI (worklog 0442); any lingering reference would fail at pod schedule
+// time with ImagePullBackOff.
+func TestRelayRouter_NoRelayWireguardImageReference(t *testing.T) {
+	docs := helmTemplate(t, relayEnabledValues)
+	for _, d := range docs {
+		// Walk the doc looking for any string containing "relay-wireguard".
+		var found []string
+		walkStrings(d, func(s string) {
+			if strings.Contains(s, "relay-wireguard") {
+				found = append(found, s)
+			}
+		})
+		assert.Empty(t, found,
+			"no rendered doc may reference the deleted relay-wireguard image; found: %v", found)
+	}
+}
+
+// TestRelayRouter_NoWGTemplatesRender verifies the deleted WG templates do
+// not render: no `relay-router-wg-scripts` ConfigMap (the render-wg.sh sidecar
+// brain) and no UDP-51820 Service. These templates were deleted in worklog
+// 0442; a future merge that restores them would re-introduce the privileged
+// sidecar dependency.
+func TestRelayRouter_NoWGTemplatesRender(t *testing.T) {
+	docs := helmTemplate(t, relayEnabledValues)
+	for _, d := range docs {
+		name := metaName(d)
+		assert.NotContains(t, name, "wg-scripts",
+			"relay-router-wg-scripts ConfigMap must NOT render (deleted in worklog 0442)")
+		kind, _ := d["kind"].(string)
+		if kind == "Service" {
+			assert.NotContains(t, name, "wg",
+				"no WG-named Service must render (UDP LB/NodePort templates deleted in worklog 0442)")
+		}
+	}
+}
+
+// TestNamespace_StaysRestrictedWhenRelayEnabled verifies the namespace PSA
+// profile stays `restricted` when inferenceRelay is enabled — the auto-
+// widening to `privileged` (necessary for the WG sidecar) was removed in
+// worklog 0442. The namespace can now stay locked-down even with the relay
+// fleet active.
+func TestNamespace_StaysRestrictedWhenRelayEnabled(t *testing.T) {
+	docs := helmTemplate(t, "namespace:\n  create: true\n  podSecurityEnforce: \"restricted\"\ncontroller:\n  inferenceRelay:\n    enabled: true\n"+relayArtifactVals)
+
+	ns := findNamespace(docs)
+	require.NotNil(t, ns, "Namespace must render when namespace.create=true")
+
+	labels, _ := ns["metadata"].(map[string]any)["labels"].(map[string]any)
+	assert.Equal(t, "restricted", labels["pod-security.kubernetes.io/enforce"],
+		"namespace must STAY restricted when inferenceRelay.enabled=true (PSA widening removed in worklog 0442)")
+}
+
+// walkStrings recursively walks a map/slice/string structure calling fn on
+// every string value. Used by the no-relay-wireguard-image test to scan
+// every field of every rendered doc without knowing the structure ahead of
+// time.
+func walkStrings(v any, fn func(string)) {
+	switch x := v.(type) {
+	case string:
+		fn(x)
+	case map[string]any:
+		for _, sub := range x {
+			walkStrings(sub, fn)
+		}
+	case []any:
+		for _, sub := range x {
+			walkStrings(sub, fn)
+		}
+	}
 }
 
 // =============================================================================
@@ -2465,174 +2341,6 @@ func nsPSAEnforce(ns map[string]any) string {
 	return v
 }
 
-// TestRelayRouter_PSA_NamespaceStaysRestrictedWhenRelayDisabled asserts the
-// default posture is unchanged when inferenceRelay is off: the chart-created
-// namespace enforces `restricted`.
-func TestRelayRouter_PSA_NamespaceStaysRestrictedWhenRelayDisabled(t *testing.T) {
-	docs := helmTemplate(t, "namespace:\n  create: true\n")
-	ns := findNamespace(docs)
-	require.NotNil(t, ns, "namespace must render when namespace.create=true")
-	require.Equal(t, "restricted", nsPSAEnforce(ns),
-		"namespace PSA must stay `restricted` when inferenceRelay is disabled (default posture)")
-}
-
-// TestRelayRouter_PSA_NamespaceAutoRelaxesWhenRelayEnabled asserts that
-// enabling inferenceRelay widens the chart-created namespace to `privileged`
-// so the WireGuard sidecar can be admitted. This is the load-bearing fix for
-// the "pod never starts" failure mode.
-func TestRelayRouter_PSA_NamespaceAutoRelaxesWhenRelayEnabled(t *testing.T) {
-	docs := helmTemplate(t, "namespace:\n  create: true\ncontroller:\n  inferenceRelay:\n    enabled: true\n")
-	ns := findNamespace(docs)
-	require.NotNil(t, ns)
-	require.Equal(t, "privileged", nsPSAEnforce(ns),
-		"namespace PSA must auto-widen to `privileged` when inferenceRelay.enabled + namespace.create "+
-			"(the WG sidecar needs root + NET_ADMIN + hostPath, all forbidden under `restricted`)")
-}
-
-// TestRelayRouter_PSA_OperatorOverrideRespected asserts that an operator who
-// explicitly sets podSecurityEnforce to something other than `restricted` has
-// their choice honored (the chart does not force-`privileged` an already-
-// relaxed namespace, and does not downgrade a deliberately-empty one).
-func TestRelayRouter_PSA_OperatorOverrideRespected(t *testing.T) {
-	docs := helmTemplate(t, "namespace:\n  create: true\n  podSecurityEnforce: \"baseline\"\ncontroller:\n  inferenceRelay:\n    enabled: true\n")
-	ns := findNamespace(docs)
-	require.NotNil(t, ns)
-	require.Equal(t, "baseline", nsPSAEnforce(ns),
-		"operator-set podSecurityEnforce=baseline must be respected (only `restricted` auto-widens)")
-}
-
-// TestRelayRouter_PSA_EmptyStringOmitsAllLabels asserts that an operator who
-// sets podSecurityEnforce to "" (opt out of PSA entirely) gets NO PSA labels
-// at all, regardless of inferenceRelay. Guards against a regression where
-// empty-string handling rendered a literal
-// `pod-security.kubernetes.io/enforce: ""` label (the {{- if $psa }} guard is
-// the only thing preventing it).
-func TestRelayRouter_PSA_EmptyStringOmitsAllLabels(t *testing.T) {
-	docs := helmTemplate(t, "namespace:\n  create: true\n  podSecurityEnforce: \"\"\ncontroller:\n  inferenceRelay:\n    enabled: true\n")
-	ns := findNamespace(docs)
-	require.NotNil(t, ns)
-	meta, _ := ns["metadata"].(map[string]any)
-	labels, _ := meta["labels"].(map[string]any)
-	for k := range labels {
-		require.NotContains(t, k, "pod-security.kubernetes.io/",
-			"empty podSecurityEnforce must omit ALL PSA labels (got %q)", k)
-	}
-}
-
-// TestRelayRouter_WGScript_DetectWGImpl_Behavior exercises the detect_wg_impl
-// shell function (shipped in the relay-router-wg-scripts ConfigMap) by
-// extracting it from the rendered chart and invoking it under controlled
-// fakes. Validates the three branches the Talos/kernel compatibility depends
-// on (worklog 0410, A-IMG-TALOS): in-kernel WG → unset userspace env;
-// userspace-only → set WG_QUICK_USERSPACE_IMPLEMENTATION=wireguard-go; neither
-// → non-zero exit. This is the TDD coverage the PR-287 review flagged as
-// missing — `sh -n` only checks parse-ability, not behavior.
-func TestRelayRouter_WGScript_DetectWGImpl_Behavior(t *testing.T) {
-	docs := helmTemplate(t, relayEnabledValues)
-	var script string
-	for _, d := range findByKind(docs, "ConfigMap") {
-		if strings.Contains(metaName(d), "relay-router-wg-scripts") {
-			data, _ := d["data"].(map[string]any)
-			script, _ = data["render-wg.sh"].(string)
-		}
-	}
-	require.NotEmpty(t, script, "render-wg.sh must render in the wg-scripts ConfigMap")
-
-	// Slice out just the detect_wg_impl function body (from its definition to
-	// the closing brace before the next function). The function is
-	// self-contained: it only calls modprobe, tests /sys/module/wireguard,
-	// and checks for wireguard-go on PATH. We stub all three.
-	start := strings.Index(script, "detect_wg_impl()")
-	require.NotEqual(t, -1, start, "detect_wg_impl must be defined in render-wg.sh")
-	// Anchor the end on the function terminal "return 1\n    }\n" (the
-	// neither-implementation branch). A naive closing-brace search would
-	// stop at the first inner if-block closing brace.
-	endMarker := "return 1\n}\n"
-	end := strings.Index(script[start:], endMarker)
-	require.NotZero(t, end, "could not locate end of detect_wg_impl (return 1 + closing brace)")
-	fnBody := script[start : start+end+len(endMarker)]
-
-	// runCase stubs the three probes and runs the function under sh.
-	//   fakeModprobeOK     — modprobe wireguard returns 0 (module loadable)
-	//   fakeSysmoduleExists— /sys/module/wireguard exists (module loaded)
-	//   fakeWGGoOnPath     — a fake `wireguard-go` is placed on PATH
-	// /sys/module is a real path test we cannot fake as a function, so we
-	// rewrite that branch to consult an env flag. modprobe IS a function.
-	// wireguard-go is faked by putting a real script on PATH (command -v is
-	// a builtin and cannot be reliably overridden as a function under dash).
-	runCase := func(t *testing.T, fakeModprobeOK, fakeSysmoduleExists, fakeWGGoOnPath bool) (exitOK bool, userspaceEnv string) {
-		t.Helper()
-		fakeBin := t.TempDir()
-		if fakeWGGoOnPath {
-			fp := filepath.Join(fakeBin, "wireguard-go")
-			require.NoError(t, os.WriteFile(fp, []byte("#!/bin/sh\nexit 0\n"), 0755))
-		}
-		stubs := fmt.Sprintf(`
-modprobe() { return %d; }
-__sysmod_exists=%v
-log() { :; }
-`, boolToRet(fakeModprobeOK), fakeSysmoduleExists)
-		// Rewrite the in-function probes to consult our flags.
-		fudged := strings.ReplaceAll(fnBody, "[ -d /sys/module/wireguard ]", "[ \"$__sysmod_exists\" = \"true\" ]")
-		fudged = strings.ReplaceAll(fudged, "modprobe wireguard 2>/dev/null", "modprobe wireguard")
-		snippet := stubs + fudged + `
-detect_wg_impl
-rc=$?
-echo "EXIT=$rc USPACE=$WG_QUICK_USERSPACE_IMPLEMENTATION"
-`
-		cmd := exec.Command("sh", "-c", snippet)
-		cmd.Env = append(os.Environ(), "PATH="+fakeBin+":/usr/bin:/bin")
-		out, _ := cmd.CombinedOutput()
-		for _, line := range strings.Split(string(out), "\n") {
-			if strings.HasPrefix(line, "EXIT=") {
-				exitOK = strings.Contains(line, "EXIT=0")
-				if i := strings.Index(line, "USPACE="); i >= 0 {
-					userspaceEnv = strings.TrimSpace(line[i+len("USPACE="):])
-				}
-			}
-		}
-		return exitOK, userspaceEnv
-	}
-
-	t.Run("kernel module present", func(t *testing.T) {
-		ok, uspace := runCase(t, true, true, true)
-		require.True(t, ok, "in-kernel WG: detect_wg_impl must succeed")
-		require.Empty(t, uspace, "in-kernel WG: must NOT set WG_QUICK_USERSPACE_IMPLEMENTATION")
-	})
-	t.Run("no kernel module, userspace available", func(t *testing.T) {
-		ok, uspace := runCase(t, false, false, true)
-		require.True(t, ok, "userspace fallback: detect_wg_impl must succeed when wireguard-go is on PATH")
-		require.Equal(t, "wireguard-go", uspace, "userspace fallback: must set WG_QUICK_USERSPACE_IMPLEMENTATION=wireguard-go")
-	})
-	t.Run("no kernel module, no userspace", func(t *testing.T) {
-		ok, _ := runCase(t, false, false, false)
-		require.False(t, ok, "neither implementation available: detect_wg_impl must fail (non-zero exit)")
-	})
-}
-
-func boolToRet(b bool) int {
-	if b {
-		return 0
-	}
-	return 1
-}
-
-// configYAML extracts the config.yaml string from an API ConfigMap. Fatals
-// if the ConfigMap has no data block or an empty config.yaml; callers have
-// already asserted the ConfigMap exists, so an empty result is a real failure.
-func configYAML(t *testing.T, cm map[string]any) string {
-	t.Helper()
-	data, _ := cm["data"].(map[string]any)
-	require.NotNil(t, data, "API ConfigMap must have a data block")
-	cfg, _ := data["config.yaml"].(string)
-	require.NotEmpty(t, cfg, "API ConfigMap data.config.yaml must be non-empty")
-	return cfg
-}
-
-// TestEmail_DefaultRender_OmitsEmailBlock asserts the email block is NOT
-// rendered by default. Without this, every install ships an email block
-// that the operator never asked for, which could confuse readers into
-// thinking email is enabled.
 func TestEmail_DefaultRender_OmitsEmailBlock(t *testing.T) {
 	docs := helmTemplate(t, "")
 	cm := findAPIConfigMap(t, docs)
@@ -2695,11 +2403,15 @@ func TestEmail_OperatorOverride_FlowsThrough(t *testing.T) {
 
 // TestRelayRouter_UpstreamAuth_MountsSecretWhenConfigured verifies that when
 // upstreamAuth.keySecret.name is set, the router container gets a
-// UPSTREAM_AUTH_KEY env from that Secret (the A23 fix wiring).
+// UPSTREAM_AUTH_KEY env from that Secret (the optional key-injection wiring
+// from PR #297; rationale updated 2026-06-20 - see worklog 0420 correction).
 func TestRelayRouter_UpstreamAuth_MountsSecretWhenConfigured(t *testing.T) {
 	vals := `controller:
   inferenceRelay:
     enabled: true
+    artifact:
+      sha256Arm64: "aaa"
+      sha256Amd64: "bbb"
     upstreamAuth:
       keySecret:
         name: relay-upstream-key
@@ -2733,9 +2445,12 @@ func TestRelayRouter_UpstreamAuth_MountsSecretWhenConfigured(t *testing.T) {
 }
 
 // TestRelayRouter_UpstreamAuth_OmittedWhenSecretEmpty verifies the default
-// (keySecret.name empty) renders NO UPSTREAM_AUTH_KEY env — the router
-// forwards the client header unchanged (pre-A23 behavior; 401s on Zen, but
-// the install must not require a Secret that doesn't exist).
+// (keySecret.name empty) renders NO UPSTREAM_AUTH_KEY env - the router
+// forwards the client header unchanged. This is the correct default posture
+// for a Zen free-model fleet where `public` authorizes inference for any
+// model flagged `allowAnonymous` (A23 disproven 2026-06-20, worklog 0420
+// correction); it also means the install must not require a Secret that
+// doesn't exist.
 func TestRelayRouter_UpstreamAuth_OmittedWhenSecretEmpty(t *testing.T) {
 	docs := helmTemplate(t, relayEnabledValues)
 	deploy := findDeploymentByNameSubstr(docs, "relay-router")
@@ -2839,4 +2554,118 @@ func TestOIDC_DefaultRender_OmitsStateCookieName(t *testing.T) {
 	require.NotContains(t, cfg, "stateCookieName:",
 		"oidc.stateCookieName must be omitted from the default render (cleaner YAML + belt-and-suspenders; "+
 			"the Go default lsp_sso_state applies via sso.go:130-133); config.yaml was:\n%s", cfg)
+}
+
+// ---------------------------------------------------------------------------
+// Workspace→router wiring (Design Principle 6, Epic 42). When the in-cluster
+// relay fleet is enabled, workspace pods must route free-model traffic through
+// the relay-router Service (http://relay-router:8080), NOT the external CF
+// Worker. Post-WG-removal (worklog 0442) the router reaches relay VMs over
+// HTTP with per-VM token auth, so --inference-relay-secret must NOT render in
+// this mode. Before this wiring, enabling the fleet only affected controller-
+// side /metrics scraping; workspace traffic still went to the CF Worker
+// regardless.
+// ---------------------------------------------------------------------------
+
+// TestControllerArgs_RoutesWorkspacesThroughRouterWhenFleetEnabled verifies
+// that with controller.inferenceRelay.enabled=true, the controller's
+// --inference-relay-url (which becomes INFERENCE_RELAY_BASEURL on workspace
+// pods) points at the in-cluster relay-router via the cross-namespace FQDN
+// (workspace pods may run in any namespace; the router Service is in the
+// release namespace), and no path-secret is passed.
+func TestControllerArgs_RoutesWorkspacesThroughRouterWhenFleetEnabled(t *testing.T) {
+	docs := helmTemplate(t, relayEnabledValues)
+	args := findControllerArgs(t, docs)
+	require.NotEmpty(t, args)
+
+	var relayURL string
+	for _, a := range args {
+		if strings.HasPrefix(a, "--inference-relay-url=") {
+			relayURL = strings.TrimPrefix(a, "--inference-relay-url=")
+		}
+		if strings.HasPrefix(a, "--inference-relay-secret=") {
+			t.Fatalf("--inference-relay-secret must NOT render when fleet enabled (router reaches relays via per-VM token, worklog 0442); got %q", a)
+		}
+	}
+	require.Equal(t, "http://relay-router.test-ns.svc.cluster.local:8080", relayURL,
+		"with fleet enabled, workspace traffic must route through the in-cluster relay-router FQDN (Design Principle 6), not the CF Worker and not a same-namespace short name (workspaces may be cross-ns)")
+}
+
+// TestControllerArgs_WorkspaceRouterURLOverride verifies that an explicit
+// controller.inferenceRelay.workspaceRouterURL overrides the derived FQDN
+// (for the separate-namespace-router deploy case).
+func TestControllerArgs_WorkspaceRouterURLOverride(t *testing.T) {
+	vals := "controller:\n  inferenceRelay:\n    enabled: true\n" + relayArtifactVals + "    workspaceRouterURL: http://my-router.privileged-ns.svc:8080\n"
+	docs := helmTemplate(t, vals)
+	args := findControllerArgs(t, docs)
+	for _, a := range args {
+		if strings.HasPrefix(a, "--inference-relay-url=") {
+			require.Equal(t, "--inference-relay-url=http://my-router.privileged-ns.svc:8080", a,
+				"explicit workspaceRouterURL must propagate as the workspace-facing inference-relay-url")
+			return
+		}
+	}
+	t.Fatal("--inference-relay-url must render when fleet is enabled")
+}
+
+// TestControllerArgs_PreservesCFWorkerURLWhenFleetDisabled verifies the
+// default (fleet off) still wires the external CF Worker URL + secret — i.e.
+// the new wiring does not regress the pre-existing Epic 26 path.
+func TestControllerArgs_PreservesCFWorkerURLWhenFleetDisabled(t *testing.T) {
+	vals := "inferenceRelayURL: https://relay.example.dev\n"
+	docs := helmTemplate(t, vals)
+	args := findControllerArgs(t, docs)
+	var sawURL bool
+	for _, a := range args {
+		if a == "--inference-relay-url=https://relay.example.dev" {
+			sawURL = true
+		}
+	}
+	require.True(t, sawURL, "with fleet disabled, the external inferenceRelayURL must still render as --inference-relay-url (CF Worker path preserved)")
+}
+
+// TestControllerArgs_RelayArtifactFlags_RenderWhenEnabled verifies the
+// artifact URL + SHA-256 flags render when the fleet is enabled — without
+// these, a provisioned VM downloads nothing and crash-loops relay-proxy.
+func TestControllerArgs_RelayArtifactFlags_RenderWhenEnabled(t *testing.T) {
+	vals := `controller:
+  inferenceRelay:
+    enabled: true
+    artifact:
+      urls:
+        - "https://github.com/lenaxia/llmsafespace/releases/latest/download"
+        - "https://s3.amazonaws.com/llmsafespace-artifacts"
+      sha256Arm64: "aaa"
+      sha256Amd64: "bbb"
+`
+	docs := helmTemplate(t, vals)
+	args := findControllerArgs(t, docs)
+
+	var sawURL, sawArm, sawAmd bool
+	for _, a := range args {
+		if a == "--relay-artifact-url=https://github.com/lenaxia/llmsafespace/releases/latest/download,https://s3.amazonaws.com/llmsafespace-artifacts" {
+			sawURL = true
+		}
+		if a == "--relay-artifact-sha256-arm64=aaa" {
+			sawArm = true
+		}
+		if a == "--relay-artifact-sha256-amd64=bbb" {
+			sawAmd = true
+		}
+	}
+	require.True(t, sawURL, "--relay-artifact-url must render (comma-separated mirrors) when fleet enabled")
+	require.True(t, sawArm, "--relay-artifact-sha256-arm64 must render when fleet enabled")
+	require.True(t, sawAmd, "--relay-artifact-sha256-amd64 must render when fleet enabled")
+}
+
+// TestControllerArgs_RelayArtifactFlags_AbsentWhenDisabled verifies no
+// artifact flags render when the fleet is disabled (default).
+func TestControllerArgs_RelayArtifactFlags_AbsentWhenDisabled(t *testing.T) {
+	docs := helmTemplate(t, "")
+	args := findControllerArgs(t, docs)
+	for _, a := range args {
+		if strings.HasPrefix(a, "--relay-artifact") {
+			t.Fatalf("artifact flags must NOT render when fleet disabled; got %q", a)
+		}
+	}
 }

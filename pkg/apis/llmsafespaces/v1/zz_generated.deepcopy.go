@@ -544,7 +544,6 @@ func (in *InferenceRelaySpec) DeepCopyInto(out *InferenceRelaySpec) {
 		*out = make([]RelayProviderSpec, len(*in))
 		copy(*out, *in)
 	}
-	out.WireGuard = in.WireGuard
 	out.HealthCheck = in.HealthCheck
 	out.Rotation = in.Rotation
 	out.Fallback = in.Fallback
@@ -639,21 +638,6 @@ func (in *RotationConfig) DeepCopy() *RotationConfig {
 		return nil
 	}
 	out := new(RotationConfig)
-	in.DeepCopyInto(out)
-	return out
-}
-
-// DeepCopyInto copies the receiver, writing into out. in must be non-nil.
-func (in *WireGuardConfig) DeepCopyInto(out *WireGuardConfig) {
-	*out = *in
-}
-
-// DeepCopy copies the receiver, creating a new WireGuardConfig.
-func (in *WireGuardConfig) DeepCopy() *WireGuardConfig {
-	if in == nil {
-		return nil
-	}
-	out := new(WireGuardConfig)
 	in.DeepCopyInto(out)
 	return out
 }

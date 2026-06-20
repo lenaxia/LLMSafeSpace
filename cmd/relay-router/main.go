@@ -17,11 +17,10 @@ import (
 
 const (
 	defaultRouterListen     = ":8080"
-	defaultRouterUpstream   = "https://ai.thekao.cloud/v1"
+	defaultRouterUpstream   = "https://opencode.ai/zen/v1"
 	defaultHealthInterval   = 15 * time.Second
 	defaultHealthTimeout    = 5 * time.Second
 	defaultHealthThreshold  = 3
-	defaultRelayPort        = 8080
 	defaultPeerConfigPath   = "/etc/relay-router/peers.json"
 	defaultPeerPollInterval = 5 * time.Second
 	defaultMax429Rate       = 0.5
@@ -40,7 +39,6 @@ type routerConfig struct {
 	healthInterval   time.Duration
 	healthTimeout    time.Duration
 	healthThreshold  int
-	relayPort        int
 	max429Rate       float64
 	detectionWindow  time.Duration
 	detectorInterval time.Duration
@@ -61,7 +59,6 @@ func loadRouterConfig() routerConfig {
 		healthInterval:   getEnvDuration("HEALTH_INTERVAL", defaultHealthInterval),
 		healthTimeout:    getEnvDuration("HEALTH_TIMEOUT", defaultHealthTimeout),
 		healthThreshold:  getEnvInt("HEALTH_THRESHOLD", defaultHealthThreshold),
-		relayPort:        getEnvInt("RELAY_PORT", defaultRelayPort),
 		max429Rate:       getEnvFloat("MAX_429_RATE", defaultMax429Rate),
 		detectionWindow:  getEnvDuration("DETECTION_WINDOW", defaultDetectionWindow),
 		detectorInterval: getEnvDuration("DETECTOR_INTERVAL", defaultDetectorInterval),
@@ -75,7 +72,7 @@ func main() {
 
 	fleet := newRelayFleet(cfg.healthThreshold, cfg.detectionWindow)
 	metrics := newRouterMetrics()
-	detector := newDetector429(fleet, cfg.max429Rate, cfg.relayPort)
+	detector := newDetector429(fleet, cfg.max429Rate, 0)
 
 	fallback, err := newFallbackProxy(cfg.upstreamURL, cfg.fallbackRate, cfg.fallbackMaxConc)
 	if err != nil {
@@ -83,7 +80,7 @@ func main() {
 	}
 	fallback.withUpstreamAuth(cfg.upstreamAuth)
 
-	proxy := newRouterProxy(fleet, detector, metrics, cfg.relayPort, fallback).withUpstreamAuth(cfg.upstreamAuth)
+	proxy := newRouterProxy(fleet, detector, metrics, 0, fallback).withUpstreamAuth(cfg.upstreamAuth)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -104,7 +101,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	hc := newHealthChecker(fleet, cfg.healthInterval, cfg.healthTimeout, cfg.relayPort)
+	hc := newHealthChecker(fleet, cfg.healthInterval, cfg.healthTimeout, 0)
 	go hc.run(ctx)
 
 	go detector.runPeriodicCheck(ctx, cfg.detectorInterval)

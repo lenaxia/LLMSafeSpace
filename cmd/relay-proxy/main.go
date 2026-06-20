@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"net"
 	"net/http"
@@ -15,23 +16,54 @@ import (
 )
 
 const (
-	defaultUpstreamURL       = "https://ai.thekao.cloud/v1"
-	defaultListenAddr        = "10.42.42.2:8080"
+	defaultUpstreamURL       = "https://opencode.ai/zen/v1"
+	defaultListenAddr        = "0.0.0.0:8080"
 	defaultKeepaliveInterval = 30 * time.Second
 )
 
 type config struct {
 	upstreamURL       string
 	listenAddr        string
+	token             string
 	keepaliveInterval time.Duration
 }
 
-func loadConfig() config {
-	return config{
-		upstreamURL:       getEnv("UPSTREAM_URL", defaultUpstreamURL),
-		listenAddr:        getEnv("LISTEN_ADDR", defaultListenAddr),
-		keepaliveInterval: getEnvDuration("KEEPALIVE_INTERVAL", defaultKeepaliveInterval),
+// loadConfig builds the relay-proxy config from CLI flags, falling back to env
+// vars, then to hardcoded defaults. Precedence: flag > env > default.
+//
+// The --upstream flag is load-bearing: controller/internal/relay/cloudinit.go
+// renders `--upstream=<relay.Spec.UpstreamURL>` into each relay VM's systemd
+// ExecStart, so a per-CR upstream override must reach the binary. Before this
+// parsed os.Args, the rendered flag was silently dropped and every VM fell
+// back to the hardcoded default — breaking any non-default spec.upstreamURL.
+//
+// The --token flag is the shared secret the relay-router presents to identify
+// itself. Each relay VM gets a unique token (per-VM blast radius: a
+// compromised VM's token cannot be used against sibling relays). The
+// controller generates and embeds it into cloud-init at provision time.
+//
+// args is os.Args[1:] from main(); explicit for testability.
+func loadConfig(args []string) (config, error) {
+	fs := flag.NewFlagSet("relay-proxy", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	upstream := fs.String("upstream", getEnv("UPSTREAM_URL", defaultUpstreamURL),
+		"LLM provider endpoint to proxy to (env: UPSTREAM_URL)")
+	listen := fs.String("listen", getEnv("LISTEN_ADDR", defaultListenAddr),
+		"address to listen on (env: LISTEN_ADDR)")
+	token := fs.String("token", getEnv("RELAY_TOKEN", ""),
+		"shared-secret token the relay-router must present in the X-Relay-Token header (env: RELAY_TOKEN). "+
+			"Empty disables auth (local dev only) — production relays must set this; without it the proxy is an open forwarder to the upstream.")
+	keepalive := fs.Duration("keepalive-interval", getEnvDuration("KEEPALIVE_INTERVAL", defaultKeepaliveInterval),
+		"interval between upstream keepalive probes (env: KEEPALIVE_INTERVAL)")
+	if err := fs.Parse(args); err != nil {
+		return config{}, err
 	}
+	return config{
+		upstreamURL:       *upstream,
+		listenAddr:        *listen,
+		token:             *token,
+		keepaliveInterval: *keepalive,
+	}, nil
 }
 
 func getEnv(key, fallback string) string {
@@ -78,7 +110,10 @@ func metricsHandler(metrics *relayMetrics) http.HandlerFunc {
 }
 
 func main() {
-	cfg := loadConfig()
+	cfg, err := loadConfig(os.Args[1:])
+	if err != nil {
+		log.Fatalf("relay-proxy: %v", err)
+	}
 
 	client := defaultHTTPClient()
 	metrics := newRelayMetrics()
@@ -88,10 +123,7 @@ func main() {
 		log.Fatalf("relay-proxy: %v", err)
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", healthzHandler)
-	mux.HandleFunc("/metrics", metricsHandler(metrics))
-	mux.Handle("/", proxy)
+	mux := buildMux(cfg.token, proxy, metrics)
 
 	ka := newKeepalive(cfg.upstreamURL, client, cfg.keepaliveInterval, metrics)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -116,9 +148,20 @@ func main() {
 		cancel()
 	}()
 
-	log.Printf("relay-proxy: listening on %s, upstream=%s", cfg.listenAddr, cfg.upstreamURL)
+	log.Printf("relay-proxy: listening on %s, upstream=%s, auth=%s",
+		cfg.listenAddr, cfg.upstreamURL, authMode(cfg.token))
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("relay-proxy: %v", err)
 	}
 	log.Println("relay-proxy: stopped")
+}
+
+// authMode renders the auth state for the startup log line. "token" means a
+// shared secret is configured (production posture); "open" means no token and
+// the proxy forwards anything (local dev only).
+func authMode(token string) string {
+	if token == "" {
+		return "open"
+	}
+	return "token"
 }

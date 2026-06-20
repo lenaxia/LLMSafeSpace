@@ -1,8 +1,37 @@
 # Worklog 0435 — Default Upstream → ai.thekao.cloud (A23 resolution, option 2)
 
+> **⛔ INCORRECT — DO NOT RELY ON THIS WORKLOG. IGNORE FOR ALL DECISION-MAKING.**
+>
+> This worklog's entire premise is false and the code change it shipped has been
+> **reverted** (worklog 0436, 2026-06-20). Treat this entry as a historical
+> record only, not a source of truth.
+>
+> **What was wrong:**
+> - The load-bearing premise — "A23 disproved that `public` authorizes Zen
+>   inference, so `opencode.ai/zen/v1` is now-dead and we must default to
+>   `ai.thekao.cloud`" — is **false**. A23 was disproven (worklog 0420
+>   correction): `public` still authorizes inference for any model Zen flags
+>   `allowAnonymous` (`big-pickle` → HTTP 200 from residential IP
+>   `24.18.52.209`).
+> - The conclusion that the project "must" default to thekao does not follow.
+>   `ai.thekao.cloud` is the maintainer's personal gateway — not something any
+>   other operator will have configured. A default deploy must produce working
+>   **free-model** inference for everyone, which means Zen + `Bearer public`,
+>   no maintainer-specific dependency.
+>
+> **Resolution:** Worklog 0436 reverted all 8 default sites (CRD annotation,
+> runtime defaulter, chart schema, chart value, router const, relay-proxy const,
+> admin Deploy handler, +tests) back to `https://opencode.ai/zen/v1`. The
+> `upstreamAuth` key-injection mechanism from PR #297 remains as an *optional*
+> capability (off by default), not the necessity this worklog framed it as.
+>
+> Do not cite this worklog as justification for thekao defaults, key injection
+> as a default posture, or any claim that `public`/Zen is dead. Read worklog
+> 0420 (correction block) and worklog 0436 (the revert) instead.
+
 **Date:** 2026-06-19
 **Epic:** 42 (Multi-Cloud Inference Relay)
-**Status:** Complete — resolves A23 (operator chose option 2)
+**Status:** ⛔ **INCORRECT — REVERTED.** ~~Complete — resolves A23 (operator chose option 2)~~. Premise (A23) false; default flip reverted in worklog 0436. This entry is retained for history only — **ignore for all decisions.**
 
 ---
 

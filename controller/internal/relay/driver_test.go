@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,12 +15,20 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+func validCloudInitConfig() CloudInitConfig {
+	return CloudInitConfig{
+		UpstreamURL: "https://opencode.ai/zen/v1",
+		Token:       "test-token-abc123",
+		ArtifactURLs: []string{
+			"https://github.com/lenaxia/llmsafespace/releases/latest/download",
+			"https://s3.amazonaws.com/llmsafespace-artifacts",
+		},
+		ArtifactSHA256: "abc123def456",
+	}
+}
+
 func TestRenderCloudInit_ValidConfig(t *testing.T) {
-	b64, err := RenderCloudInit(CloudInitConfig{
-		WgConfig:       "[Interface]\nPrivateKey = test123\n",
-		UpstreamURL:    "https://opencode.ai/zen/v1",
-		RouterEndpoint: "relay-gw.example.com:51820",
-	})
+	b64, err := RenderCloudInit(validCloudInitConfig())
 	require.NoError(t, err)
 
 	raw, err := base64.StdEncoding.DecodeString(b64)
@@ -27,27 +36,93 @@ func TestRenderCloudInit_ValidConfig(t *testing.T) {
 	content := string(raw)
 
 	assert.Contains(t, content, "#cloud-config")
-	assert.Contains(t, content, "wireguard")
-	assert.Contains(t, content, "wg0.conf")
 	assert.Contains(t, content, "relay-proxy.service")
 	assert.Contains(t, content, "--upstream=https://opencode.ai/zen/v1")
-	assert.Contains(t, content, "wg-quick@wg0")
-}
-
-func TestRenderCloudInit_MissingWGConfig(t *testing.T) {
-	_, err := RenderCloudInit(CloudInitConfig{
-		UpstreamURL: "https://example.com",
-	})
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "WireGuard config")
+	assert.Contains(t, content, "--listen=0.0.0.0:8080",
+		"cloud-init must render --listen=0.0.0.0:8080 so the proxy binds all interfaces (token-gated, not network-isolated)")
+	assert.Contains(t, content, "--token=test-token-abc123",
+		"cloud-init must pass the per-VM token so the proxy gates on it")
+	assert.NotContains(t, content, "wireguard",
+		"cloud-init must NOT install or configure WireGuard (removed in worklog 0442)")
+	assert.NotContains(t, content, "wg-quick",
+		"cloud-init must NOT bring up any WG interface (removed in worklog 0442)")
 }
 
 func TestRenderCloudInit_MissingUpstreamURL(t *testing.T) {
-	_, err := RenderCloudInit(CloudInitConfig{
-		WgConfig: "[Interface]\nPrivateKey = x\n",
-	})
+	cfg := validCloudInitConfig()
+	cfg.UpstreamURL = ""
+	_, err := RenderCloudInit(cfg)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "upstream URL")
+}
+
+func TestRenderCloudInit_MissingToken(t *testing.T) {
+	cfg := validCloudInitConfig()
+	cfg.Token = ""
+	_, err := RenderCloudInit(cfg)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "token",
+		"missing token must be rejected — without it the proxy is an open forwarder to the upstream")
+}
+
+func TestRenderCloudInit_MissingArtifactURLs(t *testing.T) {
+	cfg := validCloudInitConfig()
+	cfg.ArtifactURLs = nil
+	_, err := RenderCloudInit(cfg)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "artifact URL",
+		"without an artifact URL the relay-proxy binary can never reach the VM — cloud-init would start a nonexistent binary")
+}
+
+func TestRenderCloudInit_MissingArtifactSHA256(t *testing.T) {
+	cfg := validCloudInitConfig()
+	cfg.ArtifactSHA256 = ""
+	_, err := RenderCloudInit(cfg)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "artifact SHA-256",
+		"without a checksum the download cannot be integrity-verified — security doc §7 mandates sha256sum -c before exec")
+}
+
+func TestRenderCloudInit_RendersArtifactDownload(t *testing.T) {
+	b64, err := RenderCloudInit(validCloudInitConfig())
+	require.NoError(t, err)
+
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	require.NoError(t, err)
+	content := string(raw)
+
+	assert.Contains(t, content, "curl",
+		"curl must be installed to download the relay-proxy binary from the artifact mirror")
+	assert.Contains(t, content, "sha256sum",
+		"downloaded binary must be SHA-256 verified before exec (security doc §7)")
+	assert.Contains(t, content, "abc123def456",
+		"the embedded checksum must appear in the rendered cloud-init")
+	assert.Contains(t, content, "https://github.com/lenaxia/llmsafespace/releases/latest/download",
+		"the first mirror URL must appear in the rendered cloud-init")
+	assert.Contains(t, content, "https://s3.amazonaws.com/llmsafespace-artifacts",
+		"the second mirror URL must appear in the rendered cloud-init (multi-mirror fallback)")
+	assert.Contains(t, content, "relay-proxy-arm64",
+		"cloud-init must resolve the arm64 binary name (AWS t4g.micro / OCI A1 are arm64)")
+	assert.Contains(t, content, "/usr/local/bin/relay-proxy",
+		"binary must land at the path the systemd unit references")
+	assert.Contains(t, content, "FATAL",
+		"download failure must be fatal (set -e semantics / explicit exit) so the VM does not silently run without the proxy")
+}
+
+func TestRenderCloudInit_DownloadBeforeSystemdStart(t *testing.T) {
+	b64, err := RenderCloudInit(validCloudInitConfig())
+	require.NoError(t, err)
+
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	require.NoError(t, err)
+	content := string(raw)
+
+	downloadIdx := strings.Index(content, "/usr/local/bin/relay-proxy") // first occurrence is the download target
+	startIdx := strings.Index(content, "systemctl start relay-proxy")
+	assert.Greater(t, downloadIdx, -1)
+	assert.Greater(t, startIdx, -1)
+	assert.Less(t, downloadIdx, startIdx,
+		"the binary download+verify must run BEFORE systemctl start relay-proxy, or systemd will fail with file-not-found")
 }
 
 func TestParseHealthMetrics_BasicMetrics(t *testing.T) {
@@ -94,13 +169,6 @@ some_other_metric 42
 `
 	report := parseHealthMetrics(raw)
 	assert.Empty(t, report.Relays)
-}
-
-func TestWgIPForProvider(t *testing.T) {
-	assert.Equal(t, wgAWSRelay, wgIPForProvider("aws"))
-	assert.Equal(t, wgOCIRelay, wgIPForProvider("oci"))
-	assert.Equal(t, wgGCPRelay, wgIPForProvider("gcp"))
-	assert.Equal(t, "", wgIPForProvider("unknown"))
 }
 
 func TestDefaultShapeForProvider(t *testing.T) {

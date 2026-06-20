@@ -24,18 +24,16 @@ type detector429 struct {
 	client         *http.Client
 	max429Rate     float64
 	maxConsecutive int
-	relayPort      int
 	mu             sync.Mutex
 	probedRelays   map[string]bool
 }
 
-func newDetector429(fleet *relayFleet, max429Rate float64, relayPort int) *detector429 {
+func newDetector429(fleet *relayFleet, max429Rate float64, _ int) *detector429 {
 	return &detector429{
 		fleet:          fleet,
 		client:         &http.Client{Timeout: 5 * time.Second},
 		max429Rate:     max429Rate,
 		maxConsecutive: 3,
-		relayPort:      relayPort,
 		probedRelays:   make(map[string]bool),
 	}
 }
@@ -64,8 +62,8 @@ func (d *detector429) OnResponse(ctx context.Context, relayID string, statusCode
 // the relay suspect and increments the consecutive probe counter.
 // If consecutive probes reach maxConsecutive, marks relay draining.
 func (d *detector429) probeRelay(ctx context.Context, relayID string) {
-	wgIP := d.fleet.GetWgIP(relayID)
-	if wgIP == "" {
+	endpoint := d.fleet.GetEndpoint(relayID)
+	if endpoint == "" {
 		return
 	}
 
@@ -73,7 +71,7 @@ func (d *detector429) probeRelay(ctx context.Context, relayID string) {
 	d.probedRelays[relayID] = true
 	d.mu.Unlock()
 
-	url := fmt.Sprintf("http://%s:%d/models", wgIP, d.relayPort)
+	url := fmt.Sprintf("http://%s/models", endpoint)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return

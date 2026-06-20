@@ -6,6 +6,7 @@ package main
 import (
 	"bufio"
 	"context"
+	cryptosubtle "crypto/subtle"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -48,7 +49,7 @@ func setupRouterTest(t *testing.T, upstreamHandler http.HandlerFunc) (*relayFlee
 	det := newDetector429(fleet, 0.5, relayPort)
 
 	fleet.UpdatePeers([]PeerEntry{
-		{ID: "test-relay", WgIP: extractHost(relay.URL), Provider: "oci", State: "healthy"},
+		{ID: "test-relay", Endpoint: extractEndpoint(relay.URL), Provider: "oci", State: "healthy"},
 	})
 
 	return fleet, det, metrics, upstream, relay
@@ -71,6 +72,14 @@ func extractHost(url string) string {
 	url = strings.TrimPrefix(url, "https://")
 	parts := strings.Split(url, ":")
 	return parts[0]
+}
+
+// extractEndpoint returns the host:port of a httptest.Server URL — what the
+// router dials as http://<endpoint><path> when forwarding to a relay.
+func extractEndpoint(serverURL string) string {
+	u := strings.TrimPrefix(serverURL, "http://")
+	u = strings.TrimPrefix(u, "https://")
+	return u
 }
 
 // ---------------------------------------------------------------------------
@@ -159,7 +168,7 @@ func TestRouterProxy_StripsWorkspaceHeader(t *testing.T) {
 	t.Cleanup(relay.Close)
 
 	fleet.UpdatePeers([]PeerEntry{
-		{ID: "test-relay", WgIP: extractHost(relay.URL), Provider: "oci", State: "healthy"},
+		{ID: "test-relay", Endpoint: extractEndpoint(relay.URL), Provider: "oci", State: "healthy"},
 	})
 
 	port := extractPort(relay.URL)
@@ -342,7 +351,7 @@ func TestHealthChecker_MarksHealthyOnSuccess(t *testing.T) {
 
 	fleet := newRelayFleet(3, 5*time.Minute)
 	fleet.UpdatePeers([]PeerEntry{
-		{ID: "r1", WgIP: extractHost(relay.URL), Provider: "oci", State: "healthy"},
+		{ID: "r1", Endpoint: extractEndpoint(relay.URL), Provider: "oci", State: "healthy"},
 	})
 
 	hc := newHealthChecker(fleet, 20*time.Millisecond, 1*time.Second, extractPort(relay.URL))
@@ -358,7 +367,7 @@ func TestHealthChecker_MarksHealthyOnSuccess(t *testing.T) {
 func TestHealthChecker_MarksUnhealthyOnFailure(t *testing.T) {
 	fleet := newRelayFleet(3, 5*time.Minute)
 	fleet.UpdatePeers([]PeerEntry{
-		{ID: "r1", WgIP: "127.0.0.1", Provider: "oci", State: "healthy"},
+		{ID: "r1", Endpoint: "127.0.0.1", Provider: "oci", State: "healthy"},
 	})
 
 	hc := newHealthChecker(fleet, 20*time.Millisecond, 50*time.Millisecond, 1)
@@ -379,7 +388,7 @@ func TestHealthChecker_StopsOnContextCancel(t *testing.T) {
 
 	fleet := newRelayFleet(3, 5*time.Minute)
 	fleet.UpdatePeers([]PeerEntry{
-		{ID: "r1", WgIP: extractHost(relay.URL), Provider: "oci", State: "healthy"},
+		{ID: "r1", Endpoint: extractEndpoint(relay.URL), Provider: "oci", State: "healthy"},
 	})
 
 	hc := newHealthChecker(fleet, 10*time.Millisecond, 1*time.Second, extractPort(relay.URL))
@@ -411,7 +420,7 @@ func TestDetector_OnNon429ClearsState(t *testing.T) {
 
 	fleet := newRelayFleet(3, 5*time.Minute)
 	fleet.UpdatePeers([]PeerEntry{
-		{ID: "r1", WgIP: extractHost(relay.URL), Provider: "oci", State: "healthy"},
+		{ID: "r1", Endpoint: extractEndpoint(relay.URL), Provider: "oci", State: "healthy"},
 	})
 
 	det := newDetector429(fleet, 0.5, extractPort(relay.URL))
@@ -429,8 +438,8 @@ func TestDetector_OnNon429ClearsState(t *testing.T) {
 func TestDetector_StormDetection(t *testing.T) {
 	fleet := newRelayFleet(3, 5*time.Minute)
 	fleet.UpdatePeers([]PeerEntry{
-		{ID: "r1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
-		{ID: "r2", WgIP: "10.42.42.3", Provider: "gcp", State: "healthy"},
+		{ID: "r1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "r2", Endpoint: "10.42.42.3", Provider: "gcp", State: "healthy"},
 	})
 
 	det := newDetector429(fleet, 0.5, 8080)
@@ -450,7 +459,7 @@ func TestDetector_StormDetection(t *testing.T) {
 	}
 	assert.True(t, r1Status.Draining429, "r1 should be draining after 100%% 429 storm detected by checkAllStorms")
 
-	id, _, ok := fleet.SelectRelay()
+	id, _, _, ok := fleet.SelectRelay()
 	require.True(t, ok)
 	assert.Equal(t, "r2", id, "r1 should be excluded after 429 storm")
 }
@@ -458,7 +467,7 @@ func TestDetector_StormDetection(t *testing.T) {
 func TestDetector_CheckAllStorms(t *testing.T) {
 	fleet := newRelayFleet(3, 5*time.Minute)
 	fleet.UpdatePeers([]PeerEntry{
-		{ID: "r1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "r1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
 	})
 
 	for i := 0; i < 20; i++ {
@@ -543,7 +552,7 @@ func TestE2E_RouterForwardsAndMetrics(t *testing.T) {
 
 	fleet := newRelayFleet(3, 5*time.Minute)
 	fleet.UpdatePeers([]PeerEntry{
-		{ID: "test-relay", WgIP: extractHost(relay.URL), Provider: "oci", State: "healthy"},
+		{ID: "test-relay", Endpoint: extractEndpoint(relay.URL), Provider: "oci", State: "healthy"},
 	})
 
 	metrics := newRouterMetrics()
@@ -621,7 +630,7 @@ func TestE2E_FallbackTransitionsBackToRelay(t *testing.T) {
 	assert.Equal(t, `{"from":"upstream"}`, string(body), "should fallback when no relays")
 
 	fleet.UpdatePeers([]PeerEntry{
-		{ID: "r1", WgIP: extractHost(relay.URL), Provider: "oci", State: "healthy"},
+		{ID: "r1", Endpoint: extractEndpoint(relay.URL), Provider: "oci", State: "healthy"},
 	})
 
 	resp2, _ := http.Get(server.URL + "/test")
@@ -631,11 +640,18 @@ func TestE2E_FallbackTransitionsBackToRelay(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// US-42.2/A23 fix: upstream auth-key injection.
-// The client sends Authorization: Bearer public (A23: Zen 401s on inference).
-// The router replaces it with a real upstream key before forwarding, so the
-// relay VM stays a dumb byte-pipe but inference works. Applies to both the
-// relay path and the fallback path.
+// Upstream auth-key injection (PR #297). The router can optionally replace the
+// client's Authorization: Bearer public with a real upstream key before
+// forwarding, so the relay VM stays a dumb byte-pipe while inference works
+// against upstreams that require a real key. Applies to both the relay path
+// and the fallback path.
+//
+// NOTE: the original A23 rationale ("Zen 401s on inference, so we MUST inject")
+// was disproven 2026-06-20 (worklog 0420 correction) — `public` still works
+// for any model Zen flags `allowAnonymous`. Key injection is now an OPTIONAL
+// capability (used when pointing the fleet at a real-key-required upstream),
+// not a necessity. These tests verify the mechanism itself, which is valid
+// regardless of the rationale.
 // ---------------------------------------------------------------------------
 
 func TestApplyUpstreamAuth_ReplacesBearerPublic(t *testing.T) {
@@ -694,7 +710,7 @@ func TestRouterProxy_InjectsUpstreamAuthOnRelayPath(t *testing.T) {
 	fleet := newRelayFleet(3, 5*time.Minute)
 	port := extractPort(relay.URL)
 	fleet.UpdatePeers([]PeerEntry{
-		{ID: "r1", WgIP: extractHost(relay.URL), Provider: "oci", State: "healthy"},
+		{ID: "r1", Endpoint: extractEndpoint(relay.URL), Provider: "oci", State: "healthy"},
 	})
 	fb, _ := newFallbackProxy("https://upstream.example.com", 0.5, 1)
 	proxy := newRouterProxy(fleet, newDetector429(fleet, 0.5, port), newRouterMetrics(), port, fb).
@@ -708,6 +724,136 @@ func TestRouterProxy_InjectsUpstreamAuthOnRelayPath(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, "relay should accept the request")
 	assert.Equal(t, "Bearer sk-real-xyz", seenAuth,
 		"relay VM must receive the injected real key, not the client's Bearer public")
+}
+
+// TestRouterProxy_InjectsRelayToken is the integration test for the per-VM
+// shared-secret token (worklog 0442, post-WG-removal). The router must set
+// X-Relay-Token on every request forwarded to a relay, using the token from
+// that relay's PeerEntry. The relay-proxy validates the header via
+// constant-time compare (see cmd/relay-proxy/auth.go). This test exercises
+// the router side of the contract: a request through the router reaches the
+// relay with the correct token header.
+func TestRouterProxy_InjectsRelayToken(t *testing.T) {
+	var seenToken string
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		seenToken = r.Header.Get(relayTokenHeader)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(relay.Close)
+
+	fleet := newRelayFleet(3, 5*time.Minute)
+	port := extractPort(relay.URL)
+	fleet.UpdatePeers([]PeerEntry{
+		{ID: "r1", Endpoint: extractEndpoint(relay.URL), Provider: "oci", State: "healthy", Token: "per-vm-secret-xyz"},
+	})
+	fb, _ := newFallbackProxy("https://upstream.example.com", 0.5, 1)
+	proxy := newRouterProxy(fleet, newDetector429(fleet, 0.5, port), newRouterMetrics(), port, fb)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"x"}`))
+	rec := httptest.NewRecorder()
+	proxy.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, "relay should accept the request")
+	assert.Equal(t, "per-vm-secret-xyz", seenToken,
+		"router must inject the per-VM token from PeerEntry.Token as X-Relay-Token")
+}
+
+// TestRelayToken_EndToEnd_RouterProxiesThroughTokenGatedProxy is the
+// cross-binary integration test: it stands up a token-gated relay-proxy
+// stand-in (mirroring cmd/relay-proxy/auth.go's requireToken exactly — same
+// header name, same constant-time compare, same 401 on mismatch) and routes a
+// request through the relay-router to it. This is the strongest wire-level
+// proof that the router's injected header is what a real relay-proxy accepts.
+// Header-name drift between auth.go's TokenHeader and proxy.go's
+// relayTokenHeader would surface here as a 401.
+func TestRelayToken_EndToEnd_RouterProxiesThroughTokenGatedProxy(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	// Token-gated relay-proxy stand-in — mirrors cmd/relay-proxy/auth.go's
+	// requireToken + buildMux: /healthz exempt, / token-gated,
+	// crypto/cryptosubtle.ConstantTimeCompare, 401 on mismatch.
+	token := "e2e-integration-secret"
+	expectedBytes := []byte(token)
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/metrics" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	})
+	proxySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/healthz" && r.URL.Path != "/metrics" {
+			if cryptosubtle.ConstantTimeCompare([]byte(r.Header.Get(relayTokenHeader)), expectedBytes) != 1 {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+		}
+		inner.ServeHTTP(w, r)
+	}))
+	t.Cleanup(proxySrv.Close)
+	_ = upstream // upstream reachable; the stand-in returns its own body
+
+	// Real relay-router pointing at the proxy via peers.json.
+	fleet := newRelayFleet(3, 5*time.Minute)
+	fleet.UpdatePeers([]PeerEntry{
+		{ID: "r1", Endpoint: extractEndpoint(proxySrv.URL), Provider: "oci", State: "healthy", Token: token},
+	})
+	fb, _ := newFallbackProxy("https://unused.example.com", 0.5, 1)
+	routerProxy := newRouterProxy(fleet, newDetector429(fleet, 0.5, 0), newRouterMetrics(), 0, fb)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"x"}`))
+	req.Header.Set("Authorization", "Bearer public")
+	rec := httptest.NewRecorder()
+	routerProxy.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code,
+		"end-to-end router→token-gated-proxy must succeed (the two binaries agree on X-Relay-Token)")
+	assert.Contains(t, rec.Body.String(), "ok")
+}
+
+// TestRelayToken_EndToEnd_WrongTokenRejected proves the negative path: if the
+// router presents a token that does not match what the relay-proxy expects,
+// the proxy returns 401 and the router surfaces the error to the caller. This
+// guards against silent misconfiguration where the controller wrote a stale
+// token to peers.json.
+func TestRelayToken_EndToEnd_WrongTokenRejected(t *testing.T) {
+	expectedBytes := []byte("correct-secret")
+	proxySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/metrics" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if cryptosubtle.ConstantTimeCompare([]byte(r.Header.Get(relayTokenHeader)), expectedBytes) != 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`should-not-reach`))
+	}))
+	t.Cleanup(proxySrv.Close)
+
+	fleet := newRelayFleet(3, 5*time.Minute)
+	fleet.UpdatePeers([]PeerEntry{
+		{ID: "r1", Endpoint: extractEndpoint(proxySrv.URL), Provider: "oci", State: "healthy", Token: "WRONG-secret"},
+	})
+	fb, _ := newFallbackProxy("https://unused.example.com", 0.5, 1)
+	routerProxy := newRouterProxy(fleet, newDetector429(fleet, 0.5, 0), newRouterMetrics(), 0, fb)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"x"}`))
+	rec := httptest.NewRecorder()
+	routerProxy.ServeHTTP(rec, req)
+
+	// The relay-proxy returns 401; the router forwards the status unchanged.
+	assert.Equal(t, http.StatusUnauthorized, rec.Code,
+		"wrong token must be rejected at the relay-proxy (401) — the controller's per-VM tokens are load-bearing")
 }
 
 // TestFallbackProxy_InjectsUpstreamAuth verifies the same injection on the
@@ -732,4 +878,29 @@ func TestFallbackProxy_InjectsUpstreamAuth(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, "Bearer sk-real-fb", seenAuth,
 		"direct fallback to upstream must carry the injected real key")
+}
+
+// TestFallbackProxy_DoesNotSetRelayToken verifies the X-Relay-Token header is
+// scoped to the relay path ONLY. The fallback path hits the upstream (Zen)
+// directly, which has no concept of a relay token — sending one would be
+// harmless but leak the secret to a third party. Token scope is per-VM; the
+// fallback has no VM.
+func TestFallbackProxy_DoesNotSetRelayToken(t *testing.T) {
+	var seenToken string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenToken = r.Header.Get(relayTokenHeader)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(upstream.Close)
+
+	fb, err := newFallbackProxy(upstream.URL, 100, 10) // high limits so the request goes through
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"x"}`))
+	rec := httptest.NewRecorder()
+	fb.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Empty(t, seenToken,
+		"fallback path must NOT set X-Relay-Token — the token is per-VM and the fallback hits the upstream directly")
 }

@@ -32,9 +32,10 @@ type PeerConfig struct {
 // PeerEntry represents one relay VM in the ConfigMap.
 type PeerEntry struct {
 	ID       string `json:"id"`
-	WgIP     string `json:"wgIP"`
+	Endpoint string `json:"endpoint"` // public IP or host[:port] the router dials over HTTPS
 	Provider string `json:"provider"`
 	State    string `json:"state"`
+	Token    string `json:"token"` // per-VM shared-secret the router presents in X-Relay-Token
 }
 
 // ParsePeerConfig decodes the ConfigMap JSON into a PeerConfig.
@@ -124,15 +125,16 @@ func (f *relayFleet) UpdatePeers(peers []PeerEntry) {
 // SelectRelay picks a relay using weighted random selection.
 // AWS receives 100% of traffic when healthy. OCI receives traffic only
 // when AWS is unavailable or draining. GCP receives traffic only when
-// both AWS and OCI are unavailable. Returns the selected relay ID and
-// WG IP, or empty strings if no healthy relay is available.
-func (f *relayFleet) SelectRelay() (id, wgIP string, ok bool) {
+// both AWS and OCI are unavailable. Returns the selected relay ID,
+// its public HTTPS endpoint, and per-VM token; empty strings if no
+// healthy relay is available.
+func (f *relayFleet) SelectRelay() (id, endpoint, token string, ok bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	eligible := f.eligibleRelaysLocked()
 	if len(eligible) == 0 {
-		return "", "", false
+		return "", "", "", false
 	}
 
 	hasAWS := false
@@ -173,7 +175,7 @@ func (f *relayFleet) SelectRelay() (id, wgIP string, ok bool) {
 		}
 	}
 	if total == 0 || len(candidates) == 0 {
-		return "", "", false
+		return "", "", "", false
 	}
 
 	r := f.rng.Float64() * total
@@ -181,12 +183,12 @@ func (f *relayFleet) SelectRelay() (id, wgIP string, ok bool) {
 	for _, c := range candidates {
 		cumulative += c.weight
 		if r <= cumulative {
-			return c.entry.peer.ID, c.entry.peer.WgIP, true
+			return c.entry.peer.ID, c.entry.peer.Endpoint, c.entry.peer.Token, true
 		}
 	}
 
 	last := candidates[len(candidates)-1]
-	return last.entry.peer.ID, last.entry.peer.WgIP, true
+	return last.entry.peer.ID, last.entry.peer.Endpoint, last.entry.peer.Token, true
 }
 
 // eligibleRelaysLocked returns relays that can receive new traffic.
@@ -379,7 +381,7 @@ func (f *relayFleet) HealthyRelays() []RelayStatus {
 	for _, e := range f.relays {
 		result = append(result, RelayStatus{
 			ID:            e.peer.ID,
-			WgIP:          e.peer.WgIP,
+			Endpoint:      e.peer.Endpoint,
 			Provider:      e.peer.Provider,
 			Healthy:       f.healthStateLocked(e) == relayStateHealthy,
 			ActiveStreams: e.activeStreams,
@@ -416,7 +418,7 @@ func (f *relayFleet) ActiveStreams(relayID string) int64 {
 // RelayStatus is a read-only snapshot of a relay's state for metrics.
 type RelayStatus struct {
 	ID            string
-	WgIP          string
+	Endpoint      string
 	Provider      string
 	Healthy       bool
 	ActiveStreams int64
@@ -427,12 +429,14 @@ type RelayStatus struct {
 	Draining429   bool
 }
 
-// GetWgIP returns the WG IP for a relay ID, or empty if not found.
-func (f *relayFleet) GetWgIP(relayID string) string {
+// GetEndpoint returns the HTTPS endpoint (public IP/host[:port]) for a relay
+// ID, or empty if not found. The router dials http://<endpoint><path> when
+// forwarding traffic.
+func (f *relayFleet) GetEndpoint(relayID string) string {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	if e, ok := f.relays[relayID]; ok {
-		return e.peer.WgIP
+		return e.peer.Endpoint
 	}
 	return ""
 }

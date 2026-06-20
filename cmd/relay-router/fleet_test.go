@@ -19,8 +19,8 @@ import (
 func TestParsePeerConfig_Valid(t *testing.T) {
 	data := []byte(`{
 		"relays": [
-			{"id": "oci-1", "wgIP": "10.42.42.2", "provider": "oci", "state": "healthy"},
-			{"id": "gcp-1", "wgIP": "10.42.42.3", "provider": "gcp", "state": "healthy"}
+			{"id": "oci-1", "endpoint": "10.42.42.2", "provider": "oci", "state": "healthy"},
+			{"id": "gcp-1", "endpoint": "10.42.42.3", "provider": "gcp", "state": "healthy"}
 		]
 	}`)
 
@@ -28,7 +28,7 @@ func TestParsePeerConfig_Valid(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, cfg.Relays, 2)
 	assert.Equal(t, "oci-1", cfg.Relays[0].ID)
-	assert.Equal(t, "10.42.42.2", cfg.Relays[0].WgIP)
+	assert.Equal(t, "10.42.42.2", cfg.Relays[0].Endpoint)
 	assert.Equal(t, "oci", cfg.Relays[0].Provider)
 	assert.Equal(t, "gcp-1", cfg.Relays[1].ID)
 }
@@ -51,7 +51,7 @@ func TestParsePeerConfig_InvalidJSON(t *testing.T) {
 func TestRelayFleet_UpdatePeers_AddsNew(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
 	})
 
 	statuses := f.HealthyRelays()
@@ -62,7 +62,7 @@ func TestRelayFleet_UpdatePeers_AddsNew(t *testing.T) {
 func TestRelayFleet_UpdatePeers_PreservesHealth(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
 	})
 
 	f.RecordHealthCheck("oci-1", false)
@@ -70,7 +70,7 @@ func TestRelayFleet_UpdatePeers_PreservesHealth(t *testing.T) {
 	f.RecordHealthCheck("oci-1", false)
 
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
 	})
 
 	statuses := f.HealthyRelays()
@@ -81,12 +81,12 @@ func TestRelayFleet_UpdatePeers_PreservesHealth(t *testing.T) {
 func TestRelayFleet_UpdatePeers_RemovesStale(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
-		{ID: "gcp-1", WgIP: "10.42.42.3", Provider: "gcp", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "gcp-1", Endpoint: "10.42.42.3", Provider: "gcp", State: "healthy"},
 	})
 
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
 	})
 
 	statuses := f.HealthyRelays()
@@ -97,11 +97,11 @@ func TestRelayFleet_UpdatePeers_RemovesStale(t *testing.T) {
 func TestRelayFleet_UpdatePeers_UpdatesState(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
 	})
 
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "draining"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "draining"},
 	})
 
 	statuses := f.HealthyRelays()
@@ -116,13 +116,13 @@ func TestRelayFleet_UpdatePeers_UpdatesState(t *testing.T) {
 func TestSelectRelay_AWSPrimaryWhenAllHealthy(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "aws-1", WgIP: "10.42.42.4", Provider: "aws", State: "healthy"},
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
-		{ID: "gcp-1", WgIP: "10.42.42.3", Provider: "gcp", State: "healthy"},
+		{ID: "aws-1", Endpoint: "10.42.42.4", Provider: "aws", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "gcp-1", Endpoint: "10.42.42.3", Provider: "gcp", State: "healthy"},
 	})
 
 	for i := 0; i < 100; i++ {
-		id, _, ok := f.SelectRelay()
+		id, _, _, ok := f.SelectRelay()
 		require.True(t, ok)
 		assert.Equal(t, "aws-1", id, "AWS should receive 100%% of traffic when all healthy (iteration %d)", i)
 	}
@@ -131,12 +131,12 @@ func TestSelectRelay_AWSPrimaryWhenAllHealthy(t *testing.T) {
 func TestSelectRelay_OCIPrimaryWhenAWSAbsent(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
-		{ID: "gcp-1", WgIP: "10.42.42.3", Provider: "gcp", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "gcp-1", Endpoint: "10.42.42.3", Provider: "gcp", State: "healthy"},
 	})
 
 	for i := 0; i < 100; i++ {
-		id, _, ok := f.SelectRelay()
+		id, _, _, ok := f.SelectRelay()
 		require.True(t, ok)
 		assert.Equal(t, "oci-1", id, "OCI should receive 100%% of traffic when AWS absent (iteration %d)", i)
 	}
@@ -145,16 +145,16 @@ func TestSelectRelay_OCIPrimaryWhenAWSAbsent(t *testing.T) {
 func TestSelectRelay_OCIFailoverWhenAWSUnhealthy(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "aws-1", WgIP: "10.42.42.4", Provider: "aws", State: "healthy"},
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
-		{ID: "gcp-1", WgIP: "10.42.42.3", Provider: "gcp", State: "healthy"},
+		{ID: "aws-1", Endpoint: "10.42.42.4", Provider: "aws", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "gcp-1", Endpoint: "10.42.42.3", Provider: "gcp", State: "healthy"},
 	})
 
 	for i := 0; i < 3; i++ {
 		f.RecordHealthCheck("aws-1", false)
 	}
 
-	id, _, ok := f.SelectRelay()
+	id, _, _, ok := f.SelectRelay()
 	require.True(t, ok)
 	assert.Equal(t, "oci-1", id, "OCI should receive traffic when AWS is unhealthy")
 }
@@ -162,9 +162,9 @@ func TestSelectRelay_OCIFailoverWhenAWSUnhealthy(t *testing.T) {
 func TestSelectRelay_GCPFailoverWhenAWSAndOCIDown(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "aws-1", WgIP: "10.42.42.4", Provider: "aws", State: "healthy"},
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
-		{ID: "gcp-1", WgIP: "10.42.42.3", Provider: "gcp", State: "healthy"},
+		{ID: "aws-1", Endpoint: "10.42.42.4", Provider: "aws", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "gcp-1", Endpoint: "10.42.42.3", Provider: "gcp", State: "healthy"},
 	})
 
 	for i := 0; i < 3; i++ {
@@ -172,7 +172,7 @@ func TestSelectRelay_GCPFailoverWhenAWSAndOCIDown(t *testing.T) {
 		f.RecordHealthCheck("oci-1", false)
 	}
 
-	id, _, ok := f.SelectRelay()
+	id, _, _, ok := f.SelectRelay()
 	require.True(t, ok)
 	assert.Equal(t, "gcp-1", id, "GCP should receive traffic when AWS and OCI are both unhealthy")
 }
@@ -180,10 +180,10 @@ func TestSelectRelay_GCPFailoverWhenAWSAndOCIDown(t *testing.T) {
 func TestSelectRelay_GCPFailoverWhenOCIDraining(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "draining"},
-		{ID: "gcp-1", WgIP: "10.42.42.3", Provider: "gcp", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "draining"},
+		{ID: "gcp-1", Endpoint: "10.42.42.3", Provider: "gcp", State: "healthy"},
 	})
-	id, _, ok := f.SelectRelay()
+	id, _, _, ok := f.SelectRelay()
 	require.True(t, ok)
 	assert.Equal(t, "gcp-1", id)
 }
@@ -191,13 +191,13 @@ func TestSelectRelay_GCPFailoverWhenOCIDraining(t *testing.T) {
 func TestSelectRelay_OCIFailoverWhenAWSDraining(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "aws-1", WgIP: "10.42.42.4", Provider: "aws", State: "draining"},
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
-		{ID: "gcp-1", WgIP: "10.42.42.3", Provider: "gcp", State: "healthy"},
+		{ID: "aws-1", Endpoint: "10.42.42.4", Provider: "aws", State: "draining"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "gcp-1", Endpoint: "10.42.42.3", Provider: "gcp", State: "healthy"},
 	})
 
 	for i := 0; i < 50; i++ {
-		id, _, ok := f.SelectRelay()
+		id, _, _, ok := f.SelectRelay()
 		require.True(t, ok)
 		assert.Equal(t, "oci-1", id, "OCI should receive 100%% traffic when AWS is draining (iteration %d)", i)
 	}
@@ -206,15 +206,15 @@ func TestSelectRelay_OCIFailoverWhenAWSDraining(t *testing.T) {
 func TestSelectRelay_OCIFailoverWhenAWS429Draining(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "aws-1", WgIP: "10.42.42.4", Provider: "aws", State: "healthy"},
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
-		{ID: "gcp-1", WgIP: "10.42.42.3", Provider: "gcp", State: "healthy"},
+		{ID: "aws-1", Endpoint: "10.42.42.4", Provider: "aws", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "gcp-1", Endpoint: "10.42.42.3", Provider: "gcp", State: "healthy"},
 	})
 
 	f.Mark429Draining("aws-1", "storm")
 
 	for i := 0; i < 50; i++ {
-		id, _, ok := f.SelectRelay()
+		id, _, _, ok := f.SelectRelay()
 		require.True(t, ok)
 		assert.Equal(t, "oci-1", id, "OCI should receive traffic when AWS is 429-draining (iteration %d)", i)
 	}
@@ -223,8 +223,8 @@ func TestSelectRelay_OCIFailoverWhenAWS429Draining(t *testing.T) {
 func TestSelectRelay_NoHealthyRelays(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
-		{ID: "gcp-1", WgIP: "10.42.42.3", Provider: "gcp", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "gcp-1", Endpoint: "10.42.42.3", Provider: "gcp", State: "healthy"},
 	})
 
 	for i := 0; i < 3; i++ {
@@ -232,42 +232,42 @@ func TestSelectRelay_NoHealthyRelays(t *testing.T) {
 		f.RecordHealthCheck("gcp-1", false)
 	}
 
-	_, _, ok := f.SelectRelay()
+	_, _, _, ok := f.SelectRelay()
 	assert.False(t, ok)
 }
 
 func TestSelectRelay_EmptyFleet(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
-	_, _, ok := f.SelectRelay()
+	_, _, _, ok := f.SelectRelay()
 	assert.False(t, ok)
 }
 
 func TestSelectRelay_429DrainingExcludesRelay(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
-		{ID: "gcp-1", WgIP: "10.42.42.3", Provider: "gcp", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "gcp-1", Endpoint: "10.42.42.3", Provider: "gcp", State: "healthy"},
 	})
 
 	f.Mark429Draining("oci-1", "storm")
 
 	for i := 0; i < 50; i++ {
-		id, _, ok := f.SelectRelay()
+		id, _, _, ok := f.SelectRelay()
 		require.True(t, ok)
 		assert.Equal(t, "gcp-1", id, "429-draining OCI should be excluded")
 	}
 }
 
-func TestSelectRelay_ReturnsWgIP(t *testing.T) {
+func TestSelectRelay_ReturnsEndpoint(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
 	})
 
-	id, wgIP, ok := f.SelectRelay()
+	id, endpoint, _, ok := f.SelectRelay()
 	require.True(t, ok)
 	assert.Equal(t, "oci-1", id)
-	assert.Equal(t, "10.42.42.2", wgIP)
+	assert.Equal(t, "10.42.42.2", endpoint)
 }
 
 // ---------------------------------------------------------------------------
@@ -277,7 +277,7 @@ func TestSelectRelay_ReturnsWgIP(t *testing.T) {
 func TestRecordHealthCheck_SuccessClearsFailures(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
 	})
 
 	f.RecordHealthCheck("oci-1", false)
@@ -297,7 +297,7 @@ func TestRecordHealthCheck_UnknownRelay(t *testing.T) {
 func TestRecordHealthCheck_ThreeFailuresMarksUnhealthy(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
 	})
 
 	f.RecordHealthCheck("oci-1", false)
@@ -320,7 +320,7 @@ func TestRecordHealthCheck_ThreeFailuresMarksUnhealthy(t *testing.T) {
 func TestRecordRequest_RecordsStatusCodes(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
 	})
 
 	f.RecordRequest("oci-1", 200)
@@ -348,7 +348,7 @@ func TestRelay429Rate_EmptyFleet(t *testing.T) {
 func TestRelay429Rate_RecordsRate(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
 	})
 
 	f.RecordRequest("oci-1", 200)
@@ -362,7 +362,7 @@ func TestRelay429Rate_RecordsRate(t *testing.T) {
 func TestRelay429Rate_WindowPruning(t *testing.T) {
 	f := newRelayFleet(3, 50*time.Millisecond)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
 	})
 
 	f.RecordRequest("oci-1", 429)
@@ -381,7 +381,7 @@ func TestRelay429Rate_WindowPruning(t *testing.T) {
 func TestRecordStreamStartEnd(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
 	})
 
 	f.RecordStreamStart("oci-1")
@@ -398,7 +398,7 @@ func TestRecordStreamStartEnd(t *testing.T) {
 func TestRecordStreamEnd_NeverGoesNegative(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
 	})
 
 	f.RecordStreamEnd("oci-1")
@@ -408,7 +408,7 @@ func TestRecordStreamEnd_NeverGoesNegative(t *testing.T) {
 func TestRecordEgress(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
 	})
 
 	f.RecordEgress("oci-1", 1024)
@@ -426,8 +426,8 @@ func TestRecordEgress(t *testing.T) {
 func TestMark429Draining(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
-		{ID: "gcp-1", WgIP: "10.42.42.3", Provider: "gcp", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "gcp-1", Endpoint: "10.42.42.3", Provider: "gcp", State: "healthy"},
 	})
 
 	f.Mark429Draining("oci-1", "storm-detected")
@@ -443,7 +443,7 @@ func TestMark429Draining(t *testing.T) {
 func TestMark429Suspect_Clear429State(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
 	})
 
 	f.Mark429Suspect("oci-1")
@@ -461,7 +461,7 @@ func TestMark429Suspect_Clear429State(t *testing.T) {
 func TestHasHealthyRelay_True(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
 	})
 	assert.True(t, f.HasHealthyRelay())
 }
@@ -469,7 +469,7 @@ func TestHasHealthyRelay_True(t *testing.T) {
 func TestHasHealthyRelay_FalseAllUnhealthy(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
 	})
 
 	for i := 0; i < 3; i++ {
@@ -482,27 +482,27 @@ func TestHasHealthyRelay_FalseAllUnhealthy(t *testing.T) {
 func TestHasHealthyRelay_FalseAllDraining(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "draining"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "draining"},
 	})
 
 	assert.False(t, f.HasHealthyRelay())
 }
 
 // ---------------------------------------------------------------------------
-// GetWgIP tests
+// GetEndpoint tests
 // ---------------------------------------------------------------------------
 
-func TestGetWgIP_ExistingRelay(t *testing.T) {
+func TestGetEndpoint_ExistingRelay(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
 	})
-	assert.Equal(t, "10.42.42.2", f.GetWgIP("oci-1"))
+	assert.Equal(t, "10.42.42.2", f.GetEndpoint("oci-1"))
 }
 
-func TestGetWgIP_NonexistentRelay(t *testing.T) {
+func TestGetEndpoint_NonexistentRelay(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
-	assert.Equal(t, "", f.GetWgIP("nonexistent"))
+	assert.Equal(t, "", f.GetEndpoint("nonexistent"))
 }
 
 // ---------------------------------------------------------------------------
@@ -540,8 +540,8 @@ func TestRelayWeight_SuspectReduced(t *testing.T) {
 func TestRelayFleet_ConcurrentAccess(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
-		{ID: "gcp-1", WgIP: "10.42.42.3", Provider: "gcp", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "gcp-1", Endpoint: "10.42.42.3", Provider: "gcp", State: "healthy"},
 	})
 
 	done := make(chan struct{})
@@ -570,8 +570,8 @@ func TestRelayFleet_ConcurrentAccess(t *testing.T) {
 func TestPeerConfig_JSONRoundTrip(t *testing.T) {
 	original := PeerConfig{
 		Relays: []PeerEntry{
-			{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
-			{ID: "gcp-1", WgIP: "10.42.42.3", Provider: "gcp", State: "draining"},
+			{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
+			{ID: "gcp-1", Endpoint: "10.42.42.3", Provider: "gcp", State: "draining"},
 		},
 	}
 
@@ -598,20 +598,20 @@ func TestPeerConfig_JSONRoundTrip(t *testing.T) {
 func TestClear429State_RecoversDrainingRelay(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
-		{ID: "gcp-1", WgIP: "10.42.42.3", Provider: "gcp", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "gcp-1", Endpoint: "10.42.42.3", Provider: "gcp", State: "healthy"},
 	})
 
 	f.Mark429Draining("oci-1", "storm")
 
-	id, _, ok := f.SelectRelay()
+	id, _, _, ok := f.SelectRelay()
 	require.True(t, ok)
 	assert.Equal(t, "gcp-1", id, "429-draining OCI should be excluded")
 
 	f.Clear429State("oci-1")
 
 	for i := 0; i < 50; i++ {
-		id, _, ok := f.SelectRelay()
+		id, _, _, ok := f.SelectRelay()
 		require.True(t, ok)
 		assert.Equal(t, "oci-1", id, "recovered OCI should receive 100%% traffic (iteration %d)", i)
 	}
@@ -621,7 +621,7 @@ func TestClear429State_RecoversDrainingRelay(t *testing.T) {
 func TestClear429State_ResetsAllFields(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
 	})
 
 	f.RecordRequest("oci-1", 429)
@@ -647,7 +647,7 @@ func TestClear429State_ResetsAllFields(t *testing.T) {
 func TestConfigurableHealthThreshold(t *testing.T) {
 	f := newRelayFleet(5, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
 	})
 
 	f.RecordHealthCheck("oci-1", false)
@@ -669,27 +669,27 @@ func TestConfigurableHealthThreshold(t *testing.T) {
 func TestConsecutiveProbeDraining(t *testing.T) {
 	f := newRelayFleet(3, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "oci-1", WgIP: "10.42.42.2", Provider: "oci", State: "healthy"},
-		{ID: "gcp-1", WgIP: "10.42.42.3", Provider: "gcp", State: "healthy"},
+		{ID: "oci-1", Endpoint: "10.42.42.2", Provider: "oci", State: "healthy"},
+		{ID: "gcp-1", Endpoint: "10.42.42.3", Provider: "gcp", State: "healthy"},
 	})
 
 	det := newDetector429(f, 0.99, 8080)
 
 	f.Mark429Suspect("oci-1")
 	det.checkStorm("oci-1")
-	id, _, ok := f.SelectRelay()
+	id, _, _, ok := f.SelectRelay()
 	require.True(t, ok)
 	assert.Equal(t, "oci-1", id, "1 probe should not drain")
 
 	f.Mark429Suspect("oci-1")
 	det.checkStorm("oci-1")
-	id, _, ok = f.SelectRelay()
+	id, _, _, ok = f.SelectRelay()
 	require.True(t, ok)
 	assert.Equal(t, "oci-1", id, "2 probes should not drain")
 
 	f.Mark429Suspect("oci-1")
 	det.checkStorm("oci-1")
-	id, _, ok = f.SelectRelay()
+	id, _, _, ok = f.SelectRelay()
 	require.True(t, ok)
 	assert.Equal(t, "gcp-1", id, "3 consecutive probes should drain OCI")
 

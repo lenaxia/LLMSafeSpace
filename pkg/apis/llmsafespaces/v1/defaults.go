@@ -101,22 +101,12 @@ func SetDefaults_InferenceRelaySpec(spec *InferenceRelaySpec) {
 	}
 
 	if spec.UpstreamURL == "" {
-		spec.UpstreamURL = "https://ai.thekao.cloud/v1"
+		spec.UpstreamURL = "https://opencode.ai/zen/v1"
 	}
 
-	setDefaultsWireGuard(&spec.WireGuard)
 	setDefaultsHealthCheck(&spec.HealthCheck)
 	setDefaultsFallback(&spec.Fallback)
 	setDefaultsRotation(&spec.Rotation)
-}
-
-func setDefaultsWireGuard(w *WireGuardConfig) {
-	if w.CIDR == "" {
-		w.CIDR = "10.42.42.0/24"
-	}
-	if w.Port == 0 {
-		w.Port = 51820
-	}
 }
 
 func setDefaultsHealthCheck(h *HealthCheckConfig) {

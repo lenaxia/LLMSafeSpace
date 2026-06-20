@@ -11,21 +11,20 @@ import (
 	"time"
 )
 
-// healthChecker periodically health-checks each relay VM over the
-// WireGuard tunnel via GET http://<wgIP>:8080/healthz.
+// healthChecker periodically health-checks each relay VM via
+// GET http://<endpoint>/healthz. The /healthz endpoint is exempt from token
+// auth on the relay-proxy side, so the checker does not need the per-VM token.
 type healthChecker struct {
-	fleet     *relayFleet
-	client    *http.Client
-	interval  time.Duration
-	relayPort int
+	fleet    *relayFleet
+	client   *http.Client
+	interval time.Duration
 }
 
-func newHealthChecker(fleet *relayFleet, interval, timeout time.Duration, relayPort int) *healthChecker {
+func newHealthChecker(fleet *relayFleet, interval, timeout time.Duration, _ int) *healthChecker {
 	return &healthChecker{
-		fleet:     fleet,
-		client:    &http.Client{Timeout: timeout},
-		interval:  interval,
-		relayPort: relayPort,
+		fleet:    fleet,
+		client:   &http.Client{Timeout: timeout},
+		interval: interval,
 	}
 }
 
@@ -49,20 +48,20 @@ func (hc *healthChecker) checkAll(ctx context.Context) {
 	var wg sync.WaitGroup
 	for _, s := range statuses {
 		wg.Add(1)
-		go func(id, wgIP string) {
+		go func(id, endpoint string) {
 			defer wg.Done()
-			hc.checkOne(ctx, id, wgIP)
-		}(s.ID, s.WgIP)
+			hc.checkOne(ctx, id, endpoint)
+		}(s.ID, s.Endpoint)
 	}
 	wg.Wait()
 }
 
-func (hc *healthChecker) checkOne(ctx context.Context, relayID, wgIP string) {
-	if wgIP == "" {
+func (hc *healthChecker) checkOne(ctx context.Context, relayID, endpoint string) {
+	if endpoint == "" {
 		return
 	}
 
-	url := fmt.Sprintf("http://%s:%d/healthz", wgIP, hc.relayPort)
+	url := fmt.Sprintf("http://%s/healthz", endpoint)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		hc.fleet.RecordHealthCheck(relayID, false)

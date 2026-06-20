@@ -58,7 +58,6 @@ func TestInferenceRelaySpec_FieldShape(t *testing.T) {
 	}{
 		{"UpstreamURL", "upstreamURL"},
 		{"Providers", "providers"},
-		{"WireGuard", "wireGuard,omitempty"},
 		{"HealthCheck", "healthCheck,omitempty"},
 		{"Rotation", "rotation,omitempty"},
 		{"Fallback", "fallback,omitempty"},
@@ -87,23 +86,6 @@ func TestRelayProviderSpec_FieldShape(t *testing.T) {
 	}
 }
 
-func TestWireGuardConfig_FieldShape(t *testing.T) {
-	tests := []struct {
-		goField string
-		jsonTag string
-	}{
-		{"RouterPrivateKeyRef", "routerPrivateKeyRef,omitempty"},
-		{"CIDR", "cidr,omitempty"},
-		{"Port", "port,omitempty"},
-		{"RouterEndpoint", "routerEndpoint"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.goField, func(t *testing.T) {
-			assertFieldJSONTag(t, WireGuardConfig{}, tt.goField, tt.jsonTag)
-		})
-	}
-}
-
 func TestFallbackConfig_FieldShape(t *testing.T) {
 	tests := []struct {
 		goField string
@@ -128,7 +110,6 @@ func TestRelayInstanceStatus_FieldShape(t *testing.T) {
 		{"ID", "id"},
 		{"Provider", "provider"},
 		{"Region", "region"},
-		{"WgIP", "wgIP"},
 		{"PublicIP", "publicIP"},
 		{"State", "state"},
 		{"Healthy", "healthy"},
@@ -166,11 +147,6 @@ func TestInferenceRelay_JSONRoundTrip(t *testing.T) {
 					},
 				},
 			},
-			WireGuard: WireGuardConfig{
-				CIDR:           "10.42.42.0/24",
-				Port:           51820,
-				RouterEndpoint: "relay-gw.safespaces.dev:51820",
-			},
 			HealthCheck: HealthCheckConfig{
 				Interval:           metav1.Duration{Duration: 15 * time.Second},
 				Timeout:            metav1.Duration{Duration: 5 * time.Second},
@@ -196,7 +172,6 @@ func TestInferenceRelay_JSONRoundTrip(t *testing.T) {
 					ID:        "oci-1",
 					Provider:  "oci",
 					Region:    "us-ashburn-1",
-					WgIP:      "10.42.42.2",
 					PublicIP:  "203.0.113.1",
 					State:     string(RelayStateHealthy),
 					Healthy:   true,
@@ -226,14 +201,12 @@ func TestInferenceRelay_JSONRoundTrip(t *testing.T) {
 	assert.Equal(t, "oci", roundTrip.Spec.Providers[0].Provider)
 	assert.Equal(t, "gcp", roundTrip.Spec.Providers[1].Provider)
 	assert.Equal(t, "oci-credentials", roundTrip.Spec.Providers[0].CredentialsRef.Name)
-	assert.Equal(t, "10.42.42.0/24", roundTrip.Spec.WireGuard.CIDR)
-	assert.Equal(t, 51820, roundTrip.Spec.WireGuard.Port)
 	assert.Equal(t, 15*time.Second, roundTrip.Spec.HealthCheck.Interval.Duration)
 	assert.Equal(t, true, roundTrip.Spec.Rotation.Enabled)
 	assert.Equal(t, 0.5, roundTrip.Spec.Fallback.Rate)
 	assert.Equal(t, 2, roundTrip.Status.HealthyReplicas)
 	require.Len(t, roundTrip.Status.Instances, 1)
-	assert.Equal(t, "10.42.42.2", roundTrip.Status.Instances[0].WgIP)
+	assert.Equal(t, "203.0.113.1", roundTrip.Status.Instances[0].PublicIP)
 	assert.Equal(t, "healthy", roundTrip.Status.Instances[0].State)
 	require.Len(t, roundTrip.Status.Conditions, 1)
 	assert.Equal(t, "Ready", roundTrip.Status.Conditions[0].Type)
