@@ -71,9 +71,9 @@ webhooks:
         operations: ["CREATE"]
         scope: Namespaced
     # Only intercept workspace pods (those carrying the tenant label).
+    # matchExpressions:Exists is sufficient — matchLabels with "" would
+    # never match real pods (sanitizeLabelValue never produces "").
     objectSelector:
-      matchLabels:
-        llmsafespaces.dev/tenant: ""
       matchExpressions:
         - key: llmsafespaces.dev/tenant
           operator: Exists

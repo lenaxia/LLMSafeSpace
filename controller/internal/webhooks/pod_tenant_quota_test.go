@@ -185,7 +185,6 @@ func TestS51_2_DifferentTenantsDoNotInterfere(t *testing.T) {
 
 func TestS51_2_TerminalPodsExcluded(t *testing.T) {
 	scheme := testSchemeQuota(t)
-	// Create 5 pods but mark them all as Succeeded (terminal)
 	existing := makeExistingPods("user-1", "default", 5)
 	for _, p := range existing {
 		p.Status.Phase = corev1.PodSucceeded
@@ -197,6 +196,33 @@ func TestS51_2_TerminalPodsExcluded(t *testing.T) {
 
 	resp := validator.Handle(context.Background(), newPodCreateRequest(t, pod))
 	require.True(t, resp.Allowed, "terminal pods should not count toward quota")
+}
+
+// --- Boundary: projected == limit should be allowed (not denied) ---
+
+func TestS51_2_AllowAtExactLimit(t *testing.T) {
+	scheme := testSchemeQuota(t)
+	// 4 existing pods, limit 5 → adding 1 brings total to exactly 5 (allowed)
+	existing := makeExistingPods("user-1", "default", 4)
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(podsToRuntimeObjects(existing)...).Build()
+
+	validator := quotaValidatorWith(fakeClient, 5, 0, 0)
+	pod := newPodForQuota(t)
+
+	resp := validator.Handle(context.Background(), newPodCreateRequest(t, pod))
+	require.True(t, resp.Allowed, "projected == limit should be allowed (not denied)")
+}
+
+// --- "unspecified" tenant label is skipped ---
+
+func TestS51_2_AllowWhenTenantIsUnspecified(t *testing.T) {
+	fakeClient := fake.NewClientBuilder().WithScheme(testSchemeQuota(t)).Build()
+	validator := quotaValidatorWith(fakeClient, 1, 1, 1)
+	pod := newPodForQuota(t)
+	pod.Labels["llmsafespaces.dev/tenant"] = "unspecified"
+
+	resp := validator.Handle(context.Background(), newPodCreateRequest(t, pod))
+	require.True(t, resp.Allowed, "'unspecified' tenant (empty owner) should be allowed (skip quota check)")
 }
 
 // --- Helpers ---
