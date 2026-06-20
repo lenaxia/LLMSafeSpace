@@ -848,6 +848,7 @@ func TestRegister_UnlocksDEKAndReturnsRecoveryKey(t *testing.T) {
 	mockDb.On("GetUserByEmail", ctx, "fresh@example.com").Return(nil, nil)
 	mockDb.On("CountUsers", ctx).Return(5, nil)
 	mockDb.On("CreateUser", ctx, mock.Anything).Return(nil)
+	mockDb.On("UpdateUser", ctx, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	ks := &fakeKeyService{recoveryKey: "feedfacecafebabe1234567890abcdef"}
 	svc.SetKeyService(ks)
@@ -1604,9 +1605,10 @@ func TestRegister_TokenTTLPopulated(t *testing.T) {
 	mockDb.On("CreateUser", ctx, mock.MatchedBy(func(u *types.User) bool {
 		return u.Email == "new@example.com"
 	})).Return(nil)
+	mockDb.On("UpdateUser", ctx, mock.Anything, mock.Anything).Return(nil).Maybe()
 	mockDb.On("GetUser", ctx, mock.AnythingOfType("string")).Return(&types.User{
 		ID: "u-new", Email: "new@example.com", Username: "newuser",
-		PasswordHash: "$2a$10$dummy", Active: true, Role: "user",
+		PasswordHash: "$2a$10$dummy", Active: true, EmailVerified: true, Role: "user",
 	}, nil)
 
 	resp, err := svc.Register(ctx, types.RegisterRequest{
