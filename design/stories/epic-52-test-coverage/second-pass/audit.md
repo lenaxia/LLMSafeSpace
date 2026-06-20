@@ -24,9 +24,9 @@ originating stories to reflect decisions.
 | US-52.7 | 21 | 17 | 3 | 1 | 20 |
 | US-52.8 | 19 | 17 | 2 | 0 | 19 |
 | US-52.9 | 25 | 22 | 2 | 1 | 24 |
-| US-52.10 | 22 scenarios + 1 aggregator + 1 SDK-port | 20 + 1 + 1 | 4 | 0 | 22 + 1 + 1 |
+| US-52.10 | 24 (22 scenarios + 1 aggregator + 1 SDK-port) | 18+1+1 | 4 | 0 | 22+1+1 |
 | US-52.11 | 5 journeys | 4 | 1 | 0 | 5 |
-| **Total** | **235 tests + 24 canary + 5 journeys** | — | **28** | **7** | **203 tests + 24 canary + 5 journeys** |
+| **Total** | **210 tests + 24 canary + 5 journeys** | — | **28** | **7** | **203 tests + 24 canary + 5 journeys** |
 
 Net reduction: 7 tests dropped (3.0%), 28 strengthened (12%). The
 reductions look small because the original plans were already written

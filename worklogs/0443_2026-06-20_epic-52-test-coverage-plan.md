@@ -35,7 +35,7 @@ Counted test files per source file across every package:
 
 ### Second-pass audit
 
-Applied 6 meaningfulness criteria (M1–M6) to all 245 planned tests:
+Applied 6 meaningfulness criteria (M1–M6) to all planned tests:
 - M1 failure-mode-protective
 - M2 non-tautological
 - M3 right layer
@@ -43,7 +43,7 @@ Applied 6 meaningfulness criteria (M1–M6) to all 245 planned tests:
 - M5 isolated/reusable
 - M6 intent-declared
 
-Result: 27 REWORKed, 8 DROPped, net 237 tests + 5 synthetic journeys.
+Result: 28 REWORKed, 7 DROPped, net 203 tests + 24 canary items + 5 synthetic journeys.
 
 ### PR opened
 
