@@ -940,27 +940,57 @@ func (a *App) Shutdown() error {
 	return nil
 }
 
-// validateMasterSecret verifies LLMSAFESPACES_MASTER_SECRET is present and
-// decodes to at least 32 bytes (the AES-256-GCM key size minimum).
-//
-// Returns nil on success. Logs a structured Warn when the secret is present
-// but too short so operators can distinguish "forgot to set it" from "set it
-// to the wrong value." The secret value itself is never logged.
-//
-// This function reads the env var independently of deriveServerKey to keep
-// deriveServerKey a pure, side-effect-free function compatible with the
-// secrets.AdminKeyDeriver type (func(string) []byte).
+// validateMasterSecret verifies the master KEK is configured and usable.
+// Source preference (US-50.1): the file mount (LLMSAFESPACES_MASTER_SECRET_FILE)
+// is the modern, /proc-safe delivery; the legacy value env vars
+// (LLMSAFESPACES_MASTER_SECRET / LLMSAFESPACES_DEK_MASTER_KEY) are retained for
+// one release and log a deprecation Warn when relied upon.
 func validateMasterSecret(log *logger.Logger) error {
-	masterRaw := os.Getenv("LLMSAFESPACES_MASTER_SECRET")
+	// 1) File mount path (preferred). If the path env is set, every referenced
+	//    file must exist and decode to >=32 bytes; a configured-but-broken
+	//    mount is a startup error, not a silent fallback.
+	if fileEnv := os.Getenv(masterSecretFileEnv); fileEnv != "" {
+		materials := loadMasterSecretMaterials()
+		if len(materials) == 0 {
+			return fmt.Errorf(
+				"%s is set to %q but no readable key file was found; "+
+					"verify the mounted Secret volume; refusing to start without a DEK encryption key",
+				masterSecretFileEnv, fileEnv)
+		}
+		// activeMasterSecret returns the highest-version material; validate its length.
+		active := materials[len(materials)-1]
+		if len(active) < 32 {
+			log.Warn("master KEK file material is too short for AES-256-GCM",
+				"decoded_bytes", len(active), "required_bytes", 32, "source", masterSecretFileEnv)
+			return fmt.Errorf(
+				"master KEK from %s decodes to %d bytes; minimum is 32 (AES-256-GCM key size)",
+				masterSecretFileEnv, len(active))
+		}
+		// File source is healthy. If a legacy value env var is ALSO set, warn: it
+		// is unused at runtime (the file wins) but still exposes the KEK value in
+		// /proc/1/environ, defeating H1. Operators should remove it.
+		if v := os.Getenv(masterSecretValueEnv); v != "" {
+			log.Warn("LLMSAFESPACES_MASTER_SECRET env var is set but ignored because the file mount takes precedence; remove it to avoid exposing the KEK in /proc/1/environ",
+				"source", masterSecretFileEnv)
+		}
+		return nil
+	}
+
+	// 2) Legacy value env vars (deprecated). Log a Warn so operators move to
+	//    the file mount; only warn when the value is actually present.
+	masterRaw := os.Getenv(masterSecretValueEnv)
 	if masterRaw == "" {
-		masterRaw = os.Getenv("LLMSAFESPACES_DEK_MASTER_KEY")
+		masterRaw = os.Getenv(masterSecretLegacyEnv)
 	}
 	if masterRaw == "" {
 		return errors.New(
-			"LLMSAFESPACES_MASTER_SECRET is required but not set; " +
+			"master KEK is required but not configured. Set LLMSAFESPACES_MASTER_SECRET_FILE " +
+				"(file mount, preferred) or LLMSAFESPACES_MASTER_SECRET (deprecated env var); " +
 				"refusing to start without DEK encryption at rest in Redis. " +
 				"Generate one with: openssl rand -hex 32")
 	}
+	log.Warn("master KEK delivered via env var is deprecated; use the file mount (masterSecret.deliveryMethod defaults to file in the Helm chart). See pkg/secrets/README.md.",
+		"source", "env")
 
 	var master []byte
 	if decoded, err := hex.DecodeString(masterRaw); err == nil {
