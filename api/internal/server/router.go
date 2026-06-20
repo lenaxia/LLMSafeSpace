@@ -91,6 +91,7 @@ type RouterConfig struct {
 	WebhookHandler       *handlers.StripeWebhookHandler
 	InvitationsHandler   *handlers.InvitationsHandler
 	EmailHandler         *handlers.EmailHandler
+	EmailVerifyHandler   *handlers.EmailVerifyHandler
 	PasswordResetHandler *handlers.PasswordResetHandler
 	PolicyHandler        *handlers.PolicyHandler
 	AuditHandler         *handlers.AuditHandler
@@ -200,6 +201,12 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 	if cfg.PasswordResetHandler != nil {
 		authGroup.POST("/password-reset/request", cfg.PasswordResetHandler.Request)
 		authGroup.POST("/password-reset/confirm", cfg.PasswordResetHandler.Confirm)
+	}
+
+	// US-49.6: Email verification (public — the token IS the credential).
+	if cfg.EmailVerifyHandler != nil {
+		authGroup.POST("/verify-email", cfg.EmailVerifyHandler.Verify)
+		authGroup.POST("/verify-email/resend", cfg.EmailVerifyHandler.Resend)
 	}
 
 	// Authenticated workspace routes

@@ -860,7 +860,7 @@ func TestLogin_OmitsRecoveryKey(t *testing.T) {
 	hash, _ := bcrypt.GenerateFromPassword([]byte("mypassword"), bcrypt.DefaultCost)
 	mockDb.On("GetUserByEmail", ctx, "user@example.com").Return(&types.User{
 		ID: "u1", Username: "user", Email: "user@example.com",
-		PasswordHash: string(hash), Active: true,
+		PasswordHash: string(hash), Active: true, EmailVerified: true,
 	}, nil)
 
 	resp, err := svc.Login(ctx, types.LoginRequest{
@@ -882,7 +882,7 @@ func TestLogin_Success(t *testing.T) {
 		Username:     "user",
 		Email:        "user@example.com",
 		PasswordHash: string(hash),
-		Active:       true,
+		Active:       true, EmailVerified: true,
 	}, nil)
 
 	resp, err := svc.Login(ctx, types.LoginRequest{
@@ -922,7 +922,7 @@ func TestLogin_WrongPassword(t *testing.T) {
 	mockDb.On("GetUserByEmail", ctx, "user@example.com").Return(&types.User{
 		ID:           "u1",
 		PasswordHash: string(hash),
-		Active:       true,
+		Active:       true, EmailVerified: true,
 	}, nil)
 
 	resp, err := svc.Login(ctx, types.LoginRequest{
@@ -956,6 +956,32 @@ func TestLogin_InactiveUser(t *testing.T) {
 	assert.Nil(t, resp)
 }
 
+// TestLogin_UnverifiedUser verifies US-49.6: correct credentials but
+// email_verified=false → rejected with ErrEmailNotVerified. The message
+// tells the user to verify (safe: they already proved they know the
+// email + password). NOT recorded as a failed attempt (credentials valid).
+func TestLogin_UnverifiedUser(t *testing.T) {
+	svc, mockDb, _ := newTestService(t)
+	ctx := context.Background()
+
+	hash, _ := bcrypt.GenerateFromPassword([]byte("pass"), bcrypt.DefaultCost)
+	mockDb.On("GetUserByEmail", ctx, "unverified@example.com").Return(&types.User{
+		ID:            "u1",
+		PasswordHash:  string(hash),
+		Active:        true,
+		EmailVerified: false,
+	}, nil)
+
+	resp, err := svc.Login(ctx, types.LoginRequest{
+		Email:    "unverified@example.com",
+		Password: "pass",
+	})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrEmailNotVerified)
+	assert.Nil(t, resp)
+}
+
 // TestLogin_SuspendedUser verifies D19 user-level suspension: a user whose
 // status='suspended' cannot log in, even with the correct password and the
 // legacy active flag still true. The error is the explicit "account suspended"
@@ -969,8 +995,8 @@ func TestLogin_SuspendedUser(t *testing.T) {
 	mockDb.On("GetUserByEmail", ctx, "suspended@example.com").Return(&types.User{
 		ID:           "u1",
 		PasswordHash: string(hash),
-		Active:       true, // legacy flag still true — status is authoritative
-		Status:       types.UserStatusSuspended,
+		Active:       true, EmailVerified: true, // legacy flag still true — status is authoritative
+		Status: types.UserStatusSuspended,
 	}, nil)
 
 	resp, err := svc.Login(ctx, types.LoginRequest{
@@ -996,8 +1022,8 @@ func TestLogin_ActiveUser_StatusActive(t *testing.T) {
 		Username:     "ok",
 		Email:        "ok@example.com",
 		PasswordHash: string(hash),
-		Active:       true,
-		Status:       types.UserStatusActive,
+		Active:       true, EmailVerified: true,
+		Status: types.UserStatusActive,
 	}, nil)
 
 	resp, err := svc.Login(ctx, types.LoginRequest{
@@ -1146,7 +1172,7 @@ func TestLogin_LockoutAfterFailedAttempts(t *testing.T) {
 
 	hash, _ := bcrypt.GenerateFromPassword([]byte("pass"), bcrypt.DefaultCost)
 	user := &types.User{
-		ID: "u1", Email: "lock@e.com", PasswordHash: string(hash), Active: true,
+		ID: "u1", Email: "lock@e.com", PasswordHash: string(hash), Active: true, EmailVerified: true,
 	}
 
 	attemptCount := 0
@@ -1185,7 +1211,7 @@ func TestLogin_SuccessResetsLockout(t *testing.T) {
 
 	hash, _ := bcrypt.GenerateFromPassword([]byte("pass"), bcrypt.DefaultCost)
 	user := &types.User{
-		ID: "u1", Email: "reset@e.com", PasswordHash: string(hash), Active: true,
+		ID: "u1", Email: "reset@e.com", PasswordHash: string(hash), Active: true, EmailVerified: true,
 	}
 	mockDb.On("GetUserByEmail", ctx, "reset@e.com").Return(user, nil)
 	mockCache.On("Get", ctx, mock.MatchedBy(func(k string) bool {
@@ -1387,7 +1413,7 @@ func setupLoginUser(t *testing.T, mockDb *mocks.MockDatabaseService, userID, ema
 	t.Helper()
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
 	require.NoError(t, err)
-	user := &types.User{ID: userID, Email: email, PasswordHash: string(hash), Active: true, Role: "user"}
+	user := &types.User{ID: userID, Email: email, PasswordHash: string(hash), Active: true, EmailVerified: true, Role: "user"}
 	mockDb.On("GetUserByEmail", mock.Anything, email).Return(user, nil)
 }
 
@@ -1599,7 +1625,7 @@ func TestLogin_WrongPassword_RecordsAuthFailureMetric(t *testing.T) {
 	mockDb.On("GetUserByEmail", ctx, "user@example.com").Return(&types.User{
 		ID:           "u1",
 		PasswordHash: string(hash),
-		Active:       true,
+		Active:       true, EmailVerified: true,
 	}, nil)
 
 	before := gatherAuthFailureCount(t, "wrong_password")

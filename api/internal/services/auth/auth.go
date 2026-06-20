@@ -48,6 +48,27 @@ func (s *Service) SetKeyService(ks KeyServiceInterface) {
 	s.keyService = ks
 }
 
+// EmailVerifier creates and sends email-verification tokens for new users.
+// When set, Register creates an unverified account (email_verified=false)
+// and calls Verify to send the verification link. When nil, Register marks
+// the account email_verified=true immediately (dev/air-gapped mode — no
+// email provider to verify with).
+type EmailVerifier interface {
+	SendVerification(ctx context.Context, userID, email string) error
+}
+
+// ErrEmailNotVerified is returned by Login when the credentials are correct
+// but the user has not verified their email address. The caller (handler)
+// maps this to 403 with a clear message directing the user to check their
+// email. Not recorded as a failed login attempt (the credentials are valid).
+var ErrEmailNotVerified = errors.New("please verify your email address before logging in")
+
+// SetEmailVerifier wires the email-verification hook. Optional — nil means
+// Register auto-verifies (dev mode without an email provider).
+func (s *Service) SetEmailVerifier(v EmailVerifier) {
+	s.emailVerifier = v
+}
+
 // SetInstanceSettings injects the instance settings service for runtime config reads.
 func (s *Service) SetInstanceSettings(svc interfaces.SettingsReader) {
 	s.instanceSettings = svc
@@ -121,6 +142,7 @@ type Service struct {
 	// remember-me tokens (720h default), which outlast standard tokens (24h).
 	maxTokenTTL      time.Duration
 	keyService       KeyServiceInterface
+	emailVerifier    EmailVerifier
 	instanceSettings interfaces.SettingsReader
 	rootKeyProvider  secrets.RootKeyProvider
 }
@@ -692,6 +714,21 @@ func (s *Service) Register(ctx context.Context, req types.RegisterRequest) (*typ
 		}
 	}
 
+	// US-49.6: Send email verification. When an email verifier is wired
+	// (SES in production), the user starts unverified and must click the
+	// link before they can log in. When no verifier is wired (dev/air-gapped),
+	// mark the user verified immediately so local development isn't blocked.
+	if s.emailVerifier != nil {
+		if err := s.emailVerifier.SendVerification(ctx, userID, user.Email); err != nil {
+			s.logger.Warn("Register: failed to send verification email", "user_id", userID, "error", err.Error())
+			// Non-fatal: the user can request a resend. Registration must not
+			// fail because the email send had a transient blip.
+		}
+		user.EmailVerified = false
+	} else {
+		user.EmailVerified = true
+	}
+
 	user.PasswordHash = ""
 	return &types.AuthResponse{Token: token, User: *user, RecoveryKey: recoveryKey, TokenTTL: s.tokenDuration}, nil
 }
@@ -785,6 +822,16 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 		s.recordFailedAttempt(ctx, email)
 		metrics.RecordAuthFailure("account_inactive")
 		return nil, errors.New("invalid email or password")
+	}
+
+	// US-49.6: Unverified users cannot log in. The credentials are correct
+	// (we checked bcrypt above), so it's safe to tell them WHY — they need
+	// to verify their email. This does not create an enumeration vector:
+	// the attacker already knows the email AND the password to reach this
+	// branch.
+	if !user.EmailVerified {
+		metrics.RecordAuthFailure("email_not_verified")
+		return nil, ErrEmailNotVerified
 	}
 
 	s.clearFailedAttempts(ctx, email)

@@ -109,6 +109,30 @@ func (s *Service) SendPasswordChanged(ctx context.Context, to string) error {
 	})
 }
 
+// SendEmailVerification sends an email-verification link. The link targets
+// the interstitial frontend page /verify-email, which POSTs to the verify
+// endpoint — never a consuming GET (scanner-defense invariant, US-49.9).
+func (s *Service) SendEmailVerification(ctx context.Context, to, token string) error {
+	if s.provider == nil {
+		return ErrNotConfigured
+	}
+	link := s.buildLink("/verify-email", token)
+	textBody := fmt.Sprintf(
+		"Please verify your email address for LLMSafeSpaces.\n\nClick here to verify: %s\n\nThis link expires in 24 hours.",
+		link,
+	)
+	htmlBody := fmt.Sprintf(
+		"<p>Please verify your email address for LLMSafeSpaces.</p><p><a href=\"%s\">Click here to verify</a></p><p>This link expires in 24 hours.</p>",
+		html.EscapeString(link),
+	)
+	return s.provider.Send(ctx, email.Message{
+		To:       to,
+		Subject:  "Verify your LLMSafeSpaces email",
+		TextBody: textBody,
+		HTMLBody: htmlBody,
+	})
+}
+
 // buildLink constructs a frontend URL carrying the token in the query string.
 // Trims trailing slashes from baseURL; URL-encodes the token as
 // defense-in-depth (tokens are crypto/rand base64url which is URL-safe, but

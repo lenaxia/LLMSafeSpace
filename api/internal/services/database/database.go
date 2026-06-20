@@ -238,6 +238,11 @@ func (s *Service) UpdateUser(ctx context.Context, userID string, updates types.U
 		query += fmt.Sprintf(", status = $%d", i)
 		args = append(args, string(*updates.Status))
 	}
+	if updates.EmailVerified != nil {
+		i++
+		query += fmt.Sprintf(", email_verified = $%d", i)
+		args = append(args, *updates.EmailVerified)
+	}
 
 	if i == 0 {
 		return nil
