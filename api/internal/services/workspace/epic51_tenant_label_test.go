@@ -60,9 +60,9 @@ func TestS51_3_BuildCRD_SystemLabels_CannotBeSpoofed(t *testing.T) {
 	req := types.CreateWorkspaceRequest{
 		Name: "my-ws",
 		Labels: map[string]string{
-			"app":                       "malicious",
-			"user-id":                   "victim-user",
-			"llmsafespaces.dev/tenant":  "victim-org",
+			"app":                         "malicious",
+			"user-id":                     "victim-user",
+			"llmsafespaces.dev/tenant":    "victim-org",
 			"llmsafespaces.dev/workspace": "stolen-id",
 		},
 	}
