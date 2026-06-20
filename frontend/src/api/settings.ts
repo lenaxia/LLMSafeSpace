@@ -32,6 +32,10 @@ export const settingsApi = {
   setAdminSetting: (key: string, value: unknown) =>
     api.put<{ key: string; value: unknown }>(`/admin/settings/${key}`, { value }),
 
+  // Admin email test-send (US-49.4)
+  testEmailSend: (to: string) =>
+    api.post<{ sent: boolean; provider: string }>("/admin/email/test", { to }),
+
   // User settings
   getUserSettings: () => api.get<SettingsResponse>("/users/me/settings"),
   getUserSchema: () => api.get<SchemaResponse>("/users/me/settings/schema"),
