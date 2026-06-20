@@ -24,7 +24,7 @@ interfaces, and the original epic plan addressed only one.
 
 | Layer | Interface | Purpose strings | Protects | Decrypt sites |
 |---|---|---|---|---|
-| **1 — `RootKeyProvider`** | `Encrypt/Decrypt(ctx, []byte)` interface | `"dek-cache"` (via `dekMasterKey()`) | `api_keys.key_ciphertext`, `org_sso_configs.oidc_client_secret` | 3 (`key_service.go:560`, `auth.go:553`, `sso.go:514`) |
+| **1 — `RootKeyProvider`** | `Encrypt/Decrypt(ctx, []byte)` interface | `"dek-cache"` (via `dekMasterKey()`) | `api_keys.key_ciphertext`, `org_sso_configs.oidc_client_secret` | 3 (`key_service.go:560`, `auth.go:575`, `sso.go:514`) |
 | **2 — `AdminKeyDeriver`** | `func(label string) []byte` callback returning raw key | `"provider-credentials"`, `"org-credentials"` | `provider_credentials.ciphertext` — **all admin, org, and auto-bound LLM API keys** (Anthropic, OpenAI, etc.) | 6+ (`credential_ops.go:60`, `admin_provider_credentials.go:95,266`, `org_credentials.go:202`, `injection.go:171` — the workspace-boot hot path) |
 | **3 — Redis DEK cache** | Direct `DecryptSecret(masterKey, ct)` | `"dek-cache"` | User DEKs while cached in Redis | 1 (`redis_cache.go:63`) |
 
@@ -94,7 +94,7 @@ Each verified against live code at planning time.
 | A5 | `provider_credentials` already has a `key_version INTEGER NOT NULL DEFAULT 1` column | `api/migrations/000015_unified_credential_model.up.sql:20` | Confirmed — but never incremented by writers (US-50.6 fixes that) |
 | A6 | `api_keys` and `org_sso_configs` have **no** `key_version` column | `api/migrations/000019_api_key_dek_wrapping.up.sql`; `api/migrations/000038_org_sso_configs.up.sql:10-20` | Confirmed — US-50.3 adds them |
 | A7 | The existing `RootKeyProvider` interface is `Encrypt/Decrypt(ctx, []byte) ([]byte, error)` | `pkg/secrets/root_key.go:16-19` | Confirmed — kept unchanged (no rename, no signature change) |
-| A8a | Layer 1 decrypt sites (RootKeyProvider.Decrypt): exactly 3 — `key_service.go:560`, `auth.go:553`, `sso.go:514` | grep for `\.Decrypt(ctx` on RootKeyProvider/keyProvider consumers | Confirmed |
+| A8a | Layer 1 decrypt sites (RootKeyProvider.Decrypt): exactly 3 — `key_service.go:560`, `auth.go:575`, `sso.go:514` | grep for `\.Decrypt(ctx` on RootKeyProvider/keyProvider consumers | Confirmed |
 | A8b | Layer 2 decrypt sites (DecryptSecret with AdminKeyDeriver-derived key): 6 — `credential_ops.go:60`, `admin_provider_credentials.go:95,266`, `org_credentials.go:202`, `injection.go:171` (admin + org paths via `decryptBinding`) | grep for `DecryptSecret` in handlers + injection | Confirmed — US-50.2 unifies both layers under RootKeyProvider |
 | A9 | `provider_credentials.key_version` is read by **zero** code paths today (always defaults to 1); `org_credentials.go:106` hardcodes `KeyVersion: 1` | grep for `key_version` in `pkg/secrets/` and `api/internal/` | Confirmed — US-50.3 wires write-path; US-50.6 makes it rotation-capable |
 | A10 | The `RootKeyProvider` held by `KeyService` is built from `deriveServerKey("dek-cache")` under the Helm default — the same purpose string used for the Redis DEK cache | `secrets_adapters.go:415-447` → `case "static", ""` → `dekMasterKey()` → `deriveServerKey("dek-cache")` | Confirmed — US-50.7 fixes the domain-separation collision |
@@ -103,12 +103,13 @@ Each verified against live code at planning time.
 | A13 | AES-256-GCM `Decrypt` with a wrong key fails cleanly via auth-tag mismatch (no false positives, no panic) | `pkg/secrets/crypto.go:155` — `gcm.Open` returns `ErrDecryptionFailed` | Confirmed — "try all keys" rotation approach is safe |
 | A14 | The audit log table (`audit_log`) already exists and is written by the secrets service | `api/migrations/000028_audit_log.up.sql`; `pkg/secrets/secret_service.go` uses `AuditEntry` | Confirmed — US-50.12 extends the existing pattern to decrypt operations |
 | A15 | `AdminKeyDeriver` is consumed at 8 production call sites + 13 test call sites | grep for `AdminKeyDeriver\|deriveAdminKey\|SetAdminKeyDeriver\|orgKeyDeriver` across `.go` files | Confirmed — bounded surface for US-50.2 unification |
-| A16 | Boot order constructs `RootKeyProvider` (line 372) AFTER multiple earlier consumers: the Redis DEK cache at line 238/251 (`dekMasterKey()` → `NewRedisDEKCache`), the admin handler (317), free-tier seeding (323), and `secretService.SetAdminKeyDeriver` (357) | `api/internal/app/app.go:238,251,317,323,357,372` | Confirmed — US-50.2 reorders boot to construct per-purpose providers before the Redis cache, the earliest consumer (line 238) |
+| A16 | Boot order constructs `RootKeyProvider` (line 372) AFTER multiple earlier consumers: the Redis DEK cache at line 240/251 (`dekMasterKey()` → `NewRedisDEKCache`), the admin handler (317), free-tier seeding (323), and `secretService.SetAdminKeyDeriver` (357) | `api/internal/app/app.go:240,253,319,325,359,374` | Confirmed — US-50.2 reorders boot to construct per-purpose providers before the Redis cache, the earliest consumer (line 240) |
 | A17 | `credential_ops.go:getCredentialForProbe` uses a `credentialKeyResolver func(ctx) (key []byte, ...)` callback — it returns a raw key, not a provider; this is the shared probe helper used by both admin and org credential model-list endpoints | `api/internal/handlers/credential_ops.go:15-65` | Confirmed — US-50.2 changes this resolver to return a decrypt function |
 | A18 | The latest migration is `000040_user_email_verified` | `api/migrations/` directory listing | Confirmed — new migrations start at `000041` |
-| A19 | The **earliest** consumer of `dekMasterKey()` is the Redis DEK cache construction at `app.go:238/251` — not the admin handler at line 317. `dekMasterKey()` → `secrets.NewRedisDEKCache(dekCacheClient, mk)` runs 70+ lines before handler wiring. After unification, per-purpose providers must be constructed before line 238, not line 317. | `api/internal/app/app.go:238,251` | Confirmed — discovered in adversarial review of the prior epic draft, which incorrectly cited line 317 as the earliest consumer |
-| A20 | There are **two** `else` branches using `dekMasterKey()` when `rkp == nil`: `app.go:381` (`authSvc.SetMasterKey(dekMasterKey())` for the auth service) and `app.go:425-429` (the apiKeyStore fallback for the key service). US-50.2 must migrate both; US-50.7's domain separation must account for both. | `api/internal/app/app.go:381,425-429` | Confirmed — the prior epic draft missed line 381, which would have left a divergent unmigrated code path |
-| A21 | `app.go:394` uses `deriveServerKey("oidc-state-cookie")` — a fourth purpose string. Verified at `sso.go:542,559`: it is an **HMAC signing key** for PKCE state cookies (`hmac.New(sha256.New, s.stateKey)`), not an encryption key. It signs transient cookies and protects no data at rest. The rotation CLI (US-50.5) correctly omits it; the omission is intentional and documented in D8. | `api/internal/app/app.go:394`; `api/internal/services/sso/sso.go:542,559` | Confirmed — `stateKey` is used only as an HMAC key, never as an AES key. Not subject to rotation because it does not wrap persisted secrets. |
+| A19 | The **earliest** consumer of `dekMasterKey()` is the Redis DEK cache construction at `app.go:240/253` — not the admin handler at line 319. `dekMasterKey()` → `secrets.NewRedisDEKCache(dekCacheClient, mk)` runs 70+ lines before handler wiring. After unification, per-purpose providers must be constructed before line 240, not line 319. | `api/internal/app/app.go:240,253` | Confirmed — discovered in adversarial review of the prior epic draft, which incorrectly cited line 319 as the earliest consumer |
+| A20 | There are **two** `else` branches using `dekMasterKey()` when `rkp == nil`: `app.go:383` (`authSvc.SetMasterKey(dekMasterKey())` for the auth service) and `app.go:424-430` (the apiKeyStore fallback for the key service). US-50.2 must migrate both; US-50.7's domain separation must account for both. | `api/internal/app/app.go:383,424-430` | Confirmed — the prior epic draft missed line 383, which would have left a divergent unmigrated code path |
+| A21 | `app.go:396` uses `deriveServerKey("oidc-state-cookie")` — a fourth purpose string. Verified at `sso.go:542,559`: it is an **HMAC signing key** for PKCE state cookies (`hmac.New(sha256.New, s.stateKey)`), not an encryption key. It signs transient cookies and protects no data at rest. The rotation CLI (US-50.5) correctly omits it; the omission is intentional and documented in D8. | `api/internal/app/app.go:396`; `api/internal/services/sso/sso.go:542,559` | Confirmed — `stateKey` is used only as an HMAC key, never as an AES key. Not subject to rotation because it does not wrap persisted secrets. |
+| A22 | The constant `sealedKeyInfoStr = "llmsafespaces-sealed-root"` is defined at `pkg/secrets/root_key.go:13` but never used anywhere in the codebase — pre-existing dead code. US-50.11 consumes this constant rather than duplicating it, removing the dead code as a side effect. | grep for `sealedKeyInfoStr` across `.go` files returns one hit: the definition itself | Confirmed — identified by PR #305 AI reviewer |
 
 ---
 
@@ -170,9 +171,9 @@ gets its own provider. Consumers call `provider.Encrypt/Decrypt` instead of
 receiving a raw key and calling `EncryptSecret`/`DecryptSecret` directly.
 
 **Boot-order change (A16, A19):** Per-purpose providers must be constructed
-**before line 238** — the earliest consumer is the Redis DEK cache
-(`dekMasterKey()` at `app.go:238` → `NewRedisDEKCache` at `app.go:251`), not
-the admin handler at line 317. (A prior epic draft incorrectly cited line 317;
+**before line 240** — the earliest consumer is the Redis DEK cache
+(`dekMasterKey()` at `app.go:240` → `NewRedisDEKCache` at `app.go:253`), not
+the admin handler at line 319. (A prior epic draft incorrectly cited line 319;
 adversarial review found the Redis cache 70+ lines earlier.) The
 `newRootKeyProvider` factory is expanded to produce a `map[string]RootKeyProvider`
 keyed by purpose, constructed once at the very start of the secrets-bootstrap
@@ -183,10 +184,10 @@ block.
 error), ...)` so it can return either a provider-bound decrypt closure
 (admin/org) or a DEK-bound closure (user credentials).
 
-**Two `else` branches (A20):** Both `app.go:381` (`authSvc.SetMasterKey`)
-and `app.go:425-429` (apiKeyStore fallback) currently call `dekMasterKey()`
+**Two `else` branches (A20):** Both `app.go:383` (`authSvc.SetMasterKey`)
+and `app.go:424-430` (apiKeyStore fallback) currently call `dekMasterKey()`
 when `rkp == nil`. US-50.2 migrates both to the per-purpose provider pattern.
-A prior draft missed line 381, which would have left a divergent unmigrated
+A prior draft missed line 383, which would have left a divergent unmigrated
 auth-service path.
 
 ### D6 — US-50.2 is a high-blast-radius enabler, not a direct security fix
@@ -224,7 +225,7 @@ rotation is warranted.
 
 ### D8 — The OIDC state key (`"oidc-state-cookie"`) is intentionally not rotated
 
-`app.go:394` derives a fourth purpose string, `"oidc-state-cookie"`, used by
+`app.go:396` derives a fourth purpose string, `"oidc-state-cookie"`, used by
 the SSO service. Verified at `sso.go:542,559`: this is an **HMAC signing key**
 for transient PKCE state cookies, not an AES encryption key wrapping persisted
 secrets. It does not protect data at rest. Rotating it would invalidate
@@ -371,24 +372,24 @@ Layer 2 consumers of `AdminKeyDeriver` (8 production sites, A15):
 | `secret_service.go:21,37-41` | `deriveAdminKey AdminKeyDeriver`, `SetAdminKeyDeriver(d)` | `adminProvider RootKeyProvider`, `orgProvider RootKeyProvider`, `SetAdminProvider(p)`, `SetOrgProvider(p)` |
 | `injection.go:62-71,149-180` | `s.deriveAdminKey("provider-credentials")`, `s.deriveAdminKey("org-credentials")` → raw keys → `decryptBinding(..., adminKEK, orgKEK)` → `DecryptSecret(key, ct)` | `s.adminProvider.Decrypt(ctx, ct)`, `s.orgProvider.Decrypt(ctx, ct)` |
 | `secrets_adapters.go:627-648` | `deriveServerKey("provider-credentials")` → raw key → `EncryptSecret(kek, pt)` | `provider.Encrypt(ctx, pt)` using injected provider |
-| `app.go:317` | `NewAdminProviderCredentialsHandler(pgStore, deriveServerKey)` | `NewAdminProviderCredentialsHandler(pgStore, providerCredsProvider)` |
-| `app.go:357` | `secretService.SetAdminKeyDeriver(deriveServerKey)` | `secretService.SetAdminProvider(providerCredsProvider)` + `secretService.SetOrgProvider(orgCredsProvider)` |
-| `app.go:238,251` (A19) | `dekMasterKey()` → `NewRedisDEKCache(dekCacheClient, mk)` — earliest consumer | Redis cache receives `redisCacheKey` derived from the same per-purpose construction block |
-| `app.go:381` (A20) | `authSvc.SetMasterKey(dekMasterKey())` — `else` branch when `rkp == nil` | `authSvc.SetRootKeyProvider(apiKeyProv)` — both branches unified |
-| `app.go:425-429` (A20) | `apiKeyStore` fallback `else` when `rkp == nil`, uses `dekMasterKey()` | `keyService.SetAPIKeyStore(..., apiKeyProv)` — both branches unified |
+| `app.go:319` | `NewAdminProviderCredentialsHandler(pgStore, deriveServerKey)` | `NewAdminProviderCredentialsHandler(pgStore, providerCredsProvider)` |
+| `app.go:359` | `secretService.SetAdminKeyDeriver(deriveServerKey)` | `secretService.SetAdminProvider(providerCredsProvider)` + `secretService.SetOrgProvider(orgCredsProvider)` |
+| `app.go:240,253` (A19) | `dekMasterKey()` → `NewRedisDEKCache(dekCacheClient, mk)` — earliest consumer | Redis cache receives `redisCacheKey` derived from the same per-purpose construction block |
+| `app.go:383` (A20) | `authSvc.SetMasterKey(dekMasterKey())` — `else` branch when `rkp == nil` | `authSvc.SetRootKeyProvider(apiKeyProv)` — both branches unified |
+| `app.go:424-430` (A20) | `apiKeyStore` fallback `else` when `rkp == nil`, uses `dekMasterKey()` | `keyService.SetAPIKeyStore(..., apiKeyProv)` — both branches unified |
 
 **Boot-order change (A16, A19):**
 
-Currently `newRootKeyProvider` runs at `app.go:372`, AFTER multiple earlier
-consumers. The **earliest** is the Redis DEK cache at `app.go:238/251`
+Currently `newRootKeyProvider` runs at `app.go:374`, AFTER multiple earlier
+consumers. The **earliest** is the Redis DEK cache at `app.go:240/253`
 (`dekMasterKey()` → `NewRedisDEKCache`), which runs ~135 lines before
 `newRootKeyProvider`. The admin handler (317), free-tier seeding (323), and
 `SetAdminKeyDeriver` (357) also predate it. A prior draft of this story
-incorrectly cited line 317 as the earliest consumer; adversarial review found
-the Redis cache construction 70+ lines earlier at line 238.
+incorrectly cited line 319 as the earliest consumer; adversarial review found
+the Redis cache construction 70+ lines earlier at line 240.
 
 After unification, per-purpose providers must be constructed at the **very
-start** of the secrets-bootstrap block (before line 238). New boot sequence:
+start** of the secrets-bootstrap block (before line 240). New boot sequence:
 
 ```
 1. Read master key from file/env (US-50.1)
@@ -396,18 +397,18 @@ start** of the secrets-bootstrap block (before line 238). New boot sequence:
      providerCredsProv = newLocalProvider(deriveServerKey("provider-credentials"))
      orgCredsProv     = newLocalProvider(deriveServerKey("org-credentials"))
      apiKeyProv       = newLocalProvider(deriveServerKey("dek-cache"))  // US-50.7 changes this
-     redisCacheKey    = deriveServerKey("dek-cache")  // for Redis DEK cache (line 238)
-3. Construct Redis DEK cache (line 251) with redisCacheKey
+     redisCacheKey    = deriveServerKey("dek-cache")  // for Redis DEK cache (line 240)
+3. Construct Redis DEK cache (line 253) with redisCacheKey
 4. Wire providers into handlers, services, and key service
 5. ensureFreeTierCredential uses providerCredsProv
 6. All subsequent wiring receives providers instead of deriveServerKey
-7. Both `else` branches (app.go:381 authSvc, app.go:425 apiKeyStore) use apiKeyProv
+7. Both `else` branches (app.go:383 authSvc, app.go:424 apiKeyStore) use apiKeyProv
 ```
 
-**Two `else` branches (A20):** Both `app.go:381` (`authSvc.SetMasterKey`)
-and `app.go:425-429` (apiKeyStore fallback) currently call `dekMasterKey()`
+**Two `else` branches (A20):** Both `app.go:383` (`authSvc.SetMasterKey`)
+and `app.go:424-430` (apiKeyStore fallback) currently call `dekMasterKey()`
 when `rkp == nil`. US-50.2 migrates both to use `apiKeyProv`. A prior draft
-missed line 381, which would have left the auth-service fallback on a
+missed line 383, which would have left the auth-service fallback on a
 divergent code path.
 
 **Files:**
@@ -487,15 +488,15 @@ return a clean 503, not panic.
 
 Full `app.New()` integration test verifying every credential path resolves a
 non-nil provider after boot. This catches the boot-order bug class directly.
-The critical assertion is that providers exist **before line 238** (the Redis
+The critical assertion is that providers exist **before line 240** (the Redis
 DEK cache construction — the earliest consumer per A19), not just before line
 317 (the admin handler — a later consumer).
 
 | Test | Asserts |
 |---|---|
 | `TestAppBoot_AllCredentialProvidersWired` | after `app.New()`, admin handler, org handler, secret service, key service, **Redis DEK cache**, and auth service all have non-nil providers |
-| `TestAppBoot_ProvidersConstructedBeforeRedisCache` | the per-purpose provider map is non-nil before `NewRedisDEKCache` is called (the earliest consumer at line 238) — catches the prior epic draft's incorrect "line 317 is earliest" assumption |
-| `TestAppBoot_BothElseBranchesMigrated` | neither `app.go:381` (authSvc) nor `app.go:425-429` (apiKeyStore) call `SetMasterKey`/`dekMasterKey` post-migration — both use `apiKeyProv` (A20) |
+| `TestAppBoot_ProvidersConstructedBeforeRedisCache` | the per-purpose provider map is non-nil before `NewRedisDEKCache` is called (the earliest consumer at line 240) — catches the prior epic draft's incorrect "line 319 is earliest" assumption |
+| `TestAppBoot_BothElseBranchesMigrated` | neither `app.go:383` (authSvc) nor `app.go:424-430` (apiKeyStore) call `SetMasterKey`/`dekMasterKey` post-migration — both use `apiKeyProv` (A20) |
 | `TestAppBoot_FreeTierSeedingUsesProvider` | free-tier credential row present and decryptable post-boot |
 | `TestAppBoot_ProviderPurposeStringsCorrect` | each handler's provider derives from the correct purpose string (assert via test-only introspection or known-answer test) |
 
@@ -687,7 +688,7 @@ the new purpose.
 
 **Files:**
 - `api/internal/app/secrets_adapters.go` — change the api_keys provider construction from `newPurposeProvider(master, "dek-cache")` to `newPurposeProvider(master, "master-kek")`; the multi-key set includes the old `"dek-cache"` key for decrypting pre-migration rows
-- `api/internal/app/app.go` — **both** `else` branches updated (A20): line 381 (`authSvc.SetMasterKey`, when `rkp == nil` for auth) and line 425-429 (apiKeyStore fallback, when `rkp == nil` for key service) use the new-purpose provider. Missing line 381 would leave the auth-service fallback on a divergent purpose string.
+- `api/internal/app/app.go` — **both** `else` branches updated (A20): line 383 (`authSvc.SetMasterKey`, when `rkp == nil` for auth) and line 425-429 (apiKeyStore fallback, when `rkp == nil` for key service) use the new-purpose provider. Missing line 383 would leave the auth-service fallback on a divergent purpose string.
 
 **Acceptance criteria:**
 - New `api_keys.key_ciphertext` values are encrypted under `deriveServerKey("master-kek")`
@@ -759,11 +760,17 @@ Stop by default.
 ### US-50.11: Add HKDF info string to sealed provider KEK derivation (L2)
 
 **Goal:** `DeriveKEKFromPassword(passphrase, salt)` at `root_key.go:79, 104`
-uses no `info` parameter. Add domain separation via
-`"llmsafespaces-sealed-root"`.
+uses no `info` parameter. Add domain separation via the existing
+`sealedKeyInfoStr` constant (`"llmsafespaces-sealed-root"`, already defined at
+`root_key.go:13` but currently dead code — never referenced anywhere).
+
+**Pre-existing dead code (Rule 5):** The constant `sealedKeyInfoStr` at
+`root_key.go:13` was defined in anticipation of this exact change but never
+wired in. US-50.11 consumes it rather than introducing a duplicate. This
+removes the dead code as a side effect of the feature.
 
 **Files:**
-- `pkg/secrets/root_key.go` — change to mix info into the derivation (Argon2id has no native info field; derive a sub-salt via HKDF-Expand on the salt with info as context, or append — implementation documented in code)
+- `pkg/secrets/root_key.go` — change `DeriveKEKFromPassword(passphrase, salt)` to use the existing `sealedKeyInfoStr` constant; mix info into the derivation (Argon2id has no native info field; derive a sub-salt via HKDF-Expand on the salt with info as context, or append — implementation documented in code)
 - `pkg/secrets/crypto.go` — add the new derivation helper if needed
 
 **Breaking change handling:** This changes the derived KEK for sealed-provider
@@ -780,8 +787,9 @@ magic-prefix versioning makes the change non-breaking regardless, so the
 assumption does not need to hold.
 
 **Acceptance criteria:**
-- New sealed keys use the info-string-derive KEK and carry the `LSKP-S` magic prefix
+- New sealed keys use the info-string-derive KEK (via `sealedKeyInfoStr`) and carry the `LSKP-S` magic prefix
 - Old sealed keys (no prefix) still unseal correctly
+- `sealedKeyInfoStr` is consumed (no longer dead code)
 - All sealed-provider tests pass
 
 **Tests (TDD):**
