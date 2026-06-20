@@ -100,13 +100,13 @@ function renderChat(qc: QueryClient, path: string) {
 // renderChatNavigable renders the same tree as renderChat but also exposes a
 // captured navigate() so a test can drive a real in-app route change against the
 // SAME mounted ChatPage instance — required to exercise [sessionId] effects.
-let capturedNavigate: ((to: string) => void) | null = null;
+const navigateRef: { current: ((to: string) => void) | null } = { current: null };
 function NavigateCapturer() {
-  capturedNavigate = useNavigate();
+  navigateRef.current = useNavigate();
   return null;
 }
 function renderChatNavigable(qc: QueryClient, path: string) {
-  capturedNavigate = null;
+  navigateRef.current = null;
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[path]}>
@@ -1539,7 +1539,7 @@ describe("ChatPage SSE event handler", () => {
       await waitFor(() => expect(screen.getByText(/Agent was terminated unexpectedly/i)).toBeInTheDocument());
 
       await act(async () => {
-        capturedNavigate?.("/chat/ws-1/sess-2");
+        navigateRef.current?.("/chat/ws-1/sess-2");
       });
 
       await waitFor(() => {

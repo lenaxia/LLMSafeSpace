@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useOutletContext } from "react-router-dom";
 import { PortalLayout, type NavItem } from "./PortalLayout";
 
@@ -7,6 +8,20 @@ const NAV_ITEMS: NavItem[] = [
   { to: "overview", label: "Overview" },
   { to: "settings", label: "Settings" },
 ];
+
+function setMobileMatchMedia(isMobile: boolean) {
+  vi.spyOn(window, "matchMedia").mockImplementation((query) => {
+    const isMinWidthQuery = query.includes("min-width");
+    return {
+      matches: isMinWidthQuery ? !isMobile : false,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    } as unknown as MediaQueryList;
+  });
+}
 
 function renderPortal(initialPath = "/portal/overview") {
   return render(
@@ -110,5 +125,74 @@ describe("PortalLayout", () => {
     const ctxEl = screen.getByTestId("ctx");
     expect(ctxEl.textContent).toContain("org-1");
     expect(ctxEl.textContent).toContain('"isAdmin":true');
+  });
+});
+
+describe("PortalLayout mobile drawer", () => {
+  beforeEach(() => {
+    setMobileMatchMedia(true);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("renders a menu toggle button on mobile", () => {
+    renderPortal();
+    expect(screen.getByRole("button", { name: "Open menu" })).toBeInTheDocument();
+  });
+
+  it("does not render a menu toggle on desktop", () => {
+    setMobileMatchMedia(false);
+    renderPortal();
+    expect(screen.queryByRole("button", { name: "Open menu" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close menu" })).not.toBeInTheDocument();
+  });
+
+  it("opens the drawer when the toggle is clicked", async () => {
+    const user = userEvent.setup();
+    renderPortal();
+    const toggle = screen.getByRole("button", { name: "Open menu" });
+    await user.click(toggle);
+    expect(screen.getByRole("button", { name: "Close menu" })).toBeInTheDocument();
+  });
+
+  it("renders an overlay when the drawer is open on mobile", async () => {
+    const user = userEvent.setup();
+    const { container } = renderPortal();
+    await user.click(screen.getByRole("button", { name: "Open menu" }));
+    const overlay = container.querySelector('div[aria-hidden="true"]');
+    expect(overlay).not.toBeNull();
+    expect(overlay!.className).toContain("opacity-100");
+  });
+
+  it("closes the drawer when a nav item is clicked", async () => {
+    const user = userEvent.setup();
+    renderPortal();
+    await user.click(screen.getByRole("button", { name: "Open menu" }));
+    expect(screen.getByRole("button", { name: "Close menu" })).toBeInTheDocument();
+    await user.click(screen.getByRole("link", { name: "Settings" }));
+    expect(screen.getByRole("button", { name: "Open menu" })).toBeInTheDocument();
+  });
+
+  it("closes the drawer when the overlay is clicked", async () => {
+    const user = userEvent.setup();
+    const { container } = renderPortal();
+    await user.click(screen.getByRole("button", { name: "Open menu" }));
+    const overlay = container.querySelector('div[aria-hidden="true"]') as HTMLElement;
+    await user.click(overlay);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Open menu" })).toBeInTheDocument();
+    });
+  });
+
+  it("closes the drawer on navigation to another tab", async () => {
+    const user = userEvent.setup();
+    renderPortal();
+    await user.click(screen.getByRole("button", { name: "Open menu" }));
+    // Navigate via a tab link rendered directly (not through the drawer close handler path):
+    // clicking the link triggers both the close handler and the route change.
+    await user.click(screen.getByRole("link", { name: "Settings" }));
+    expect(screen.getByRole("button", { name: "Open menu" })).toBeInTheDocument();
   });
 });
