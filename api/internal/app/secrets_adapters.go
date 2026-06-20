@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -446,49 +447,129 @@ func newRootKeyProvider(cfg *config.Config, log *logger.Logger) secrets.RootKeyP
 	}
 }
 
+// Env vars holding the master KEK. The file-path var (US-50.1) is preferred so
+// the KEK is never exposed via /proc/1/environ; the value vars are retained for
+// one release as a deprecated fallback for non-Helm deployments.
+const (
+	masterSecretFileEnv   = "LLMSAFESPACES_MASTER_SECRET_FILE"
+	masterSecretValueEnv  = "LLMSAFESPACES_MASTER_SECRET"
+	masterSecretLegacyEnv = "LLMSAFESPACES_DEK_MASTER_KEY"
+)
+
 // dekMasterKey derives the DEK cache encryption key from the master secret.
 // Uses HKDF with purpose-specific context so each derived key is independent.
 func dekMasterKey() []byte {
 	return deriveServerKey("dek-cache")
 }
 
-// deriveServerKey derives a 32-byte purpose-scoped key from LLMSAFESPACES_MASTER_SECRET
+// decodeMasterRaw turns a raw secret string into key material bytes. A valid
+// even-length hex string is decoded to bytes; anything else is used as raw
+// bytes (Helm randAlphaNum, base64, etc.). Returns nil only for an empty
+// string. It does NOT enforce a minimum length so that callers (the file
+// loader + validateMasterSecret) can distinguish "present but too short"
+// from "missing" for precise diagnostics. Side-effect-free.
+func decodeMasterRaw(raw string) []byte {
+	if raw == "" {
+		return nil
+	}
+	if decoded, err := hex.DecodeString(raw); err == nil {
+		return decoded // valid hex path
+	}
+	return []byte(raw) // raw bytes path
+}
+
+// decodeMasterMaterial turns a raw secret string into key material suitable
+// for HKDF/AES-256-GCM: decodeMasterRaw plus the 32-byte minimum. Returns nil
+// if empty or shorter than 32 bytes. Side-effect-free.
+func decodeMasterMaterial(raw string) []byte {
+	m := decodeMasterRaw(raw)
+	if len(m) < 32 { // AES-256-GCM requires 32 bytes minimum
+		return nil
+	}
+	return m
+}
+
+// loadMasterSecretMaterials reads the master KEK from the file mount(s)
+// referenced by LLMSAFESPACES_MASTER_SECRET_FILE (US-50.1). The value is a
+// colon-separated list of paths so a rotation window (US-50.4/US-50.5) can
+// mount old + new key files at once; the entries are returned in file order
+// with the LAST file treated as the highest (active) version.
+//
+// Each file holds a single value — the key material as either hex (>=64 chars)
+// or raw bytes (>=32 bytes), whitespace-trimmed. Files that are missing or
+// unreadable are skipped. A file that is PRESENT but decodes to fewer than 32
+// bytes (including empty/whitespace-only content) is INCLUDED as a short or
+// nil entry so validateMasterSecret can report the precise diagnostic and the
+// system fails closed — never silently continuing with an earlier key during a
+// rotation window where the active file was mis-mounted.
+//
+// Returns nil when the env var is unset. Side-effect-free (no logging):
+// validateMasterSecret in app.go is responsible for startup diagnostics.
+func loadMasterSecretMaterials() [][]byte {
+	pathList := os.Getenv(masterSecretFileEnv)
+	if pathList == "" {
+		return nil
+	}
+	var out [][]byte
+	for _, p := range strings.Split(pathList, ":") {
+		if p == "" {
+			continue
+		}
+		data, err := os.ReadFile(p) //nolint:gosec // G703: path is operator-configured (Helm-mounted Secret volume via LLMSAFESPACES_MASTER_SECRET_FILE), not user input
+		if err != nil {
+			continue // missing/unreadable file: skip (validateMasterSecret reports the empty result)
+		}
+		// Always append the decoded material, even when nil (empty file): presence
+		// must be preserved so an empty/short active file fails closed at validation
+		// rather than being silently dropped (which would fall back to an earlier key).
+		out = append(out, decodeMasterRaw(strings.TrimSpace(string(data))))
+	}
+	return out
+}
+
+// activeMasterSecret returns the master KEK material to derive purpose keys
+// from. The file mount (US-50.1) is preferred; the active key is the highest
+// version (last file). If no file material is available it falls back to the
+// legacy value env vars (LLMSAFESPACES_MASTER_SECRET then LLMSAFESPACES_DEK_MASTER_KEY)
+// for one release. Returns nil when no usable source is configured.
+// Side-effect-free.
+func activeMasterSecret() []byte {
+	if materials := loadMasterSecretMaterials(); len(materials) > 0 {
+		active := materials[len(materials)-1]
+		if len(active) >= 32 {
+			return active
+		}
+		// Active file material is too short — a misconfiguration validateMasterSecret
+		// reports at boot; return nil here so callers fail closed rather than derive
+		// from a weak key.
+		return nil
+	}
+	if raw := os.Getenv(masterSecretValueEnv); raw != "" {
+		return decodeMasterMaterial(raw)
+	}
+	if raw := os.Getenv(masterSecretLegacyEnv); raw != "" {
+		return decodeMasterMaterial(raw)
+	}
+	return nil
+}
+
+// deriveServerKey derives a 32-byte purpose-scoped key from the master KEK
 // using HKDF-SHA256. Each purpose string produces an independent key.
 //
-// Accepted input formats (auto-detected):
-//   - Valid hex string (even-length, [0-9a-fA-F]): decoded to raw bytes.
-//     Minimum: 64 hex chars = 32 decoded bytes.
-//   - Any other string (e.g. alphanumeric from Helm randAlphaNum 64):
-//     used as raw bytes directly. Minimum: 32 bytes.
+// Source preference (US-50.1): file mount (LLMSAFESPACES_MASTER_SECRET_FILE)
+// first, then the legacy value env vars as a one-release fallback.
 //
-// Returns nil if:
-//   - The env var is absent or empty.
-//   - The decoded/raw key is shorter than 32 bytes (AES-256-GCM minimum).
+// Returns nil if no usable source is configured or the material decodes below
+// the 32-byte AES-256-GCM minimum.
 //
 // This function is intentionally side-effect-free (no logging). It is passed
 // by reference as secrets.AdminKeyDeriver; callers that need diagnostics must
-// inspect the env var independently (see validateMasterSecret in app.go).
+// inspect the sources independently (see validateMasterSecret in app.go).
 func deriveServerKey(purpose string) []byte {
-	masterRaw := os.Getenv("LLMSAFESPACES_MASTER_SECRET")
-	if masterRaw == "" {
-		// Fallback: check legacy env var
-		masterRaw = os.Getenv("LLMSAFESPACES_DEK_MASTER_KEY")
-	}
-	if masterRaw == "" {
+	master := activeMasterSecret()
+	if master == nil {
 		return nil
 	}
-
-	var master []byte
-	if decoded, err := hex.DecodeString(masterRaw); err == nil {
-		master = decoded // valid hex path
-	} else {
-		master = []byte(masterRaw) // raw bytes path (Helm alphanumeric, base64, etc.)
-	}
-
-	if len(master) < 32 { // AES-256-GCM requires 32 bytes minimum
-		return nil
-	}
-
 	key, err := secrets.DeriveKEKFromKey(master, []byte("llmsafespaces-server"), purpose)
 	if err != nil {
 		return nil

@@ -60,11 +60,20 @@ spec:
                 secretKeyRef:
                   name: {{ include "llmsafespaces.secretName" . }}
                   key: jwt-secret
+            {{/* US-50.1: the master KEK is delivered as a read-only file mount by
+                   default (masterSecret.deliveryMethod=file) so it never appears in
+                   /proc/1/environ. Setting masterSecret.deliveryMethod=env restores
+                   the legacy env-var block for non-Helm/back-compat deployments. */}}
+            {{- if eq (default "file" .Values.masterSecret.deliveryMethod) "env" }}
             - name: LLMSAFESPACES_MASTER_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ include "llmsafespaces.secretName" . }}
                   key: master-secret
+            {{- else }}
+            - name: LLMSAFESPACES_MASTER_SECRET_FILE
+              value: {{ default "/etc/llmsafespaces/master-secret" .Values.masterSecret.fileMountPath | quote }}
+            {{- end }}
             {{/* F5 (worklog 0372): shared secret the controller presents as
                    X-Internal-Token to authenticate internal org-status polls.
                    The endpoint FAILS CLOSED without it, so it is always wired
@@ -100,12 +109,27 @@ spec:
             - name: config
               mountPath: /etc/llmsafespaces
               readOnly: true
+            {{- if ne (default "file" .Values.masterSecret.deliveryMethod) "env" }}
+            - name: master-secret
+              mountPath: {{ default "/etc/llmsafespaces/master-secret" .Values.masterSecret.fileMountPath }}
+              subPath: master-secret
+              readOnly: true
+            {{- end }}
             - name: tmp
               mountPath: /tmp
       volumes:
         - name: config
           configMap:
             name: {{ include "llmsafespaces.fullname" . }}-api-config
+        {{- if ne (default "file" .Values.masterSecret.deliveryMethod) "env" }}
+        - name: master-secret
+          secret:
+            secretName: {{ include "llmsafespaces.secretName" . }}
+            items:
+              - key: master-secret
+                path: master-secret
+            defaultMode: 0440
+        {{- end }}
         - name: tmp
           emptyDir: {}
       {{- with .Values.api.nodeSelector }}

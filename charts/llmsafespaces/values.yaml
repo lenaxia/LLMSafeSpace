@@ -411,6 +411,25 @@ externalSecret:
   masterSecret: ""
 
 # ----------------------------------------------------------------------------
+# Master KEK delivery to the API pod (US-50.1)
+# ----------------------------------------------------------------------------
+# HOW the master KEK (the value stored at externalSecret.masterSecret above)
+# reaches the API container. This is distinct from externalSecret.masterSecret,
+# which is the *value* of the key.
+#
+# deliveryMethod:
+#   file (default) — project the KEK as a read-only file at fileMountPath
+#                    (mode 0440). The KEK never appears in /proc/<pid>/environ,
+#                    eliminating env-var exposure. This is the production default.
+#   env            — legacy opt-in: deliver the KEK as the LLMSAFESPACES_MASTER_SECRET
+#                    env var. Retained for one release for non-Helm deployments
+#                    (bare kubectl apply, docker-compose). The API logs a
+#                    deprecation Warn when this path is used.
+masterSecret:
+  deliveryMethod: file
+  fileMountPath: /etc/llmsafespaces/master-secret
+
+# ----------------------------------------------------------------------------
 # Datastore NetworkPolicies (G26)
 # ----------------------------------------------------------------------------
 # The chart ships NetworkPolicy resources blocking ingress to postgres and
