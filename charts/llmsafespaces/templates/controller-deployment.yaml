@@ -106,6 +106,20 @@ spec:
             {{- if .Values.gvisor.enabled }}
             - --default-runtime-class={{ .Values.gvisor.defaultRuntimeClass | default "gvisor" }}
             {{- end }}
+            {{- /* Epic 51 S51.2: per-tenant resource quotas. Only wired when
+                    any limit is > 0; the webhook registration is conditional
+                    in main.go (disabled when all are 0). */}}
+            {{- if hasKey .Values.webhooks "tenantQuota" }}
+            {{- if gt (int .Values.webhooks.tenantQuota.maxWorkspacesPerTenant) 0 }}
+            - --max-workspaces-per-tenant={{ .Values.webhooks.tenantQuota.maxWorkspacesPerTenant }}
+            {{- end }}
+            {{- if gt (int .Values.webhooks.tenantQuota.maxCPUMillisPerTenant) 0 }}
+            - --max-cpu-millis-per-tenant={{ .Values.webhooks.tenantQuota.maxCPUMillisPerTenant }}
+            {{- end }}
+            {{- if gt (int .Values.webhooks.tenantQuota.maxMemoryMiPerTenant) 0 }}
+            - --max-memory-mi-per-tenant={{ .Values.webhooks.tenantQuota.maxMemoryMiPerTenant }}
+            {{- end }}
+            {{- end }}
           ports:
             - name: metrics
               containerPort: {{ $metricsAddr | regexFind "[0-9]+$" | atoi }}

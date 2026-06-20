@@ -100,6 +100,18 @@ func main() {
 			"Set to 'gvisor' for production multi-tenant isolation. "+
 			"Empty means runc (default K8s runtime). "+
 			"Individual workspaces can override via spec.runtimeClass.")
+	var maxWorkspacesPerTenant int
+	flag.IntVar(&maxWorkspacesPerTenant, "max-workspaces-per-tenant", 0,
+		"Maximum concurrent workspace pods per tenant (Epic 51 S51.2). "+
+			"0 means unlimited. Recommended: 10-20 for multi-tenant deployments.")
+	var maxCPUMillisPerTenant int64
+	flag.Int64Var(&maxCPUMillisPerTenant, "max-cpu-millis-per-tenant", 0,
+		"Maximum aggregate CPU requests (millicores) per tenant (Epic 51 S51.2). "+
+			"0 means unlimited. Recommended: 8000 (8 cores) for multi-tenant.")
+	var maxMemoryMiPerTenant int64
+	flag.Int64Var(&maxMemoryMiPerTenant, "max-memory-mi-per-tenant", 0,
+		"Maximum aggregate memory requests (MiB) per tenant (Epic 51 S51.2). "+
+			"0 means unlimited. Recommended: 16384 (16GiB) for multi-tenant.")
 	flag.Parse()
 
 	// US-43.19 / D20: the shared secret authenticating controller→API internal
@@ -184,6 +196,26 @@ func main() {
 			MaxMemoryMi:              maxMemoryMi,
 		},
 	})
+
+	// Epic 51 S51.2 — per-tenant resource quota webhook. Enforces
+	// max-workspaces / max-CPU / max-memory per tenant by counting existing
+	// workspace pods at admission time. Only active when limits > 0;
+	// disabled (no-op) by default for single-tenant deployments.
+	if maxWorkspacesPerTenant > 0 || maxCPUMillisPerTenant > 0 || maxMemoryMiPerTenant > 0 {
+		mgr.GetWebhookServer().Register("/validate-pod-tenant-quota", &webhook.Admission{
+			Handler: &webhooks.PodTenantQuotaValidator{
+				Decoder:                webhookDecoder,
+				Client:                 mgr.GetClient(),
+				MaxWorkspacesPerTenant: maxWorkspacesPerTenant,
+				MaxCPUMillisPerTenant:  maxCPUMillisPerTenant,
+				MaxMemoryMiPerTenant:   maxMemoryMiPerTenant,
+			},
+		})
+		setupLog.Info("tenant quota webhook enabled",
+			"maxWorkspaces", maxWorkspacesPerTenant,
+			"maxCPUMillis", maxCPUMillisPerTenant,
+			"maxMemoryMi", maxMemoryMiPerTenant)
+	}
 
 	// Set up controllers
 	if err := controller.SetupControllers(mgr, inferenceRelayURL, inferenceRelaySecret, apiServiceURL, apiInternalToken, defaultRuntimeClass); err != nil {

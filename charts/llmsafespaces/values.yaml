@@ -741,6 +741,23 @@ webhooks:
   maxWorkspaceCPUMillicores: 16000
   maxWorkspaceMemoryMi: 65536
 
+  # Epic 51 S51.2 — per-tenant resource quotas. Enforced by a validating
+  # webhook on Pod create that counts existing workspace pods per tenant
+  # (identified by the llmsafespaces.dev/tenant label) and rejects creation
+  # when the aggregate would exceed these limits. Prevents noisy-neighbor
+  # resource exhaustion in multi-tenant deployments.
+  #
+  # All values default to 0 (disabled). Enable for multi-tenant deployments.
+  # Org-specific overrides (from org_policies) are a follow-up; billing tier
+  # → quota mapping is tracked under Epic 43.
+  tenantQuota:
+    # Maximum concurrent workspace pods per tenant. Recommended: 10-20.
+    maxWorkspacesPerTenant: 0
+    # Maximum aggregate CPU requests per tenant (millicores). Recommended: 8000 (8 cores).
+    maxCPUMillisPerTenant: 0
+    # Maximum aggregate memory requests per tenant (MiB). Recommended: 16384 (16GiB).
+    maxMemoryMiPerTenant: 0
+
 
 # ----------------------------------------------------------------------------
 # gVisor — Container runtime isolation (Epic 51)
