@@ -403,6 +403,33 @@ gVisor is the primary container-escape control for multi-tenancy and is not depe
 
 **Estimated Effort:** 3 points (down from 8)
 
+<details>
+<summary>Original S18.8 scope (superseded — do not implement)</summary>
+
+**Goal:** Multi-tenant isolation via Capsule namespaces.
+
+**Acceptance Criteria:**
+- [ ] Capsule operator deployed via Helm
+- [ ] `Tenant` CR per tenant: namespace quota, ResourceQuota, LimitRange, NetworkPolicy
+- [ ] Workspaces + Migrations scoped to tenant namespace
+- [ ] NetworkPolicy: deny cross-tenant ingress; allow from API namespace
+- [ ] Proxy refactored: resolve namespace from JWT `tenant_id` claim (replaces hardcoded `h.namespace`)
+- [ ] All `Workspaces(h.namespace)` calls accept namespace parameter
+- [ ] Tenant deletion cascades (namespace → workspaces → PVCs → pods)
+- [ ] EFS access points: one per workspace, root `/tenants/{tenant_id}/workspaces/{workspace_id}`
+- [ ] Tenant context flows to EFS CSI via PVC annotations: workspace reconciler sets `efs.csi.aws.com/rootDirectory` and `efs.csi.aws.com/uid`/`gid` annotations on PVC based on workspace owner's tenant_id. CSI driver reads these during dynamic provisioning.
+- [ ] Scale test: 100 tenants × 10 workspaces, reconcile <500ms p99
+
+**Why Capsule:** vCluster = ~256MB/tenant = 256GB at 1000 tenants. Capsule = ~0 overhead.
+
+**Implementation Notes:**
+- Controller keeps cluster-wide RBAC + shared informer. Isolation enforced at API layer.
+- Proxy refactor: `ProxyHandler` methods accept `namespace` from auth middleware context.
+
+**Estimated Effort:** 8 points
+
+</details>
+
 ---
 
 ### S18.9 — Karpenter NodePool (Production)
