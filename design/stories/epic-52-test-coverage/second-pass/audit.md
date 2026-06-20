@@ -13,25 +13,25 @@ originating stories to reflect decisions.
 
 ## Summary
 
-| Story | Tests planned | KEEP | REWORK | DROP | Net |
+| Story | Planned | KEEP | REWORK | DROP | Net |
 |---|---|---|---|---|---|
 | US-52.1 | 47 | 41 | 5 | 1 | 46 |
 | US-52.2 | 25 | 22 | 3 | 0 | 25 |
 | US-52.3 | 28 | 25 | 2 | 1 | 27 |
 | US-52.4 | 18 | 14 | 3 | 1 | 17 |
 | US-52.5 | 18 | 15 | 2 | 1 | 17 |
-| US-52.6 | 8 | 7 | 1 | 1 | 8 |
+| US-52.6 | 9 | 7 | 1 | 1 | 8 |
 | US-52.7 | 21 | 17 | 3 | 1 | 20 |
 | US-52.8 | 19 | 17 | 2 | 0 | 19 |
 | US-52.9 | 25 | 22 | 2 | 1 | 24 |
-| US-52.10 | 22 scenarios + 1 aggregator + 1 SDK-port | 20 + 1 + 1 | 3 | 1 | 22 + 1 + 1 |
+| US-52.10 | 22 scenarios + 1 aggregator + 1 SDK-port | 20 + 1 + 1 | 4 | 0 | 22 + 1 + 1 |
 | US-52.11 | 5 journeys | 4 | 1 | 0 | 5 |
-| **Total** | **236 tests + 22 canary scenarios + 5 journeys** | — | **27** | **8** | — |
+| **Total** | **235 tests + 24 canary + 5 journeys** | — | **28** | **7** | **203 tests + 24 canary + 5 journeys** |
 
-Net reduction: 8 tests dropped (3.4%), 27 strengthened (11%). The
+Net reduction: 7 tests dropped (3.0%), 28 strengthened (12%). The
 reductions look small because the original plans were already written
 under M1–M6 awareness — the audit is the verification, not a rewrite. The
-8 drops and 27 reworks are recorded below with the rationale Rule 11
+7 drops and 28 reworks are recorded below with the rationale Rule 11
 Phase 2 requires.
 
 **Note on units:** US-52.10 and US-52.11 deal in *scenarios* and
@@ -39,6 +39,11 @@ Phase 2 requires.
 multiple check rows (P1–P4, N1–N2); each synth journey emits continuous
 metrics. The audit counts these at the scenario/journey level, not the
 check level, to match the unit the stories themselves use.
+
+**Note on D-MCP-LONG-MESSAGE (formerly DROP-10.1):** reclassified as
+REWORK-10.4 — the scenario was renamed to D-MCP-BODY-LIMIT, not dropped.
+A rename is a rework (the test still exists, with strengthened
+assertions), not a drop.
 
 ---
 
@@ -389,16 +394,11 @@ check level, to match the unit the stories themselves use.
   breakage, not transient drops.
 - **Status:** Amended in US-52.10.
 
-#### DROP-10.1: D-MCP-LONG-MESSAGE (as 100KB assertion)
+#### DROP-10.1: ~~D-MCP-LONG-MESSAGE~~ (reclassified as REWORK-10.4)
 
-- **M1 unspecified threshold:** "100KB message body" — what's the actual
-  limit? If the test sends 100KB and the limit is 1MB, the test asserts
-  nothing.
-- **Fix:** Don't drop the scenario; rework it. Send a body at the
-  documented MCP body-size limit (currently 1 MiB per `proxy_input_test.go`
-  + `s-mcp-input-NEG` N5). Assert at-limit succeeds; over-limit returns
-  the documented "too large" error. Re-named `D-MCP-BODY-LIMIT`.
-- **Status:** Amended (renamed) in US-52.10.
+- **Reclassification:** The scenario was *renamed* to `D-MCP-BODY-LIMIT`,
+  not dropped. A rename with strengthened assertions is a rework, not a
+  drop. The original DROP classification was wrong.
 
 ### US-52.11 — Synthetic traffic
 
@@ -509,7 +509,7 @@ story table after the evaluation.
 
 ## Loop status
 
-This is iteration 1 of the second pass. All 27 REWORKs and 8 DROPs are
+This is iteration 1 of the second pass. All 28 REWORKs and 7 DROPs are
 reflected in the originating stories (amendments applied in the same
 editing session). The predicted-findings table in US-52.12 reconciles
 as follows:
@@ -541,7 +541,7 @@ addressed; no new findings surfaced during the amendment pass. Per Rule
 
 ## Final state
 
-The epic now contains **236 tests + 22 canary scenarios + 5 synthetic
+The epic now contains **203 tests + 24 canary items + 5 synthetic
 journeys** across:
 
 - 46 unit/envtest tests for the controller (US-52.1)
@@ -553,8 +553,7 @@ journeys** across:
 - 20 e2e tests for kind nightly + PR (US-52.7)
 - 19 vitest + Playwright tests for frontend (US-52.8)
 - 24 unit/integration tests for the inference-relay worker (US-52.9)
-- 22 canary scenarios across T1/T2/T3 + controller + MCP + worker
-  + 1 aggregator + 1 SDK-parity port (US-52.10)
+- 22 canary scenarios + 1 aggregator + 1 SDK-parity port (US-52.10)
 - 5 synthetic-traffic journeys (US-52.11)
 
 Every test passes M1–M6. Every test declares intent. Every infrastructure
