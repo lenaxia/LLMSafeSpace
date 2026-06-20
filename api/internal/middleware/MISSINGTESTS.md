@@ -6,8 +6,8 @@
 2. **~~Context Value Propagation Tests~~** ✅ **DONE** — `middleware_gaps_test.go`: TestContextPropagation_ValuesSurviveAcrossMiddleware, TestContextPropagation_OverwriteValue
    - Values set and retrieved from Gin context across middleware; edge cases where values are overwritten
 
-3. **~~Error Handling Edge Cases~~** ✅ **DONE** — `middleware_gaps_test.go`: TestErrorHandler_ConcurrentErrors, TestErrorHandler_NestedErrors, TestErrorHandler_LargePayload
-   - Concurrent error handling, nested errors, large payloads
+3. **~~Error Handling Edge Cases~~** ✅ **DONE** — `middleware_gaps_test.go`: TestErrorHandler_WrappedErrors (nested error chains), TestErrorHandler_LargePayload (large payloads)
+   - Concurrent error handling remains a gap (requires goroutine-safety assertions specific to the error handler implementation)
 
 4. **~~Validation Middleware Additional Tests~~** ✅ **DONE** — `middleware_gaps_test.go`: TestValidation_NestedObject_RequiredField, TestValidation_ArrayDive, TestValidation_ArrayMinConstraint, TestValidation_ValidNestedObject
    - Nested object validation, array validation, custom validation rules
