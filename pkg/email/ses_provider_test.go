@@ -1,5 +1,5 @@
 // Copyright (C) 2026 Michael Kao
-// SPDX-License-Identifier:AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package email
 
@@ -15,10 +15,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testCredentials is a minimal CredentialsProvider that returns dummy
+// credentials so the AWS SDK v2 credential chain doesn't try to reach
+// real AWS (IRSA, env vars, etc.) during tests.
+type testCredentials struct{}
+
+func (testCredentials) Retrieve(ctx context.Context) (aws.Credentials, error) {
+	return aws.Credentials{AccessKeyID: "test", SecretAccessKey: "test"}, nil
+}
+
 // newMockSESProvider creates an SESProvider pointed at an httptest server.
-// The server returns the configured status + response. This lets us test
-// Send without real AWS credentials.
-func newMockSESProvider(t *testing.T, status int, respBody string) (*SESProvider, *httptest.Server) {
+func newMockSESProvider(t *testing.T, status int, respBody string) *SESProvider {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/xml")
@@ -28,23 +35,27 @@ func newMockSESProvider(t *testing.T, status int, respBody string) (*SESProvider
 	t.Cleanup(func() { server.Close() })
 
 	cfg := aws.Config{
-		Region: "us-east-1",
+		Region:      "us-east-1",
+		Credentials: testCredentials{},
 	}
 	client := ses.NewFromConfig(cfg, func(o *ses.Options) {
 		o.BaseEndpoint = aws.String(server.URL)
 	})
-	return &SESProvider{client: client, from: "noreply@test.com"}, server
+	return &SESProvider{client: client, from: "noreply@test.com"}
 }
 
 func TestNewSESProvider_ConstructsWithoutPanic(t *testing.T) {
-	p := NewSESProvider(aws.Config{Region: "us-east-1"}, "noreply@test.com")
+	p := NewSESProvider(aws.Config{
+		Region:      "us-east-1",
+		Credentials: testCredentials{},
+	}, "noreply@test.com")
 	require.NotNil(t, p)
 	assert.Equal(t, "noreply@test.com", p.from)
 }
 
 func TestSESProvider_Send_Success(t *testing.T) {
 	// SES returns XML. A minimal successful response:
-	provider, _ := newMockSESProvider(t, http.StatusOK,
+	provider := newMockSESProvider(t, http.StatusOK,
 		`<SendEmailResponse xmlns="http://ses.amazonaws.com/doc/2010-12-01/"><SendEmailResult><MessageId>msg-123</MessageId></SendEmailResult></SendEmailResponse>`)
 
 	err := provider.Send(context.Background(), Message{
@@ -57,7 +68,7 @@ func TestSESProvider_Send_Success(t *testing.T) {
 }
 
 func TestSESProvider_Send_SESError_Wrapped(t *testing.T) {
-	provider, _ := newMockSESProvider(t, http.StatusBadRequest,
+	provider := newMockSESProvider(t, http.StatusBadRequest,
 		`<ErrorResponse><Error><Code>MessageRejected</Code><Message>Email address is not verified.</Message></Error></ErrorResponse>`)
 
 	err := provider.Send(context.Background(), Message{
@@ -68,8 +79,8 @@ func TestSESProvider_Send_SESError_Wrapped(t *testing.T) {
 	assert.Contains(t, err.Error(), "ses send email to unverified@test.com")
 }
 
-func TestSESProvider_Send_CancelledContext(t *testing.T) {
-	provider, _ := newMockSESProvider(t, http.StatusOK,
+func TestSESProvider_Send_CanceledContext(t *testing.T) {
+	provider := newMockSESProvider(t, http.StatusOK,
 		`<SendEmailResponse xmlns="http://ses.amazonaws.com/doc/2010-12-01/"><SendEmailResult><MessageId>ok</MessageId></SendEmailResult></SendEmailResponse>`)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -83,7 +94,7 @@ func TestSESProvider_Send_CancelledContext(t *testing.T) {
 }
 
 func TestSESProvider_Send_5xxError_Wrapped(t *testing.T) {
-	provider, _ := newMockSESProvider(t, http.StatusInternalServerError,
+	provider := newMockSESProvider(t, http.StatusInternalServerError,
 		`<ErrorResponse><Error><Code>InternalError</Code><Message>internal</Message></Error></ErrorResponse>`)
 
 	err := provider.Send(context.Background(), Message{

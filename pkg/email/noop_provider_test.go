@@ -24,7 +24,7 @@ func TestNoopProvider_Send_EmptyMessage_NoPanic(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestNoopProvider_Send_CancelledContext_NoPanic(t *testing.T) {
+func TestNoopProvider_Send_CanceledContext_NoPanic(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	err := (&NoopProvider{}).Send(ctx, Message{To: "x@y.com"})
