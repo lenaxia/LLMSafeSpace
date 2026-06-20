@@ -88,7 +88,7 @@ It is the standard answer for multi-tenant arbitrary-code platforms. Its limits:
 
 - Ship a `RuntimeClass` named `gvisor` in the Helm chart, gated on `gvisor.enabled` (default `false` for dev/single-tenant; `true` for production multi-tenant).
 - Workspace pod builder sets `RuntimeClassName` when `gvisor.enabled` (add to the spec hardening block near `controller/internal/workspace/pod_builder.go:360-362`).
-- Node setup: AMI/userData installs `runsc` and configures the container runtime (Epic 18 S18.9 Karpenter `EC2NodeClass` already plans for gVisor at `epic-18-hot-migration/README.md:420` — coordinate but don't block on Karpenter).
+- Node setup: AMI/userData installs `runsc` and configures the container runtime (Epic 18 S18.9 Karpenter `EC2NodeClass` plans for gVisor in userData — coordinate but don't block on Karpenter).
 - Per-workspace opt-out: add a `spec.runtimeClass` field or annotation to allow `runc` fallback for workloads incompatible with gVisor (ptrace debuggers, certain seccomp filters). Opt-out is admin-gated, not tenant-selectable, to prevent weakening the default.
 
 ### S51.2 — Per-tenant resource quotas via admission webhook
