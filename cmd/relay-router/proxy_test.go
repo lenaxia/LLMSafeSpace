@@ -67,7 +67,6 @@ func extractPort(url string) int {
 	return port
 }
 
-
 // extractEndpoint returns the host:port of a httptest.Server URL — what the
 // router dials as http://<endpoint><path> when forwarding to a relay.
 func extractEndpoint(serverURL string) string {
