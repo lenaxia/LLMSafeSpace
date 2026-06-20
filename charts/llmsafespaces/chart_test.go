@@ -2820,17 +2820,21 @@ func TestOIDC_CustomValues_FlowsThrough(t *testing.T) {
 
 // TestOIDC_DefaultRender_OmitsStateCookieName asserts the stateCookieName
 // line is NOT present in the default render. The {{- with .Values.oidc.stateCookieName }}
-// guard in configmap-api.yaml deliberately omits the line when empty so
-// Viper Unmarshal leaves the Go field at its zero value, letting the SSO
-// service apply its own default of "lsp_sso_state" (sso.go:132). A
-// regression that rendered stateCookieName: "" would shadow that default
-// with an empty string and break the state cookie.
+// guard in configmap-api.yaml deliberately omits the line when empty.
+//
+// Note: this is a cleaner-YAML / belt-and-suspenders design choice, NOT a
+// load-bearing correctness guard. The Go code at sso.go:130-133 explicitly
+// handles empty strings (if cookieName == "" { cookieName = "lsp_sso_state" }),
+// so rendering stateCookieName: "" would still produce a working cookie via
+// the Go fallback. We omit the line anyway to (a) produce cleaner rendered
+// YAML and (b) not rely on the Go fallback for default behavior. This test
+// locks in that design decision against regression to an unconditional render.
 func TestOIDC_DefaultRender_OmitsStateCookieName(t *testing.T) {
 	docs := helmTemplate(t, "")
 	cm := findAPIConfigMap(t, docs)
 	require.NotNil(t, cm)
 	cfg := configYAML(t, cm)
 	require.NotContains(t, cfg, "stateCookieName:",
-		"oidc.stateCookieName must be omitted from the default render so the Go default (lsp_sso_state) applies; "+
-			"config.yaml was:\n%s", cfg)
+		"oidc.stateCookieName must be omitted from the default render (cleaner YAML + belt-and-suspenders; "+
+			"the Go default lsp_sso_state applies via sso.go:130-133); config.yaml was:\n%s", cfg)
 }
