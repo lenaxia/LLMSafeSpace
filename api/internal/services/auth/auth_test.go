@@ -579,6 +579,9 @@ func TestRegister_Success(t *testing.T) {
 	mockDb.On("CreateUser", ctx, mock.MatchedBy(func(u *types.User) bool {
 		return u.Email == "new@example.com" && u.Username == "newuser" && u.PasswordHash != "" && u.Active && u.Role == "user"
 	})).Return(nil)
+	// US-49.6: Register auto-verifies in dev mode (no email verifier wired)
+	// by calling UpdateUser to persist email_verified=true.
+	mockDb.On("UpdateUser", ctx, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	resp, err := svc.Register(ctx, types.RegisterRequest{
 		Username: "newuser",
@@ -591,8 +594,58 @@ func TestRegister_Success(t *testing.T) {
 	assert.NotEmpty(t, resp.Token, "response must include a JWT")
 	assert.Equal(t, "newuser", resp.User.Username)
 	assert.Equal(t, "new@example.com", resp.User.Email)
+	assert.True(t, resp.User.EmailVerified, "dev-mode register must auto-verify")
 	assert.Empty(t, resp.User.PasswordHash, "password hash must not be in response")
 	mockDb.AssertExpectations(t)
+}
+
+// TestRegister_DevMode_AutoVerifiesAndLoginWorks is the end-to-end regression
+// test for the login-gate model: Register without an email verifier (dev mode)
+// → email_verified persisted → Login succeeds. Catches the bug where Register
+// set the in-memory flag but never persisted to DB, locking the user out.
+func TestRegister_DevMode_AutoVerifiesAndLoginWorks(t *testing.T) {
+	svc, mockDb, _ := newTestService(t)
+	ctx := context.Background()
+
+	hash, _ := bcrypt.GenerateFromPassword([]byte("securepassword123"), bcrypt.DefaultCost)
+
+	// Register creates the user with email_verified=false in CreateUser,
+	// then Register auto-verifies via UpdateUser (dev mode, no verifier).
+	createdUser := &types.User{EmailVerified: false}
+	mockDb.On("GetUserByEmail", ctx, "e2e@test.com").Return(nil, nil).Once()
+	mockDb.On("CreateUser", ctx, mock.MatchedBy(func(u *types.User) bool {
+		createdUser.ID = u.ID
+		createdUser.Email = u.Email
+		createdUser.Username = u.Username
+		createdUser.Active = u.Active
+		createdUser.Role = u.Role
+		createdUser.PasswordHash = string(hash) // simulate DB persisting the hash
+		return true
+	})).Return(nil).Once()
+	mockDb.On("UpdateUser", ctx, mock.Anything, mock.MatchedBy(func(u types.UserUpdates) bool {
+		if u.EmailVerified != nil {
+			createdUser.EmailVerified = *u.EmailVerified // simulate DB applying the update
+		}
+		return true
+	})).Return(nil).Once()
+
+	regResp, err := svc.Register(ctx, types.RegisterRequest{
+		Username: "e2euser",
+		Email:    "e2e@test.com",
+		Password: "securepassword123",
+	})
+	require.NoError(t, err)
+	assert.True(t, regResp.User.EmailVerified, "register response must show verified in dev mode")
+
+	// Now login — must succeed because email_verified was persisted.
+	mockDb.On("GetUserByEmail", ctx, "e2e@test.com").Return(createdUser, nil).Once()
+
+	loginResp, err := svc.Login(ctx, types.LoginRequest{
+		Email:    "e2e@test.com",
+		Password: "securepassword123",
+	})
+	require.NoError(t, err, "login must succeed after dev-mode auto-verify")
+	assert.NotEmpty(t, loginResp.Token)
 }
 
 // TestRegister_FirstUserBecomesAdmin verifies that the first user registered
@@ -613,6 +666,7 @@ func TestRegister_FirstUserBecomesAdmin(t *testing.T) {
 		u := args.Get(1).(*types.User)
 		u.Role = "admin"
 	}).Return(nil)
+	mockDb.On("UpdateUser", ctx, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	resp, err := svc.Register(ctx, types.RegisterRequest{
 		Username: "founder",
@@ -637,6 +691,7 @@ func TestRegister_SubsequentUsersAreNotAdmin(t *testing.T) {
 	mockDb.On("CreateUser", ctx, mock.MatchedBy(func(u *types.User) bool {
 		return u.Email == "second@example.com" && u.Role == "user"
 	})).Return(nil)
+	mockDb.On("UpdateUser", ctx, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	resp, err := svc.Register(ctx, types.RegisterRequest{
 		Username: "regular",
@@ -793,6 +848,7 @@ func TestRegister_UnlocksDEKAndReturnsRecoveryKey(t *testing.T) {
 	mockDb.On("GetUserByEmail", ctx, "fresh@example.com").Return(nil, nil)
 	mockDb.On("CountUsers", ctx).Return(5, nil)
 	mockDb.On("CreateUser", ctx, mock.Anything).Return(nil)
+	mockDb.On("UpdateUser", ctx, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	ks := &fakeKeyService{recoveryKey: "feedfacecafebabe1234567890abcdef"}
 	svc.SetKeyService(ks)
@@ -860,7 +916,7 @@ func TestLogin_OmitsRecoveryKey(t *testing.T) {
 	hash, _ := bcrypt.GenerateFromPassword([]byte("mypassword"), bcrypt.DefaultCost)
 	mockDb.On("GetUserByEmail", ctx, "user@example.com").Return(&types.User{
 		ID: "u1", Username: "user", Email: "user@example.com",
-		PasswordHash: string(hash), Active: true,
+		PasswordHash: string(hash), Active: true, EmailVerified: true,
 	}, nil)
 
 	resp, err := svc.Login(ctx, types.LoginRequest{
@@ -882,7 +938,7 @@ func TestLogin_Success(t *testing.T) {
 		Username:     "user",
 		Email:        "user@example.com",
 		PasswordHash: string(hash),
-		Active:       true,
+		Active:       true, EmailVerified: true,
 	}, nil)
 
 	resp, err := svc.Login(ctx, types.LoginRequest{
@@ -922,7 +978,7 @@ func TestLogin_WrongPassword(t *testing.T) {
 	mockDb.On("GetUserByEmail", ctx, "user@example.com").Return(&types.User{
 		ID:           "u1",
 		PasswordHash: string(hash),
-		Active:       true,
+		Active:       true, EmailVerified: true,
 	}, nil)
 
 	resp, err := svc.Login(ctx, types.LoginRequest{
@@ -956,6 +1012,32 @@ func TestLogin_InactiveUser(t *testing.T) {
 	assert.Nil(t, resp)
 }
 
+// TestLogin_UnverifiedUser verifies US-49.6: correct credentials but
+// email_verified=false → rejected with ErrEmailNotVerified. The message
+// tells the user to verify (safe: they already proved they know the
+// email + password). NOT recorded as a failed attempt (credentials valid).
+func TestLogin_UnverifiedUser(t *testing.T) {
+	svc, mockDb, _ := newTestService(t)
+	ctx := context.Background()
+
+	hash, _ := bcrypt.GenerateFromPassword([]byte("pass"), bcrypt.DefaultCost)
+	mockDb.On("GetUserByEmail", ctx, "unverified@example.com").Return(&types.User{
+		ID:            "u1",
+		PasswordHash:  string(hash),
+		Active:        true,
+		EmailVerified: false,
+	}, nil)
+
+	resp, err := svc.Login(ctx, types.LoginRequest{
+		Email:    "unverified@example.com",
+		Password: "pass",
+	})
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrEmailNotVerified)
+	assert.Nil(t, resp)
+}
+
 // TestLogin_SuspendedUser verifies D19 user-level suspension: a user whose
 // status='suspended' cannot log in, even with the correct password and the
 // legacy active flag still true. The error is the explicit "account suspended"
@@ -969,8 +1051,8 @@ func TestLogin_SuspendedUser(t *testing.T) {
 	mockDb.On("GetUserByEmail", ctx, "suspended@example.com").Return(&types.User{
 		ID:           "u1",
 		PasswordHash: string(hash),
-		Active:       true, // legacy flag still true — status is authoritative
-		Status:       types.UserStatusSuspended,
+		Active:       true, EmailVerified: true, // legacy flag still true — status is authoritative
+		Status: types.UserStatusSuspended,
 	}, nil)
 
 	resp, err := svc.Login(ctx, types.LoginRequest{
@@ -996,8 +1078,8 @@ func TestLogin_ActiveUser_StatusActive(t *testing.T) {
 		Username:     "ok",
 		Email:        "ok@example.com",
 		PasswordHash: string(hash),
-		Active:       true,
-		Status:       types.UserStatusActive,
+		Active:       true, EmailVerified: true,
+		Status: types.UserStatusActive,
 	}, nil)
 
 	resp, err := svc.Login(ctx, types.LoginRequest{
@@ -1146,7 +1228,7 @@ func TestLogin_LockoutAfterFailedAttempts(t *testing.T) {
 
 	hash, _ := bcrypt.GenerateFromPassword([]byte("pass"), bcrypt.DefaultCost)
 	user := &types.User{
-		ID: "u1", Email: "lock@e.com", PasswordHash: string(hash), Active: true,
+		ID: "u1", Email: "lock@e.com", PasswordHash: string(hash), Active: true, EmailVerified: true,
 	}
 
 	attemptCount := 0
@@ -1185,7 +1267,7 @@ func TestLogin_SuccessResetsLockout(t *testing.T) {
 
 	hash, _ := bcrypt.GenerateFromPassword([]byte("pass"), bcrypt.DefaultCost)
 	user := &types.User{
-		ID: "u1", Email: "reset@e.com", PasswordHash: string(hash), Active: true,
+		ID: "u1", Email: "reset@e.com", PasswordHash: string(hash), Active: true, EmailVerified: true,
 	}
 	mockDb.On("GetUserByEmail", ctx, "reset@e.com").Return(user, nil)
 	mockCache.On("Get", ctx, mock.MatchedBy(func(k string) bool {
@@ -1387,7 +1469,7 @@ func setupLoginUser(t *testing.T, mockDb *mocks.MockDatabaseService, userID, ema
 	t.Helper()
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
 	require.NoError(t, err)
-	user := &types.User{ID: userID, Email: email, PasswordHash: string(hash), Active: true, Role: "user"}
+	user := &types.User{ID: userID, Email: email, PasswordHash: string(hash), Active: true, EmailVerified: true, Role: "user"}
 	mockDb.On("GetUserByEmail", mock.Anything, email).Return(user, nil)
 }
 
@@ -1523,9 +1605,10 @@ func TestRegister_TokenTTLPopulated(t *testing.T) {
 	mockDb.On("CreateUser", ctx, mock.MatchedBy(func(u *types.User) bool {
 		return u.Email == "new@example.com"
 	})).Return(nil)
+	mockDb.On("UpdateUser", ctx, mock.Anything, mock.Anything).Return(nil).Maybe()
 	mockDb.On("GetUser", ctx, mock.AnythingOfType("string")).Return(&types.User{
 		ID: "u-new", Email: "new@example.com", Username: "newuser",
-		PasswordHash: "$2a$10$dummy", Active: true, Role: "user",
+		PasswordHash: "$2a$10$dummy", Active: true, EmailVerified: true, Role: "user",
 	}, nil)
 
 	resp, err := svc.Register(ctx, types.RegisterRequest{
@@ -1599,7 +1682,7 @@ func TestLogin_WrongPassword_RecordsAuthFailureMetric(t *testing.T) {
 	mockDb.On("GetUserByEmail", ctx, "user@example.com").Return(&types.User{
 		ID:           "u1",
 		PasswordHash: string(hash),
-		Active:       true,
+		Active:       true, EmailVerified: true,
 	}, nil)
 
 	before := gatherAuthFailureCount(t, "wrong_password")

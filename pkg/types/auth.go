@@ -81,12 +81,13 @@ type APIKey struct {
 // UserUpdates carries the fields that may be changed on a User record.
 // All fields are pointers — nil means "do not update this field".
 type UserUpdates struct {
-	Username     *string     `json:"username,omitempty"`
-	Email        *string     `json:"email,omitempty"`
-	Active       *bool       `json:"active,omitempty"`
-	Role         *string     `json:"role,omitempty"`
-	Status       *UserStatus `json:"status,omitempty"`
-	PasswordHash *string     `json:"-"`
+	Username      *string     `json:"username,omitempty"`
+	Email         *string     `json:"email,omitempty"`
+	Active        *bool       `json:"active,omitempty"`
+	Role          *string     `json:"role,omitempty"`
+	Status        *UserStatus `json:"status,omitempty"`
+	PasswordHash  *string     `json:"-"`
+	EmailVerified *bool       `json:"-"`
 }
 
 // CachedSession is the typed representation of a WebSocket session stored in

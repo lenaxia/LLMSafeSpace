@@ -587,7 +587,14 @@ func (m *apiKeyAwareDB) CreateUser(_ context.Context, u *types.User) error {
 	return nil
 }
 func (m *apiKeyAwareDB) CountUsers(_ context.Context) (int, error) { return len(m.users), nil }
-func (m *apiKeyAwareDB) UpdateUser(context.Context, string, types.UserUpdates) error {
+func (m *apiKeyAwareDB) UpdateUser(_ context.Context, userID string, updates types.UserUpdates) error {
+	u, ok := m.users[userID]
+	if !ok {
+		return nil
+	}
+	if updates.EmailVerified != nil {
+		u.EmailVerified = *updates.EmailVerified
+	}
 	return nil
 }
 func (m *apiKeyAwareDB) DeleteUser(context.Context, string) error { return nil }

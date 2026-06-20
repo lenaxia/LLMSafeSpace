@@ -72,6 +72,7 @@ type App struct {
 	invitationsHandler *handlers.InvitationsHandler
 	emailService       *emailsvc.Service
 	emailHandler       *handlers.EmailHandler
+	emailVerifyHandler *handlers.EmailVerifyHandler
 	shutdownCh         chan struct{}
 	ctx                context.Context
 	cancel             context.CancelFunc
@@ -222,6 +223,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var invitationsHandler *handlers.InvitationsHandler
 	var emailService *emailsvc.Service
 	var emailHandler *handlers.EmailHandler
+	var emailVerifyHandler *handlers.EmailVerifyHandler
 	var passwordResetHandler *handlers.PasswordResetHandler
 	var orgCredBinder *secrets.PgSecretStore
 	var keyService *secrets.KeyService
@@ -625,6 +627,18 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		return nil, emailInitErr
 	}
 
+	// US-49.6: Email verification. Wire the verifier adapter into auth.Service
+	// (so Register sends verification emails) and construct the verify handler
+	// (so users can verify + resend). The shared emailTokenStore backs both.
+	emailTokenStore := database.NewPgEmailTokenStore(dbSvc.DB)
+	verifier := handlers.NewEmailVerifierAdapter(emailTokenStore, emailService, cfg.Email.BaseURL)
+	emailVerifyHandler = handlers.NewEmailVerifyHandler(emailTokenStore, svc.Database, emailService, verifier, log)
+	if emailService.ProviderName() != "noop" {
+		if authSvc, ok := svc.GetAuth().(*auth.Service); ok {
+			authSvc.SetEmailVerifier(verifier)
+		}
+	}
+
 	// Invitations still needs the raw provider + the org store.
 	if pgOrgStore != nil {
 		mailer, _ := newEmailMailer(cfg)
@@ -695,6 +709,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		WebhookHandler:                  webhookHandler,
 		InvitationsHandler:              invitationsHandler,
 		EmailHandler:                    emailHandler,
+		EmailVerifyHandler:              emailVerifyHandler,
 		PasswordResetHandler:            passwordResetHandler,
 		PolicyHandler:                   policyHandler,
 		AuditHandler:                    auditHandler,
@@ -735,6 +750,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		invitationsHandler: invitationsHandler,
 		emailService:       emailService,
 		emailHandler:       emailHandler,
+		emailVerifyHandler: emailVerifyHandler,
 		dekCacheClient:     dekCacheClient,
 		shutdownCh:         make(chan struct{}),
 		ctx:                ctx,
