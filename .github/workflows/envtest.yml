@@ -1,13 +1,17 @@
-name: Envtest (CRD defaults)
+name: Envtest (CRD defaults + webhook integration)
 
 # M5-a: dedicated envtest workflow that verifies CRD kubebuilder defaults
 # are applied by the real Kubernetes API server's admission webhook. This
 # catches the class of bug from PR #231 that fake-client-based tests miss.
 #
+# Epic 51 S51.2: also runs webhook integration tests that verify the
+# PodTenantQuotaValidator actually intercepts pod creates via the real
+# API server, not just in-process Handle() calls. This catches webhook
+# routing/path/selector bugs (e.g., the objectSelector matchLabels bug
+# from PR #317 review).
+#
 # NOT required for merge — runs alongside the main CI pipeline like
-# e2e-pr.yml. The fast unit-test seam (SetDefaults_* in defaults_test.go)
-# covers the same defaults in the main test job; envtest verifies the
-# real admission webhook agrees.
+# e2e-pr.yml.
 #
 # Downloads kube-apiserver + etcd binaries via setup-envtest (cached).
 
@@ -17,6 +21,7 @@ on:
     paths:
       - 'pkg/apis/**'
       - 'charts/llmsafespaces/crds/**'
+      - 'controller/internal/webhooks/**'
       - '.github/workflows/envtest.yml'
   schedule:
     # Nightly at 04:00 UTC — catches upstream envtest binary regressions.
@@ -25,7 +30,7 @@ on:
 
 jobs:
   envtest:
-    name: CRD defaults (envtest)
+    name: CRD defaults + webhook integration (envtest)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -52,5 +57,8 @@ jobs:
           echo "KUBEBUILDER_ASSETS=$ASSETS_PATH" >> $GITHUB_ENV
           echo "Using envtest assets at: $ASSETS_PATH"
 
-      - name: Run envtest defaults tests
+      - name: Run envtest CRD defaults tests
         run: go test -timeout 120s -race -tags envtest ./pkg/apis/llmsafespaces/v1/ -run TestEnvtest -v
+
+      - name: Run envtest webhook integration tests
+        run: go test -timeout 120s -race -tags envtest ./controller/internal/webhooks/ -run TestEnvtest -v
