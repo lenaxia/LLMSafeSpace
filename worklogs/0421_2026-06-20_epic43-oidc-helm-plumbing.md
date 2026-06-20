@@ -21,8 +21,8 @@ Traced the full per-org OIDC request path and confirmed every layer is wired:
 
 | Layer | Evidence |
 |---|---|
-| Service construction | `app.go:392` `sso.New(pgOrgStore, dbSvc, ...)` with KEK + state key + issuer |
-| Handler construction | `app.go:405` `NewSSOHandler(ssoSvc, pgOrgStore, svc.GetAuth(), ...)` |
+| Service construction | `app.go:398` `sso.New(pgOrgStore, dbSvc, ...)` with KEK + state key + issuer |
+| Handler construction | `app.go:411` `NewSSOHandler(ssoSvc, pgOrgStore, svc.GetAuth(), ...)` |
 | Public auth routes | `router.go:198,599-601` (gated by `if ssoHandler != nil`) |
 | Org-admin CRUD routes | `router.go:1192-1194` inside `orgAdminGroup` (OrgAdminGuard at `:1150`) |
 | `/auth/config` flag | `router.go:585-586` `oidcEnabled = ssoHandler.OIDCEnabled(...)` |
@@ -59,7 +59,7 @@ All three **mutation-validated**: disabling the oidc block via `{{- if false }}`
 
 - **Scope: multi-tenant only, NOT a global IdP.** The three chart values are instance-*plumbing* ("where does the IdP redirect back to"). Per-org IdP wiring still lives in `org_sso_configs` via the org-admin API. No `instance_sso_configs` table or `/auth/sso/start` (without org slug) route was added. Made explicit in the values.yaml comment and the PR description.
 
-- **Mirror the `email:` pattern, not invent a new one.** The chart already had a `{{- if .Values.email.enabled }}` configmap guard + values block + comment header. The `oidc:` block follows the same shape for consistency. The only difference: `oidc:` has no `enabled` toggle because the SSO service is always constructed when the state key is available (`app.go:389-407`); the per-org config table being empty is the natural "off" state.
+- **Mirror the `email:` pattern, not invent a new one.** The chart already had a `{{- if .Values.email.enabled }}` configmap guard + values block + comment header. The `oidc:` block follows the same shape for consistency. The only difference: `oidc:` has no `enabled` toggle because the SSO service is always constructed when the state key is available (`app.go:395-413`); the per-org config table being empty is the natural "off" state.
 
 - **`stateCookieName` omitted when empty, not rendered as `""`.** Belt-and-suspenders / cleaner-YAML choice, NOT a load-bearing correctness guard. The Go code at `sso.go:130-133` handles empty strings (`if cookieName == "" { cookieName = "lsp_sso_state" }`), so an empty render would still produce a working cookie via fallback. The `{{- with }}` guard omits the line entirely to (a) produce cleaner rendered YAML and (b) not rely on the Go fallback for default behavior. The test `TestOIDC_DefaultRender_OmitsStateCookieName` locks in this design decision against regression to an unconditional render.
 

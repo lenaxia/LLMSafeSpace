@@ -1479,7 +1479,7 @@ The state cookie carries `{state, verifier, orgID, exp}` because the API is stat
 | `oidc.frontendRedirectUrl` | `LLMSAFESPACES_OIDC_FRONTENDREDIRECTURL` | `""` | Browser landing URL after SSO callback (e.g. `https://app.example.com`). Empty → `/`. |
 | `oidc.stateCookieName` | `LLMSAFESPACES_OIDC_STATECOOKIENAME` | `""` (→ `lsp_sso_state` in Go) | PKCE/state cookie name. Override only on collision. |
 
-The state-cookie signing key is `deriveServerKey("oidc-state-cookie")` (`api/internal/app/app.go:390`), derived from the same master secret as the KEK. When unset, the SSO service constructs but rejects config mutation and login at runtime (`sso.go:259,329`).
+The state-cookie signing key is `deriveServerKey("oidc-state-cookie")` (`api/internal/app/app.go:396`), derived from the same master secret as the KEK. When unset, the SSO service constructs but rejects config mutation and login at runtime (`sso.go:259,329`).
 
 **Per-org IdP config** is not in `config.yaml`, `values.yaml`, or the settings system — it is entered by the org admin through the API and stored in `org_sso_configs`.
 
@@ -1509,7 +1509,7 @@ The state-cookie signing key is `deriveServerKey("oidc-state-cookie")` (`api/int
 | Schema migration | `api/migrations/000038_org_sso_configs.up.sql` |
 | API DTOs | `pkg/types/orgs.go:174-215` |
 | Router registration | `api/internal/server/router.go:599-601, 1192-1194` |
-| Service wiring (KEK, state key) | `api/internal/app/app.go:370-408` |
+| Service wiring (KEK, state key) | `api/internal/app/app.go:395-413` |
 | Frontend admin UI | `frontend/src/components/org-admin/OrgSSOTab.tsx` |
 | Frontend login integration | `frontend/src/pages/LoginPage.tsx`, `frontend/src/api/sso.ts` |
 | Design doc (D17 decisions) | `design/stories/epic-43-organization-management/README.md` (Q-S1..Q-S4) |
