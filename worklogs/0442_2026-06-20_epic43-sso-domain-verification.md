@@ -1,4 +1,4 @@
-# Worklog 0441 — Epic 43 / D17 Q-S2: DNS verification of claimed SSO domains
+# Worklog 0442 — Epic 43 / D17 Q-S2: DNS verification of claimed SSO domains
 
 **Date:** 2026-06-20
 **Epic:** 43 (Organization Management)
