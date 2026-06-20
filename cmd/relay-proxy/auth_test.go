@@ -98,7 +98,7 @@ func TestRequireToken_HeaderName(t *testing.T) {
 // TestRequireToken_HealthzAndMetricsExempt verifies that health and metrics
 // endpoints are NOT token-gated — the router's health-checker needs to probe
 // /healthz without knowing a relay-specific token (the check is "is the proxy
-// up", not "am I authorized"). buildMux centralises this exemption.
+// up", not "am I authorized"). buildMux centralizes this exemption.
 func TestRequireToken_HealthzAndMetricsExempt(t *testing.T) {
 	mux := buildMux("secret-abc", dummyProxy{}, newRelayMetrics())
 
