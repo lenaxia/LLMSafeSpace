@@ -29,7 +29,7 @@ export interface OrgResponse extends Organization {
   memberCount: number;
 }
 
-export interface CreateOrgResponse extends OrgResponse {}
+export type CreateOrgResponse = OrgResponse;
 
 export interface OrgMember {
   orgId: string;

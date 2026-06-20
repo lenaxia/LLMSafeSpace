@@ -1,5 +1,8 @@
 import type { ReactNode } from "react";
 import { Link, NavLink, Outlet } from "react-router-dom";
+import { SidebarDrawer } from "./SidebarDrawer";
+import { SidebarToggleButton } from "./SidebarToggleButton";
+import { useCollapsibleSidebar } from "../../hooks/useCollapsibleSidebar";
 
 export interface NavItem {
   to: string;
@@ -16,6 +19,8 @@ export interface PortalLayoutProps {
   context: unknown;
 }
 
+const PORTAL_NAV_WIDTH = 192;
+
 export function PortalLayout({
   title,
   backLink,
@@ -25,10 +30,19 @@ export function PortalLayout({
   navItems,
   context,
 }: PortalLayoutProps) {
+  const sidebar = useCollapsibleSidebar({ sidebarWidth: PORTAL_NAV_WIDTH });
+
   return (
-    <div className="flex h-screen flex-col bg-background">
+    <div
+      ref={sidebar.containerRef}
+      className="flex h-screen flex-col bg-background overflow-hidden overscroll-none"
+      style={{ touchAction: "pan-y" }}
+    >
       <header className="flex items-center justify-between border-b border-border px-6 py-3">
         <div className="flex items-center gap-3">
+          {sidebar.isMobile && (
+            <SidebarToggleButton open={sidebar.open} onClick={() => sidebar.setOpen(!sidebar.open)} />
+          )}
           <Link
             to={backLink}
             className="text-sm text-muted-foreground hover:text-foreground"
@@ -43,23 +57,26 @@ export function PortalLayout({
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        <nav className="w-48 border-r border-border py-2">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) =>
-                `block px-4 py-2 text-sm ${
-                  isActive
-                    ? "bg-accent/10 font-medium text-accent"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                }`
-              }
-            >
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
+        <SidebarDrawer state={sidebar} ariaLabel="Sections" desktopClassName="relative w-48 shrink-0">
+          <nav className="h-full w-full border-r border-border bg-card py-2">
+            {navItems.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                onClick={() => sidebar.close()}
+                className={({ isActive }) =>
+                  `block px-4 py-2 text-sm ${
+                    isActive
+                      ? "bg-accent/10 font-medium text-accent"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`
+                }
+              >
+                {item.label}
+              </NavLink>
+            ))}
+          </nav>
+        </SidebarDrawer>
 
         <main className="flex-1 overflow-y-auto p-6">
           <Outlet context={context} />
