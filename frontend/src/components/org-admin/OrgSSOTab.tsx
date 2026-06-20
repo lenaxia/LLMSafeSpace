@@ -58,6 +58,8 @@ export function OrgSSOTab() {
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const [hasSecret, setHasSecret] = useState(false);
+  const [verifiedDomains, setVerifiedDomains] = useState<string[]>([]);
+  const [verificationToken, setVerificationToken] = useState("");
   const [form, setForm] = useState<FormState>(toFormState(null));
 
   useEffect(() => {
@@ -71,6 +73,8 @@ export function OrgSSOTab() {
       .then((cfg) => {
         setForm(toFormState(cfg));
         setHasSecret(cfg.hasSecret);
+        setVerifiedDomains(cfg.verifiedDomains ?? []);
+        setVerificationToken(cfg.verificationToken ?? "");
       })
       .catch((e) => {
         // 404/empty config is the normal "not configured yet" state — render defaults.
@@ -236,6 +240,172 @@ export function OrgSSOTab() {
             </Button>
           )}
         </div>
+      </div>
+
+      {hasSecret && form.claimedDomains && (
+        <DomainVerification
+          orgId={org.id}
+          orgName={org.name}
+          claimedDomains={form.claimedDomains.split(",").map((d) => d.trim().replace(/^@/, "")).filter(Boolean)}
+          verifiedDomains={verifiedDomains}
+          verificationToken={verificationToken}
+          onVerified={(domain) => setVerifiedDomains((prev) => [...new Set([...prev, domain])])}
+          onTokenRotated={(token) => setVerificationToken(token)}
+        />
+      )}
+    </div>
+  );
+}
+
+interface DomainVerificationProps {
+  orgId: string;
+  orgName: string;
+  claimedDomains: string[];
+  verifiedDomains: string[];
+  verificationToken: string;
+  onVerified: (domain: string) => void;
+  onTokenRotated: (token: string) => void;
+}
+
+function DomainVerification({
+  orgId,
+  orgName,
+  claimedDomains,
+  verifiedDomains,
+  verificationToken,
+  onVerified,
+  onTokenRotated,
+}: DomainVerificationProps) {
+  const [verifying, setVerifying] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const handleVerify = async (domain: string) => {
+    setVerifying(domain);
+    setError("");
+    setSuccess("");
+    try {
+      const result = await ssoApi.verifyDomain(orgId, domain);
+      if (result.verified) {
+        onVerified(domain);
+        setSuccess(`${domain} verified — auto-routing enabled.`);
+      } else {
+        setError(`${domain} verification failed — check the TXT record.`);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Verification failed";
+      setError(`${domain}: ${msg}`);
+    } finally {
+      setVerifying(null);
+    }
+  };
+
+  const handleRotate = async () => {
+    if (!confirm("Rotate the verification token? Existing DNS records must be updated to match.")) {
+      return;
+    }
+    setVerifying("token");
+    setError("");
+    try {
+      const result = await ssoApi.rotateToken(orgId);
+      onTokenRotated(result.verificationToken);
+      setSuccess("Token rotated. Update your DNS TXT records.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Token rotation failed");
+    } finally {
+      setVerifying(null);
+    }
+  };
+
+  const hasToken = verificationToken.length > 0;
+
+  return (
+    <div className="space-y-4 rounded border border-border p-4">
+      <div>
+        <h3 className="text-lg font-semibold">Domain Verification</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Verified domains auto-route on the login page (users see "Sign in with {orgName}").
+          Unverified claimed domains require the org slug URL — no auto-routing.
+        </p>
+      </div>
+
+      {error && <p className="text-sm text-red-500">{error}</p>}
+      {success && <p className="text-sm text-green-600">{success}</p>}
+
+      {claimedDomains.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No claimed domains. Add domains above and save first.</p>
+      ) : (
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-left">
+              <th className="py-2">Domain</th>
+              <th className="py-2">Status</th>
+              <th className="py-2">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {claimedDomains.map((domain) => {
+              const isVerified = verifiedDomains.includes(domain);
+              return (
+                <tr key={domain} className="border-b border-border">
+                  <td className="py-2 font-mono">{domain}</td>
+                  <td className="py-2">
+                    {isVerified ? (
+                      <span className="text-green-600">✓ Verified</span>
+                    ) : (
+                      <span className="text-muted-foreground">Unverified</span>
+                    )}
+                  </td>
+                  <td className="py-2">
+                    {!isVerified && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleVerify(domain)}
+                        disabled={verifying !== null}
+                      >
+                        {verifying === domain ? "Checking…" : "Verify"}
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+
+      <div className="space-y-2 border-t border-border pt-4">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium">DNS Verification Token</span>
+          <Button size="sm" variant="outline" onClick={handleRotate} disabled={verifying !== null}>
+            {verifying === "token" ? "Rotating…" : hasToken ? "Rotate Token" : "Generate Token"}
+          </Button>
+        </div>
+        {hasToken ? (
+          <>
+            <p className="text-xs text-muted-foreground">
+              Add a DNS TXT record:
+            </p>
+            <div className="rounded bg-muted p-2 font-mono text-xs">
+              <div>
+                <span className="text-muted-foreground">Name:</span>{" "}
+                _llmsafespaces-verify.{claimedDomains[0] ?? "<domain>"}
+              </div>
+              <div>
+                <span className="text-muted-foreground">Value:</span> {verificationToken}
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              One token works for all your domains. Add the TXT record to each domain's DNS,
+              then click Verify above.
+            </p>
+          </>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            No token generated yet. Click "Generate Token" to get a value for your DNS TXT record.
+          </p>
+        )}
       </div>
     </div>
   );

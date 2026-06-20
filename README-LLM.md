@@ -2,7 +2,7 @@
 
 > **Repository:** `github.com/lenaxia/llmsafespaces`
 
-**Version:** 1.17
+**Version:** 1.18
 **Last Updated:** 2026-06-20
 **Project Status:** Active Development
 
@@ -1387,7 +1387,9 @@ Go types in `pkg/types/orgs.go:174-215`:
 | `GET` | `/api/v1/orgs/:id/sso` | Org admin | Read this org's SSO config (secret omitted) |
 | `PUT` | `/api/v1/orgs/:id/sso` | Org admin | Upsert SSO config; encrypts client secret, audits `sso.update` |
 | `DELETE` | `/api/v1/orgs/:id/sso` | Org admin | Remove SSO config; audits `sso.delete` |
-| `GET` | `/api/v1/auth/sso/domains` | Public | List all orgs' claimed domains (for login-page routing) |
+| `POST` | `/api/v1/orgs/:id/sso/domains/:domain/verify` | Org admin | On-demand DNS verification of a claimed domain (D17 Q-S2) |
+| `POST` | `/api/v1/orgs/:id/sso/verification-token/rotate` | Org admin | Generate or rotate the DNS verification token |
+| `GET` | `/api/v1/auth/sso/domains` | Public | List all orgs' **verified** domains (for login-page routing) |
 | `GET` | `/api/v1/auth/sso/:orgSlug/start` | Public | Begin PKCE flow; 302 to IdP, sets signed state cookie |
 | `GET` | `/api/v1/auth/sso/:orgSlug/callback` | Public | Complete flow; sets `lsp_session` JWT cookie, 302 to frontend |
 
@@ -1491,7 +1493,7 @@ The state-cookie signing key is `deriveServerKey("oidc-state-cookie")` (`api/int
 
 ### Known gaps and non-goals
 
-- **DNS verification of `claimed_domains`** — designed in D17 (Q-S2) but not shipped. Domains are stored as-entered; an org admin can claim any domain string. The mitigation is that org creation is platform-admin-only (`design/0031` D1) and org admins are trusted.
+- **DNS verification of `claimed_domains`** — shipped (D17 Q-S2). On-demand verification via `POST /orgs/:id/sso/domains/:domain/verify`; the org admin adds a `TXT _llmsafespaces-verify.<domain> = <token>` DNS record and clicks Verify. Only verified domains appear in the login-page discovery endpoint (`ListSSODomains` filters on `verified_domains`). Existing claimed domains at migration time were grandfathered as verified (operator decision).
 - **No instance-level / platform-global OIDC** — every SSO login is org-scoped (`/auth/sso/:orgSlug/...`). A single-IdP-for-the-whole-deployment mode does not exist; `cfg.OIDC` carries only plumbing.
 - **No SAML or SCIM** — explicitly deferred per Epic 43 decision D3.
 - **No generic org-level settings tier** — org config lives in dedicated normalized tables (`org_policies`, `org_sso_configs`, `org_credentials`), not a key-value `org_settings` table.
@@ -1587,6 +1589,7 @@ The API service is configured via `api/config/config.yaml` with environment vari
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.18 | 2026-06-20 | Shipped DNS verification of claimed SSO domains (D17 Q-S2): new `verified_domains` + `verification_token` columns (migration 000041); on-demand DNS verification via `POST /orgs/:id/sso/domains/:domain/verify`; token rotation endpoint; login-page discovery (`ListSSODomains`) now filters on verified only; existing domains grandfathered as verified; updated §14 endpoints + known gaps |
 | 1.17 | 2026-06-20 | Surfaced per-org OIDC SSO instance-plumbing config (`oidc.redirectBaseUrl`, `oidc.frontendRedirectUrl`, `oidc.stateCookieName`) in the Helm chart (`values.yaml` + `configmap-api.yaml`), closing the F11 header-trust gap in chart-managed deploys; updated §14 Configuration to document both chart and env-var paths |
 | 1.16 | 2026-06-20 | Added "Multi-Tenant OIDC SSO" section documenting the as-built per-org OIDC system (Epic 43 / US-43.10 / D17): data model, endpoints, PKCE login flow, org-admin config flow, auto-provisioning + role mapping, security controls, instance plumbing config, frontend, known gaps, and file reference |
 | 1.15 | 2026-06-18 | US-46.14/US-46.15: archived V1 design docs (`0001`–`0020`) to `design/archive/v1/`; repointed all V1 references in README-LLM.md to the archive path; fixed stale filenames (network doc was listed as `0007` but is `0020`; runtimeenv doc was listed as `0006` but is `0007`) |

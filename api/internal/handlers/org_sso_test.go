@@ -5,6 +5,7 @@ package handlers
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -70,6 +71,43 @@ func (m *mockSSOStore) DeleteSSOConfig(_ context.Context, orgID string) error {
 	}
 	delete(m.configs, orgID)
 	return nil
+}
+func (m *mockSSOStore) SetDomainVerified(_ context.Context, orgID, domain string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cfg, ok := m.configs[orgID]
+	if !ok || cfg == nil {
+		return false, nil
+	}
+	claimed := false
+	for _, d := range cfg.ClaimedDomains {
+		if strings.EqualFold(d, domain) {
+			claimed = true
+			break
+		}
+	}
+	if !claimed {
+		return false, nil
+	}
+	for _, d := range cfg.VerifiedDomains {
+		if strings.EqualFold(d, domain) {
+			return false, nil
+		}
+	}
+	cfg.VerifiedDomains = append(cfg.VerifiedDomains, domain)
+	return true, nil
+}
+func (m *mockSSOStore) RotateVerificationToken(_ context.Context, orgID string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cfg, ok := m.configs[orgID]
+	if !ok || cfg == nil {
+		return "", fmt.Errorf("no sso config for org %s", orgID)
+	}
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	cfg.VerificationToken = fmt.Sprintf("%x", b)
+	return cfg.VerificationToken, nil
 }
 func (m *mockSSOStore) GetOrgBySlug(_ context.Context, slug string) (*types.Organization, error) {
 	m.mu.Lock()
@@ -169,7 +207,8 @@ func (m *mockSSOHandlerUserStore) CreateUser(_ context.Context, u *types.User) e
 }
 
 // buildSSOHandler wires the handler + router. ONE store serves both the service
-// and the handler so writes are visible to reads.
+// and the handler so writes are visible to reads. Also returns the service so
+// tests can inject a fake DNS resolver for domain-verification tests.
 func buildSSOHandler(t *testing.T) (*SSOHandler, *mockSSOStore, *mockSSOHandlerUserStore, *gin.Engine) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
@@ -182,6 +221,8 @@ func buildSSOHandler(t *testing.T) (*SSOHandler, *mockSSOStore, *mockSSOHandlerU
 	r.GET("/api/v1/orgs/:id/sso", h.Get)
 	r.PUT("/api/v1/orgs/:id/sso", h.Put)
 	r.DELETE("/api/v1/orgs/:id/sso", h.Delete)
+	r.POST("/api/v1/orgs/:id/sso/domains/:domain/verify", h.VerifyDomain)
+	r.POST("/api/v1/orgs/:id/sso/verification-token/rotate", h.RotateToken)
 	r.GET("/api/v1/auth/sso/domains", h.Domains)
 	r.GET("/api/v1/auth/sso/:orgSlug/start", h.Start)
 	r.GET("/api/v1/auth/sso/:orgSlug/callback", h.Callback)
@@ -615,4 +656,139 @@ func TestE2E_SSO_ResolveCallbackURL_NoWarnWhenRedirectBaseURLSet(t *testing.T) {
 	url := h.resolveCallbackURL(c, "acme")
 	require.Contains(t, url, "https://api.production.local/api/v1/auth/sso/acme/callback")
 	require.Empty(t, log.warns, "no warning when RedirectBaseURL is set (trust gap closed)")
+}
+
+// --- DNS domain verification handler tests (D17 Q-S2) ---
+
+// buildVerifyHandler wires a handler with a fake DNS resolver so verify
+// endpoint tests don't depend on real DNS. Returns the resolver so the test
+// can preset TXT records.
+func buildVerifyHandler(t *testing.T) (*SSOHandler, *mockSSOStore, *gin.Engine, *fakeVerifyDNSResolver) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	store := newMockSSOStore()
+	users := newMockSSOHandlerUserStore()
+	svc := newSSOServiceForHandler(t, store, users, "https://api.test.local")
+	dns := &fakeVerifyDNSResolver{records: map[string][]string{}}
+	svc.SetDNSResolver(dns)
+	h := NewSSOHandler(svc, store, &mockOrgAuthService{userID: "admin-1"}, "lsp_session", "https://app.test.local", nil)
+	r := gin.New()
+	r.POST("/api/v1/orgs/:id/sso/domains/:domain/verify", h.VerifyDomain)
+	r.POST("/api/v1/orgs/:id/sso/verification-token/rotate", h.RotateToken)
+	r.GET("/api/v1/orgs/:id/sso", h.Get)
+	return h, store, r, dns
+}
+
+// fakeVerifyDNSResolver mirrors sso.fakeDNSResolver but lives in the handlers
+// test package (sso's internal fakes are not exported).
+type fakeVerifyDNSResolver struct {
+	records map[string][]string
+	err     error
+}
+
+func (f *fakeVerifyDNSResolver) LookupTXT(_ context.Context, name string) ([]string, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.records[name], nil
+}
+
+func TestSSOHandler_VerifyDomain_Success(t *testing.T) {
+	_, store, r, dns := buildVerifyHandler(t)
+	store.configs["org-1"] = &types.OrgSSOConfig{
+		OrgID:             "org-1",
+		ClaimedDomains:    []string{"acme.com"},
+		VerificationToken: "tok-abc",
+	}
+	dns.records["_llmsafespaces-verify.acme.com"] = []string{"tok-abc"}
+
+	w := doRequest(r, "POST", "/api/v1/orgs/org-1/sso/domains/acme.com/verify", "")
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp sso.VerifyDomainResult
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.True(t, resp.Verified)
+	require.Equal(t, "acme.com", resp.Domain)
+}
+
+func TestSSOHandler_VerifyDomain_DNSNotMatching_422(t *testing.T) {
+	_, store, r, dns := buildVerifyHandler(t)
+	store.configs["org-1"] = &types.OrgSSOConfig{
+		OrgID:             "org-1",
+		ClaimedDomains:    []string{"acme.com"},
+		VerificationToken: "correct",
+	}
+	dns.records["_llmsafespaces-verify.acme.com"] = []string{"wrong"}
+
+	w := doRequest(r, "POST", "/api/v1/orgs/org-1/sso/domains/acme.com/verify", "")
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code)
+}
+
+func TestSSOHandler_VerifyDomain_NotClaimed_400(t *testing.T) {
+	_, store, r, _ := buildVerifyHandler(t)
+	store.configs["org-1"] = &types.OrgSSOConfig{
+		OrgID:             "org-1",
+		ClaimedDomains:    []string{"acme.com"},
+		VerificationToken: "tok",
+	}
+
+	w := doRequest(r, "POST", "/api/v1/orgs/org-1/sso/domains/other.com/verify", "")
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestSSOHandler_VerifyDomain_NoToken_409(t *testing.T) {
+	_, store, r, _ := buildVerifyHandler(t)
+	store.configs["org-1"] = &types.OrgSSOConfig{
+		OrgID:          "org-1",
+		ClaimedDomains: []string{"acme.com"},
+	}
+
+	w := doRequest(r, "POST", "/api/v1/orgs/org-1/sso/domains/acme.com/verify", "")
+	require.Equal(t, http.StatusConflict, w.Code)
+}
+
+func TestSSOHandler_VerifyDomain_NoSSOConfig_404(t *testing.T) {
+	_, _, r, _ := buildVerifyHandler(t)
+
+	w := doRequest(r, "POST", "/api/v1/orgs/ghost/sso/domains/acme.com/verify", "")
+	require.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestSSOHandler_RotateToken_Success(t *testing.T) {
+	_, store, r, _ := buildVerifyHandler(t)
+	store.configs["org-1"] = &types.OrgSSOConfig{OrgID: "org-1"}
+
+	w := doRequest(r, "POST", "/api/v1/orgs/org-1/sso/verification-token/rotate", "")
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]string
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp["verificationToken"], 32)
+}
+
+func TestSSOHandler_RotateToken_NoSSOConfig_404(t *testing.T) {
+	_, _, r, _ := buildVerifyHandler(t)
+
+	w := doRequest(r, "POST", "/api/v1/orgs/ghost/sso/verification-token/rotate", "")
+	require.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestSSOHandler_Get_ReturnsVerifiedDomainsAndToken(t *testing.T) {
+	_, store, r, _ := buildVerifyHandler(t)
+	store.configs["org-1"] = &types.OrgSSOConfig{
+		OrgID:             "org-1",
+		DiscoveryURL:      "https://idp",
+		ClientID:          "cid",
+		ClientSecret:      []byte("enc"),
+		ClaimedDomains:    []string{"acme.com", "acme.io"},
+		VerifiedDomains:   []string{"acme.com"},
+		VerificationToken: "tok-xyz",
+		AutoProvision:     true,
+	}
+
+	w := doRequest(r, "GET", "/api/v1/orgs/org-1/sso", "")
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp types.OrgSSOConfigResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, []string{"acme.com", "acme.io"}, resp.ClaimedDomains)
+	require.Equal(t, []string{"acme.com"}, resp.VerifiedDomains)
+	require.Equal(t, "tok-xyz", resp.VerificationToken)
 }
