@@ -1391,7 +1391,7 @@ Go types in `pkg/types/orgs.go:174-215`:
 | `GET` | `/api/v1/auth/sso/:orgSlug/start` | Public | Begin PKCE flow; 302 to IdP, sets signed state cookie |
 | `GET` | `/api/v1/auth/sso/:orgSlug/callback` | Public | Complete flow; sets `lsp_session` JWT cookie, 302 to frontend |
 
-The CRUD routes are registered in `registerOrgRoutes` behind `OrgAdminGuard` (`api/internal/server/router.go:1172-1174`). The public login routes sit under the auth group (`router.go:583-585`). `/auth/config` advertises `oidcEnabled = (CountSSOConfigs > 0)` so the frontend can hide SSO UI when no org has configured it.
+The CRUD routes are registered in `registerOrgRoutes` behind `OrgAdminGuard` (`api/internal/server/router.go:1192-1194`). The public login routes sit under the auth group (`router.go:599-601`). `/auth/config` advertises `oidcEnabled = (CountSSOConfigs > 0)` so the frontend can hide SSO UI when no org has configured it.
 
 ### Login flow (PKCE)
 
@@ -1508,7 +1508,7 @@ The state-cookie signing key is `deriveServerKey("oidc-state-cookie")` (`api/int
 | Store tests | `api/internal/services/database/pg_org_store_sso_test.go` |
 | Schema migration | `api/migrations/000038_org_sso_configs.up.sql` |
 | API DTOs | `pkg/types/orgs.go:174-215` |
-| Router registration | `api/internal/server/router.go:583-585, 1172-1174` |
+| Router registration | `api/internal/server/router.go:599-601, 1192-1194` |
 | Service wiring (KEK, state key) | `api/internal/app/app.go:370-408` |
 | Frontend admin UI | `frontend/src/components/org-admin/OrgSSOTab.tsx` |
 | Frontend login integration | `frontend/src/pages/LoginPage.tsx`, `frontend/src/api/sso.ts` |
