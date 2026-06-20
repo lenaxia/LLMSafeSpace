@@ -52,7 +52,7 @@ The earlier Epic 18 S18.8 Capsule decision (original text preserved in a `<detai
 |---|---|---|
 | Tenant container escape → host kernel | **gVisor RuntimeClass** (primary) | **This epic** |
 | Tenant pod → tenant pod (network) | Chart default-deny ingress + egress filtering | ✅ Shipped |
-| Tenant → kube-apiserver / cloud metadata | Egress filtering + `AutomountServiceAccountToken: false` | ✅ Shipped (`controller/internal/workspace/pod_builder.go:231`) |
+| Tenant → kube-apiserver / cloud metadata | Egress filtering + `AutomountServiceAccountToken: false` | ✅ Shipped (`controller/internal/workspace/pod_builder.go:214`) |
 | Tenant reads another tenant's K8s Secret | No tenant API credentials; namespace-scoped controller `Role` | ✅ Shipped |
 | Tenant exhausts node resources (noisy neighbor) | **Per-tenant ResourceQuota via admission webhook** | **This epic** |
 | Side-channel (CPU/cache/Rowhammer) | Accepted risk for soft-to-medium multi-tenancy | Out of scope |
@@ -87,7 +87,7 @@ It is the standard answer for multi-tenant arbitrary-code platforms. Its limits:
 ### S51.1 — gVisor RuntimeClass (primary isolation)
 
 - Ship a `RuntimeClass` named `gvisor` in the Helm chart, gated on `gvisor.enabled` (default `false` for dev/single-tenant; `true` for production multi-tenant).
-- Workspace pod builder sets `RuntimeClassName` when `gvisor.enabled` (add to the spec hardening block near `controller/internal/workspace/pod_builder.go:360-362`).
+- Workspace pod builder sets `RuntimeClassName` when `gvisor.enabled` (add to the PodSpec hardening block in `controller/internal/workspace/pod_builder.go` `buildPod`, alongside `AutomountServiceAccountToken` and `SecurityContext`).
 - Node setup: AMI/userData installs `runsc` and configures the container runtime (Epic 18 S18.9 Karpenter `EC2NodeClass` plans for gVisor in userData — coordinate but don't block on Karpenter).
 - Per-workspace opt-out: add a `spec.runtimeClass` field or annotation to allow `runc` fallback for workloads incompatible with gVisor (ptrace debuggers, certain seccomp filters). Opt-out is admin-gated, not tenant-selectable, to prevent weakening the default.
 
@@ -108,9 +108,10 @@ It is the standard answer for multi-tenant arbitrary-code platforms. Its limits:
 - Enables: webhook quota enforcement (S51.2), audit attribution, future admission policies, tenant-scoped metrics.
 - Also propagate to the Workspace CR's existing label set (`api/internal/services/workspace/workspace_service.go:851-854`) for consistency.
 
-### S51.4 — In-pod hardening verification (defense-in-depth)
+### S51.4 — In-pod hardening verification under gVisor (defense-in-depth)
 
-- gVisor is the primary boundary; existing pod hardening remains as defense-in-depth. No code change, but add an integration test asserting the hardening set survives (non-root, drop-all-caps, read-only rootfs, seccomp, `AutomountServiceAccountToken: false`) — these are set at `controller/internal/workspace/pod_builder.go:115-120, 231, 340-364` but not regression-tested today.
+- gVisor is the primary boundary; existing pod hardening remains as defense-in-depth. The hardening set (non-root, drop-all-caps, read-only rootfs, seccomp, `AutomountServiceAccountToken: false`) is **already regression-tested** today in `controller/internal/workspace/security_test.go` (`TestG17_SandboxPodDoesNotAutomountSAToken`, `TestSandboxPod_SecurityContextHardening`, `TestG22_PodHasEnableServiceLinksFalse`, `TestG24_PodHasRuntimeDefaultSeccompProfile`).
+- S51.4's value-add: extend these tests to assert the hardening set **survives under a gVisor `RuntimeClass`** — i.e., that setting `RuntimeClassName: gvisor` does not regress or conflict with the existing security context. This specific combination (gVisor + hardening) is not tested today.
 
 ---
 
@@ -136,7 +137,7 @@ It is the standard answer for multi-tenant arbitrary-code platforms. Its limits:
 4. Workspace pod carries `llmsafespaces.dev/tenant=<tenant_id>` label
 5. Admission webhook rejects a workspace pod when tenant CPU/memory/workspace-count quota is exceeded
 6. Quota values come from org plan (org members) or instance defaults (personal users)
-7. Pod-hardening regression test passes (non-root, drop caps, read-only rootfs, seccomp, no SA token)
+7. Pod-hardening tests pass under gVisor RuntimeClass (extend existing `security_test.go` tests to assert hardening survives when `RuntimeClassName: gvisor` is set)
 8. Performance: gVisor overhead on a representative workload (LLM-coding session) measured and documented — accept/reject gVisor based on <30% overhead target
 9. Integration test: tenant A's quota does not affect tenant B; opt-out workspace runs under `runc` as expected
 
