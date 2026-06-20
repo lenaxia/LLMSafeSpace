@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // S-EMAIL-RESET canary — tests email endpoints through the real HTTP boundary
 
-import { Runner, Config, configFromEnv, rawDo } from '../canary.js';
+import { Runner, Config, configFromEnv, rawDo, containsLeakedInternals } from '../canary.js';
 
 async function run(run: Runner, cfg: Config): Promise<void> {
   const base = cfg.apiUrl.replace(/\/$/, '') + '/api/v1';
@@ -47,12 +47,18 @@ async function run(run: Runner, cfg: Config): Promise<void> {
   // P8: Resend unknown → 202
   const [resendUnknownStatus] = await rawDo('POST', base + '/auth/verify-email/resend', '', Buffer.from(JSON.stringify({ email: 'ghost-canary@nonexistent.invalid' })));
   run.assert(resendUnknownStatus === 202, `verify-email-resend-unknown: 202 (got ${resendUnknownStatus})`, '');
+
+  // P9: No leaked internals in error responses
+  const [, leakResp] = await rawDo('POST', base + '/auth/password-reset/confirm', '', Buffer.from(JSON.stringify({ token: 'x', newPassword: 'canary-valid-pwd' })));
+  run.assert(!containsLeakedInternals(leakResp.toString()), 'password-reset-confirm: no leaked internals', '');
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+async function main() {
   const r = new Runner('email-reset', 'typescript-sdk');
   const cfg = configFromEnv();
   await run(r, cfg);
   const res = r.print();
   if (res.failed > 0) process.exit(1);
 }
+
+main().catch((e) => { console.error(e); process.exit(1); });

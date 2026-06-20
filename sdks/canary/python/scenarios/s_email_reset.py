@@ -12,7 +12,7 @@ import json
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
-from canary import Runner, Config, config_from_env, raw_do
+from canary import Runner, Config, config_from_env, raw_do, contains_leaked_internals
 
 
 def run(run: Runner, cfg: Config) -> None:
@@ -65,6 +65,11 @@ def run(run: Runner, cfg: Config) -> None:
     status, _ = raw_do("POST", base + "/auth/verify-email/resend", "",
                        json.dumps({"email": "ghost-canary@nonexistent.invalid"}).encode())
     run.assert_(status == 202, f"verify-email-resend-unknown: 202 (got {status})")
+
+    # P9: No leaked internals in error responses
+    _, leak_resp = raw_do("POST", base + "/auth/password-reset/confirm", "",
+                          json.dumps({"token": "x", "newPassword": "canary-valid-pwd"}).encode())
+    run.assert_(not contains_leaked_internals(leak_resp), "password-reset-confirm: no leaked internals")
 
 
 if __name__ == "__main__":

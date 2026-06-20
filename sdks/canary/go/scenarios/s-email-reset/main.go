@@ -4,12 +4,12 @@
 // Canary scenario: S-EMAIL-RESET
 // Tests the email-related public endpoints through the real HTTP boundary:
 //
-//   1. Register a unique user → 201 (or 409 if exists)
-//   2. Login attempt → either 200 (noop/auto-verified) or 403 (SES/unverified)
-//   3. Password-reset request → 202 (always, no enumeration)
-//   4. Password-reset confirm with bogus token → 404 (not found)
-//   5. Verify-email with bogus token → 404 (not found)
-//   6. Verify-email/resend → 202 (always, no enumeration)
+//  1. Register a unique user → 201 (or 409 if exists)
+//  2. Login attempt → either 200 (noop/auto-verified) or 403 (SES/unverified)
+//  3. Password-reset request → 202 (always, no enumeration)
+//  4. Password-reset confirm with bogus token → 404 (not found)
+//  5. Verify-email with bogus token → 404 (not found)
+//  6. Verify-email/resend → 202 (always, no enumeration)
 //
 // This is the one test that exercises every email endpoint through the real
 // HTTP server — router → handler → service → store — catching wiring
