@@ -152,7 +152,7 @@ as a *regression* guard, not a completion gate.
 
 | # | Assumption | Validation |
 |---|---|---|
-| A1 | The `fixture{}` pattern at `api/internal/services/workspace/workspace_service_test.go:33` is the project's idiomatic test-helper shape — every new unit/integration test follows it | Verified: same pattern in `controller/internal/workspace/controller_test.go:55` (`reconcilerFor`) and `controller/internal/relay/reconciler_test.go:32` (`stubDriver`) |
+| A1 | The `fixture{}` pattern at `api/internal/services/workspace/workspace_service_test.go:33` is the project's idiomatic test-helper shape — every new unit/integration test follows it | Verified: same pattern in `controller/internal/workspace/controller_test.go:36` (`reconcilerFor`) and `controller/internal/relay/reconciler_test.go:36` (`stubDriver`) |
 | A2 | The canary two-tier model (TESTPLAN.md §2) is the project's authority on canary design — Tier 3 extends it, doesn't replace it | Verified: `sdks/canary/TESTPLAN.md` §2 defines Shallow/Deep, schedules, and alert policy; `canary-functions.yaml` deploys only Tier 1+2 today |
 | A3 | `local/test.sh` is the only existing system-level e2e runner; CI's `e2e-pr.yml` "Full-stack E2E" job is disabled (`if: false`) | Verified: `.github/workflows/e2e-pr.yml:30` and `local/test.sh:1` |
 | A4 | `tests/epic26/` and `tests/gharouter/` are the only Go-level e2e test packages; both target specific epics, not general coverage | Verified: `ls tests/` |
