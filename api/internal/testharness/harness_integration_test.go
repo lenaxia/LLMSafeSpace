@@ -155,6 +155,13 @@ func TestHarness_Seed_InsertsAndReturnsID(t *testing.T) {
 	require.NotEmpty(t, id, "Seed must return the row id")
 	assert.Equal(t, "seed-probe", id)
 
+	// Cleanup so the test is self-contained: without it, re-running this test
+	// in isolation (-run TestHarness_Seed) against a persistent DB fails on the
+	// second run with a primary-key violation.
+	t.Cleanup(func() {
+		_, _ = h.Pool().Exec(context.Background(), "DELETE FROM users WHERE id = $1", id)
+	})
+
 	var email string
 	require.NoError(t, h.Pool().QueryRow(context.Background(),
 		`SELECT email FROM users WHERE id = $1`, id).Scan(&email))

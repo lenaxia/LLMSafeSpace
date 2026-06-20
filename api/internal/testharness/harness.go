@@ -4,11 +4,14 @@
 // Package testharness is the single source of Postgres + Redis wiring for the
 // API service's integration tests.
 //
-// It consolidates the three near-identical pool constructors that were
-// duplicated across pkg/secrets and api/internal/services/database
-// (getTestPool, getIntegrationPool, newIntegrationDB) and adds the
-// migration runner the codebase was missing — so an integration test never
-// has to reinvent Postgres/Redis setup or assume the schema is pre-migrated.
+// It consolidates the two near-identical pool constructors duplicated across
+// api/internal/services/database (getIntegrationPool, newIntegrationDB) and
+// adds the migration runner the codebase was missing — so an integration test
+// never has to reinvent Postgres/Redis setup or assume the schema is
+// pre-migrated. The third constructor, getTestPool in pkg/secrets, cannot be
+// consolidated here because Go's internal-package visibility forbids pkg/
+// imports of api/internal/; that duplication is documented and deferred (see
+// README.md).
 //
 // # Isolation model
 //
@@ -391,11 +394,23 @@ func buildSeedSQL(table string, row map[string]any) (string, []any, error) {
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
 		args[i] = row[c]
 	}
-	return fmt.Sprintf(`INSERT INTO "%s" ("%s") VALUES (%s) RETURNING "id"`,
+	return fmt.Sprintf(`INSERT INTO "%s" (%s) VALUES (%s) RETURNING "id"`,
 			strings.ReplaceAll(table, `"`, `""`),
-			strings.Join(cols, `", "`),
+			quoteIdentifiers(cols),
 			strings.Join(placeholders, ", ")),
 		args, nil
+}
+
+// quoteIdentifiers quotes each identifier for SQL, doubling any embedded `"`,
+// matching the escaping already applied to table names. Column names here come
+// from the test's row map (developer-controlled), but applying the same escape
+// keeps buildSeedSQL internally consistent and robust.
+func quoteIdentifiers(cols []string) string {
+	quoted := make([]string, len(cols))
+	for i, c := range cols {
+		quoted[i] = `"` + strings.ReplaceAll(c, `"`, `""`) + `"`
+	}
+	return strings.Join(quoted, `, `)
 }
 
 func newLogger() (*zap.Logger, *observer.ObservedLogs) {
