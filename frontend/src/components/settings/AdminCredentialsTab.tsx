@@ -412,6 +412,10 @@ function ProvidersTab({
   useEffect(() => {
     setEditBuf(Object.fromEntries((cs.providers ?? []).map((p) => [p, { apiKey: "", baseUrl: "" }])));
     setError(null);
+    // cs.providers is read to seed editBuf but intentionally omitted: the effect
+    // must only reset the buffer when a different credential (cs.id) is selected,
+    // not when the same credential's provider list refreshes (would discard edits).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cs.id]);
 
   const addProvider = () => {

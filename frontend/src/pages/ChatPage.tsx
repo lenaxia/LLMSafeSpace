@@ -698,7 +698,7 @@ export function ChatPage() {
     } else if (event.type === "agent_died") {
       setAgentDied(true);
     }
-  }, [queryClient, workspaceId, sessionId, parseStreamEvent, notifySessionIdle, reconcileOnIdle, queue, addPendingAction, removePendingAction]);
+  }, [queryClient, workspaceId, sessionId, parseStreamEvent, notifySessionIdle, reconcileOnIdle, queue, addPendingAction, removePendingAction, clearStreamTimedOut]);
 
   // US-15.2: On SSE reconnect, re-poll status to catch missed transitions
   const handleSSEReconnect = useCallback(() => {
