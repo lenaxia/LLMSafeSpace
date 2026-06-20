@@ -101,7 +101,7 @@ Each verified against live code at planning time.
 | A11 | `cmd/seal-key/main.go:59` prints the generated root key to stderr | Read of `cmd/seal-key/main.go` lines 1-60 | Confirmed |
 | A12 | `SealedKeyProvider`'s `DeriveKEKFromPassword` call uses no `info` parameter | `pkg/secrets/root_key.go:79, 104` | Confirmed — `DeriveKEKFromPassword(password, salt)` only |
 | A13 | AES-256-GCM `Decrypt` with a wrong key fails cleanly via auth-tag mismatch (no false positives, no panic) | `pkg/secrets/crypto.go:155` — `gcm.Open` returns `ErrDecryptionFailed` | Confirmed — "try all keys" rotation approach is safe |
-| A14 | The audit log table (`audit_log`) already exists and is written by the secrets service | `api/migrations/000028_audit_log.up.sql`; `pkg/secrets/secret_service.go` uses `AuditEntry` | Confirmed — US-50.12 extends the existing pattern to decrypt operations |
+| A14 | The secrets audit log table (`secret_audit_log`) already exists and is written by the secrets service via `PgSecretStore.LogAudit` → `INSERT INTO secret_audit_log`. This is **distinct** from the org-level `audit_log` table (migration 000028), which is used by `pg_org_store.go` for org admin actions. US-50.12 extends the `secret_audit_log` pattern, not `audit_log`. | `api/migrations/000008_user_secrets.up.sql`; `pkg/secrets/pg_secret_store.go:418` (`INSERT INTO secret_audit_log`) | Confirmed — corrected from initial draft which cited 000028 (the wrong table). Identified by PR #305 AI reviewer re-review. |
 | A15 | `AdminKeyDeriver` is consumed at 8 production call sites + 13 test call sites | grep for `AdminKeyDeriver\|deriveAdminKey\|SetAdminKeyDeriver\|orgKeyDeriver` across `.go` files | Confirmed — bounded surface for US-50.2 unification |
 | A16 | Boot order constructs `RootKeyProvider` (line 372) AFTER multiple earlier consumers: the Redis DEK cache at line 240/251 (`dekMasterKey()` → `NewRedisDEKCache`), the admin handler (317), free-tier seeding (323), and `secretService.SetAdminKeyDeriver` (357) | `api/internal/app/app.go:240,253,319,325,359,374` | Confirmed — US-50.2 reorders boot to construct per-purpose providers before the Redis cache, the earliest consumer (line 240) |
 | A17 | `credential_ops.go:getCredentialForProbe` uses a `credentialKeyResolver func(ctx) (key []byte, ...)` callback — it returns a raw key, not a provider; this is the shared probe helper used by both admin and org credential model-list endpoints | `api/internal/handlers/credential_ops.go:15-65` | Confirmed — US-50.2 changes this resolver to return a decrypt function |
@@ -801,7 +801,8 @@ assumption does not need to hold.
 
 **Goal:** After US-50.2 unification, all decrypt operations flow through
 `RootKeyProvider.Decrypt`. A single `AuditedProvider` wrapper logs every
-decrypt call to the existing `audit_log` table. This is the detection layer
+decrypt call to the existing `secret_audit_log` table (migration 000008,
+written by `pg_secret_store.go:418`). This is the detection layer
 for authorized-decrypt abuse and partially compensates for the deferred KMS
 audit logging.
 
@@ -830,12 +831,12 @@ logged (encrypt is not a sensitive read operation).
 
 **Files:**
 - `pkg/secrets/audited_provider.go` (new) — `AuditedProvider` wrapper
-- `pkg/secrets/audit.go` — `DecryptAuditEntry` type; writes to existing `audit_log` table via `AuditEntry`
+- `pkg/secrets/audit.go` — `DecryptAuditEntry` type; writes to existing `secret_audit_log` table (migration 000008) via the same `PgSecretStore.LogAudit` path
 - `api/internal/app/app.go` — wrap every per-purpose provider in `AuditedProvider` at boot (after US-50.2 wiring)
 - Calling handlers pass context with row identification (table name, row ID) so the audit entry is meaningful
 
 **Acceptance criteria:**
-- Every `RootKeyProvider.Decrypt` call across both former layers produces exactly one `audit_log` row
+- Every `RootKeyProvider.Decrypt` call across both former layers produces exactly one `secret_audit_log` row
 - The audit row contains label, table, row ID, key version, timestamp, success — nothing else
 - A failed decrypt is also logged with `success=false`
 - Audit write is async (buffered writer, same pattern as existing audit); does not block decrypt
