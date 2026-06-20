@@ -32,7 +32,6 @@ export function wsLog(
 ): void {
   const short = workspaceId ? workspaceId.slice(0, 8) : "?";
   const ts = `t=${perfNow().toFixed(1)}ms | wall=${new Date().toISOString()}`;
-  // eslint-disable-next-line no-console
   console.log(
     `[ws-timing] ${event} | ws=${short} | ${ts}${extra ? ` | ${extra}` : ""}`,
   );

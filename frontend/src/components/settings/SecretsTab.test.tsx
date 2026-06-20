@@ -96,7 +96,6 @@ describe("CreateSecretForm – mount_path handling", () => {
 
     await waitFor(() => expect(createMock).toHaveBeenCalled(), { timeout: 10000 });
 
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const callArg = createMock.mock.calls[0]![0] as { metadata?: { mount_path?: string } };
     const sentPath = callArg.metadata?.mount_path ?? "";
 
@@ -123,7 +122,6 @@ describe("CreateSecretForm – mount_path handling", () => {
     await user.click(screen.getByRole("button", { name: "Create Secret" }));
     await waitFor(() => expect(createMock).toHaveBeenCalled(), { timeout: 10000 });
 
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const callArg = createMock.mock.calls[0]![0] as { metadata?: { mount_path?: string } };
     const sentPath = callArg.metadata?.mount_path ?? "";
 
@@ -146,7 +144,6 @@ describe("CreateSecretForm – mount_path handling", () => {
     await user.click(screen.getByRole("button", { name: "Create Secret" }));
     await waitFor(() => expect(createMock).toHaveBeenCalled(), { timeout: 10000 });
 
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const callArg = createMock.mock.calls[0]![0] as { metadata?: { mount_path?: string } };
     const sentPath = callArg.metadata?.mount_path ?? "";
 

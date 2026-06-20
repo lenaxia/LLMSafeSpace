@@ -22,6 +22,9 @@ export function AppShell() {
       }
     }
     mainRef.current?.focus();
+    // matches (useMatches) and the sidebar state object are unstable across renders;
+    // this effect must only re-run on pathname change, so deps are intentionally minimal.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
 
   return (
