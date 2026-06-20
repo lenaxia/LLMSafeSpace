@@ -16,7 +16,7 @@ Write a comprehensive test plan (Epic 52) that fills all identified testing gaps
 
 ### Gap inventory (validated against source)
 
-Counted test files per source file across every package. Key findings: 9 controller source files with no direct tests, 6 relay driver files untested, `api/internal/services/kubernetes/` with 0 tests, `pkg/email/` with 0 tests, 5 cmd binaries with 0 or near-0 tests, inference-relay worker with 1 test file only.
+Counted test files per source file across every package. Key findings: 9 controller source files with no direct tests, 6 relay driver files untested, `api/internal/services/kubernetes/` with 0 tests, `pkg/email/` covered by Epic 49 (#306, 8 tests), 5 cmd binaries with 0 or near-0 tests, inference-relay worker with 1 test file only.
 
 ### Epic design written
 
