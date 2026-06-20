@@ -96,13 +96,24 @@ func (d *AWSDriver) Provision(ctx context.Context, req ProvisionRequest) (*Provi
 		return nil, fmt.Errorf("%w: resolve AMI: %v", ErrConfig, err)
 	}
 
+	// Ensure a security group exists that allows inbound TCP 8080 (the
+	// relay-proxy port) from anywhere. The router (in-cluster) dials relay
+	// VMs via their public IP, so the SG must allow public ingress. Without
+	// this, instances launch with the VPC default SG which blocks external
+	// traffic — the router can never reach the relay-proxy.
+	sgID, err := d.ensureSecurityGroup(ctx, client, region)
+	if err != nil {
+		return nil, fmt.Errorf("%w: ensure security group: %v", ErrConfig, err)
+	}
+
 	// Run instances
 	runOutput, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
-		ImageId:      aws.String(imageID),
-		InstanceType: ec2types.InstanceType(shape),
-		MinCount:     aws.Int32(1),
-		MaxCount:     aws.Int32(1),
-		UserData:     aws.String(req.CloudInit),
+		ImageId:         aws.String(imageID),
+		InstanceType:    ec2types.InstanceType(shape),
+		MinCount:        aws.Int32(1),
+		MaxCount:        aws.Int32(1),
+		UserData:        aws.String(req.CloudInit),
+		SecurityGroupIds: []string{sgID},
 		TagSpecifications: []ec2types.TagSpecification{
 			{
 				ResourceType: ec2types.ResourceTypeInstance,
@@ -238,13 +249,91 @@ func (d *AWSDriver) ListInstances(ctx context.Context, region string) ([]VMInsta
 }
 
 // resolveAMI finds the latest Ubuntu 22.04 ARM64 AMI for the region.
+// ensureSecurityGroup creates or finds a security group named
+// "llmsafespaces-relay-proxy" that allows inbound TCP 8080 from 0.0.0.0/0
+// (the relay-proxy port the router dials). Idempotent — safe to call every
+// provision cycle. Returns the security group ID.
+func (d *AWSDriver) ensureSecurityGroup(ctx context.Context, client *ec2.Client, region string) (string, error) {
+	sgName := "llmsafespaces-relay-proxy"
+
+	// Check if it already exists
+	describeOutput, err := client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+		Filters: []ec2types.Filter{
+			{Name: aws.String("group-name"), Values: []string{sgName}},
+		},
+	})
+	if err == nil && len(describeOutput.SecurityGroups) > 0 {
+		return aws.ToString(describeOutput.SecurityGroups[0].GroupId), nil
+	}
+
+	// Get the default VPC ID
+	vpcOutput, err := client.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{
+		Filters: []ec2types.Filter{
+			{Name: aws.String("isDefault"), Values: []string{"true"}},
+		},
+	})
+	if err != nil || len(vpcOutput.Vpcs) == 0 {
+		return "", fmt.Errorf("find default VPC: %v", err)
+	}
+	vpcID := aws.ToString(vpcOutput.Vpcs[0].VpcId)
+
+	// Create the security group
+	createOutput, err := client.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
+		GroupName:   aws.String(sgName),
+		Description: aws.String("Allow inbound TCP 8080 for LLMSafeSpaces relay-proxy"),
+		VpcId:       aws.String(vpcID),
+		TagSpecifications: []ec2types.TagSpecification{
+			{
+				ResourceType: ec2types.ResourceTypeSecurityGroup,
+				Tags: []ec2types.Tag{
+					{Key: aws.String("managed-by"), Value: aws.String("llmsafespaces-relay")},
+				},
+			},
+		},
+	})
+	if err != nil {
+		// Race condition — another process created it between describe and create.
+		// Re-describe and return.
+		describeOutput2, err2 := client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+			Filters: []ec2types.Filter{
+				{Name: aws.String("group-name"), Values: []string{sgName}},
+			},
+		})
+		if err2 == nil && len(describeOutput2.SecurityGroups) > 0 {
+			return aws.ToString(describeOutput2.SecurityGroups[0].GroupId), nil
+		}
+		return "", fmt.Errorf("create security group: %v", err)
+	}
+
+	sgID := aws.ToString(createOutput.GroupId)
+
+	// Authorize inbound TCP 8080 from anywhere
+	_, err = client.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: aws.String(sgID),
+		IpPermissions: []ec2types.IpPermission{
+			{
+				IpProtocol: aws.String("tcp"),
+				FromPort:   aws.Int32(8080),
+				ToPort:     aws.Int32(8080),
+				IpRanges:   []ec2types.IpRange{{CidrIp: aws.String("0.0.0.0/0")}},
+			},
+		},
+	})
+	if err != nil {
+		// If the rule already exists (DuplicatePolicyViolation), that's fine.
+		return sgID, nil
+	}
+
+	return sgID, nil
+}
+
 func (d *AWSDriver) resolveAMI(ctx context.Context, client *ec2.Client, region string) (string, error) {
 	output, err := client.DescribeImages(ctx, &ec2.DescribeImagesInput{
 		Owners: []string{"099720109477"}, // Canonical
 		Filters: []ec2types.Filter{
 			{
 				Name:   aws.String("name"),
-				Values: []string{"ubuntu/images/hvm-ssd-generic-arm64-ubuntu-jammy-22.04*"},
+				Values: []string{"ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-arm64-server-*"},
 			},
 			{
 				Name:   aws.String("architecture"),

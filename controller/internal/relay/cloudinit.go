@@ -43,6 +43,26 @@ package_update: true
 packages:
   - curl
 write_files:
+  - path: /usr/local/bin/download-relay-proxy.sh
+    content: |
+      #!/bin/sh
+      set -e
+      bin=/usr/local/bin/relay-proxy
+      ok=0
+      for base in {{ range .ArtifactURLs }}{{ . }} {{ end }}; do
+        if curl -fsSL --connect-timeout 10 "$base/{{ .BinaryName }}" -o "$bin"; then
+          echo "{{ .ArtifactSHA256 }}  $bin" | sha256sum -c -
+          chmod +x "$bin"
+          ok=1
+          break
+        fi
+      done
+      if [ "$ok" != "1" ]; then
+        echo "FATAL: could not download/verify relay-proxy from any mirror" >&2
+        exit 1
+      fi
+    permissions: "0755"
+    owner: root:root
   - path: /etc/systemd/system/relay-proxy.service
     content: |
       [Unit]
@@ -61,7 +81,7 @@ write_files:
     permissions: "0644"
     owner: root:root
 runcmd:
-  - sh -c 'set -e; bin=/usr/local/bin/relay-proxy; ok=0; for base in {{ range .ArtifactURLs }}{{ . }} {{ end }}; do if curl -fsSL --connect-timeout 10 "$base/{{ .BinaryName }}" -o "$bin"; then echo "{{ .ArtifactSHA256 }}  $bin" | sha256sum -c - && chmod +x "$bin" && ok=1 && break; fi; done; if [ "$ok" != "1" ]; then echo "FATAL: could not download/verify relay-proxy from any mirror" >&2; exit 1; fi'
+  - /usr/local/bin/download-relay-proxy.sh
   - systemctl enable relay-proxy
   - systemctl start relay-proxy
 `
