@@ -100,4 +100,4 @@ None. PR #308 is open with AI review feedback addressed.
 - `design/stories/epic-52-test-coverage/US-52.11-synthetic-traffic-runner.md` (new)
 - `design/stories/epic-52-test-coverage/US-52.12-second-pass-validation.md` (new)
 - `design/stories/epic-52-test-coverage/second-pass/audit.md` (new)
-- `worklogs/0443_2026-06-20_epic-52-test-coverage-plan.md` (this file)
+- `worklogs/0445_2026-06-20_epic-52-test-coverage-plan.md` (this file)
