@@ -619,12 +619,12 @@ func TestRegister_DevMode_AutoVerifiesAndLoginWorks(t *testing.T) {
 		createdUser.Username = u.Username
 		createdUser.Active = u.Active
 		createdUser.Role = u.Role
-		createdUser.PasswordHash = string(hash) // simulate DB persisting the hash
+		createdUser.PasswordHash = string(hash)
 		return true
 	})).Return(nil).Once()
 	mockDb.On("UpdateUser", ctx, mock.Anything, mock.MatchedBy(func(u types.UserUpdates) bool {
 		if u.EmailVerified != nil {
-			createdUser.EmailVerified = *u.EmailVerified // simulate DB applying the update
+			createdUser.EmailVerified = *u.EmailVerified
 		}
 		return true
 	})).Return(nil).Once()
@@ -646,6 +646,70 @@ func TestRegister_DevMode_AutoVerifiesAndLoginWorks(t *testing.T) {
 	})
 	require.NoError(t, err, "login must succeed after dev-mode auto-verify")
 	assert.NotEmpty(t, loginResp.Token)
+}
+
+// TestRegister_WithVerifier_SendsEmail verifies the production path: when an
+// EmailVerifier is wired (SES), Register creates an unverified account and
+// calls SendVerification.
+func TestRegister_WithVerifier_SendsEmail(t *testing.T) {
+	svc, mockDb, _ := newTestService(t)
+	ctx := context.Background()
+
+	verifier := &fakeVerifier{}
+	svc.SetEmailVerifier(verifier)
+
+	mockDb.On("GetUserByEmail", ctx, "verified@test.com").Return(nil, nil)
+	mockDb.On("CreateUser", ctx, mock.Anything).Return(nil)
+
+	resp, err := svc.Register(ctx, types.RegisterRequest{
+		Username: "produser",
+		Email:    "verified@test.com",
+		Password: "securepassword123",
+	})
+
+	require.NoError(t, err)
+	assert.NotNil(t, resp)
+	assert.False(t, resp.User.EmailVerified, "production register with verifier must leave user unverified")
+	assert.Equal(t, 1, verifier.calls, "SendVerification must be called exactly once")
+	assert.Equal(t, "verified@test.com", verifier.lastEmail)
+}
+
+// TestRegister_WithVerifier_SendFailure_NonFatal verifies that a verification
+// email send failure does NOT abort registration. The user can resend later.
+func TestRegister_WithVerifier_SendFailure_NonFatal(t *testing.T) {
+	svc, mockDb, _ := newTestService(t)
+	ctx := context.Background()
+
+	verifier := &fakeVerifier{err: errors.New("SES down")}
+	svc.SetEmailVerifier(verifier)
+
+	mockDb.On("GetUserByEmail", ctx, "fail@test.com").Return(nil, nil)
+	mockDb.On("CreateUser", ctx, mock.Anything).Return(nil)
+
+	resp, err := svc.Register(ctx, types.RegisterRequest{
+		Username: "failuser",
+		Email:    "fail@test.com",
+		Password: "securepassword123",
+	})
+
+	require.NoError(t, err, "registration must not fail on email send error")
+	assert.NotNil(t, resp)
+	assert.False(t, resp.User.EmailVerified, "user must stay unverified when send fails")
+}
+
+// fakeVerifier implements auth.EmailVerifier for testing.
+type fakeVerifier struct {
+	calls     int
+	lastID    string
+	lastEmail string
+	err       error
+}
+
+func (f *fakeVerifier) SendVerification(_ context.Context, userID, email string) error {
+	f.calls++
+	f.lastID = userID
+	f.lastEmail = email
+	return f.err
 }
 
 // TestRegister_FirstUserBecomesAdmin verifies that the first user registered

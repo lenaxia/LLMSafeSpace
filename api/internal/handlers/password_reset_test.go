@@ -376,6 +376,103 @@ func TestPasswordReset_Confirm_ConsumeError_DBTransient_500(t *testing.T) {
 		"DB transient error during consume must return 500, not 410")
 }
 
+func TestPasswordReset_Confirm_KeyInitFailure_500(t *testing.T) {
+	store := newMemTokenStore()
+	tokenHash := hashTokenForTest("keyinit-fail-token")
+	store.tokens[tokenHash] = &types.EmailToken{
+		ID:        "tok-7",
+		UserID:    "user-1",
+		Kind:      "password_reset",
+		TokenHash: tokenHash,
+		ExpiresAt: time.Now().Add(10 * time.Minute),
+	}
+
+	keyInit := &memKeyInit{initErr: errors.New("key service unavailable")}
+	users := newMemUserStore()
+	users.users["user-1@test.com"] = &memUser{id: "user-1", email: "user-1@test.com"}
+	users.emailVer["user-1"] = true
+
+	h := NewPasswordResetHandler(store, users, keyInit, &memPwUpdater{}, &memSessionRevoker{}, emailsvc.NewService(&fakeEmailProvider{}, "", ""), nil)
+	router := setupPasswordResetRouter(h)
+
+	w := doRequest(router, http.MethodPost, "/api/v1/auth/password-reset/confirm",
+		`{"token":"keyinit-fail-token","newPassword":"newpass123"}`)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestPasswordReset_Confirm_BcryptUpdateFailure_500(t *testing.T) {
+	store := newMemTokenStore()
+	tokenHash := hashTokenForTest("bcrypt-fail-token")
+	store.tokens[tokenHash] = &types.EmailToken{
+		ID:        "tok-8",
+		UserID:    "user-1",
+		Kind:      "password_reset",
+		TokenHash: tokenHash,
+		ExpiresAt: time.Now().Add(10 * time.Minute),
+	}
+
+	pwUp := &memPwUpdater{err: errors.New("db write failed")}
+
+	h := NewPasswordResetHandler(store, newMemUserStore(), &memKeyInit{recoverK: "k"}, pwUp, &memSessionRevoker{}, emailsvc.NewService(&fakeEmailProvider{}, "", ""), nil)
+	router := setupPasswordResetRouter(h)
+
+	w := doRequest(router, http.MethodPost, "/api/v1/auth/password-reset/confirm",
+		`{"token":"bcrypt-fail-token","newPassword":"newpass123"}`)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestPasswordReset_Request_DBError_NoEnumeration(t *testing.T) {
+	// GetUserByEmail error must return 202 (not 500) to avoid enumeration.
+	// The handler logs the error but returns 202.
+	users := newMemUserStore()
+	// Override GetUserByEmail to return an error
+	users2 := &erroringUserStore{memUserStore: users}
+
+	h := NewPasswordResetHandler(newMemTokenStore(), users2, &memKeyInit{}, &memPwUpdater{}, &memSessionRevoker{}, emailsvc.NewService(&fakeEmailProvider{}, "", ""), nil)
+	router := setupPasswordResetRouter(h)
+
+	w := doRequest(router, http.MethodPost, "/api/v1/auth/password-reset/request", `{"email":"alice@test.com"}`)
+	assert.Equal(t, http.StatusAccepted, w.Code, "DB lookup error must still return 202 (no enumeration)")
+}
+
+func TestPasswordReset_Request_BodyTooLarge_Rejected(t *testing.T) {
+	h := NewPasswordResetHandler(newMemTokenStore(), newMemUserStore(), &memKeyInit{}, &memPwUpdater{}, &memSessionRevoker{}, emailsvc.NewService(&fakeEmailProvider{}, "", ""), nil)
+	router := setupPasswordResetRouter(h)
+
+	// Body > 1 MiB must be rejected
+	big := strings.Repeat("x", 2*1024*1024)
+	w := doRequest(router, http.MethodPost, "/api/v1/auth/password-reset/request", `{"email":"`+big+`@"}`)
+	// Gin binding will fail (not a valid email or body too large) → 400
+	assert.True(t, w.Code == http.StatusBadRequest || w.Code == http.StatusRequestEntityTooLarge,
+		"oversized body must be rejected, got %d", w.Code)
+}
+
+func TestEmailVerifierAdapter_StoreError(t *testing.T) {
+	store := &memTokenStore{createErr: errors.New("db unavailable")}
+	adapter := NewEmailVerifierAdapter(store, emailsvc.NewService(&fakeEmailProvider{}, "", ""), "https://app.test")
+	err := adapter.SendVerification(context.Background(), "user-1", "alice@test.com")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "store verify token")
+}
+
+func TestEmailVerifierAdapter_EmailSendError(t *testing.T) {
+	store := newMemTokenStore()
+	fp := &fakeEmailProvider{err: errors.New("ses down")}
+	adapter := NewEmailVerifierAdapter(store, emailsvc.NewService(fp, "https://app.test", "ses"), "https://app.test")
+	err := adapter.SendVerification(context.Background(), "user-1", "alice@test.com")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "send verify email")
+}
+
+// erroringUserStore wraps memUserStore to inject a DB error on GetUserByEmail.
+type erroringUserStore struct {
+	*memUserStore
+}
+
+func (s *erroringUserStore) GetUserByEmail(_ context.Context, _ string) (*types.User, error) {
+	return nil, errors.New("db unavailable")
+}
+
 func hashTokenForTest(token string) string {
 	return hashToken(token)
 }

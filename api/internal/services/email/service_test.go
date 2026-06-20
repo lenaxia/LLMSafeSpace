@@ -76,6 +76,42 @@ func TestSend_PropagatesProviderError(t *testing.T) {
 	assert.Contains(t, err.Error(), "ses down")
 }
 
+func TestSendPasswordReset_NilProvider_ErrNotConfigured(t *testing.T) {
+	svc := NewService(nil, "https://app.test", "ses")
+	err := svc.SendPasswordReset(context.Background(), "alice@test.com", "tok")
+	assert.ErrorIs(t, err, ErrNotConfigured)
+}
+
+func TestSendPasswordChanged_NilProvider_ErrNotConfigured(t *testing.T) {
+	svc := NewService(nil, "https://app.test", "ses")
+	err := svc.SendPasswordChanged(context.Background(), "alice@test.com")
+	assert.ErrorIs(t, err, ErrNotConfigured)
+}
+
+func TestSendEmailVerification_NilProvider_ErrNotConfigured(t *testing.T) {
+	svc := NewService(nil, "https://app.test", "ses")
+	err := svc.SendEmailVerification(context.Background(), "bob@test.com", "tok")
+	assert.ErrorIs(t, err, ErrNotConfigured)
+}
+
+func TestSendEmailVerification_ExplainsExpiry(t *testing.T) {
+	svc, fp := newSvc()
+	err := svc.SendEmailVerification(context.Background(), "bob@test.com", "tok")
+	require.NoError(t, err)
+	assert.Contains(t, fp.last.TextBody, "24 hours", "verification email must state 24h expiry")
+}
+
+func TestSendEmailVerification_BuildsCorrectLink(t *testing.T) {
+	svc, fp := newSvc()
+	token := "xyz789verify"
+	err := svc.SendEmailVerification(context.Background(), "bob@test.com", token)
+	require.NoError(t, err)
+	require.NotNil(t, fp.last)
+	assert.Equal(t, "bob@test.com", fp.last.To)
+	assert.Contains(t, fp.last.TextBody, "https://app.test/verify-email?token="+token)
+	assert.Contains(t, fp.last.HTMLBody, "https://app.test/verify-email?token="+token)
+}
+
 func TestSendPasswordReset_BuildsCorrectLink(t *testing.T) {
 	svc, fp := newSvc()
 	token := "abc123reset"
