@@ -257,7 +257,7 @@ func TestValidation_ArrayDive(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code, "invalid array element should fail dive validation")
 }
 
-func TestValidation_ArrayMinConstraint(t *testing.T) {
+func TestValidation_ArrayMaxConstraint(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.POST("/test", func(c *gin.Context) {
@@ -298,6 +298,3 @@ func TestValidation_ValidNestedObject(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code, "valid nested structure should pass")
 }
-
-// Ensure json import is used (used in parseResponse).
-var _ = json.NewEncoder

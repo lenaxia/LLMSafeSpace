@@ -59,6 +59,32 @@ go test -race ./api/internal/middleware/tests/...  # ok (all tests pass)
 
 ---
 
+## Key Decisions
+
+1. **funlen threshold 350, not 60.** app.New (502 lines) is inherently sequential service initialization that resists decomposition without a 20-field return struct. registerWorkspaceRoutes (267 lines) is declarative route registration. Setting 60 would require massive plumbing for zero clarity gain. 350 catches new violations while grandfathering these two with documented `//nolint`.
+
+2. **Extracted checkProxyQuota from proxyToWorkspaceWithErrBody.** Reduces the proxy function's cyclomatic complexity from 70→67 by moving the quota-gating logic (6 branches) into a testable helper. The canary workspace bypass is preserved and covered by a regression test.
+
+3. **Swallowed errors fixed with log.Warn, not return err.** The sites are best-effort side-effects (audit logging, session metadata propagation, cache writes). Returning the error would change control flow — the correct fix is observability (log) without behavior change.
+
+4. **MISSINGTESTS.md item 3 partially complete.** Nested error chains and large payloads are tested; concurrent error handling remains a gap (requires goroutine-safety assertions specific to the error handler's implementation).
+
+---
+
+## Blockers
+
+None.
+
+---
+
+## Next Steps
+
+- Continue tightening funlen/gocyclo thresholds: 350→200→100→60 over future PRs
+- Add concurrent error handler tests (MISSINGTESTS item 3 remaining gap)
+- Audit remaining `_ =` sites in controller/ and cmd/ (lower priority — mostly defer Close and signal patterns)
+
+---
+
 ## Files Modified
 
 - `.golangci.yml` — thresholds lowered (funlen 520→350, gocyclo 75→65)
