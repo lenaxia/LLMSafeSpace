@@ -497,9 +497,11 @@ func decodeMasterMaterial(raw string) []byte {
 //
 // Each file holds a single value — the key material as either hex (>=64 chars)
 // or raw bytes (>=32 bytes), whitespace-trimmed. Files that are missing or
-// unreadable are skipped; a file that is present but decodes below the 32-byte
-// minimum is INCLUDED as a short entry so validateMasterSecret can report the
-// precise "too short" diagnostic rather than a misleading "no readable file".
+// unreadable are skipped. A file that is PRESENT but decodes to fewer than 32
+// bytes (including empty/whitespace-only content) is INCLUDED as a short or
+// nil entry so validateMasterSecret can report the precise diagnostic and the
+// system fails closed — never silently continuing with an earlier key during a
+// rotation window where the active file was mis-mounted.
 //
 // Returns nil when the env var is unset. Side-effect-free (no logging):
 // validateMasterSecret in app.go is responsible for startup diagnostics.
@@ -517,9 +519,10 @@ func loadMasterSecretMaterials() [][]byte {
 		if err != nil {
 			continue // missing/unreadable file: skip (validateMasterSecret reports the empty result)
 		}
-		if m := decodeMasterRaw(strings.TrimSpace(string(data))); m != nil {
-			out = append(out, m)
-		}
+		// Always append the decoded material, even when nil (empty file): presence
+		// must be preserved so an empty/short active file fails closed at validation
+		// rather than being silently dropped (which would fall back to an earlier key).
+		out = append(out, decodeMasterRaw(strings.TrimSpace(string(data))))
 	}
 	return out
 }

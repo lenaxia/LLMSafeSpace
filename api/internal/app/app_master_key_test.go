@@ -10,6 +10,7 @@ import (
 
 	"github.com/lenaxia/llmsafespaces/api/internal/config"
 	"github.com/lenaxia/llmsafespaces/api/internal/logger"
+	"github.com/stretchr/testify/require"
 )
 
 // ---- deriveServerKey tests ----
@@ -603,5 +604,44 @@ func TestDeriveServerKey_MultiFile_ActiveShortFailsClosed(t *testing.T) {
 
 	if key := deriveServerKey("test-purpose"); key != nil {
 		t.Errorf("deriveServerKey must return nil when the active file is too short, got %d bytes", len(key))
+	}
+}
+
+// TestValidateMasterSecret_MultiFile_BotchedRotation_ActiveEmptyFails (US-50.1):
+// the active (last) file is empty (e.g. mis-mounted Secret key) while an
+// earlier file is valid. Must fail closed rather than silently using the old
+// key — the loader preserves presence so validation rejects the empty material.
+func TestValidateMasterSecret_MultiFile_BotchedRotation_ActiveEmptyFails(t *testing.T) {
+	tmpDir := t.TempDir()
+	goodFile := tmpDir + "/master-old"
+	emptyFile := tmpDir + "/master-new"
+	writeFileHelper(t, goodFile, "abcdefghijklmnopqrstuvwxyz012345")   // valid (earlier/old)
+	require.NoError(t, os.WriteFile(emptyFile, []byte("   \n"), 0600)) // empty/whitespace (active/last — botched mount)
+
+	clearMasterSecretSources(t)
+	t.Setenv(masterSecretFileEnv, goodFile+":"+emptyFile)
+
+	log, _ := logger.NewObserved()
+	err := validateMasterSecret(log)
+	if err == nil {
+		t.Fatal("expected error when the active (last) rotation file is empty")
+	}
+}
+
+// TestDeriveServerKey_MultiFile_ActiveEmptyFailsClosed (US-50.1): an empty
+// active file must NOT silently fall back to an earlier key; deriveServerKey
+// returns nil (fails closed).
+func TestDeriveServerKey_MultiFile_ActiveEmptyFailsClosed(t *testing.T) {
+	tmpDir := t.TempDir()
+	goodFile := tmpDir + "/master-old"
+	emptyFile := tmpDir + "/master-new"
+	writeFileHelper(t, goodFile, "abcdefghijklmnopqrstuvwxyz012345")
+	require.NoError(t, os.WriteFile(emptyFile, nil, 0600))
+
+	clearMasterSecretSources(t)
+	t.Setenv(masterSecretFileEnv, goodFile+":"+emptyFile)
+
+	if key := deriveServerKey("test-purpose"); key != nil {
+		t.Errorf("deriveServerKey must return nil when the active file is empty, got %d bytes", len(key))
 	}
 }
