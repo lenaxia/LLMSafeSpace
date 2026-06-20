@@ -108,11 +108,11 @@ func (d *AWSDriver) Provision(ctx context.Context, req ProvisionRequest) (*Provi
 
 	// Run instances
 	runOutput, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
-		ImageId:         aws.String(imageID),
-		InstanceType:    ec2types.InstanceType(shape),
-		MinCount:        aws.Int32(1),
-		MaxCount:        aws.Int32(1),
-		UserData:        aws.String(req.CloudInit),
+		ImageId:          aws.String(imageID),
+		InstanceType:     ec2types.InstanceType(shape),
+		MinCount:         aws.Int32(1),
+		MaxCount:         aws.Int32(1),
+		UserData:         aws.String(req.CloudInit),
 		SecurityGroupIds: []string{sgID},
 		TagSpecifications: []ec2types.TagSpecification{
 			{
