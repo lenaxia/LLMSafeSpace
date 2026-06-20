@@ -119,6 +119,14 @@ func (v *PodTenantQuotaValidator) Handle(ctx context.Context, req admission.Requ
 // tenantUsage returns (podCount, cpuMillis, memoryMi) for all workspace
 // pods belonging to the given tenant in the given namespace. Only counts
 // pods that are Running or Pending (not Terminated/Succeeded/Failed).
+//
+// NOTE: Usage is scoped to the pod's namespace, not aggregated across all
+// namespaces. For single-namespace deployments (the standard architecture),
+// this is equivalent to per-tenant scoping. For multi-namespace deployments,
+// a tenant could theoretically span namespaces and exceed the aggregate
+// limit. This is accepted given the single-namespace architecture; if
+// multi-namespace is ever adopted, change to a cluster-wide List with
+// the tenant label selector only (drop InNamespace).
 func (v *PodTenantQuotaValidator) tenantUsage(ctx context.Context, tenantID, namespace string) (int, int64, int64, error) {
 	if v.Client == nil {
 		return 0, 0, 0, fmt.Errorf("client not configured")
