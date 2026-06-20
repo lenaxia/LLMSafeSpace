@@ -50,4 +50,32 @@ webhooks:
         resources: ["workspaces"]
         operations: ["CREATE", "UPDATE"]
         scope: Namespaced
+  {{- /* Epic 51 S51.2: per-tenant resource quota webhook on Pod create.
+          Only rendered when any tenant quota limit is configured. */}}
+  {{- if or (gt (int .Values.webhooks.tenantQuota.maxWorkspacesPerTenant) 0) (gt (int .Values.webhooks.tenantQuota.maxCPUMillisPerTenant) 0) (gt (int .Values.webhooks.tenantQuota.maxMemoryMiPerTenant) 0) }}
+  - name: vpodtenantquota.llmsafespaces.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.webhooks.failurePolicy }}
+    timeoutSeconds: {{ .Values.webhooks.timeoutSeconds }}
+    clientConfig:
+      service:
+        name: {{ include "llmsafespaces.fullname" . }}-controller-webhook
+        namespace: {{ .Release.Namespace }}
+        path: /validate-pod-tenant-quota
+        port: 443
+    rules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+        operations: ["CREATE"]
+        scope: Namespaced
+    # Only intercept workspace pods (those carrying the tenant label).
+    # matchExpressions:Exists is sufficient — matchLabels with "" would
+    # never match real pods (sanitizeLabelValue never produces "").
+    objectSelector:
+      matchExpressions:
+        - key: llmsafespaces.dev/tenant
+          operator: Exists
+  {{- end }}
 {{- end }}
