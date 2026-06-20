@@ -159,4 +159,4 @@ Refactored `loadConfig()` → `loadConfig(args []string) (config, error)` using 
 - `worklogs/0437_2026-06-20_fix-relay-proxy-upstream-flag.md`
 - `worklogs/0438_2026-06-20_fix-relay-listen-address-per-vm.md`
 - `worklogs/0439_2026-06-20_workspace-relay-router-wiring.md`
-- `worklogs/0454_2026-06-20_relay-fleet-audit-a23-revert-wiring.md` (this entry)
+- `worklogs/0457_2026-06-20_relay-fleet-audit-a23-revert-wiring.md` (this entry)
