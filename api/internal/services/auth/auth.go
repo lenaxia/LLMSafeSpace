@@ -726,7 +726,9 @@ func (s *Service) Register(ctx context.Context, req types.RegisterRequest) (*typ
 		user.EmailVerified = false
 	} else {
 		verified := true
-		_ = s.dbService.UpdateUser(ctx, userID, types.UserUpdates{EmailVerified: &verified})
+		if err := s.dbService.UpdateUser(ctx, userID, types.UserUpdates{EmailVerified: &verified}); err != nil {
+			s.logger.Error("Register: failed to persist email_verified", err, "user_id", userID)
+		}
 		user.EmailVerified = true
 	}
 

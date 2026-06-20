@@ -13,17 +13,16 @@ import (
 	"strings"
 	"time"
 
-	emailsvc "github.com/lenaxia/llmsafespaces/api/internal/services/email"
-	"github.com/lenaxia/llmsafespaces/api/internal/services/database"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/database"
+	emailsvc "github.com/lenaxia/llmsafespaces/api/internal/services/email"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 const (
 	emailVerifyTokenBytes = 32
 	emailVerifyTokenTTL   = 24 * time.Hour
-	emailVerifyMinEmail   = 1
 )
 
 // emailTokenStore is the data-access surface for email tokens (shared with

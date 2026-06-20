@@ -579,6 +579,9 @@ func TestRegister_Success(t *testing.T) {
 	mockDb.On("CreateUser", ctx, mock.MatchedBy(func(u *types.User) bool {
 		return u.Email == "new@example.com" && u.Username == "newuser" && u.PasswordHash != "" && u.Active && u.Role == "user"
 	})).Return(nil)
+	// US-49.6: Register auto-verifies in dev mode (no email verifier wired)
+	// by calling UpdateUser to persist email_verified=true.
+	mockDb.On("UpdateUser", ctx, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	resp, err := svc.Register(ctx, types.RegisterRequest{
 		Username: "newuser",
@@ -591,8 +594,58 @@ func TestRegister_Success(t *testing.T) {
 	assert.NotEmpty(t, resp.Token, "response must include a JWT")
 	assert.Equal(t, "newuser", resp.User.Username)
 	assert.Equal(t, "new@example.com", resp.User.Email)
+	assert.True(t, resp.User.EmailVerified, "dev-mode register must auto-verify")
 	assert.Empty(t, resp.User.PasswordHash, "password hash must not be in response")
 	mockDb.AssertExpectations(t)
+}
+
+// TestRegister_DevMode_AutoVerifiesAndLoginWorks is the end-to-end regression
+// test for the login-gate model: Register without an email verifier (dev mode)
+// → email_verified persisted → Login succeeds. Catches the bug where Register
+// set the in-memory flag but never persisted to DB, locking the user out.
+func TestRegister_DevMode_AutoVerifiesAndLoginWorks(t *testing.T) {
+	svc, mockDb, _ := newTestService(t)
+	ctx := context.Background()
+
+	hash, _ := bcrypt.GenerateFromPassword([]byte("securepassword123"), bcrypt.DefaultCost)
+
+	// Register creates the user with email_verified=false in CreateUser,
+	// then Register auto-verifies via UpdateUser (dev mode, no verifier).
+	createdUser := &types.User{EmailVerified: false}
+	mockDb.On("GetUserByEmail", ctx, "e2e@test.com").Return(nil, nil).Once()
+	mockDb.On("CreateUser", ctx, mock.MatchedBy(func(u *types.User) bool {
+		createdUser.ID = u.ID
+		createdUser.Email = u.Email
+		createdUser.Username = u.Username
+		createdUser.Active = u.Active
+		createdUser.Role = u.Role
+		createdUser.PasswordHash = string(hash) // simulate DB persisting the hash
+		return true
+	})).Return(nil).Once()
+	mockDb.On("UpdateUser", ctx, mock.Anything, mock.MatchedBy(func(u types.UserUpdates) bool {
+		if u.EmailVerified != nil {
+			createdUser.EmailVerified = *u.EmailVerified // simulate DB applying the update
+		}
+		return true
+	})).Return(nil).Once()
+
+	regResp, err := svc.Register(ctx, types.RegisterRequest{
+		Username: "e2euser",
+		Email:    "e2e@test.com",
+		Password: "securepassword123",
+	})
+	require.NoError(t, err)
+	assert.True(t, regResp.User.EmailVerified, "register response must show verified in dev mode")
+
+	// Now login — must succeed because email_verified was persisted.
+	mockDb.On("GetUserByEmail", ctx, "e2e@test.com").Return(createdUser, nil).Once()
+
+	loginResp, err := svc.Login(ctx, types.LoginRequest{
+		Email:    "e2e@test.com",
+		Password: "securepassword123",
+	})
+	require.NoError(t, err, "login must succeed after dev-mode auto-verify")
+	assert.NotEmpty(t, loginResp.Token)
 }
 
 // TestRegister_FirstUserBecomesAdmin verifies that the first user registered
@@ -613,6 +666,7 @@ func TestRegister_FirstUserBecomesAdmin(t *testing.T) {
 		u := args.Get(1).(*types.User)
 		u.Role = "admin"
 	}).Return(nil)
+	mockDb.On("UpdateUser", ctx, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	resp, err := svc.Register(ctx, types.RegisterRequest{
 		Username: "founder",
@@ -637,6 +691,7 @@ func TestRegister_SubsequentUsersAreNotAdmin(t *testing.T) {
 	mockDb.On("CreateUser", ctx, mock.MatchedBy(func(u *types.User) bool {
 		return u.Email == "second@example.com" && u.Role == "user"
 	})).Return(nil)
+	mockDb.On("UpdateUser", ctx, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	resp, err := svc.Register(ctx, types.RegisterRequest{
 		Username: "regular",
