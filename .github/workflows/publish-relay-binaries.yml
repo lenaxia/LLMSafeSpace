@@ -1,0 +1,82 @@
+name: Publish Relay Proxy Binaries
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag name (defaults to sha-derived)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    name: Build + Publish Relay Proxy Binaries
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build binaries
+        run: |
+          mkdir -p deploy
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o deploy/relay-proxy-arm64 ./cmd/relay-proxy/
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o deploy/relay-proxy-amd64 ./cmd/relay-proxy/
+
+      - name: Generate checksums
+        run: |
+          cd deploy
+          sha256sum relay-proxy-arm64 relay-proxy-amd64 > checksums.txt
+          cat checksums.txt
+
+      - name: Determine tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=v0.0.0-dev-$(echo $GITHUB_SHA | cut -c1-8)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create release + upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: Relay Proxy ${{ steps.tag.outputs.name }}
+          body: |
+            Relay proxy binaries for the multi-cloud inference relay fleet (Epic 42).
+
+            ## Usage
+
+            Set `controller.inferenceRelay.artifact.urls` in Helm values to the
+            download URL for this release, and `sha256Arm64`/`sha256Amd64` from
+            `checksums.txt` below.
+
+            ```yaml
+            controller:
+              inferenceRelay:
+                enabled: true
+                artifact:
+                  urls:
+                    - "https://github.com/lenaxia/LLMSafeSpaces/releases/download/${{ steps.tag.outputs.name }}"
+                  sha256Arm64: "<from checksums.txt>"
+                  sha256Amd64: "<from checksums.txt>"
+            ```
+          files: |
+            deploy/relay-proxy-arm64
+            deploy/relay-proxy-amd64
+            deploy/checksums.txt
+          prerelease: ${{ startsWith(steps.tag.outputs.name, 'v0.0.0-dev') }}
