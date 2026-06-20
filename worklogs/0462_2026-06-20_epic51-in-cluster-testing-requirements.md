@@ -211,27 +211,44 @@ kubectl -n <ns> exec tenant-a-ws-pod -- curl -sS --connect-timeout 5 http://<api
 
 ### 6. gVisor opt-out via spec.runtimeClass (AC2)
 
+**Note:** The controller reads `spec.runtimeClass` at pod creation time only — there is no drift detection in `phase_active.go` that recreates a pod when `runtimeClass` changes. Patching an Active workspace won't take effect until the pod is recreated (suspend + resume, or delete the pod and let the controller rebuild). The test below creates the workspace with the opt-out set from the start.
+
 **Test:**
 ```bash
-# With gvisor.enabled=true (default RuntimeClass is gvisor):
-# Create a workspace that opts out:
-llmspaces create --runtime python:3.12 --name optout-test
-# Patch the workspace CRD to set spec.runtimeClass: "runc":
-kubectl patch workspace optout-test --type=merge -p '{"spec":{"runtimeClass":"runc"}}'
+# With gvisor.enabled=true (default RuntimeClass is gvisor).
+# Create a workspace with the opt-out set via CRD:
+cat <<'EOF' | kubectl apply -f -
+apiVersion: llmsafespaces.dev/v1
+kind: Workspace
+metadata:
+  name: optout-test
+  namespace: <ns>
+  labels:
+    app: llmsafespaces
+    user-id: <user-id>
+spec:
+  owner:
+    userID: "<user-id>"
+  runtime: "python:3.12"
+  storage:
+    size: "5Gi"
+  runtimeClass: "runc"
+EOF
 
+# Wait for the workspace to reach Active.
 # Verify the pod runs under runc, not gVisor:
 kubectl get pod -n <ns> -l llmsafespaces.dev/workspace=optout-test -o jsonpath='{.items[0].spec.runtimeClassName}'
 # Expected: runc (the controller sets RuntimeClassName to the explicit
-# value "runc" from spec.runtimeClass — not cleared/empty)
+# value "runc" from spec.runtimeClass)
 
-# Verify the workspace still functions:
+# Verify the workspace functions:
 kubectl exec -n <ns> <optout-pod> -- python -c "print('hello from runc')"
 ```
 
 **Pass criteria:**
-- Opt-out workspace's pod has `runtimeClassName: runc` (explicitly set by the controller, not cleared).
+- Opt-out workspace's pod has `runtimeClassName: runc` (explicitly set by the controller from `spec.runtimeClass`).
 - Workspace functions normally under runc.
-- Non-opted-out workspaces still run under gVisor.
+- Non-opted-out workspaces (created without `spec.runtimeClass`) still run under gVisor.
 
 ---
 
