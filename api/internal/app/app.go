@@ -957,7 +957,8 @@ func validateMasterSecret(log *logger.Logger) error {
 					"verify the mounted Secret volume; refusing to start without a DEK encryption key",
 				masterSecretFileEnv, fileEnv)
 		}
-		// activeMasterSecret returns the highest-version material; validate its length.
+		// The active material is the highest version (last file per the US-50.4
+		// rotation-window convention); validate its length.
 		active := materials[len(materials)-1]
 		if len(active) < 32 {
 			log.Warn("master KEK file material is too short for AES-256-GCM",
@@ -970,11 +971,11 @@ func validateMasterSecret(log *logger.Logger) error {
 		// is unused at runtime (the file wins) but still exposes the KEK value in
 		// /proc/1/environ, defeating H1. Operators should remove it. Check BOTH
 		// legacy var names so a migration from either is flagged.
-		if v := os.Getenv(masterSecretValueEnv); v != "" {
+		if os.Getenv(masterSecretValueEnv) != "" {
 			log.Warn("LLMSAFESPACES_MASTER_SECRET env var is set but ignored because the file mount takes precedence; remove it to avoid exposing the KEK in /proc/1/environ",
 				"source", masterSecretFileEnv)
 		}
-		if v := os.Getenv(masterSecretLegacyEnv); v != "" {
+		if os.Getenv(masterSecretLegacyEnv) != "" {
 			log.Warn("LLMSAFESPACES_DEK_MASTER_KEY env var is set but ignored because the file mount takes precedence; remove it to avoid exposing the KEK in /proc/1/environ",
 				"source", masterSecretFileEnv)
 		}
