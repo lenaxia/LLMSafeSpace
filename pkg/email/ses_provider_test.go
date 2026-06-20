@@ -79,7 +79,7 @@ func TestSESProvider_Send_CancelledContext(t *testing.T) {
 		To:      "alice@test.com",
 		Subject: "test",
 	})
-	require.Error(t, err, "cancelled context must produce an error")
+	require.Error(t, err, "canceled context must produce an error")
 }
 
 func TestSESProvider_Send_5xxError_Wrapped(t *testing.T) {
