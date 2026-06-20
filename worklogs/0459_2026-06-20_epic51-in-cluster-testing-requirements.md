@@ -218,14 +218,15 @@ kubectl patch workspace optout-test --type=merge -p '{"spec":{"runtimeClass":"ru
 
 # Verify the pod runs under runc, not gVisor:
 kubectl get pod -n <ns> -l llmsafespaces.dev/workspace=optout-test -o jsonpath='{.items[0].spec.runtimeClassName}'
-# Expected: runc (or empty — the controller clears RuntimeClassName when runtimeClass is "runc")
+# Expected: runc (the controller sets RuntimeClassName to the explicit
+# value "runc" from spec.runtimeClass — not cleared/empty)
 
 # Verify the workspace still functions:
 kubectl exec -n <ns> <optout-pod> -- python -c "print('hello from runc')"
 ```
 
 **Pass criteria:**
-- Opt-out workspace's pod has `runtimeClassName: runc` (or unset).
+- Opt-out workspace's pod has `runtimeClassName: runc` (explicitly set by the controller, not cleared).
 - Workspace functions normally under runc.
 - Non-opted-out workspaces still run under gVisor.
 
@@ -233,26 +234,30 @@ kubectl exec -n <ns> <optout-pod> -- python -c "print('hello from runc')"
 
 ### 7. Quota webhook fail-open behavior
 
+**Note:** This test validates Kubernetes-level `failurePolicy` behavior (what happens when the webhook endpoint is unreachable). This is distinct from the handler-level fail-open in `PodTenantQuotaValidator.Handle()` (which returns `Allowed` when the client.List call errors — tested in unit tests, not reproducible here). Scaling the controller tests whether the API server respects `failurePolicy: Fail` (the chart default) when the webhook server is down.
+
 **Test:**
 ```bash
 # Deploy with quota enabled.
-# Scale the controller to 0 replicas (simulating webhook unavailability):
+# Scale the controller to 0 replicas (makes the webhook endpoint unreachable):
 kubectl scale deploy -n <ns> <release>-controller --replicas=0
 
 # Attempt to create a workspace:
-# Expected: creation SUCCEEDS (webhook fails open — failurePolicy or handler error returns allowed)
-# OR: creation FAILS with a webhook timeout (if failurePolicy: Fail)
-# Document which behavior is expected and verify it matches.
+# Expected: creation FAILS — the chart defaults to failurePolicy: Fail,
+# so the API server rejects the pod create when the webhook endpoint
+# is unreachable (connection refused / timeout). This is the secure
+# default: no workspaces created while the controller is down.
 
 # Scale controller back up:
 kubectl scale deploy -n <ns> <release>-controller --replicas=1
+
+# Verify workspace creation works again after recovery.
 ```
 
 **Pass criteria:**
-- Behavior matches the documented failurePolicy (`Fail` by default → workspace creation fails when webhook is down; this is the secure default).
+- With `failurePolicy: Fail` (default): workspace creation fails while the controller is down. This is the secure default — no workspaces created while the webhook is unavailable.
 - After controller recovery, workspace creation works again.
-
-**Note:** This is a trade-off test. `failurePolicy: Fail` means the webhook is on the critical path — if the controller is down, no new workspaces can be created. If this is unacceptable for production, consider `failurePolicy: Ignore` for the quota webhook only (different from the workspace validation webhook, which should stay `Fail`).
+- If operators need workspaces to be creatable during controller outages, they can set `failurePolicy: Ignore` for the quota webhook only (the workspace validation webhook should remain `Fail`). Document this trade-off.
 
 ---
 
