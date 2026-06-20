@@ -153,7 +153,12 @@ type WorkspaceSpec struct {
 	// to disable the default gVisor sandbox for workloads incompatible with
 	// gVisor (ptrace debuggers, certain seccomp filters). Empty means use
 	// the controller's DefaultRuntimeClass (typically "gvisor" in production,
-	// empty/runc in dev). This field is admin-gated, not tenant-selectable.
+	// empty/runc in dev).
+	//
+	// Enforcement: webhook validation to prevent tenants from setting this
+	// field via direct kubectl is deferred to S51.2. Today the API's
+	// CreateWorkspaceRequest does not expose the field (mitigating the API
+	// path), but direct kubectl users can set it.
 	RuntimeClass *string `json:"runtimeClass,omitempty"`
 
 	// AutoApprovePermissions controls whether permission requests from the agent

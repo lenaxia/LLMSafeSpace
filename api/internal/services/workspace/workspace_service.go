@@ -859,16 +859,19 @@ func buildWorkspaceCRD(workspaceID, userID string, req types.CreateWorkspaceRequ
 	}
 
 	// Epic 51 S51.3: tenant label for quota enforcement + audit attribution.
-	// tenant_id = org_id if set (Design 0031 D4), else user_id.
+	// tenantID = orgID if set (Design 0031 D4), else userID.
 	tenantIDVal := userID
 	if owner.OrgID != "" {
 		tenantIDVal = owner.OrgID
 	}
-	labels["llmsafespaces.dev/tenant"] = tenantIDVal
 
+	// Merge user-supplied labels first, then set system labels — system
+	// labels must always win so users cannot spoof the tenant identity
+	// (which would undermine audit attribution and future quota enforcement).
 	for k, v := range req.Labels {
 		labels[k] = v
 	}
+	labels["llmsafespaces.dev/tenant"] = tenantIDVal
 
 	spec := v1.WorkspaceSpec{
 		Owner: owner,
