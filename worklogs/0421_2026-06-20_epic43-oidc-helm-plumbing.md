@@ -23,9 +23,9 @@ Traced the full per-org OIDC request path and confirmed every layer is wired:
 |---|---|
 | Service construction | `app.go:392` `sso.New(pgOrgStore, dbSvc, ...)` with KEK + state key + issuer |
 | Handler construction | `app.go:405` `NewSSOHandler(ssoSvc, pgOrgStore, svc.GetAuth(), ...)` |
-| Public auth routes | `router.go:195,583-585` (gated by `if ssoHandler != nil`) |
-| Org-admin CRUD routes | `router.go:1170-1175` inside `orgAdminGroup` (OrgAdminGuard at `:1130`) |
-| `/auth/config` flag | `router.go:568-571` `oidcEnabled = ssoHandler.OIDCEnabled(...)` |
+| Public auth routes | `router.go:198,599-601` (gated by `if ssoHandler != nil`) |
+| Org-admin CRUD routes | `router.go:1192-1194` inside `orgAdminGroup` (OrgAdminGuard at `:1150`) |
+| `/auth/config` flag | `router.go:585-586` `oidcEnabled = ssoHandler.OIDCEnabled(...)` |
 | `orgAuthService` iface | `orgs.go:43` satisfied by `auth.Service.GetUserID` (`auth.go:241`) |
 | Store: 6 SSO methods | `pg_org_store.go:1571-1682` |
 | Migration in chart | `charts/llmsafespaces/migrations/000038_*` |
@@ -61,7 +61,7 @@ All three **mutation-validated**: disabling the oidc block via `{{- if false }}`
 
 - **Mirror the `email:` pattern, not invent a new one.** The chart already had a `{{- if .Values.email.enabled }}` configmap guard + values block + comment header. The `oidc:` block follows the same shape for consistency. The only difference: `oidc:` has no `enabled` toggle because the SSO service is always constructed when the state key is available (`app.go:389-407`); the per-org config table being empty is the natural "off" state.
 
-- **`stateCookieName` omitted when empty, not rendered as `""`.** Rendering `stateCookieName: ""` would shadow the Go default (`lsp_sso_state`, `sso.go:132`) via Viper `Unmarshal` — the empty string overwrites the zero value. The `{{- with }}` guard omits the line entirely so Viper leaves the field at zero and the SSO service applies its default.
+- **`stateCookieName` omitted when empty, not rendered as `""`.** Belt-and-suspenders / cleaner-YAML choice, NOT a load-bearing correctness guard. The Go code at `sso.go:130-133` handles empty strings (`if cookieName == "" { cookieName = "lsp_sso_state" }`), so an empty render would still produce a working cookie via fallback. The `{{- with }}` guard omits the line entirely to (a) produce cleaner rendered YAML and (b) not rely on the Go fallback for default behavior. The test `TestOIDC_DefaultRender_OmitsStateCookieName` locks in this design decision against regression to an unconditional render.
 
 ---
 
@@ -71,7 +71,7 @@ All three **mutation-validated**: disabling the oidc block via `{{- if false }}`
 - **A-CHART-GAP: the chart did not template the `oidc:` block or expose `LLMSAFESPACES_OIDC_*` env vars.** **VALIDATED** — `configmap-api.yaml` ended at `email:` (line 64); `api-deployment.yaml:44-86` env list had no `LLMSAFESPACES_OIDC_*` entries; `values.yaml` only mention of OIDC was line 869 (unrelated AWS IRSA pod identity).
 - **A-PLUMBING-ONLY: `cfg.OIDC` only carries plumbing, not IdP config.** **VALIDATED** at `config.go:128-138` — three string fields (`RedirectBaseURL`, `FrontendRedirectURL`, `StateCookieName`), no discovery URL / client ID / secret.
 - **A-PATTERN: the chart pattern to mirror is `email:`.** **VALIDATED** at `configmap-api.yaml:58-64` (guard + values block) and the `TestEmail_*` test suite.
-- **A-VIPER-SHADOW: rendering `stateCookieName: ""` would break the Go default.** **VALIDATED** by code reading — Viper `Unmarshal` into the `OIDC.StateCookieName` string field writes `""` for an empty YAML value, which is distinct from the field being absent (zero value). The SSO service's `if cookieName == ""` check at `sso.go:131` would still apply the default, BUT only if the line is omitted, not if it's rendered as empty. (Actually re-checking `sso.go:130-133`: the Go code does `if cookieName == "" { cookieName = "lsp_sso_state" }` — so an empty string WOULD fall back. The `{{- with }}` guard is therefore belt-and-suspenders: it produces cleaner YAML AND avoids relying on the Go fallback. The test `TestOIDC_DefaultRender_OmitsStateCookieName` locks in the cleaner-YAML choice as a deliberate design decision.)
+- **A-VIPER-SHADOW: rendering `stateCookieName: ""` would shadow the Go default.** **DISPROVED by code reading.** Initial assumption was that an empty YAML value would shadow the Go default via Viper `Unmarshal`. Re-checking `sso.go:130-133`: the Go code does `if cookieName == "" { cookieName = "lsp_sso_state" }` — so an empty string WOULD fall back to the default. The `{{- with }}` guard is therefore belt-and-suspenders (cleaner YAML + not relying on the fallback), not load-bearing. The test `TestOIDC_DefaultRender_OmitsStateCookieName` locks in the cleaner-YAML choice as a deliberate design decision. (This worklog entry and the corresponding test comment were corrected during PR review after the AI reviewer flagged the contradiction — see commit history of this branch.)
 
 ---
 
