@@ -41,13 +41,16 @@ What was NOT tested: anything requiring real compute nodes (gVisor runtime), rea
 **Test:**
 ```bash
 # Create a workspace and verify it schedules under gVisor.
-# The pod's container runtime can be confirmed via:
-kubectl exec -n <ns> <workspace-pod> -- cat /proc/1/status | head -5
-# Under gVisor, /proc/1/status shows "gVisor" in the process name or
-# the kernel version string differs from the host.
-# More reliable: check the pod events for the RuntimeClass:
+# Confirm the RuntimeClass is set on the pod:
 kubectl get pod -n <ns> <workspace-pod> -o jsonpath='{.spec.runtimeClassName}'
 # Expected: gvisor
+# To verify runsc is actually the active runtime (not just the
+# RuntimeClass assignment), check node-level signals:
+# - Pod events may show "runsc" in sandbox creation messages
+# - gVisor's /proc is a synthetic filesystem; compare /proc/version
+#   inside the pod vs the host kernel — they will differ under gVisor
+# - The definitive check: run `dmesg` on the node and look for
+#   runsc log lines (gVisor logs to the node's dmesg by default)
 ```
 
 **Pass criteria:**
@@ -257,7 +260,8 @@ kubectl scale deploy -n <ns> <release>-controller --replicas=1
 **Pass criteria:**
 - With `failurePolicy: Fail` (default): workspace creation fails while the controller is down. This is the secure default — no workspaces created while the webhook is unavailable.
 - After controller recovery, workspace creation works again.
-- If operators need workspaces to be creatable during controller outages, they can set `failurePolicy: Ignore` for the quota webhook only (the workspace validation webhook should remain `Fail`). Document this trade-off.
+
+**Note:** The chart currently uses a single `failurePolicy` value (`webhooks.failurePolicy`, default `Fail`) for ALL three webhooks (runtimeenv, workspace, quota). Changing it to `Ignore` would also weaken the workspace validation webhook (registry allow-list, status forge protection), which is not recommended. If per-webhook failurePolicy is needed in the future (e.g., quota webhook `Ignore` while workspace validation stays `Fail`), the chart's `validating-webhook.yaml` must be refactored to template per-webhook failurePolicy values rather than the shared `webhooks.failurePolicy`. This is a future enhancement, not a current option.
 
 ---
 
