@@ -142,4 +142,4 @@ None.
 - `frontend/src/api/sso.ts` — new types + methods
 - `frontend/src/components/org-admin/OrgSSOTab.tsx` — DomainVerification component
 - `README-LLM.md` — §14 endpoints + known gaps updated, v1.18
-- `worklogs/0441_2026-06-20_epic43-sso-domain-verification.md` — this worklog
+- `worklogs/0442_2026-06-20_epic43-sso-domain-verification.md` — this worklog
