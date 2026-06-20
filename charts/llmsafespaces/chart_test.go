@@ -2749,3 +2749,88 @@ func TestRelayRouter_UpstreamAuth_OmittedWhenSecretEmpty(t *testing.T) {
 		}
 	}
 }
+
+// =============================================================================
+// Epic 43 / US-43.10 — Per-org OIDC SSO instance plumbing (helm surfacing)
+// =============================================================================
+//
+// These tests guard the contract that the OIDC instance-plumbing config
+// (oidc.redirectBaseUrl, oidc.frontendRedirectUrl, oidc.stateCookieName) is
+// rendered into the API ConfigMap from helm values. Pre-fix these were only
+// reachable via LLMSAFESPACES_OIDC_* env vars; in chart-managed deploys
+// oidc.redirectBaseUrl was empty, triggering the F11 header-trust fallback
+// at api/internal/handlers/org_sso.go:245 where the callback URL is derived
+// from X-Forwarded-Proto + Host.
+//
+// IMPORTANT SCOPE: this is instance-*plumbing* (where the IdP redirects back
+// to, where the browser lands). Per-org IdP wiring (discovery URL, client ID,
+// secret, claimed domains, group mapping) lives in org_sso_configs and is
+// configured by org admins via the API — NOT in this chart block.
+//
+// Contracts (each test is designed to turn red if its fix is reverted):
+//   1. Default render includes the oidc: block with redirectBaseUrl="" and
+//      frontendRedirectUrl="". This is the load-bearing assertion: removing
+//      the oidc: section entirely (regressing the F11 fix) makes this test
+//      fail. The empty values are correct — Go treats empty as "derive from
+//      request" (redirectBaseUrl) and "/" (frontendRedirectUrl).
+//   2. Custom operator values flow through verbatim for all three keys.
+//   3. stateCookieName is OMITTED from the default render — the {{- with }}
+//      guard in configmap-api.yaml deliberately omits it when empty, so the
+//      Go default of "lsp_sso_state" (sso.go:132) takes effect. Rendering
+//      stateCookieName: "" would shadow that default with an empty string
+//      via Viper Unmarshal.
+
+// TestOIDC_DefaultRender_IncludesEmptyBlock asserts the oidc: block is
+// rendered by default with empty redirectBaseUrl and frontendRedirectUrl.
+// This is the regression guard for the F11 fix: if the oidc: section is
+// removed from the template, the test fails — forcing the operator back to
+// env-var-only config and the header-trust fallback.
+func TestOIDC_DefaultRender_IncludesEmptyBlock(t *testing.T) {
+	docs := helmTemplate(t, "")
+	cm := findAPIConfigMap(t, docs)
+	require.NotNil(t, cm, "API config ConfigMap must be rendered by default")
+	cfg := configYAML(t, cm)
+	require.Contains(t, cfg, "oidc:",
+		"oidc: block must render by default (F11 fix); config.yaml was:\n%s", cfg)
+	require.Contains(t, cfg, "oidc:\n  redirectBaseUrl: \"\"",
+		"default oidc.redirectBaseUrl must render as empty string; config.yaml was:\n%s", cfg)
+	require.Contains(t, cfg, "frontendRedirectUrl: \"\"",
+		"default oidc.frontendRedirectUrl must render as empty string; config.yaml was:\n%s", cfg)
+}
+
+// TestOIDC_CustomValues_FlowsThrough asserts all three operator-supplied
+// values propagate to the rendered configmap. Guards against a typo'd
+// .Values.oidc.* path or a copy/paste error in the template.
+func TestOIDC_CustomValues_FlowsThrough(t *testing.T) {
+	docs := helmTemplate(t, `oidc:
+  redirectBaseUrl: "https://api.example.com"
+  frontendRedirectUrl: "https://app.example.com"
+  stateCookieName: "custom_sso_state"
+`)
+	cm := findAPIConfigMap(t, docs)
+	require.NotNil(t, cm)
+	cfg := configYAML(t, cm)
+	require.Contains(t, cfg, `redirectBaseUrl: "https://api.example.com"`,
+		"operator oidc.redirectBaseUrl must flow through; config.yaml was:\n%s", cfg)
+	require.Contains(t, cfg, `frontendRedirectUrl: "https://app.example.com"`,
+		"operator oidc.frontendRedirectUrl must flow through; config.yaml was:\n%s", cfg)
+	require.Contains(t, cfg, `stateCookieName: "custom_sso_state"`,
+		"operator oidc.stateCookieName must flow through; config.yaml was:\n%s", cfg)
+}
+
+// TestOIDC_DefaultRender_OmitsStateCookieName asserts the stateCookieName
+// line is NOT present in the default render. The {{- with .Values.oidc.stateCookieName }}
+// guard in configmap-api.yaml deliberately omits the line when empty so
+// Viper Unmarshal leaves the Go field at its zero value, letting the SSO
+// service apply its own default of "lsp_sso_state" (sso.go:132). A
+// regression that rendered stateCookieName: "" would shadow that default
+// with an empty string and break the state cookie.
+func TestOIDC_DefaultRender_OmitsStateCookieName(t *testing.T) {
+	docs := helmTemplate(t, "")
+	cm := findAPIConfigMap(t, docs)
+	require.NotNil(t, cm)
+	cfg := configYAML(t, cm)
+	require.NotContains(t, cfg, "stateCookieName:",
+		"oidc.stateCookieName must be omitted from the default render so the Go default (lsp_sso_state) applies; "+
+			"config.yaml was:\n%s", cfg)
+}
