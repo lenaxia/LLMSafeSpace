@@ -270,12 +270,12 @@ func (h *RelayAdminHandler) GetStatus(c *gin.Context) {
 			State:    inst.State,
 			Healthy:  inst.Healthy,
 			Metrics: instanceMetrics{
-				RequestsToday:    routerMetrics.requestsByProvider[inst.Provider],
-				Requests429Today: routerMetrics.requests429ByProvider[inst.Provider],
+				RequestsToday:    routerMetrics.requestsByRelay[inst.ID],
+				Requests429Today: routerMetrics.requests429ByRelay[inst.ID],
 				TotalRequests:    int64(inst.TotalRequests),
 				EgressBytes:      inst.EgressBytes,
 				EgressLimitBytes: egressLimitForProvider(inst.Provider),
-				ActiveStreams:    routerMetrics.streamsByProvider[inst.Provider],
+				ActiveStreams:    routerMetrics.streamsByRelay[inst.ID],
 			},
 			Cost:               computeCost(inst.Provider, inst.Healthy),
 			LastProvisionError: inst.LastProvisionError,
@@ -617,17 +617,17 @@ func (h *RelayAdminHandler) upsertSecret(ctx context.Context, desired *corev1.Se
 }
 
 type routerMetricsData struct {
-	activeStreams         int64
-	requestsByProvider    map[string]int64
-	requests429ByProvider map[string]int64
-	streamsByProvider     map[string]int64
+	activeStreams      int64
+	requestsByRelay    map[string]int64
+	requests429ByRelay map[string]int64
+	streamsByRelay     map[string]int64
 }
 
 func (h *RelayAdminHandler) scrapeRouterMetrics(ctx context.Context) routerMetricsData {
 	data := routerMetricsData{
-		requestsByProvider:    make(map[string]int64),
-		requests429ByProvider: make(map[string]int64),
-		streamsByProvider:     make(map[string]int64),
+		requestsByRelay:    make(map[string]int64),
+		requests429ByRelay: make(map[string]int64),
+		streamsByRelay:     make(map[string]int64),
 	}
 	url := strings.TrimRight(h.routerSvcURL, "/") + "/metrics"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -647,6 +647,12 @@ func (h *RelayAdminHandler) scrapeRouterMetrics(ctx context.Context) routerMetri
 	return data
 }
 
+// parseRouterMetrics extracts per-relay (per-instance) metrics from the
+// router's Prometheus output. The router emits the relay ID under the
+// "relay" label and the HTTP status under "status" on
+// relay_router_requests_total — there is no separate
+// relay_router_requests_429_total metric. See worklog 0464 for the bug
+// these label names previously did not match.
 func parseRouterMetrics(raw string, data *routerMetricsData) {
 	lines := strings.Split(raw, "\n")
 	for _, line := range lines {
@@ -661,20 +667,27 @@ func parseRouterMetrics(raw string, data *routerMetricsData) {
 		var val int64
 		parseInt(parts[len(parts)-1], &val)
 
-		if strings.HasPrefix(line, "relay_router_active_streams") {
-			data.activeStreams = val
-		}
-		if strings.HasPrefix(line, "relay_router_requests_total{provider=") {
-			provider := extractLabel(line, "provider")
-			data.requestsByProvider[provider] = val
-		}
-		if strings.HasPrefix(line, "relay_router_requests_429_total{provider=") {
-			provider := extractLabel(line, "provider")
-			data.requests429ByProvider[provider] = val
-		}
-		if strings.HasPrefix(line, "relay_router_streams{provider=") {
-			provider := extractLabel(line, "provider")
-			data.streamsByProvider[provider] = val
+		// fallback_active is a global gauge with no labels.
+		// active_streams here is also kept as a global aggregate for the
+		// admin UX summary, computed from the per-relay sum below.
+
+		switch {
+		case strings.HasPrefix(line, "relay_router_active_streams{"):
+			relayID := extractLabel(line, "relay")
+			if relayID == "" {
+				continue
+			}
+			data.streamsByRelay[relayID] = val
+			data.activeStreams += val
+		case strings.HasPrefix(line, "relay_router_requests_total{"):
+			relayID := extractLabel(line, "relay")
+			if relayID == "" {
+				continue
+			}
+			data.requestsByRelay[relayID] += val
+			if extractLabel(line, "status") == "429" {
+				data.requests429ByRelay[relayID] += val
+			}
 		}
 	}
 }

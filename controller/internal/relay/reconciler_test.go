@@ -641,11 +641,11 @@ func TestReconcileFleet_HealthReportApplied(t *testing.T) {
 	// Create a health checker pointing at a mock server
 	metricsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte(`relay_router_relay_healthy{id="existing-vm",provider="oci"} 1
-relay_router_active_streams{id="existing-vm",provider="oci"} 5
-relay_router_requests_total{id="existing-vm",provider="oci"} 9999
-relay_router_requests_429_total{id="existing-vm",provider="oci"} 7
-relay_router_relay_egress_bytes{id="existing-vm",provider="oci"} 123456789
+		w.Write([]byte(`relay_router_relay_healthy{relay="existing-vm"} 1
+relay_router_active_streams{relay="existing-vm"} 5
+relay_router_requests_total{relay="existing-vm",status="200"} 9992
+relay_router_requests_total{relay="existing-vm",status="429"} 7
+relay_router_relay_egress_bytes{relay="existing-vm"} 123456789
 relay_router_fallback_active 0
 `))
 	}))
