@@ -66,7 +66,7 @@ func TestSyncPeerConfigMap_ContainsEndpointAndToken(t *testing.T) {
 	peers := []PeerEntry{
 		{ID: "aws-1", Endpoint: "203.0.113.10:8080", Provider: "aws", State: "healthy", Token: "tok-aws-xyz"},
 	}
-	require.NoError(t, syncPeerConfigMap(context.Background(), fakeClient, "test-ns", nil, peers))
+	require.NoError(t, syncPeerConfigMap(context.Background(), fakeClient, "test-ns", peers))
 
 	cm := &corev1.ConfigMap{}
 	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{Name: routerPeersConfigMap, Namespace: "test-ns"}, cm))

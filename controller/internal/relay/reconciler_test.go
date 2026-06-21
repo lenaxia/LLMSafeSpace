@@ -511,7 +511,7 @@ func TestSyncPeerConfigMap_CreatesConfigMap(t *testing.T) {
 		{ID: "oci-1", Endpoint: "203.0.113.2:8080", Provider: "oci", State: "healthy", Token: "tok123"},
 	}
 
-	err := syncPeerConfigMap(context.Background(), fakeClient, "test-ns", nil, peers)
+	err := syncPeerConfigMap(context.Background(), fakeClient, "test-ns", peers)
 	require.NoError(t, err)
 
 	cm := &corev1.ConfigMap{}
@@ -536,7 +536,7 @@ func TestSyncPeerConfigMap_NoOpWhenSame(t *testing.T) {
 		Build()
 
 	// Same data — should not error
-	err := syncPeerConfigMap(context.Background(), fakeClient, "test-ns", nil, peers)
+	err := syncPeerConfigMap(context.Background(), fakeClient, "test-ns", peers)
 	require.NoError(t, err)
 }
 
