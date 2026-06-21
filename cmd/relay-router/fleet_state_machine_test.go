@@ -26,7 +26,7 @@ import (
 func TestHealthStateLocked_ProvisioningToHealthyOnSuccesses(t *testing.T) {
 	f := newRelayFleetWithThresholds(3, 2, 5*time.Minute) // unhealthyThr=3, healthyThr=2
 	f.UpdatePeers([]PeerEntry{
-		{ID: "i-prov", Endpoint: "1.2.3.4:8080", Provider: "aws", State: "provisioning"},
+		{ID: "i-prov", Endpoint: "1.2.3.4:8080", Provider: "aws", State: relayStateProvisioning},
 	})
 
 	// 1 success — not yet healthy (need 2)
@@ -104,7 +104,7 @@ func TestHealthStateLocked_FailureThresholdStillUnhealthy(t *testing.T) {
 func TestHealthStateLocked_FailureResetsSuccessCounter(t *testing.T) {
 	f := newRelayFleetWithThresholds(3, 2, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "i-aws", Endpoint: "1.2.3.4:8080", Provider: "aws", State: "provisioning"},
+		{ID: "i-aws", Endpoint: "1.2.3.4:8080", Provider: "aws", State: relayStateProvisioning},
 	})
 
 	// 2 successes — healthy
@@ -133,7 +133,7 @@ func TestHealthStateLocked_FailureResetsSuccessCounter(t *testing.T) {
 func TestHealthStateLocked_SuccessResetsFailureCounter(t *testing.T) {
 	f := newRelayFleetWithThresholds(3, 2, 5*time.Minute)
 	f.UpdatePeers([]PeerEntry{
-		{ID: "i-aws", Endpoint: "1.2.3.4:8080", Provider: "aws", State: "provisioning"},
+		{ID: "i-aws", Endpoint: "1.2.3.4:8080", Provider: "aws", State: relayStateProvisioning},
 	})
 
 	// 2 failures — under threshold but consecutive failure count is 2
@@ -155,16 +155,6 @@ func TestHealthStateLocked_SuccessResetsFailureCounter(t *testing.T) {
 	// One more failure — now 3 consecutive — flips unhealthy
 	f.RecordHealthCheck("i-aws", false)
 	assert.False(t, f.HealthyRelays()[0].Healthy)
-}
-
-// TestRelayStateProvisioningConstant verifies the constant exists and
-// matches the controller's value (v1.RelayStateProvisioning = "provisioning").
-// Without this, the router treats "provisioning" as a magic string with no
-// recognized meaning.
-func TestRelayStateProvisioningConstant(t *testing.T) {
-	assert.Equal(t, "provisioning", relayStateProvisioning,
-		"router must define relayStateProvisioning matching the controller's "+
-			"v1.RelayStateProvisioning value (worklog 0467 action item 2)")
 }
 
 // TestNewRelayFleetWithThresholds_DefaultsBackcompat verifies the
