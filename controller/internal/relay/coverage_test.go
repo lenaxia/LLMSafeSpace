@@ -156,6 +156,80 @@ func TestSyncPeerConfigMap_NoOwnerRef(t *testing.T) {
 			"that orphans relays on CR deletion (worklog 0468)")
 }
 
+// TestSyncPeerConfigMap_StripsExistingOwnerRef verifies the upgrade path:
+// a CM that already exists in the cluster from a prior controller version
+// (which set ownerReferences) must have those ownerReferences stripped on
+// the next sync. Otherwise the first CR deletion after upgrade would
+// trigger GC and re-introduce the orphan-relay race the worklog 0469
+// fix was meant to eliminate.
+func TestSyncPeerConfigMap_StripsExistingOwnerRef(t *testing.T) {
+	scheme := testScheme(t)
+
+	// Pre-seed a CM with an ownerReference, simulating a cluster that
+	// ran an earlier version of the controller (PR #334 era).
+	preSeeded := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      routerPeersConfigMap,
+			Namespace: "test-ns",
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion: "llmsafespaces.dev/v1",
+					Kind:       "InferenceRelay",
+					Name:       "relay-fleet",
+					UID:        "stale-pre-upgrade-uid",
+				},
+			},
+		},
+		Data: map[string]string{
+			"peers.json": `{"relays":[{"id":"old","endpoint":"1.2.3.4:8080","provider":"aws","state":"healthy","token":"t"}]}`,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(preSeeded).Build()
+
+	peers := []PeerEntry{{ID: "fresh", Endpoint: "5.6.7.8:8080", Provider: "aws", State: "healthy", Token: "t2"}}
+	require.NoError(t, syncPeerConfigMap(context.Background(), fakeClient, "test-ns", peers))
+
+	cm := &corev1.ConfigMap{}
+	require.NoError(t, fakeClient.Get(context.Background(),
+		types.NamespacedName{Name: routerPeersConfigMap, Namespace: "test-ns"}, cm))
+	assert.Empty(t, cm.OwnerReferences,
+		"sync must strip pre-existing ownerReferences from CMs created by "+
+			"an older controller version, otherwise GC re-introduces the "+
+			"worklog 0468 race on the next CR deletion")
+	assert.Contains(t, cm.Data["peers.json"], `"id":"fresh"`)
+}
+
+// TestSyncPeerConfigMap_NoOpWhenIdenticalAndNoOwnerRef verifies the fast
+// path: when the data already matches AND there are no ownerRefs to strip,
+// sync skips the Update API call. This is a perf optimization (the relay
+// reconciler runs every 30s in the steady state).
+func TestSyncPeerConfigMap_NoOpWhenIdenticalAndNoOwnerRef(t *testing.T) {
+	scheme := testScheme(t)
+
+	expectedJSON := `{"relays":[{"id":"x","endpoint":"1.2.3.4:8080","provider":"aws","state":"healthy","token":"t"}]}`
+	preSeeded := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            routerPeersConfigMap,
+			Namespace:       "test-ns",
+			ResourceVersion: "100",
+		},
+		Data: map[string]string{"peers.json": expectedJSON},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(preSeeded).Build()
+
+	peers := []PeerEntry{{ID: "x", Endpoint: "1.2.3.4:8080", Provider: "aws", State: "healthy", Token: "t"}}
+	require.NoError(t, syncPeerConfigMap(context.Background(), fakeClient, "test-ns", peers))
+
+	// ResourceVersion must NOT have changed (no Update call).
+	cm := &corev1.ConfigMap{}
+	require.NoError(t, fakeClient.Get(context.Background(),
+		types.NamespacedName{Name: routerPeersConfigMap, Namespace: "test-ns"}, cm))
+	assert.Equal(t, "100", cm.ResourceVersion,
+		"sync must skip the Update API call when data matches and no ownerRefs need stripping")
+}
+
 func TestSyncPeerConfigMap_NilDataMap(t *testing.T) {
 	scheme := testScheme(t)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(

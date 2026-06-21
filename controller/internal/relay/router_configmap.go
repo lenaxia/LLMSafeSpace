@@ -75,7 +75,11 @@ func syncPeerConfigMap(ctx context.Context, c client.Client, namespace string, p
 	}
 
 	currentData, ok := existing.Data["peers.json"]
-	if ok && currentData == string(data) {
+	// Skip the Update only when the data matches AND no ownerRefs need
+	// stripping. Pre-existing CMs in clusters that ran an earlier version
+	// of this controller may still carry an ownerReference; those must
+	// be cleared here so the next CR deletion does not GC the CM.
+	if ok && currentData == string(data) && len(existing.OwnerReferences) == 0 {
 		return nil
 	}
 
@@ -83,5 +87,9 @@ func syncPeerConfigMap(ctx context.Context, c client.Client, namespace string, p
 		existing.Data = make(map[string]string)
 	}
 	existing.Data["peers.json"] = string(data)
+	// Strip any pre-existing ownerReferences (worklog 0468/0469 lifecycle
+	// change). The CM is now controller-managed; ownerRef would re-introduce
+	// the GC-vs-kubelet race on the next CR deletion.
+	existing.OwnerReferences = nil
 	return c.Update(ctx, existing)
 }
