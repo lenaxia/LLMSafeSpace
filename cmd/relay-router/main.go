@@ -140,13 +140,24 @@ func pollPeerConfig(ctx context.Context, path string, interval time.Duration, fl
 	load := func() {
 		data, err := os.ReadFile(path)
 		if err != nil {
+			// File missing → ConfigMap was deleted (e.g. InferenceRelay CR
+			// removed). Treat as "no peers" to drop orphaned relays from
+			// the in-memory fleet. Without this, relays linger in metrics
+			// and selection until pod restart (worklog 0467).
+			if os.IsNotExist(err) {
+				fleet.UpdatePeers(nil)
+			}
 			return
 		}
 		if strings.TrimSpace(string(data)) == "" {
+			// Empty file — same as missing: drop all peers.
+			fleet.UpdatePeers(nil)
 			return
 		}
 		peerCfg, err := ParsePeerConfig(data)
 		if err != nil {
+			// Parse errors are transient — keep last-known-good rather
+			// than draining the fleet on a temporary corruption.
 			log.Printf("relay-router: parse peer config: %v", err)
 			return
 		}
