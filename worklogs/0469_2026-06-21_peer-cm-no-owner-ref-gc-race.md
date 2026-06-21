@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-21
 **Session:** Live testing of PR #334 (CM-clear in handleDeletion) revealed the fix didn't actually propagate to the router. Investigated, discovered the GC-vs-kubelet race, and shipped PR #335 to remove the CM's ownerReference entirely.
-**Status:** PR #335 merged. Live verification pending next deploy.
+**Status:** PR #335 open and reviewed. Live verification pending merge + deploy.
 
 ---
 
@@ -56,18 +56,21 @@ This is strictly simpler than the prior design (which conflated K8s-managed clea
 
 ## PR #335
 
-Removed the `owner` parameter from `syncPeerConfigMap` (it was unused after the ownerRef-set call was removed). Removed `Owns(&corev1.ConfigMap{})` from `SetupWithManager` since the watch wouldn't fire without owner-ref anyway.
+Removed the `owner` parameter from `syncPeerConfigMap` (it was unused after the ownerRef-set call was removed). Removed `Owns(&corev1.ConfigMap{})` from `SetupWithManager` since the watch wouldn't fire without owner-ref anyway. The Update path explicitly strips any pre-existing `OwnerReferences` so clusters that ran an earlier controller version (with PR #334's ownerRef-on-create) self-heal on the first reconcile after upgrade.
 
 Tests:
-- Replaced `TestSyncPeerConfigMap_WithOwnerRef` with `TestSyncPeerConfigMap_NoOwnerRef` pinning the absence of ownerRef.
-- Added `TestHandleDeletion_PeerCMHasNoOwnerRef` pinning the end-to-end deletion lifecycle.
-- Updated existing test callers to drop the `nil` owner argument.
+- `TestSyncPeerConfigMap_NoOwnerRef` pinning the absence of ownerRef on Create.
+- `TestSyncPeerConfigMap_StripsExistingOwnerRef` pinning the upgrade self-heal path.
+- `TestSyncPeerConfigMap_NoOpWhenIdenticalAndNoOwnerRef` pinning the steady-state perf optimization.
+- `TestHandleDeletion_PeerCMHasNoOwnerRef` pinning the end-to-end deletion lifecycle.
+- Updated existing test callers to drop the now-removed owner argument.
 
-Reviewer findings addressed in second commit:
-1. Stale comment in `handleDeletion` (still mentioned owner-reference deletion) → corrected
-2. Dead `owner` parameter (`_ = owner`) → removed entirely (function signature changed)
-3. Stale test comments → updated
-4. Missing worklog → this file
+Reviewer findings addressed across three commits:
+1. Stale comment in `handleDeletion` (still mentioned owner-reference deletion) → corrected (commit 2)
+2. Dead `owner` parameter — removed entirely from the function signature (commit 2)
+3. Stale test comments → updated (commit 2)
+4. Missing worklog → this file added (commit 2)
+5. Update path didn't strip pre-existing ownerRefs → strip-on-update + 2 new tests (commit 3)
 
 ---
 
@@ -91,7 +94,7 @@ For PR #335:
 
 ## Blockers
 
-None. PR #335 merged. Awaiting CI build + deploy + live re-verification.
+None. PR #335 reviewed APPROVE pending the worklog accuracy fix in this entry. After merge: CI build → deploy → live re-verification.
 
 ---
 
@@ -121,9 +124,9 @@ None. PR #335 merged. Awaiting CI build + deploy + live re-verification.
 
 | File | Change |
 |---|---|
-| `controller/internal/relay/router_configmap.go` | Removed owner parameter + `controllerutil.SetControllerReference` call |
+| `controller/internal/relay/router_configmap.go` | Removed `owner` parameter + `controllerutil.SetControllerReference` call; Update path now strips pre-existing OwnerReferences and includes ownerRef state in the no-op check |
 | `controller/internal/relay/reconciler.go` | Updated `syncPeerConfigMap` callers (no owner arg); removed `Owns(&corev1.ConfigMap{})` from SetupWithManager; updated handleDeletion comment |
-| `controller/internal/relay/coverage_test.go` | Updated test callers; renamed test to `TestSyncPeerConfigMap_NoOwnerRef` |
+| `controller/internal/relay/coverage_test.go` | Updated test callers; renamed `TestSyncPeerConfigMap_WithOwnerRef` → `TestSyncPeerConfigMap_NoOwnerRef`; added `TestSyncPeerConfigMap_StripsExistingOwnerRef` and `TestSyncPeerConfigMap_NoOpWhenIdenticalAndNoOwnerRef` |
 | `controller/internal/relay/reconciler_test.go` | Updated test callers (removed nil owner argument) |
 | `controller/internal/relay/wgremoval_test.go` | Updated test caller |
 | `controller/internal/relay/deletion_clears_peers_test.go` | Updated comments to reflect no-ownerRef lifecycle; added `TestHandleDeletion_PeerCMHasNoOwnerRef` |
