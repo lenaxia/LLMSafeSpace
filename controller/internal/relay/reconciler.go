@@ -25,6 +25,41 @@ import (
 	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
+// transitionInstanceState computes the new state for an instance after the
+// router reports its health. The transition rules (worklog 0467 fix):
+//
+//   - Terminal/explicit states (draining, terminated, quota-exhausted,
+//     provisioning-failed) are preserved unchanged. Only the routine
+//     provisioning ↔ healthy ↔ unhealthy axis transitions automatically.
+//   - During initial boot, a not-yet-healthy provisioning instance stays
+//     provisioning rather than flipping to unhealthy. This avoids alerting
+//     on a relay that hasn't had a chance to come up yet.
+//   - A previously-healthy instance that goes unhealthy flips to unhealthy.
+//   - Any unhealthy or provisioning instance that becomes healthy flips
+//     to healthy (recovery path).
+func transitionInstanceState(currentState string, healthy bool) string {
+	switch currentState {
+	case "", string(v1.RelayStateProvisioning):
+		if healthy {
+			return string(v1.RelayStateHealthy)
+		}
+		return currentState // stay provisioning during boot grace
+	case string(v1.RelayStateHealthy):
+		if healthy {
+			return currentState
+		}
+		return string(v1.RelayStateUnhealthy)
+	case string(v1.RelayStateUnhealthy):
+		if healthy {
+			return string(v1.RelayStateHealthy)
+		}
+		return currentState
+	}
+	// All other states (draining, terminated, quota-exhausted,
+	// provisioning-failed) are controller-driven and preserved as-is.
+	return currentState
+}
+
 // generateRelayToken returns a fresh per-VM shared-secret token (32 random
 // bytes, hex-encoded → 64 chars). Used by provisionRelay when no existing token
 // is persisted for the provider slot.
@@ -185,6 +220,7 @@ func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1
 					existing.Requests429 = int(h.Requests429)
 					existing.TotalRequests = int(h.Requests)
 					existing.EgressBytes = h.EgressBytes
+					existing.State = transitionInstanceState(existing.State, h.Healthy)
 				}
 			}
 			if existing.LastCheck == nil {
