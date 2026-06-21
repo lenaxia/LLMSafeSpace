@@ -13,7 +13,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 // PeerEntry is the JSON shape for one relay VM in the ConfigMap.
@@ -35,7 +34,23 @@ type PeerConfig struct {
 
 // syncPeerConfigMap creates or updates the relay-router-peers ConfigMap
 // with the current set of relay VMs.
+//
+// The CM is intentionally NOT given an ownerReference to the InferenceRelay
+// CR. If it were, GC would delete the CM as soon as the CR's finalizer
+// is removed, racing with kubelet's volume-mount sync. The window between
+// "controller writes empty list" and "GC deletes CM" is typically too short
+// for kubelet to propagate the cleared content to the relay-router pod's
+// volume mount, leaving the router with stale peer data until pod restart.
+//
+// By managing the CM lifecycle directly (no ownerRef), the empty-list write
+// from handleDeletion stays in the CM and propagates cleanly. A subsequent
+// CR creation re-uses the same CM, overwriting the empty list with the
+// fresh fleet. See worklog 0468 for the discovery that motivated this.
+//
+// The `owner` parameter is preserved to keep the API stable, but is unused
+// for the CM ownerReference.
 func syncPeerConfigMap(ctx context.Context, c client.Client, namespace string, owner client.Object, peers []PeerEntry) error {
+	_ = owner // intentionally unused — see function-level comment
 	data, err := json.Marshal(PeerConfig{Relays: peers})
 	if err != nil {
 		return fmt.Errorf("marshal peer config: %w", err)
@@ -57,12 +72,6 @@ func syncPeerConfigMap(ctx context.Context, c client.Client, namespace string, o
 			Data: map[string]string{
 				"peers.json": string(data),
 			},
-		}
-
-		if owner != nil {
-			if err := controllerutil.SetControllerReference(owner, cm, c.Scheme()); err != nil {
-				return fmt.Errorf("set owner reference: %w", err)
-			}
 		}
 
 		return c.Create(ctx, cm)

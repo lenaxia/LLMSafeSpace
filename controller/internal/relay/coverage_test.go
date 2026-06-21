@@ -136,7 +136,13 @@ func TestSyncPeerConfigMap_UpdatePath(t *testing.T) {
 	assert.NotContains(t, cm.Data["peers.json"], "old")
 }
 
-func TestSyncPeerConfigMap_WithOwnerRef(t *testing.T) {
+// TestSyncPeerConfigMap_NoOwnerRef verifies that even when an owner is
+// passed, the resulting ConfigMap does NOT have an ownerReference. This
+// is intentional — the CM lifecycle is managed by the controller's
+// reconcile loop alone, not by Kubernetes garbage collection. Owner-ref
+// would race with kubelet's volume-mount sync on CR deletion (see worklog
+// 0468). The owner argument is preserved for API stability but is unused.
+func TestSyncPeerConfigMap_NoOwnerRef(t *testing.T) {
 	scheme := testScheme(t)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	owner := &v1.InferenceRelay{ObjectMeta: metav1.ObjectMeta{Name: "relay-fleet", UID: "test-uid"}}
@@ -145,8 +151,10 @@ func TestSyncPeerConfigMap_WithOwnerRef(t *testing.T) {
 
 	cm := &corev1.ConfigMap{}
 	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{Name: routerPeersConfigMap, Namespace: "test-ns"}, cm))
-	require.NotEmpty(t, cm.OwnerReferences)
-	assert.Equal(t, "relay-fleet", cm.OwnerReferences[0].Name)
+	assert.Empty(t, cm.OwnerReferences,
+		"peer ConfigMap must have NO ownerReference — controller manages "+
+			"its lifecycle directly to avoid the GC-vs-kubelet-sync race "+
+			"that orphans relays on CR deletion (worklog 0468)")
 }
 
 func TestSyncPeerConfigMap_NilDataMap(t *testing.T) {

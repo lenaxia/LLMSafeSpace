@@ -614,10 +614,15 @@ func (r *InferenceRelayReconciler) handleDeletion(ctx context.Context, relay *v1
 }
 
 // SetupWithManager registers the reconciler with the controller-runtime manager.
+//
+// Note: the relay-router-peers ConfigMap is intentionally NOT registered via
+// Owns() because it has no ownerReference (see syncPeerConfigMap doc comment
+// for why). The CM is managed by the controller's reconcile loop alone;
+// external edits would not trigger a reconcile, which is acceptable since
+// the controller is the only legitimate writer.
 func (r *InferenceRelayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1.InferenceRelay{}).
-		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.Secret{}).
 		Complete(r)
 }
