@@ -171,7 +171,7 @@ func TestSyncPeerConfigMap_NilDataMap(t *testing.T) {
 
 func TestHealthChecker_Scrape_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte("relay_router_relay_healthy{id=\"oci-1\",provider=\"oci\"} 1\nrelay_router_fallback_active 0\n"))
+		_, _ = w.Write([]byte("relay_router_relay_healthy{relay=\"oci-1\"} 1\nrelay_router_fallback_active 0\n"))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -198,24 +198,12 @@ func TestHealthChecker_Scrape_Unreachable(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestRelayKey_ProviderFallback(t *testing.T) {
-	assert.Equal(t, "oci", relayKey("", "oci"))
-	assert.Equal(t, "aws-1", relayKey("aws-1", "aws"))
-}
-
 func TestExtractMetricValue_NoValue(t *testing.T) {
 	assert.Equal(t, int64(0), extractMetricValue("just_a_name"))
 }
 
 func TestExtractMetricValue_NonNumeric(t *testing.T) {
 	assert.Equal(t, int64(0), extractMetricValue("some_metric abc"))
-}
-
-func TestParseHealthMetrics_ProviderOnlyKey(t *testing.T) {
-	raw := "relay_router_relay_healthy{provider=\"aws\"} 1"
-	report := parseHealthMetrics(raw)
-	require.Contains(t, report.Relays, "aws")
-	assert.True(t, report.Relays["aws"].Healthy)
 }
 
 // ─── Reconcile paused + deletion branches ────────────────────────────────────
