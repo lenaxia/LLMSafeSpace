@@ -185,6 +185,26 @@ func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1
 					existing.Requests429 = int(h.Requests429)
 					existing.TotalRequests = int(h.Requests)
 					existing.EgressBytes = h.EgressBytes
+					// Transition state field based on observed health.
+					// Without this, instances stay in "provisioning" forever
+					// even after the router confirms they're healthy
+					// (worklog 0467 finding). Preserve terminal/explicit states
+					// like draining/terminated/quotaExhausted; only transition
+					// the routine provisioning↔healthy/unhealthy axis.
+					if existing.State == "" || existing.State == string(v1.RelayStateProvisioning) ||
+						existing.State == string(v1.RelayStateHealthy) || existing.State == string(v1.RelayStateUnhealthy) {
+						if h.Healthy {
+							existing.State = string(v1.RelayStateHealthy)
+						} else {
+							// Only mark unhealthy after we've left provisioning;
+							// during initial boot we keep the provisioning state
+							// to avoid alerting on a relay that hasn't had a chance
+							// to come up yet.
+							if existing.State == string(v1.RelayStateHealthy) {
+								existing.State = string(v1.RelayStateUnhealthy)
+							}
+						}
+					}
 				}
 			}
 			if existing.LastCheck == nil {
