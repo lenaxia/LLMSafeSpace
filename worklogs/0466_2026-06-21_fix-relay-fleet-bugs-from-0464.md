@@ -30,7 +30,7 @@ The blocker is (1): the controller's router-metrics parser reads label `id` but 
 - Sum `relay_router_requests_total` across status codes for total Requests, and pull the `status="429"` subset into Requests429.
 - Match metric prefixes on `{` only (label content is then extracted separately).
 
-**Regression test:** New file `controller/internal/relay/health_test.go` with `TestParseHealthMetrics_RouterEmittedFormat` that pins the *exact* string format produced by `routerMetrics.writePrometheus()` (verified by `cmd/relay-router/proxy_test.go` `TestRouterMetrics_PrometheusOutput`). The test comments explicitly cross-reference both producer and consumer files plus worklog 0464 so that anyone changing either side gets pointed at the wire contract.
+**Regression test:** New file `controller/internal/relay/health_test.go` with `TestParseHealthMetrics_RouterEmittedFormat` that pins the *exact* string format produced by `routerMetrics.writePrometheus()` (verified by `cmd/relay-router/proxy_test.go` `TestRouterMetrics_PrometheusFormat`). The test comments explicitly cross-reference both producer and consumer files plus worklog 0464 so that anyone changing either side gets pointed at the wire contract.
 
 Updated existing tests in `coverage_test.go`, `driver_test.go`, and `reconciler_test.go` to use the correct router-emitted shape. Removed obsolete tests of the dead `relayKey` and `provider`-only paths (`TestRelayKey_ProviderFallback`, `TestParseHealthMetrics_ProviderOnlyKey`, `TestParseHealthMetrics_BasicMetrics`/`_FallbackActive`/`_EmptyInput`/`_SkipsCommentsAndEmpty`) — the new health_test.go covers the same surface area against the correct shape.
 

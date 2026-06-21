@@ -26,7 +26,7 @@ import (
 func TestParseHealthMetrics_RouterEmittedFormat(t *testing.T) {
 	// This is the exact format produced by routerMetrics.writePrometheus() in
 	// cmd/relay-router/metrics.go (verified by cmd/relay-router/proxy_test.go
-	// TestRouterMetrics_PrometheusOutput). Single relay, two status codes,
+	// TestRouterMetrics_PrometheusFormat). Single relay, two status codes,
 	// one health point, one egress point.
 	raw := `# HELP relay_router_requests_total Total requests routed per relay by HTTP status
 # TYPE relay_router_requests_total counter
@@ -126,4 +126,23 @@ relay_router_fallback_active 0
 `
 	report := parseHealthMetrics(raw)
 	assert.NotContains(t, report.Relays, "")
+}
+
+// TestParseHealthMetrics_OnlyStatus429 verifies the request-summing logic
+// when a relay has emitted only 429 responses. Both Requests and Requests429
+// must equal the value of the status="429" line — no double-counting, no
+// undercounting. Pinned per the AI reviewer's gap on PR #329.
+func TestParseHealthMetrics_OnlyStatus429(t *testing.T) {
+	raw := `relay_router_requests_total{relay="i-only429",status="429"} 17
+relay_router_relay_healthy{relay="i-only429"} 0
+relay_router_fallback_active 0
+`
+	report := parseHealthMetrics(raw)
+
+	require.Contains(t, report.Relays, "i-only429")
+	assert.Equal(t, int64(17), report.Relays["i-only429"].Requests,
+		"Requests must include the 429 line in the total sum")
+	assert.Equal(t, int64(17), report.Relays["i-only429"].Requests429,
+		"Requests429 must equal the count of status=\"429\" lines")
+	assert.False(t, report.Relays["i-only429"].Healthy)
 }
