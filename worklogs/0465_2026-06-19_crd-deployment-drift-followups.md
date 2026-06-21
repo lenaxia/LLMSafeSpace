@@ -247,7 +247,7 @@ Created:
 - `design/0042_2026-06-19_api-group-rename-migration.md`
 - `pkg/repolint/cluster_drift.go`
 - `pkg/repolint/cluster_drift_test.go`
-- `worklogs/0463_2026-06-19_crd-deployment-drift-followups.md` (this file)
+- `worklogs/0465_2026-06-19_crd-deployment-drift-followups.md` (this file)
 
 Modified:
 - `.github/prompts/implement.md` — corrected stale CRD-update guidance
