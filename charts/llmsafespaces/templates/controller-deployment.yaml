@@ -171,6 +171,16 @@ spec:
                 secretKeyRef:
                   name: {{ include "llmsafespaces.secretName" . }}
                   key: internal-token
+            {{/* POD_NAMESPACE is read by the InferenceRelay controller's
+                   reconciler to locate the relay-router peer ConfigMap and
+                   per-VM token Secret in the release namespace. Without it,
+                   the reconciler falls back to a hardcoded "llmsafespaces"
+                   namespace which only happens to work when the chart is
+                   installed under that exact name. See worklog 0464. */}}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             {{- if and .Values.inferenceRelayURL (or .Values.externalSecret.create .Values.externalSecret.existingSecret) }}
             - name: INFERENCE_RELAY_SECRET
               valueFrom:

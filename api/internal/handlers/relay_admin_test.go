@@ -846,38 +846,53 @@ func TestRelayOCICreds_CreateThenUpdate_Success(t *testing.T) {
 
 // ─── Metric parsing tests ───────────────────────────────────────────────────
 
-func TestParseRouterMetrics_BasicMetrics(t *testing.T) {
-	raw := `# HELP relay_router_active_streams Current active streams
+// TestParseRouterMetrics_RouterEmittedFormat pins the wire contract between
+// the relay-router (cmd/relay-router/metrics.go) and this admin handler's
+// scrape parser. The router emits the relay ID under the "relay" label and
+// the HTTP status under "status" on relay_router_requests_total. There is
+// no separate relay_router_requests_429_total metric. Worklog 0464 documented
+// the pre-fix mismatch where this parser read "provider" labels the router
+// never emitted.
+func TestParseRouterMetrics_RouterEmittedFormat(t *testing.T) {
+	raw := `# HELP relay_router_active_streams Current in-flight streaming connections per relay
 # TYPE relay_router_active_streams gauge
-relay_router_active_streams 5
-relay_router_requests_total{provider="oci"} 12847
-relay_router_requests_total{provider="gcp"} 0
-relay_router_requests_429_total{provider="oci"} 3
-relay_router_streams{provider="oci"} 3
+relay_router_active_streams{relay="i-aaa"} 3
+relay_router_active_streams{relay="i-bbb"} 2
+# HELP relay_router_requests_total Total requests routed per relay by HTTP status
+# TYPE relay_router_requests_total counter
+relay_router_requests_total{relay="i-aaa",status="200"} 12845
+relay_router_requests_total{relay="i-aaa",status="429"} 2
+relay_router_requests_total{relay="i-bbb",status="200"} 50
 `
 	data := &routerMetricsData{
-		requestsByProvider:    make(map[string]int64),
-		requests429ByProvider: make(map[string]int64),
-		streamsByProvider:     make(map[string]int64),
+		requestsByRelay:    make(map[string]int64),
+		requests429ByRelay: make(map[string]int64),
+		streamsByRelay:     make(map[string]int64),
 	}
 	parseRouterMetrics(raw, data)
 
+	// activeStreams is the sum across relays.
 	assert.Equal(t, int64(5), data.activeStreams)
-	assert.Equal(t, int64(12847), data.requestsByProvider["oci"])
-	assert.Equal(t, int64(0), data.requestsByProvider["gcp"])
-	assert.Equal(t, int64(3), data.requests429ByProvider["oci"])
-	assert.Equal(t, int64(3), data.streamsByProvider["oci"])
+	// Per-relay requests sum across status codes.
+	assert.Equal(t, int64(12847), data.requestsByRelay["i-aaa"])
+	assert.Equal(t, int64(50), data.requestsByRelay["i-bbb"])
+	// Per-relay 429s come from the status="429" subset.
+	assert.Equal(t, int64(2), data.requests429ByRelay["i-aaa"])
+	assert.Equal(t, int64(0), data.requests429ByRelay["i-bbb"])
+	// Per-relay active streams.
+	assert.Equal(t, int64(3), data.streamsByRelay["i-aaa"])
+	assert.Equal(t, int64(2), data.streamsByRelay["i-bbb"])
 }
 
 func TestParseRouterMetrics_EmptyInput(t *testing.T) {
 	data := &routerMetricsData{
-		requestsByProvider:    make(map[string]int64),
-		requests429ByProvider: make(map[string]int64),
-		streamsByProvider:     make(map[string]int64),
+		requestsByRelay:    make(map[string]int64),
+		requests429ByRelay: make(map[string]int64),
+		streamsByRelay:     make(map[string]int64),
 	}
 	parseRouterMetrics("", data)
 	assert.Equal(t, int64(0), data.activeStreams)
-	assert.Empty(t, data.requestsByProvider)
+	assert.Empty(t, data.requestsByRelay)
 }
 
 func TestEgressLimitForProvider(t *testing.T) {
@@ -913,8 +928,9 @@ func TestBuildAlerts_Partial(t *testing.T) {
 }
 
 func TestExtractLabel(t *testing.T) {
-	assert.Equal(t, "oci", extractLabel(`relay_router_requests_total{provider="oci"} 12847`, "provider"))
-	assert.Equal(t, "", extractLabel("no labels here", "provider"))
+	assert.Equal(t, "i-aaa", extractLabel(`relay_router_requests_total{relay="i-aaa",status="200"} 12847`, "relay"))
+	assert.Equal(t, "200", extractLabel(`relay_router_requests_total{relay="i-aaa",status="200"} 12847`, "status"))
+	assert.Equal(t, "", extractLabel("no labels here", "relay"))
 }
 
 func TestParseInt(t *testing.T) {
@@ -934,7 +950,7 @@ func TestParseInt(t *testing.T) {
 func TestRelayStatus_ScrapesRouterMetrics(t *testing.T) {
 	metricsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("relay_router_active_streams 7\nrelay_router_requests_total{provider=\"oci\"} 999\n"))
+		w.Write([]byte("relay_router_active_streams{relay=\"oci-1\"} 7\nrelay_router_requests_total{relay=\"oci-1\",status=\"200\"} 999\n"))
 	}))
 	defer metricsServer.Close()
 

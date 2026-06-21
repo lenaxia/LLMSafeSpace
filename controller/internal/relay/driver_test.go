@@ -125,52 +125,6 @@ func TestRenderCloudInit_DownloadBeforeSystemdStart(t *testing.T) {
 		"the binary download+verify must run BEFORE systemctl start relay-proxy, or systemd will fail with file-not-found")
 }
 
-func TestParseHealthMetrics_BasicMetrics(t *testing.T) {
-	raw := `# HELP relay_router_relay_healthy Relay health
-relay_router_relay_healthy{id="oci-1",provider="oci"} 1
-relay_router_relay_healthy{id="aws-1",provider="aws"} 0
-relay_router_active_streams{id="oci-1",provider="oci"} 3
-relay_router_requests_total{id="oci-1",provider="oci"} 12847
-relay_router_requests_429_total{id="oci-1",provider="oci"} 2
-relay_router_relay_egress_bytes{id="oci-1",provider="oci"} 149546362
-relay_router_fallback_active 0
-`
-	report := parseHealthMetrics(raw)
-
-	assert.False(t, report.FallbackActive)
-	require.Contains(t, report.Relays, "oci-1")
-	assert.True(t, report.Relays["oci-1"].Healthy)
-	assert.Equal(t, int64(3), report.Relays["oci-1"].ActiveStreams)
-	assert.Equal(t, int64(12847), report.Relays["oci-1"].Requests)
-	assert.Equal(t, int64(2), report.Relays["oci-1"].Requests429)
-	assert.Equal(t, int64(149546362), report.Relays["oci-1"].EgressBytes)
-
-	require.Contains(t, report.Relays, "aws-1")
-	assert.False(t, report.Relays["aws-1"].Healthy)
-}
-
-func TestParseHealthMetrics_FallbackActive(t *testing.T) {
-	raw := `relay_router_fallback_active 1`
-	report := parseHealthMetrics(raw)
-	assert.True(t, report.FallbackActive)
-}
-
-func TestParseHealthMetrics_EmptyInput(t *testing.T) {
-	report := parseHealthMetrics("")
-	assert.False(t, report.FallbackActive)
-	assert.Empty(t, report.Relays)
-}
-
-func TestParseHealthMetrics_SkipsCommentsAndEmpty(t *testing.T) {
-	raw := `# HELP some_metric Help text
-# TYPE some_metric counter
-
-some_other_metric 42
-`
-	report := parseHealthMetrics(raw)
-	assert.Empty(t, report.Relays)
-}
-
 func TestDefaultShapeForProvider(t *testing.T) {
 	assert.Equal(t, "t4g.micro", defaultShapeForProvider("aws"))
 	assert.Equal(t, "VM.Standard.A1.Flex", defaultShapeForProvider("oci"))

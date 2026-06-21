@@ -2650,3 +2650,69 @@ func TestControllerArgs_RelayArtifactFlags_AbsentWhenDisabled(t *testing.T) {
 		}
 	}
 }
+
+// findControllerEnv locates the controller container's env list in the
+// rendered Deployment.
+func findControllerEnv(t *testing.T, docs []map[string]any) []map[string]any {
+	t.Helper()
+	for _, d := range docs {
+		if d["kind"] != "Deployment" {
+			continue
+		}
+		meta, _ := d["metadata"].(map[string]any)
+		name, _ := meta["name"].(string)
+		if !strings.Contains(name, "controller") {
+			continue
+		}
+		spec, _ := d["spec"].(map[string]any)
+		tmpl, _ := spec["template"].(map[string]any)
+		podSpec, _ := tmpl["spec"].(map[string]any)
+		containers, _ := podSpec["containers"].([]any)
+		if len(containers) == 0 {
+			continue
+		}
+		c, _ := containers[0].(map[string]any)
+		rawEnv, _ := c["env"].([]any)
+		out := make([]map[string]any, 0, len(rawEnv))
+		for _, e := range rawEnv {
+			if m, ok := e.(map[string]any); ok {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// TestControllerEnv_PodNamespaceFromFieldRef pins that the controller
+// deployment exports POD_NAMESPACE via the downward API. The InferenceRelay
+// reconciler reads this env var to locate the relay-router peer ConfigMap
+// and per-VM token Secret in the release namespace; without it, the
+// reconciler falls back to a hardcoded "llmsafespaces" namespace literal
+// that only happens to work when the chart is installed under that exact
+// name. See worklog 0464 for the production failure mode this prevents.
+//
+// This test is unconditional (relay-disabled default) because POD_NAMESPACE
+// is unconditionally rendered: it is cheap to add and other controller
+// components may grow to read it.
+func TestControllerEnv_PodNamespaceFromFieldRef(t *testing.T) {
+	docs := helmTemplate(t, "")
+	env := findControllerEnv(t, docs)
+
+	var sawPodNamespace bool
+	for _, e := range env {
+		if e["name"] != "POD_NAMESPACE" {
+			continue
+		}
+		sawPodNamespace = true
+		valueFrom, ok := e["valueFrom"].(map[string]any)
+		require.True(t, ok, "POD_NAMESPACE must use valueFrom (not literal value)")
+		fieldRef, ok := valueFrom["fieldRef"].(map[string]any)
+		require.True(t, ok, "POD_NAMESPACE valueFrom must use fieldRef (downward API)")
+		require.Equal(t, "metadata.namespace", fieldRef["fieldPath"],
+			"POD_NAMESPACE must source from metadata.namespace via downward API")
+		break
+	}
+	require.True(t, sawPodNamespace,
+		"controller deployment must export POD_NAMESPACE env var; without it the relay reconciler falls back to a hardcoded namespace and fails on non-default chart installs")
+}
