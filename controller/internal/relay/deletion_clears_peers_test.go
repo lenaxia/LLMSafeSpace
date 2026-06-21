@@ -5,6 +5,7 @@ package relay
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,7 +13,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
@@ -136,3 +139,83 @@ func TestHandleDeletion_NoConfigMap_StillSucceeds(t *testing.T) {
 	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{Name: "relay-fleet"}, updated))
 	assert.False(t, controllerutil.ContainsFinalizer(updated, InferenceRelayFinalizer))
 }
+
+// TestHandleDeletion_PeerCMUpdateFails_StillRemovesFinalizer pins the
+// best-effort error semantics flagged in PR #334 review: if the CM-clear
+// fails (e.g. transient API server error during graceful shutdown),
+// handleDeletion must NOT block on it. Terminating EC2 instances and
+// removing the finalizer is more important than this cosmetic
+// router-cache cleanup.
+//
+// A regression that converts the logger.Error to `return err` would
+// strand the InferenceRelay CR in a deletion loop forever, leaving the
+// already-destroyed EC2 instances orphaned in the spec but the CR
+// undeletable.
+func TestHandleDeletion_PeerCMUpdateFails_StillRemovesFinalizer(t *testing.T) {
+	scheme := testScheme(t)
+
+	relay := &v1.InferenceRelay{
+		ObjectMeta: metav1.ObjectMeta{Name: "relay-fleet"},
+		Status: v1.InferenceRelayStatus{
+			Instances: []v1.RelayInstanceStatus{
+				{ID: "i-ccc", Provider: "aws", Region: "us-west-2", State: string(v1.RelayStateHealthy)},
+			},
+		},
+	}
+	controllerutil.AddFinalizer(relay, InferenceRelayFinalizer)
+
+	existingCM := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      routerPeersConfigMap,
+			Namespace: "test-ns",
+		},
+		Data: map[string]string{
+			"peers.json": `{"relays":[{"id":"i-ccc","endpoint":"1.2.3.4:8080","provider":"aws","state":"healthy","token":"t"}]}`,
+		},
+	}
+
+	awsDriver := &stubDriver{}
+
+	// Inject an error specifically on the ConfigMap Update path. The CM
+	// already exists (so syncPeerConfigMap takes the Update branch, not
+	// the Create branch). Other Update calls (e.g. removing the finalizer
+	// on the InferenceRelay) must NOT be affected.
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(relay, existingCM).
+		WithStatusSubresource(&v1.InferenceRelay{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+				if _, isCM := obj.(*corev1.ConfigMap); isCM {
+					return errInjectedCMUpdate
+				}
+				return c.Update(ctx, obj, opts...)
+			},
+		}).
+		Build()
+	r := &InferenceRelayReconciler{
+		Client:    fakeClient,
+		Scheme:    scheme,
+		Namespace: "test-ns",
+		Drivers:   map[string]ProviderDriver{"aws": awsDriver},
+	}
+
+	_, err := r.handleDeletion(context.Background(), relay)
+	require.NoError(t, err,
+		"handleDeletion must NOT propagate a CM-clear failure — terminating EC2 "+
+			"instances and removing the finalizer is more important than this "+
+			"cosmetic router-cache cleanup")
+
+	// Finalizer must be removed despite the CM update error
+	updated := &v1.InferenceRelay{}
+	require.NoError(t, fakeClient.Get(context.Background(),
+		types.NamespacedName{Name: "relay-fleet"}, updated))
+	assert.False(t, controllerutil.ContainsFinalizer(updated, InferenceRelayFinalizer),
+		"finalizer must still be removed even when CM-clear fails")
+
+	// EC2 destroy must still have run
+	require.Len(t, awsDriver.destroyCalls, 1)
+	assert.Equal(t, "i-ccc", awsDriver.destroyCalls[0].ID)
+}
+
+var errInjectedCMUpdate = errors.New("injected: API server unavailable for ConfigMap Update")
