@@ -2716,3 +2716,96 @@ func TestControllerEnv_PodNamespaceFromFieldRef(t *testing.T) {
 	require.True(t, sawPodNamespace,
 		"controller deployment must export POD_NAMESPACE env var; without it the relay reconciler falls back to a hardcoded namespace and fails on non-default chart installs")
 }
+
+// TestWorkspaceEgress_AllowsRelayRouter verifies the workspace-egress
+// NetworkPolicy includes an explicit allow rule for the in-cluster
+// relay-router on port 8080. Without this, the workspace agentd cannot
+// reach INFERENCE_RELAY_BASEURL=http://relay-router.<ns>.svc.cluster.local:8080
+// because the router's ClusterIP falls under the RFC1918 block in the
+// general-egress rule. Discovered live during worklog 0467 testing.
+func TestWorkspaceEgress_AllowsRelayRouter(t *testing.T) {
+	docs := helmTemplate(t, relayEnabledValues)
+	policies := findByKind(docs, "NetworkPolicy")
+
+	var checked bool
+	for _, p := range policies {
+		name := metaName(p)
+		if !strings.Contains(name, "workspace-egress") {
+			continue
+		}
+		checked = true
+		spec, _ := p["spec"].(map[string]any)
+		egress, _ := spec["egress"].([]any)
+
+		var sawRouterAllow bool
+		for _, rawRule := range egress {
+			rule, _ := rawRule.(map[string]any)
+			ports, _ := rule["ports"].([]any)
+			to, _ := rule["to"].([]any)
+
+			// Look for a rule with port 8080 that targets the relay-router
+			// pod selector (component=relay-router).
+			port8080 := false
+			for _, rawPort := range ports {
+				port, _ := rawPort.(map[string]any)
+				if port["port"] == float64(8080) || port["port"] == int64(8080) || port["port"] == 8080 {
+					port8080 = true
+					break
+				}
+			}
+			if !port8080 {
+				continue
+			}
+			for _, rawTo := range to {
+				toEntry, _ := rawTo.(map[string]any)
+				podSelector, _ := toEntry["podSelector"].(map[string]any)
+				if podSelector == nil {
+					continue
+				}
+				matchLabels, _ := podSelector["matchLabels"].(map[string]any)
+				if matchLabels["app.kubernetes.io/component"] == "relay-router" {
+					sawRouterAllow = true
+				}
+			}
+		}
+		require.True(t, sawRouterAllow,
+			"workspace-egress policy must include an explicit allow rule "+
+				"for component=relay-router on port 8080. Without this, "+
+				"workspace pods cannot reach INFERENCE_RELAY_BASEURL because "+
+				"the router's ClusterIP falls under the RFC1918 exclude. "+
+				"Bug discovered during worklog 0467 in-cluster testing.")
+	}
+	require.True(t, checked, "workspace-egress NetworkPolicy must exist when fleet enabled")
+}
+
+// TestWorkspaceEgress_NoRelayRouterRuleWhenFleetDisabled verifies the
+// rule does not render when the fleet is disabled — there is no
+// in-cluster router to permit egress to.
+func TestWorkspaceEgress_NoRelayRouterRuleWhenFleetDisabled(t *testing.T) {
+	docs := helmTemplate(t, "")
+	policies := findByKind(docs, "NetworkPolicy")
+
+	for _, p := range policies {
+		name := metaName(p)
+		if !strings.Contains(name, "workspace-egress") {
+			continue
+		}
+		spec, _ := p["spec"].(map[string]any)
+		egress, _ := spec["egress"].([]any)
+		for _, rawRule := range egress {
+			rule, _ := rawRule.(map[string]any)
+			to, _ := rule["to"].([]any)
+			for _, rawTo := range to {
+				toEntry, _ := rawTo.(map[string]any)
+				podSelector, _ := toEntry["podSelector"].(map[string]any)
+				if podSelector == nil {
+					continue
+				}
+				matchLabels, _ := podSelector["matchLabels"].(map[string]any)
+				if matchLabels["app.kubernetes.io/component"] == "relay-router" {
+					t.Fatal("workspace-egress must NOT include relay-router rule when fleet disabled")
+				}
+			}
+		}
+	}
+}

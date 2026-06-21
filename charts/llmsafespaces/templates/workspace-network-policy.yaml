@@ -134,6 +134,24 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.api.service.port }}
+    {{- if .Values.controller.inferenceRelay.enabled }}
+    # Epic 42: In-cluster relay-router egress. The agentd reads
+    # INFERENCE_RELAY_BASEURL pointing at the router's ClusterIP, which
+    # falls under the RFC1918 exclude in the general-egress rule below.
+    # Without an explicit pod-selector allow, the agentd cannot reach the
+    # router and free-model inference requests fail. Discovered during
+    # worklog 0467 in-cluster testing.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              {{- include "llmsafespaces.relayRouter.selectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 8080
+    {{- end }}
     # External egress: allowedEgressCIDRs minus blockedEgressCIDRs.
     {{- if .Values.networkPolicy.allowedEgressCIDRs }}
     - to:
