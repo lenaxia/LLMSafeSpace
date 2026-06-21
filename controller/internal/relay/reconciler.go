@@ -589,6 +589,21 @@ func (r *InferenceRelayReconciler) handleDeletion(ctx context.Context, relay *v1
 		return ctrl.Result{RequeueAfter: requeueError}, fmt.Errorf("some relay VMs could not be destroyed")
 	}
 
+	// Clear the peer ConfigMap so the relay-router observes the empty
+	// fleet before the CM is owner-reference-deleted along with this CR.
+	// kubelet's optional-CM volume mount keeps the stale file otherwise
+	// (the file is not removed when the CM is deleted), so the router
+	// never sees that orphaned relays should be dropped from its in-memory
+	// fleet. Writing the empty list explicitly forces kubelet to update
+	// the volume mount before owner-reference cleanup runs.
+	// See worklog 0467 follow-up.
+	if err := syncPeerConfigMap(ctx, r.Client, r.Namespace, relay, []PeerEntry{}); err != nil {
+		logger.Error(err, "failed to clear peer ConfigMap during deletion — relay-router may retain orphans until restart")
+		// Do not block deletion on this — terminating EC2 instances and
+		// removing the finalizer is more important than the cosmetic
+		// router-cache cleanup.
+	}
+
 	common.RemoveFinalizer(relay, InferenceRelayFinalizer)
 	if err := r.Update(ctx, relay); err != nil {
 		return ctrl.Result{}, err
