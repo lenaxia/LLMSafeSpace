@@ -318,7 +318,7 @@ func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1
 	}
 
 	// Sync the router peers ConfigMap
-	if err := syncPeerConfigMap(ctx, r.Client, r.Namespace, relay, peers); err != nil {
+	if err := syncPeerConfigMap(ctx, r.Client, r.Namespace, peers); err != nil {
 		logger.Error(err, "failed to sync peers ConfigMap")
 	}
 
@@ -590,14 +590,12 @@ func (r *InferenceRelayReconciler) handleDeletion(ctx context.Context, relay *v1
 	}
 
 	// Clear the peer ConfigMap so the relay-router observes the empty
-	// fleet before the CM is owner-reference-deleted along with this CR.
-	// kubelet's optional-CM volume mount keeps the stale file otherwise
-	// (the file is not removed when the CM is deleted), so the router
-	// never sees that orphaned relays should be dropped from its in-memory
-	// fleet. Writing the empty list explicitly forces kubelet to update
-	// the volume mount before owner-reference cleanup runs.
-	// See worklog 0467 follow-up.
-	if err := syncPeerConfigMap(ctx, r.Client, r.Namespace, relay, []PeerEntry{}); err != nil {
+	// fleet. The CM has no ownerReference (see syncPeerConfigMap doc
+	// comment for why) so it persists across CR deletions; the empty-list
+	// write here propagates cleanly through kubelet's volume-mount sync to
+	// the router pod. See worklog 0468 for the discovery that motivated
+	// removing the ownerRef.
+	if err := syncPeerConfigMap(ctx, r.Client, r.Namespace, []PeerEntry{}); err != nil {
 		logger.Error(err, "failed to clear peer ConfigMap during deletion — relay-router may retain orphans until restart")
 		// Do not block deletion on this — terminating EC2 instances and
 		// removing the finalizer is more important than the cosmetic

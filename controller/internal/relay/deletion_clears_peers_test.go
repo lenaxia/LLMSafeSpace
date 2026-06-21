@@ -22,21 +22,14 @@ import (
 )
 
 // TestHandleDeletion_ClearsPeerConfigMap pins the deletion-cleanup
-// fix for worklog 0467+: when the InferenceRelay CR is deleted, the
-// controller must write {"relays":[]} to the peer ConfigMap before
-// removing the finalizer (and thus before owner-reference cascade
-// deletes the CM).
+// fix from worklog 0467+0468: when the InferenceRelay CR is deleted,
+// the controller must write {"relays":[]} to the peer ConfigMap so the
+// relay-router observes the cleared fleet.
 //
-// Without this, kubelet's "optional ConfigMap" volume mount semantics
-// keep the stale file in the relay-router pod's /etc/relay-router/
-// directory after the CM is deleted. The router's pollPeerConfig sees
-// the same stale content forever (until pod restart) and continues to
-// list orphaned relays in metrics + select them for routing.
-//
-// Writing the empty list explicitly before deleting the CR forces
-// kubelet to update the volume mount with the cleared content. After
-// the file change is observed by the router, owner-reference cleanup
-// then removes the CM safely.
+// The CM has no ownerReference (worklog 0468 fix) so it persists across
+// CR deletions; the empty-list write here propagates cleanly through
+// kubelet's volume-mount sync to the router pod, which drops the
+// orphaned relays from its in-memory fleet.
 func TestHandleDeletion_ClearsPeerConfigMap(t *testing.T) {
 	scheme := testScheme(t)
 
@@ -79,19 +72,20 @@ func TestHandleDeletion_ClearsPeerConfigMap(t *testing.T) {
 	_, err := r.handleDeletion(context.Background(), relay)
 	require.NoError(t, err)
 
-	// The ConfigMap must contain an empty relay list now (regardless of
-	// whether owner-reference deletion has run yet — the controller wrote
-	// the empty list explicitly).
+	// The ConfigMap must contain an empty relay list now. The CM has no
+	// ownerReference (worklog 0468) so it persists after handleDeletion;
+	// kubelet propagates the cleared content to the router pod's volume
+	// mount.
 	cm := &corev1.ConfigMap{}
 	getErr := fakeClient.Get(context.Background(),
 		types.NamespacedName{Name: routerPeersConfigMap, Namespace: "test-ns"}, cm)
 	require.NoError(t, getErr,
-		"peer ConfigMap must still exist after handleDeletion (before owner-reference cleanup)")
+		"peer ConfigMap must still exist after handleDeletion (no ownerReference, no GC)")
 	assert.Equal(t, `{"relays":[]}`, cm.Data["peers.json"],
-		"handleDeletion must write empty peer list to the CM before removing "+
-			"the finalizer; otherwise kubelet's optional-CM volume mount keeps "+
-			"the stale file in the relay-router pod and orphan relays linger "+
-			"until pod restart (worklog 0467 follow-up)")
+		"handleDeletion must write empty peer list to the CM so kubelet "+
+			"propagates the cleared content to the relay-router pod's volume "+
+			"mount and the router drops orphaned relays from its in-memory "+
+			"fleet (worklog 0467+0468)")
 
 	// Finalizer must also be removed (existing behavior preserved)
 	updated := &v1.InferenceRelay{}

@@ -128,7 +128,7 @@ func TestSyncPeerConfigMap_UpdatePath(t *testing.T) {
 	).Build()
 
 	peers := []PeerEntry{{ID: "new", Endpoint: "1.2.3.4:8080", Provider: "aws", State: "healthy", Token: "t"}}
-	require.NoError(t, syncPeerConfigMap(context.Background(), fakeClient, "test-ns", nil, peers))
+	require.NoError(t, syncPeerConfigMap(context.Background(), fakeClient, "test-ns", peers))
 
 	cm := &corev1.ConfigMap{}
 	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{Name: routerPeersConfigMap, Namespace: "test-ns"}, cm))
@@ -136,18 +136,17 @@ func TestSyncPeerConfigMap_UpdatePath(t *testing.T) {
 	assert.NotContains(t, cm.Data["peers.json"], "old")
 }
 
-// TestSyncPeerConfigMap_NoOwnerRef verifies that even when an owner is
-// passed, the resulting ConfigMap does NOT have an ownerReference. This
-// is intentional — the CM lifecycle is managed by the controller's
-// reconcile loop alone, not by Kubernetes garbage collection. Owner-ref
-// would race with kubelet's volume-mount sync on CR deletion (see worklog
-// 0468). The owner argument is preserved for API stability but is unused.
+// TestSyncPeerConfigMap_NoOwnerRef verifies that the resulting ConfigMap
+// does NOT have an ownerReference. This is intentional — the CM lifecycle
+// is managed by the controller's reconcile loop alone, not by Kubernetes
+// garbage collection. Owner-ref would race with kubelet's volume-mount
+// sync on CR deletion and orphan relays in the router's in-memory fleet
+// (see worklog 0468).
 func TestSyncPeerConfigMap_NoOwnerRef(t *testing.T) {
 	scheme := testScheme(t)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	owner := &v1.InferenceRelay{ObjectMeta: metav1.ObjectMeta{Name: "relay-fleet", UID: "test-uid"}}
 	peers := []PeerEntry{{ID: "x", Endpoint: "1.2.3.4:8080", Provider: "oci", State: "healthy", Token: "t"}}
-	require.NoError(t, syncPeerConfigMap(context.Background(), fakeClient, "test-ns", owner, peers))
+	require.NoError(t, syncPeerConfigMap(context.Background(), fakeClient, "test-ns", peers))
 
 	cm := &corev1.ConfigMap{}
 	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{Name: routerPeersConfigMap, Namespace: "test-ns"}, cm))
@@ -167,7 +166,7 @@ func TestSyncPeerConfigMap_NilDataMap(t *testing.T) {
 	).Build()
 
 	peers := []PeerEntry{{ID: "x", Endpoint: "1.2.3.4:8080", Provider: "oci", State: "healthy", Token: "t"}}
-	require.NoError(t, syncPeerConfigMap(context.Background(), fakeClient, "test-ns", nil, peers))
+	require.NoError(t, syncPeerConfigMap(context.Background(), fakeClient, "test-ns", peers))
 
 	cm := &corev1.ConfigMap{}
 	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{Name: routerPeersConfigMap, Namespace: "test-ns"}, cm))

@@ -35,22 +35,19 @@ type PeerConfig struct {
 // syncPeerConfigMap creates or updates the relay-router-peers ConfigMap
 // with the current set of relay VMs.
 //
-// The CM is intentionally NOT given an ownerReference to the InferenceRelay
-// CR. If it were, GC would delete the CM as soon as the CR's finalizer
-// is removed, racing with kubelet's volume-mount sync. The window between
-// "controller writes empty list" and "GC deletes CM" is typically too short
-// for kubelet to propagate the cleared content to the relay-router pod's
-// volume mount, leaving the router with stale peer data until pod restart.
+// The CM is intentionally NOT given an ownerReference. If it were, GC
+// would delete the CM as soon as the InferenceRelay CR's finalizer is
+// removed, racing with kubelet's volume-mount sync. The window between
+// "controller writes empty list" and "GC deletes CM" is typically too
+// short for kubelet to propagate the cleared content to the relay-router
+// pod's volume mount, leaving the router with stale peer data until pod
+// restart.
 //
-// By managing the CM lifecycle directly (no ownerRef), the empty-list write
-// from handleDeletion stays in the CM and propagates cleanly. A subsequent
-// CR creation re-uses the same CM, overwriting the empty list with the
-// fresh fleet. See worklog 0468 for the discovery that motivated this.
-//
-// The `owner` parameter is preserved to keep the API stable, but is unused
-// for the CM ownerReference.
-func syncPeerConfigMap(ctx context.Context, c client.Client, namespace string, owner client.Object, peers []PeerEntry) error {
-	_ = owner // intentionally unused — see function-level comment
+// By managing the CM lifecycle directly (no ownerRef), the empty-list
+// write from handleDeletion stays in the CM and propagates cleanly. A
+// subsequent CR creation re-uses the same CM, overwriting the empty list
+// with the fresh fleet. See worklog 0468 for the discovery.
+func syncPeerConfigMap(ctx context.Context, c client.Client, namespace string, peers []PeerEntry) error {
 	data, err := json.Marshal(PeerConfig{Relays: peers})
 	if err != nil {
 		return fmt.Errorf("marshal peer config: %w", err)
