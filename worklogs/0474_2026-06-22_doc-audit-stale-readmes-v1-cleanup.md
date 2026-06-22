@@ -37,6 +37,11 @@ Audited every non-archived, non-node_modules doc. Findings:
 - `pkg/secrets/README.md` — StaticKeyProvider now reflects file-mount default (Epic 50 US-50.1).
 - `frontend/README.md` — added missing `org-admin/`, `shared/` dirs.
 - `api/migrations/README.md` — removed dead `epic-19/` reference.
+- `.github/prompts/context.md` — AI system prompt: fixed CRD list (removed Sandbox/SandboxProfile, added InferenceRelay), expanded cmd/ binaries list (2 → 8), fixed "sandbox" → "workspace" language.
+- `charts/llmsafespaces/templates/NOTES.txt` — fixed `kubectl get crd` command (removed sandboxes/sandboxprofiles, added inferencerelays), fixed webhook advisory CRD names.
+
+**Deleted (second pass):**
+- `design/story2.1` — V1-era "Implementation Plan for API Service" referencing removed WarmPoolService/SandboxHandler/ExecutionService (same class as `APIIMPLEMENTATION.md`; unreferenced).
 
 ### Phase 3 — AI review remediation (1 iteration)
 
@@ -45,6 +50,14 @@ The automated reviewer (`review` CI job) found 3 real issues, all validated agai
 1. **Relay weighting error (README-LLM.md + relay-router README):** Both said "OCI gets 100% of traffic; GCP during OCI failure." Source (`fleet.go:146-151, 265-284`) is **AWS primary (weight 1000), OCI secondary (100), GCP tertiary (1)**. README.md was correct; the two other docs carried a stale pre-existing error that I propagated. Fixed all three to AWS-primary. Also dropped the GCP "(paid)" label (source is internally inconsistent: CRD line 63 says e2-micro is Always Free eligible, line 137 says "optional paid provider").
 2. **Missing `UPSTREAM_AUTH_KEY`:** `main.go:54` reads it (the credential value); I only documented `UPSTREAM_AUTH_HEADER` (the header name). Added both; corrected the header description (default empty → `Authorization` sent as `Bearer <key>`, verified at `proxy.go:18,40,59`).
 3. **Missing worklog** — this entry.
+
+### Phase 4 — Second review iteration (scope completeness)
+
+The reviewer's second pass accepted all prior fixes but found the audit missed 3 items in its stated scope:
+
+4. **`charts/llmsafespaces/templates/NOTES.txt`** — user-facing `kubectl get crd` command listed removed `sandboxes` + `sandboxprofiles` CRDs (prints a failing command to every operator at install); webhook advisory referenced removed CRDs. Fixed.
+5. **`.github/prompts/context.md`** — the AI system prompt listed 4 CRDs including 2 removed ones and only 2 cmd/ binaries (missing 6). This file is the reviewer's own entry point — it directly contradicted the refreshed README-LLM.md. Fixed: CRD list, cmd binaries, "sandbox" → "workspace" language.
+6. **`design/story2.1`** — unreferenced 1113-line V1 implementation plan (same class as the already-deleted `APIIMPLEMENTATION.md`). Deleted.
 
 ---
 
@@ -79,11 +92,13 @@ Docs-only PR — no code changes. CI verifies: Lint ✓, all migration checks �
 ## Files Modified
 
 - `APIIMPLEMENTATION.md` (deleted)
+- `design/story2.1` (deleted, second pass)
 - `README.md`, `README-LLM.md`
 - `cmd/relay-proxy/README.md`, `cmd/relay-router/README.md`
 - `pkg/README.md`, `pkg/secrets/README.md`
-- `charts/llmsafespaces/README.md`
+- `charts/llmsafespaces/README.md`, `charts/llmsafespaces/templates/NOTES.txt`
 - `design/stories/README.md`
+- `.github/prompts/context.md`
 - `frontend/README.md`
 - `api/migrations/README.md`
 - `COORDINATE.md`

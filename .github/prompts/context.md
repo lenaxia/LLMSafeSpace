@@ -1,11 +1,11 @@
-Repository: LLMSafeSpaces — a Kubernetes-first platform (Go) for running AI agents securely in isolated sandboxes. Every sandbox runs `opencode serve` as a persistent HTTP server with a PVC-backed persistent workspace. Single maintainer: @lenaxia.
+Repository: LLMSafeSpaces — a Kubernetes-first platform (Go) for running AI agents securely in isolated workspaces. Every workspace runs `opencode serve` as a persistent HTTP server with a PVC-backed persistent filesystem. Single maintainer: @lenaxia.
 
 Key directories:
-- api/               — Go API service (Gin) + MCP server; reverse proxy to sandbox agents, workspace/credential management
-- controller/        — Kubernetes operator (controller-runtime); manages Sandbox, Workspace, SandboxProfile, RuntimeEnvironment CRDs
+- api/               — Go API service (Gin) + MCP server; reverse proxy to workspace agents, workspace/credential/secret management
+- controller/        — Kubernetes operator (controller-runtime); manages Workspace, RuntimeEnvironment, InferenceRelay CRDs
 - runtimes/          — Container images (Python, Node.js, Go); hardened environments with opencode serve and credential injection
-- pkg/               — Shared packages (types, kubernetes client, redact, logger, utilities)
-- cmd/               — Top-level binaries (redact, mcp)
+- pkg/               — Shared packages (types, kubernetes client, redact, logger, secrets, utilities)
+- cmd/               — Top-level binaries (api, mcp, redact, repolint, seal-key, workspace-agentd, relay-router, relay-proxy)
 - design/            — Architecture and design documents (EVOLUTION-V2.md is authoritative for V2)
 - design/SECURITY.md — Defense-in-depth security model
 - .github/workflows/ — CI/CD pipelines
