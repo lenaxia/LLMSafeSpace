@@ -147,7 +147,7 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 		Name:               req.Name,
 		Provider:           req.Provider,
 		Ciphertext:         ciphertext,
-		KeyVersion:         1,
+		KeyVersion:         secrets.ActiveVersionOf(h.provider),
 		ModelAllowlist:     req.ModelAllowlist,
 		ModelContextLimits: req.ModelContextLimits,
 		CreatedAt:          now,

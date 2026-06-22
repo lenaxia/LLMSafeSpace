@@ -76,6 +76,7 @@ type APIKey struct {
 	KekSalt       []byte   `json:"-" db:"kek_salt"`
 	WrappedDEK    []byte   `json:"-" db:"wrapped_dek"`
 	KeyCiphertext []byte   `json:"-" db:"key_ciphertext"`
+	KeyVersion    int      `json:"-" db:"key_version"`
 }
 
 // UserUpdates carries the fields that may be changed on a User record.
