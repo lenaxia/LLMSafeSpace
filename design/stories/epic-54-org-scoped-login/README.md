@@ -31,7 +31,7 @@ The platform is multi-tenant with potentially multiple BYO-email orgs, so per-or
 | Email-lookup primitive (`GetUserByEmail`) | ✅ Shipped | `database.go:115`, interface `interfaces.go:61`. Used by SSO, auth, register, email-verify, password-reset. |
 | Enumeration-safe response pattern | ✅ Shipped | `password_reset.go:119` + test at `password_reset_test.go:425` ("must return 202 (not 500) to avoid enumeration"). Establishes the convention this epic will follow. |
 | Invitation system | ✅ Shipped | `InvitationsHandler` (`invitations.go`). Token-based accept flow carries `orgID` — invitation links already serve as first-login onboarding. |
-| Single-org invariant (1 user → ≤1 org) | ✅ Enforced (DB + app layer) | DB: `CREATE UNIQUE INDEX idx_org_memberships_single_user ON org_memberships(user_id)` (`migration 000036_single_org_enforcement.up.sql:12-13`). App: pre-check in `orgs.go:125-145` (create) and `:409-420` (add-member) returns a clear 409 before hitting the raw constraint. Dropping 1:1 requires a migration to `DROP INDEX idx_org_memberships_single_user` + app code change + new `users.default_org_id` column (see D54-3). |
+| Single-org invariant (1 user → ≤1 org) | ✅ Enforced (DB + app layer) | DB: `CREATE UNIQUE INDEX idx_org_memberships_single_user ON org_memberships(user_id)` (`migration 000036_single_org_enforcement.up.sql:12-13`). App: pre-check in `orgs.go:125-137` (create) and `:409-420` (add-member) returns a clear 409 before hitting the raw constraint. Dropping 1:1 requires a migration to `DROP INDEX idx_org_memberships_single_user` + app code change + new `users.default_org_id` column (see D54-3). |
 | Wildcard subdomain ingress | ❌ Not present | `frontend-ingress.yaml` supports `additionalHosts` (list of explicit hosts) but no wildcard host or wildcard cert. `cert-manager.io/v1` is already installed for the webhook cert (`templates/webhook-cert.yaml`) — reusable for a wildcard Issuer. |
 | Cross-subdomain session cookie | ❌ Not configured | `lsp_session` JWT cookie is set without an explicit `Domain=` attribute (`auth.go` cookie path). Subdomain routing requires `Domain=.app.example.com` (or equivalent) so the session survives the redirect. |
 | Passkeys / WebAuthn | ❌ Not present | Zero matches for `passkey`, `webauthn`, `WebAuthn` anywhere in the repo. Deferred (see Non-Goals). |
@@ -260,7 +260,7 @@ frontend:
 
 - **D54-1:** No magic links. Email is for invitations + notifications only, never auth.
 - **D54-2:** `POST /auth/lookup` returns a single `redirectUrl`, never a list. Found and not-found responses match the `password_reset.go:119` precedent: uniform status (200) + uniform body shape, no timing pad (see hardening table in US-54.1).
-- **D54-3:** Keep 1 user → ≤1 org invariant (DB-enforced via `UNIQUE INDEX idx_org_memberships_single_user` in migration 000036, plus app-layer pre-check in `orgs.go:125-145, 409-420`). The `redirectUrl` contract is forward-compatible with multi-org: a future epic only changes the resolver (pick `default_org_id` / `last_used_org_id`), not the API surface.
+- **D54-3:** Keep 1 user → ≤1 org invariant (DB-enforced via `UNIQUE INDEX idx_org_memberships_single_user` in migration 000036, plus app-layer pre-check in `orgs.go:125-137, 409-420`). The `redirectUrl` contract is forward-compatible with multi-org: a future epic only changes the resolver (pick `default_org_id` / `last_used_org_id`), not the API surface.
 - **D54-4:** Spike first (S54-0). The epic is gated on wildcard subdomain routing being viable on the operator's cluster. If the spike fails, replan toward org picker (rejected here for customer-list-leak reasons but defensible if infra blocks subdomains).
 - **D54-5:** `orgSubdomainRouting.enabled=false` by default. Operators must opt in (requires wildcard DNS + cert). Single-host deploys continue to work unchanged.
 
@@ -276,7 +276,7 @@ When multi-org lands (future epic), the migration will be:
 - `DROP INDEX IF EXISTS idx_org_memberships_single_user;` (removes the DB 1:1 constraint from migration 000036)
 - `ALTER TABLE users ADD COLUMN default_org_id UUID REFERENCES organizations(id);`
 - `ALTER TABLE users ADD COLUMN last_used_org_id UUID REFERENCES organizations(id);`
-- Drop the app-layer 1:1 pre-check in `orgs.go:125-145, 409-420`.
+- Drop the app-layer 1:1 pre-check in `orgs.go:125-137, 409-420`.
 
 ---
 
@@ -290,7 +290,7 @@ When multi-org lands (future epic), the migration will be:
 | SSO start (target of redirect) | `api/internal/services/sso/sso.go:419` (`StartLogin`), route `GET /auth/sso/:orgSlug/start` |
 | SSO callback (sets session cookie) | `api/internal/services/sso/sso.go` (`HandleCallback`), route `GET /auth/sso/:orgSlug/callback` |
 | Session cookie setter | `api/internal/services/auth/auth.go` (cookie path; needs `Domain=` when subdomain routing enabled) |
-| Single-org enforcement (app layer pre-check) | `api/internal/handlers/orgs.go:125-145` (create), `:409-420` (add member) |
+| Single-org enforcement (app layer pre-check) | `api/internal/handlers/orgs.go:125-137` (create), `:409-420` (add member) |
 | DB single-org constraint | `api/migrations/000036_single_org_enforcement.up.sql:12-13` (`UNIQUE INDEX ... ON org_memberships(user_id)`) |
 | Login page (subdomain, current) | `frontend/src/pages/LoginPage.tsx` |
 | Frontend ingress (current) | `charts/llmsafespaces/templates/frontend-ingress.yaml` |

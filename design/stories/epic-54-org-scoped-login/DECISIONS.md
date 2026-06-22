@@ -69,7 +69,7 @@ All decisions below were confirmed during the 2026-06-22 scoping conversation. T
 **Status:** Confirmed (2026-06-22)
 **Source:** User direction ("We may add multi-org support in the future, but will not do so immediately.")
 
-**Context:** The current schema enforces 1:1 at two layers. **DB layer:** migration `000036_single_org_enforcement.up.sql:12-13` creates `CREATE UNIQUE INDEX IF NOT EXISTS idx_org_memberships_single_user ON org_memberships(user_id)` — a hard schema constraint. The composite PK `(org_id, user_id)` from migration 000029 is orthogonal (prevents duplicate rows for the same pair); the unique index on `user_id` alone is what enforces one-membership-per-user. **App layer:** `orgs.go:125-145` (create) and `:409-420` (add-member) pre-check via `GetUserOrgID` and return a clear 409 before the DB constraint would fire as a raw 23505 error. Dropping 1:1 requires a migration to `DROP INDEX idx_org_memberships_single_user` **plus** removing the app-layer pre-check **plus** a new `users.default_org_id` column for the resolver to pick.
+**Context:** The current schema enforces 1:1 at two layers. **DB layer:** migration `000036_single_org_enforcement.up.sql:12-13` creates `CREATE UNIQUE INDEX IF NOT EXISTS idx_org_memberships_single_user ON org_memberships(user_id)` — a hard schema constraint. The composite PK `(org_id, user_id)` from migration 000029 is orthogonal (prevents duplicate rows for the same pair); the unique index on `user_id` alone is what enforces one-membership-per-user. **App layer:** `orgs.go:125-137` (create) and `:409-420` (add-member) pre-check via `GetUserOrgID` and return a clear 409 before the DB constraint would fire as a raw 23505 error. Dropping 1:1 requires a migration to `DROP INDEX idx_org_memberships_single_user` **plus** removing the app-layer pre-check **plus** a new `users.default_org_id` column for the resolver to pick.
 
 **Decision:** Keep 1:1 for now. The `POST /auth/lookup` contract returns a single `redirectUrl` — under 1:1, the resolver is trivially `GetUserOrgID(user.ID)` (returns `""` or one org_id). When multi-org lands:
 
@@ -82,7 +82,7 @@ All decisions below were confirmed during the 2026-06-22 scoping conversation. T
    ALTER TABLE users ADD COLUMN last_used_org_id UUID REFERENCES organizations(id);
    ALTER TABLE users ADD COLUMN last_used_org_at TIMESTAMPTZ;
    ```
-4. **App change** (future epic): remove the pre-check in `orgs.go:125-145, 409-420`.
+4. **App change** (future epic): remove the pre-check in `orgs.go:125-137, 409-420`.
 5. **Resolver change** (future epic):
    ```go
    // Today (1:1, DB-enforced):
