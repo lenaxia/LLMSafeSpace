@@ -1,6 +1,6 @@
 {{- if and .Values.orgSubdomainRouting.enabled .Values.frontend.enabled .Values.frontend.ingress.enabled }}
 {{- $fullname := include "llmsafespaces.fullname" . }}
-{{- $base := .Values.orgSubdomainRouting.baseDomain }}
+{{- $base := required "orgSubdomainRouting.baseDomain is required when orgSubdomainRouting.enabled=true" .Values.orgSubdomainRouting.baseDomain }}
 # Epic 54, US-54.3: Wildcard Ingress for org-scoped subdomain routing.
 #
 # Routes *.<baseDomain> to the frontend + API services so that

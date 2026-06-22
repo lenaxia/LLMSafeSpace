@@ -3020,3 +3020,33 @@ orgSubdomainRouting:
 	assert.Contains(t, configYAML, "baseDomain: \"app.example.com\"")
 	assert.Contains(t, configYAML, "cookieDomain: \".app.example.com\"")
 }
+
+// TestEpic54_WildcardEnabled_EmptyBaseDomain_FailsAtTemplate verifies that
+// enabling orgSubdomainRouting without a baseDomain fails at helm template
+// time (via the `required` function) rather than rendering a broken host rule.
+func TestEpic54_WildcardEnabled_EmptyBaseDomain_FailsAtTemplate(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("helm not on PATH; skipping chart render test")
+	}
+	values := `
+frontend:
+  enabled: true
+  ingress:
+    enabled: true
+orgSubdomainRouting:
+  enabled: true
+  baseDomain: ""
+`
+	dir := t.TempDir()
+	valuesPath := filepath.Join(dir, "values.yaml")
+	require.NoError(t, writeFile(valuesPath, values))
+
+	cmd := exec.Command("helm", "template", "test-release", chartDir(t), "-n", "test-ns", "-f", valuesPath)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+
+	require.Error(t, err, "helm template must fail when orgSubdomainRouting.enabled=true but baseDomain is empty")
+	assert.Contains(t, stderr.String(), "baseDomain is required",
+		"error message must explain that baseDomain is required")
+}

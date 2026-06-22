@@ -702,7 +702,7 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, insta
 					"error", err.Error())
 			}
 		}
-		c.SetCookie(cookieName, "", -1, "/", "", true, true)
+		c.SetCookie(cookieName, "", -1, "/", cookieDomain, true, true)
 		c.Status(http.StatusNoContent)
 	})
 
