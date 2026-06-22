@@ -647,6 +647,11 @@ func assignSentinels(dir string, remoteByVersion map[int][]string) ([]WorklogRen
 		return nil, fmt.Errorf("read %s: %w", dir, err)
 	}
 
+	// Single pass: collect sentinels AND seed the occupied-version set
+	// from local numbered worklogs. No second ReadDir needed — the
+	// directory hasn't been mutated yet.
+	occupied := map[int]bool{}
+	maxVer := 0
 	var sentinels []string
 	for _, e := range entries {
 		if e.IsDir() {
@@ -654,46 +659,29 @@ func assignSentinels(dir string, remoteByVersion map[int][]string) ([]WorklogRen
 		}
 		if WorklogSentinelPattern.MatchString(e.Name()) {
 			sentinels = append(sentinels, e.Name())
+			continue
+		}
+		// Check if it's a numbered worklog to seed the occupied set.
+		if m := WorklogPattern.FindStringSubmatch(e.Name()); m != nil {
+			if v, err := strconv.Atoi(m[1]); err == nil {
+				occupied[v] = true
+				if v > maxVer {
+					maxVer = v
+				}
+			}
 		}
 	}
-	if len(sentinels) == 0 {
-		return nil, nil
-	}
-	sort.Strings(sentinels)
-
-	// Seed maxVer and the occupied-version set from both the local
-	// numbered worklogs and remote (origin/main) versions so the first
-	// assigned sentinel number is strictly greater than both.
-	occupied := map[int]bool{}
-	maxVer := 0
+	// Seed from remote (origin/main) versions too.
 	for v := range remoteByVersion {
 		occupied[v] = true
 		if v > maxVer {
 			maxVer = v
 		}
 	}
-	// Re-read the dir for numbered worklogs (not sentinels).
-	numberedEntries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, fmt.Errorf("read %s for numbered worklogs: %w", dir, err)
+	if len(sentinels) == 0 {
+		return nil, nil
 	}
-	for _, e := range numberedEntries {
-		if e.IsDir() {
-			continue
-		}
-		m := WorklogPattern.FindStringSubmatch(e.Name())
-		if m == nil {
-			continue
-		}
-		v, err := strconv.Atoi(m[1])
-		if err != nil {
-			continue
-		}
-		occupied[v] = true
-		if v > maxVer {
-			maxVer = v
-		}
-	}
+	sort.Strings(sentinels)
 
 	var renames []WorklogRename
 	for _, s := range sentinels {

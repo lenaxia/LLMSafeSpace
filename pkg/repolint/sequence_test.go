@@ -4,6 +4,7 @@
 package repolint
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -529,28 +531,37 @@ func TestLive_Migrations_NoCollisionsOrGaps(t *testing.T) {
 }
 
 func TestLive_Worklogs_NoDuplicates(t *testing.T) {
-	// Skip if there are uncommitted changes in worklogs/ — a developer
-	// writing a NNNN_ sentinel worklog locally would trip this test
-	// before the post-merge bot has numbered it. On CI (clean checkout
-	// of main), the bot should have numbered everything.
+	// The invariant: origin/main should have NO NNNN_ sentinel files —
+	// the post-merge bot numbers them at merge time. A NNNN_ persisting
+	// on main means the bot is broken.
+	//
+	// This test checks origin/main's tree (via git ls-tree), NOT the
+	// working directory. Feature branches naturally carry NNNN_ files
+	// (that's the whole point of the scheme), so checking the working
+	// tree would fail on every PR that adds a worklog.
 	root := repoRoot(t)
-	if out, err := exec.Command("git", "-C", root, "status", "--porcelain", "--", "worklogs/").Output(); err == nil && len(out) > 0 {
-		t.Skip("skipping live sentinel check: uncommitted changes in worklogs/ (expected during local development)")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "-C", root, "ls-tree", "--name-only", "origin/main", "--", "worklogs/")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Skipf("skipping live sentinel check: cannot read origin/main (not fetched or no network): %v", err)
 	}
 
-	// The old sequence check is retired — under the NNNN_ sentinel scheme,
-	// authors never pick numbers, so sequence collisions cannot originate
-	// at authoring time. The post-merge bot assigns numbers atomically.
-	// Historical duplicates (pre-scheme) remain grandfathered.
-	//
-	// The live invariant is now: no NNNN_ sentinel files on main (the
-	// post-merge bot should have numbered them all).
-	rep, err := SentinelCheck(filepath.Join(root, "worklogs"))
-	if err != nil {
-		t.Fatalf("scanning worklogs for sentinels: %v", err)
+	var sentinels []string
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		base := filepath.Base(line)
+		if WorklogSentinelPattern.MatchString(base) {
+			sentinels = append(sentinels, base)
+		}
 	}
-	if !rep.OK() {
-		t.Fatalf("worklogs/ has NNNN_ sentinel files on main (post-merge bot should have numbered them):\n%s", rep.String())
+	if len(sentinels) > 0 {
+		t.Fatalf("origin/main has NNNN_ sentinel files (post-merge bot should have numbered them):\n%s", strings.Join(sentinels, "\n"))
 	}
 }
 

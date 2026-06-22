@@ -1398,28 +1398,24 @@ jobs:
         run: |
           # Extract the PR number from the merge commit message.
           # Squash-merge format: "feat: ... (#343)"
-          # Merge-commit format: "Merge pull request #343"
-          PR_NUM=$(git log -1 --pretty=%B | grep -oE '#[0-9]+' | head -1 | tr -d '#')
+          # Use the LAST #NNN to avoid matching issue refs in the title.
+          PR_NUM=$(git log -1 --pretty=%B | grep -oE '#[0-9]+' | tail -1 | tr -d '#')
           if [ -z "$PR_NUM" ]; then
             echo "No PR number found in merge commit — skipping comment"
             exit 0
           fi
 
-          # Build the comment body from the rename lines.
-          BODY="## Worklog numbers assigned
-
-          The post-merge bot assigned the following worklog number(s):
-          "$'\n'"
-          while IFS= read -r line; do
-            # Extract the "→ TARGET" part from "fix-worklogs: renamed SRC → TARGET"
-            TARGET=$(echo "$line" | sed 's/.*→ //')
-            echo "- \`$TARGET\`" >> /tmp/comment.md
-          done < /tmp/renames.txt
-
+          # Build the comment body using a heredoc to avoid quote-nesting issues.
           {
-            echo "$BODY"
+            echo "## Worklog numbers assigned"
             echo ""
-            cat /tmp/comment.md
+            echo "The post-merge bot assigned the following worklog number(s):"
+            echo ""
+            while IFS= read -r line; do
+              # Extract the target filename from "fix-worklogs: renamed SRC → TARGET"
+              TARGET=$(echo "$line" | sed 's/.*→ //')
+              echo "- \`$TARGET\`"
+            done < /tmp/renames.txt
           } > /tmp/full-comment.md
 
           gh pr comment "$PR_NUM" --body-file /tmp/full-comment.md
