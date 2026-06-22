@@ -99,4 +99,4 @@ Manual verification of reviewer claims (before applying fixes):
 - `design/stories/epic-54-org-scoped-login/README.md` — created (scaffold), then corrected (DB constraint, file refs, timing pad, line drifts, not-found redirect consistency)
 - `design/stories/epic-54-org-scoped-login/DECISIONS.md` — created (scaffold), then corrected (D54-2 timing pad, D54-3 DB constraint + resolver primitive)
 - `design/stories/README.md` — added Epic 54 row to V2.2 (In Planning) table
-- `worklogs/0473_2026-06-22_epic-54-scaffold-reviewer-corrections.md` — this entry
+- `worklogs/0497_2026-06-22_epic-54-scaffold-reviewer-corrections.md` — this entry
