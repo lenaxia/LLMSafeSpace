@@ -215,7 +215,7 @@ func buildSSOHandler(t *testing.T) (*SSOHandler, *mockSSOStore, *mockSSOHandlerU
 	store := newMockSSOStore()
 	users := newMockSSOHandlerUserStore()
 	svc := newSSOServiceForHandler(t, store, users, "https://api.test.local")
-	h := NewSSOHandler(svc, store, &mockOrgAuthService{userID: "admin-1"}, "lsp_session", "https://app.test.local", nil)
+	h := NewSSOHandler(svc, store, &mockOrgAuthService{userID: "admin-1"}, "lsp_session", "", "https://app.test.local", nil)
 
 	r := gin.New()
 	r.GET("/api/v1/orgs/:id/sso", h.Get)
@@ -616,7 +616,7 @@ func TestE2E_SSO_ResolveCallbackURL_WarnsOnForwardedHeaderFallback(t *testing.T)
 	// RedirectBaseURL = "" → the fallback path (forwarded headers).
 	svc := newSSOServiceForHandler(t, store, users, "")
 	log := &capturingSSOLogger{}
-	h := NewSSOHandler(svc, store, &mockOrgAuthService{userID: "admin-1"}, "lsp_session", "https://app.test.local", log)
+	h := NewSSOHandler(svc, store, &mockOrgAuthService{userID: "admin-1"}, "lsp_session", "", "https://app.test.local", log)
 
 	// Simulate a request with forwarded headers (the attacker-influenceable
 	// surface F11 documents).
@@ -647,7 +647,7 @@ func TestE2E_SSO_ResolveCallbackURL_NoWarnWhenRedirectBaseURLSet(t *testing.T) {
 	users := newMockSSOHandlerUserStore()
 	svc := newSSOServiceForHandler(t, store, users, "https://api.production.local")
 	log := &capturingSSOLogger{}
-	h := NewSSOHandler(svc, store, &mockOrgAuthService{userID: "admin-1"}, "lsp_session", "https://app.test.local", log)
+	h := NewSSOHandler(svc, store, &mockOrgAuthService{userID: "admin-1"}, "lsp_session", "", "https://app.test.local", log)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -671,7 +671,7 @@ func buildVerifyHandler(t *testing.T) (*SSOHandler, *mockSSOStore, *gin.Engine, 
 	svc := newSSOServiceForHandler(t, store, users, "https://api.test.local")
 	dns := &fakeVerifyDNSResolver{records: map[string][]string{}}
 	svc.SetDNSResolver(dns)
-	h := NewSSOHandler(svc, store, &mockOrgAuthService{userID: "admin-1"}, "lsp_session", "https://app.test.local", nil)
+	h := NewSSOHandler(svc, store, &mockOrgAuthService{userID: "admin-1"}, "lsp_session", "", "https://app.test.local", nil)
 	r := gin.New()
 	r.POST("/api/v1/orgs/:id/sso/domains/:domain/verify", h.VerifyDomain)
 	r.POST("/api/v1/orgs/:id/sso/verification-token/rotate", h.RotateToken)

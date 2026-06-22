@@ -1,0 +1,50 @@
+{{- if and .Values.orgSubdomainRouting.enabled .Values.frontend.enabled .Values.frontend.ingress.enabled .Values.frontend.ingress.tls }}
+{{- if not .Values.orgSubdomainRouting.wildcardCert.tlsSecret }}
+{{- $fullname := include "llmsafespaces.fullname" . }}
+{{- $base := .Values.orgSubdomainRouting.baseDomain }}
+{{- $issuer := .Values.orgSubdomainRouting.wildcardCert.issuerRef }}
+# Epic 54, US-54.3: cert-manager Certificate for the wildcard subdomain.
+#
+# Issues a TLS certificate for *.<baseDomain> so the wildcard Ingress
+# (frontend-wildcard-ingress.yaml) can serve HTTPS on every org subdomain.
+# The certificate is stored in a Secret named
+# <release>-frontend-wildcard-tls, referenced by the Ingress's tls[] block.
+#
+# Prerequisites: cert-manager installed + a configured Issuer/ClusterIssuer
+# capable of issuing wildcard certificates (Let's Encrypt DNS-01 or a
+# private CA). Provide the issuerRef in values.yaml:
+#
+#   orgSubdomainRouting:
+#     wildcardCert:
+#       issuerRef:
+#         name: "letsencrypt-prod"
+#         kind: "ClusterIssuer"
+#
+# If you already have a wildcard TLS Secret (external issuer), set
+# orgSubdomainRouting.wildcardCert.tlsSecret to its name — this template
+# is skipped and the Ingress references your Secret directly.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $fullname }}-frontend-wildcard
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmsafespaces.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  secretName: {{ $fullname }}-frontend-wildcard-tls
+  duration: 8760h    # 1 year
+  renewBefore: 720h  # 30 days
+  privateKey:
+    algorithm: RSA
+    size: 2048
+    rotationPolicy: Always
+  dnsNames:
+    - {{ printf "*.%s" $base | quote }}
+    - {{ $base | quote }}
+  issuerRef:
+    name: {{ required "orgSubdomainRouting.wildcardCert.issuerRef.name is required when tlsSecret is empty" $issuer.name }}
+    kind: {{ $issuer.kind | default "ClusterIssuer" }}
+    group: cert-manager.io
+{{- end }}
+{{- end }}

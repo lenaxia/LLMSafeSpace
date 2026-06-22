@@ -70,3 +70,10 @@ data:
       stateCookieName: {{ . | quote }}
       {{- end }}
     {{- end }}
+    {{- if .Values.orgSubdomainRouting }}
+    orgSubdomainRouting:
+      baseDomain: {{ .Values.orgSubdomainRouting.baseDomain | quote }}
+      {{- with .Values.orgSubdomainRouting.cookieDomain }}
+      cookieDomain: {{ . | quote }}
+      {{- end }}
+    {{- end }}

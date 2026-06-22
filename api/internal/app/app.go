@@ -424,7 +424,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 				if ssoErr != nil {
 					log.Error("failed to construct sso service", ssoErr)
 				} else {
-					ssoHandler = handlers.NewSSOHandler(ssoSvc, pgOrgStore, svc.GetAuth(), cfg.Auth.CookieName, cfg.OIDC.FrontendRedirectURL, log)
+					ssoHandler = handlers.NewSSOHandler(ssoSvc, pgOrgStore, svc.GetAuth(), cfg.Auth.CookieName, cfg.OrgSubdomainRouting.CookieDomain, cfg.OIDC.FrontendRedirectURL, log)
 				}
 			}
 		}
@@ -737,6 +737,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		SSOHandler:                      ssoHandler,
 		LoginDiscoveryHandler:           loginDiscoveryHandler,
 		CookieName:                      cfg.Auth.CookieName,
+		CookieDomain:                    cfg.OrgSubdomainRouting.CookieDomain,
 	})
 
 	httpServer := &http.Server{

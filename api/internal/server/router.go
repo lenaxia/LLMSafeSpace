@@ -121,6 +121,12 @@ type RouterConfig struct {
 
 	CookieName string
 
+	// CookieDomain (Epic 54, US-54.3): when non-empty, set as the Domain
+	// attribute on the lsp_session cookie so the session survives root→subdomain
+	// redirects under wildcard subdomain routing. When empty (default), the
+	// cookie is host-only — current behavior, single-host deploys.
+	CookieDomain string
+
 	// SSOHandler handles org-admin SSO config CRUD + the public OIDC login flow
 	// (start/callback) and claimed-domain discovery (US-43.10, D17).
 	SSOHandler *handlers.SSOHandler
@@ -202,7 +208,7 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 
 	// Auth routes (public — no auth middleware)
 	authGroup := router.Group("/api/v1/auth")
-	registerAuthRoutes(authGroup, services, cfg.InstanceSettings, logger, cfg.cookieName(), cfg.SSOHandler)
+	registerAuthRoutes(authGroup, services, cfg.InstanceSettings, logger, cfg.cookieName(), cfg.CookieDomain, cfg.SSOHandler)
 
 	// US-49.5: Password reset via email (public — the token IS the credential
 	// for confirm; request is always 202 with no enumeration).
@@ -569,12 +575,14 @@ func sanitizeBindError(err error) string {
 // setSessionCookie sets the HttpOnly session cookie on the response.
 // maxAge is in seconds and must match the JWT's TTL.
 // cookieName is the cookie name from RouterConfig (defaults to "lsp_session").
-func setSessionCookie(c *gin.Context, token string, maxAge int, cookieName string) {
-	c.SetCookie(cookieName, token, maxAge, "/", "", true, true)
+// cookieDomain is the Domain attribute (empty = host-only; set when wildcard
+// subdomain routing is enabled so the cookie is visible across subdomains).
+func setSessionCookie(c *gin.Context, token string, maxAge int, cookieName, cookieDomain string) {
+	c.SetCookie(cookieName, token, maxAge, "/", cookieDomain, true, true)
 }
 
 // API key management routes.
-func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, instanceSettings *settings.InstanceService, logger *apilogger.Logger, cookieName string, ssoHandler *handlers.SSOHandler) {
+func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, instanceSettings *settings.InstanceService, logger *apilogger.Logger, cookieName, cookieDomain string, ssoHandler *handlers.SSOHandler) {
 	authSvc := services.GetAuth()
 
 	// Public: feature flag discovery
@@ -631,7 +639,7 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, insta
 		if maxAge <= 0 {
 			maxAge = 86400 // safe fallback: matches default tokenDuration
 		}
-		setSessionCookie(c, resp.Token, maxAge, cookieName)
+		setSessionCookie(c, resp.Token, maxAge, cookieName, cookieDomain)
 		c.JSON(http.StatusCreated, resp)
 	})
 
@@ -655,7 +663,7 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, insta
 		if maxAge <= 0 {
 			maxAge = 86400 // safe fallback: matches default tokenDuration
 		}
-		setSessionCookie(c, resp.Token, maxAge, cookieName)
+		setSessionCookie(c, resp.Token, maxAge, cookieName, cookieDomain)
 		c.JSON(http.StatusOK, resp)
 	})
 

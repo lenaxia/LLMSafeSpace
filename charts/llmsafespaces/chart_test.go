@@ -2809,3 +2809,214 @@ func TestWorkspaceEgress_NoRelayRouterRuleWhenFleetDisabled(t *testing.T) {
 		}
 	}
 }
+
+// ============================================================================
+// Epic 54, US-54.3: Org-scoped wildcard subdomain routing chart tests.
+//
+// These tests verify the chart's opt-in wildcard Ingress + Certificate
+// templates render correctly when orgSubdomainRouting.enabled=true and
+// are absent by default (backward compatibility).
+// ============================================================================
+
+// TestEpic54_DefaultRender_NoWildcardResources verifies that a default
+// `helm template` with no overrides renders ZERO wildcard Ingress or
+// Certificate resources — single-host deploys are unaffected.
+func TestEpic54_DefaultRender_NoWildcardResources(t *testing.T) {
+	docs := helmTemplate(t, "")
+	for _, d := range docs {
+		name := metaName(d)
+		if strings.Contains(name, "wildcard") {
+			t.Fatalf("default render must NOT include wildcard resources; found %s/%s",
+				d["kind"], name)
+		}
+	}
+}
+
+// TestEpic54_WildcardEnabled_RendersIngressAndCert verifies that enabling
+// orgSubdomainRouting renders both the wildcard Ingress and a cert-manager
+// Certificate with the correct host and DNS names.
+func TestEpic54_WildcardEnabled_RendersIngressAndCert(t *testing.T) {
+	values := `
+frontend:
+  enabled: true
+  ingress:
+    enabled: true
+    host: "app.example.com"
+    tls: true
+orgSubdomainRouting:
+  enabled: true
+  baseDomain: "app.example.com"
+  cookieDomain: ".app.example.com"
+  wildcardCert:
+    issuerRef:
+      name: "letsencrypt-prod"
+      kind: "ClusterIssuer"
+`
+	docs := helmTemplate(t, values)
+
+	// Find the wildcard Ingress
+	ingresses := findByKind(docs, "Ingress")
+	var wildcardIngress map[string]any
+	for _, ing := range ingresses {
+		if strings.Contains(metaName(ing), "wildcard") {
+			wildcardIngress = ing
+			break
+		}
+	}
+	require.NotNil(t, wildcardIngress, "wildcard Ingress must render when orgSubdomainRouting.enabled=true")
+
+	// Verify the host rule
+	spec, _ := wildcardIngress["spec"].(map[string]any)
+	rules, _ := spec["rules"].([]any)
+	require.NotEmpty(t, rules, "wildcard Ingress must have at least one rule")
+	rule, _ := rules[0].(map[string]any)
+	assert.Equal(t, "*.app.example.com", rule["host"],
+		"wildcard Ingress host must be *.<baseDomain>")
+
+	// Verify TLS block references the wildcard secret
+	tls, _ := spec["tls"].([]any)
+	require.NotEmpty(t, tls, "wildcard Ingress must have TLS when frontend.ingress.tls=true")
+	tlsEntry, _ := tls[0].(map[string]any)
+	hosts, _ := tlsEntry["hosts"].([]any)
+	require.Contains(t, hosts, "*.app.example.com")
+	assert.Contains(t, tlsEntry["secretName"], "wildcard-tls",
+		"TLS secret name must contain 'wildcard-tls'")
+
+	// Find the wildcard Certificate
+	certs := findByKind(docs, "Certificate")
+	var wildcardCert map[string]any
+	for _, cert := range certs {
+		if strings.Contains(metaName(cert), "wildcard") {
+			wildcardCert = cert
+			break
+		}
+	}
+	require.NotNil(t, wildcardCert, "wildcard Certificate must render when issuerRef is configured")
+
+	certSpec, _ := wildcardCert["spec"].(map[string]any)
+	dnsNames, _ := certSpec["dnsNames"].([]any)
+	require.Contains(t, dnsNames, "*.app.example.com",
+		"Certificate dnsNames must include the wildcard")
+	require.Contains(t, dnsNames, "app.example.com",
+		"Certificate dnsNames must include the base domain (for non-wildcard requests)")
+
+	issuerRef, _ := certSpec["issuerRef"].(map[string]any)
+	assert.Equal(t, "letsencrypt-prod", issuerRef["name"],
+		"Certificate issuerRef.name must match values")
+	assert.Equal(t, "ClusterIssuer", issuerRef["kind"],
+		"Certificate issuerRef.kind must match values")
+}
+
+// TestEpic54_WildcardEnabled_NoCertWhenTlsDisabled verifies that when TLS
+// is disabled (frontend.ingress.tls=false), no Certificate is rendered
+// even if orgSubdomainRouting is enabled.
+func TestEpic54_WildcardEnabled_NoCertWhenTlsDisabled(t *testing.T) {
+	values := `
+frontend:
+  enabled: true
+  ingress:
+    enabled: true
+    host: "app.example.com"
+    tls: false
+orgSubdomainRouting:
+  enabled: true
+  baseDomain: "app.example.com"
+  cookieDomain: ".app.example.com"
+  wildcardCert:
+    issuerRef:
+      name: "letsencrypt-prod"
+      kind: "ClusterIssuer"
+`
+	docs := helmTemplate(t, values)
+
+	// Wildcard Ingress should still render (just without TLS)
+	ingresses := findByKind(docs, "Ingress")
+	var sawWildcardIngress bool
+	for _, ing := range ingresses {
+		if strings.Contains(metaName(ing), "wildcard") {
+			sawWildcardIngress = true
+			spec, _ := ing["spec"].(map[string]any)
+			_, hasTLS := spec["tls"]
+			assert.False(t, hasTLS, "wildcard Ingress must NOT have TLS when tls=false")
+			break
+		}
+	}
+	assert.True(t, sawWildcardIngress, "wildcard Ingress should render even without TLS")
+
+	// No Certificate should render
+	for _, cert := range findByKind(docs, "Certificate") {
+		assert.NotContains(t, metaName(cert), "wildcard",
+			"wildcard Certificate must NOT render when tls=false")
+	}
+}
+
+// TestEpic54_ExistingTLSSecret_NoCertificateRendered verifies that when
+// wildcardCert.tlsSecret is set (operator has an external wildcard cert),
+// no Certificate resource is rendered — the Ingress references the
+// operator's existing Secret.
+func TestEpic54_ExistingTLSSecret_NoCertificateRendered(t *testing.T) {
+	values := `
+frontend:
+  enabled: true
+  ingress:
+    enabled: true
+    host: "app.example.com"
+    tls: true
+orgSubdomainRouting:
+  enabled: true
+  baseDomain: "app.example.com"
+  cookieDomain: ".app.example.com"
+  wildcardCert:
+    tlsSecret: "my-existing-wildcard-cert"
+    issuerRef:
+      name: "letsencrypt-prod"
+      kind: "ClusterIssuer"
+`
+	docs := helmTemplate(t, values)
+
+	// No Certificate should render (tlsSecret takes precedence)
+	for _, cert := range findByKind(docs, "Certificate") {
+		assert.NotContains(t, metaName(cert), "wildcard",
+			"wildcard Certificate must NOT render when tlsSecret is set")
+	}
+
+	// The Ingress should reference the operator's Secret
+	ingresses := findByKind(docs, "Ingress")
+	for _, ing := range ingresses {
+		if !strings.Contains(metaName(ing), "wildcard") {
+			continue
+		}
+		spec, _ := ing["spec"].(map[string]any)
+		tls, _ := spec["tls"].([]any)
+		require.NotEmpty(t, tls)
+		tlsEntry, _ := tls[0].(map[string]any)
+		assert.Equal(t, "my-existing-wildcard-cert", tlsEntry["secretName"],
+			"wildcard Ingress must reference the operator-supplied tlsSecret")
+	}
+}
+
+// TestEpic54_ConfigMapEmitsOrgSubdomainRouting verifies that the API
+// ConfigMap includes the orgSubdomainRouting block when configured.
+func TestEpic54_ConfigMapEmitsOrgSubdomainRouting(t *testing.T) {
+	values := `
+orgSubdomainRouting:
+  enabled: true
+  baseDomain: "app.example.com"
+  cookieDomain: ".app.example.com"
+`
+	docs := helmTemplate(t, values)
+	cms := findByKind(docs, "ConfigMap")
+	var apiCM map[string]any
+	for _, cm := range cms {
+		if strings.Contains(metaName(cm), "api-config") {
+			apiCM = cm
+			break
+		}
+	}
+	require.NotNil(t, apiCM, "API ConfigMap must render")
+	data, _ := apiCM["data"].(map[string]any)
+	configYAML, _ := data["config.yaml"].(string)
+	assert.Contains(t, configYAML, "orgSubdomainRouting:")
+	assert.Contains(t, configYAML, "baseDomain: \"app.example.com\"")
+	assert.Contains(t, configYAML, "cookieDomain: \".app.example.com\"")
+}

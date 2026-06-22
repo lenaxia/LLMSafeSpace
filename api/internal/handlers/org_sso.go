@@ -37,6 +37,7 @@ type SSOHandler struct {
 	store         ssoStore
 	authSvc       orgAuthService
 	sessionCookie string
+	cookieDomain  string // Epic 54: set as Domain= on the session cookie when wildcard subdomain routing is enabled
 	frontendURL   string
 	logger        ssoLogger
 }
@@ -44,12 +45,16 @@ type SSOHandler struct {
 // NewSSOHandler constructs the handler. sessionCookie is the JWT cookie name
 // used elsewhere in the app (e.g. "lsp_session"); frontendURL is the post-SSO
 // browser landing URL (may be empty — the handler falls back to "/").
-func NewSSOHandler(svc *sso.Service, store ssoStore, authSvc orgAuthService, sessionCookie, frontendURL string, logger ssoLogger) *SSOHandler {
+// cookieDomain is the Domain attribute for the session cookie (empty = host-only;
+// set when wildcard subdomain routing is enabled so the session survives the
+// IdP→callback→subdomain redirect chain).
+func NewSSOHandler(svc *sso.Service, store ssoStore, authSvc orgAuthService, sessionCookie, cookieDomain, frontendURL string, logger ssoLogger) *SSOHandler {
 	return &SSOHandler{
 		svc:           svc,
 		store:         store,
 		authSvc:       authSvc,
 		sessionCookie: sessionCookie,
+		cookieDomain:  cookieDomain,
 		frontendURL:   frontendURL,
 		logger:        logger,
 	}
@@ -267,7 +272,7 @@ func (h *SSOHandler) Callback(c *gin.Context) {
 	if maxAge <= 0 {
 		maxAge = 86400
 	}
-	c.SetCookie(h.sessionCookie, result.Token, maxAge, "/", "", true, true)
+	c.SetCookie(h.sessionCookie, result.Token, maxAge, "/", h.cookieDomain, true, true)
 	c.Redirect(http.StatusFound, h.frontendRedirectWithSuccess())
 }
 
