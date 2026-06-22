@@ -111,3 +111,23 @@ func TestLogin_RecordsAuthAttemptFailureOnUserNotFound(t *testing.T) {
 	after := gatherAuthAttemptCount(t, "password", "failure")
 	assert.Equal(t, before+1, after, "auth_attempts_total{password,failure} must increment on user-not-found")
 }
+
+// A locked-out attempt must also increment the failure counter so the
+// Auth Failure Ratio panel's denominator includes it. The lockout path
+// short-circuits before the regular failure paths fire, so it is its
+// own carve-out.
+func TestLogin_RecordsAuthAttemptFailureOnLockout(t *testing.T) {
+	svc, _, mockCache := newLockoutService(t)
+	ctx := context.Background()
+
+	mockCache.On("Get", ctx, "lockout:locked-attempt@e.com").Return("3", nil)
+
+	before := gatherAuthAttemptCount(t, "password", "failure")
+	_, err := svc.Login(ctx, types.LoginRequest{
+		Email:    "locked-attempt@e.com",
+		Password: "anything",
+	})
+	require.Error(t, err)
+	after := gatherAuthAttemptCount(t, "password", "failure")
+	assert.Equal(t, before+1, after, "auth_attempts_total{password,failure} must increment on lockout-blocked attempt")
+}

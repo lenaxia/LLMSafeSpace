@@ -110,6 +110,45 @@ func TestClassifyOperation_ClassifiesAllVerbs(t *testing.T) {
 	}
 }
 
+// CTE classifier must fold to the trailing DML operation, not the first
+// keyword it encounters. Production examples (CreateUser, DeleteSessionTree
+// in api/internal/services/database/database.go) wrap an INSERT or DELETE
+// in a CTE that contains a SELECT — those queries must classify as INSERT
+// / DELETE, not SELECT, otherwise the per-operation buckets are wrong.
+func TestClassifyOperation_CTEFoldsToTrailingDML(t *testing.T) {
+	cases := map[string]string{
+		// Simple CTE-INSERT: SELECT inside parens (does not match
+		// a space-bounded ` SELECT `), trailing INSERT does.
+		"WITH existing AS (SELECT count(*) FROM users) INSERT INTO users VALUES ($1)": "insert",
+		// Simple CTE-DELETE: same pattern.
+		"WITH RECURSIVE d AS (SELECT id FROM s) DELETE FROM s WHERE id IN (SELECT id FROM d)": "delete",
+		// Update via CTE.
+		"WITH x AS (SELECT 1) UPDATE users SET name = 'a'": "update",
+		// CTE wrapping only SELECTs still classifies as select.
+		"WITH x AS (SELECT 1), y AS (SELECT 2) SELECT * FROM x, y": "select",
+		// PRODUCTION REGRESSION: CreateUser query (database.go:194).
+		// The INSERT statement uses an INSERT … SELECT form, so
+		// after the CTE there are TWO un-parenthesised tokens:
+		// ` INSERT ` AND ` SELECT $1 …`. The first-keyword loop
+		// would return "select" — wrong; this is an INSERT.
+		`
+		WITH existing AS (
+			SELECT COUNT(*) AS n FROM users
+		)
+		INSERT INTO users (id, username, email, password_hash, created_at, updated_at, active, role)
+		SELECT $1, $2, $3, $4, $5, $6, $7,
+		       CASE WHEN existing.n = 0 THEN 'admin' ELSE $8 END
+		FROM existing
+		RETURNING role`: "insert",
+	}
+	for sql, want := range cases {
+		got := classifyOperation(sql)
+		if got != want {
+			t.Errorf("classifyOperation(%q):\n  got  %q\n  want %q", sql, got, want)
+		}
+	}
+}
+
 func TestClassifyOperation_LeadingComments(t *testing.T) {
 	got := classifyOperation("/* tagged: GetUser */\n  SELECT 1")
 	if !strings.EqualFold(got, "select") {

@@ -788,6 +788,11 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 		if countStr, err := s.cacheService.Get(ctx, lockoutKey); err == nil && countStr != "" {
 			var count int
 			if _, err := fmt.Sscanf(countStr, "%d", &count); err == nil && count >= lockoutAttempts {
+				// A locked-out attempt is still an attempt from
+				// the dashboard's perspective: include it in
+				// the auth_attempts_total denominator so the
+				// failure ratio reflects reality.
+				metrics.RecordAuthAttempt("password", "failure")
 				return nil, errors.New("account temporarily locked due to too many failed attempts")
 			}
 		}

@@ -150,25 +150,89 @@ func stripLeadingNoise(sql string) string {
 	}
 }
 
-// classifyAfterWith finds the first DML verb after the CTE list. It is a
-// best-effort scan, not a parser — it walks token-by-token looking for the
-// next standalone SELECT/INSERT/UPDATE/DELETE keyword.
+// classifyAfterWith finds the DML verb that owns the statement when the
+// query starts with a CTE (`WITH … <DML>`). It is a best-effort scan,
+// not a SQL parser:
+//
+//   - Tokenization treats ANY whitespace (space, tab, newline) as a word
+//     boundary. The earlier space-only match missed multi-line queries.
+//
+//   - It tracks parenthesis depth. SELECT/INSERT/UPDATE/DELETE keywords
+//     inside a parenthesised CTE body (depth > 0) are CTE-internal and
+//     ignored. The first keyword observed at depth 0 AFTER the CTE list
+//     is the real operation. This correctly handles INSERT…SELECT,
+//     UPDATE…FROM, and DELETE…WHERE…IN(SELECT…) shapes — earlier
+//     positional heuristics (first-keyword-wins / last-keyword-wins) got
+//     these wrong because they ignored the CTE structure.
+//
+//   - The returned bucket is "select" / "insert" / "update" / "delete"
+//     or empty (caller falls back to "other") if no DML verb is found
+//     at the outer depth — e.g. a CTE that ends in a TRUNCATE or a
+//     malformed string.
 func classifyAfterWith(upperSQL string) string {
 	// Cap the scan to the first 4096 bytes; CTEs longer than that are
 	// vanishingly rare and the cost of a full scan is not worth the
-	// bucket precision.
+	// bucket precision. If the trailing verb falls beyond the cap, the
+	// caller falls back to "other" — safe but less precise.
 	if len(upperSQL) > 4096 {
 		upperSQL = upperSQL[:4096]
 	}
-	for _, kw := range [...]string{"SELECT", "INSERT", "UPDATE", "DELETE"} {
-		// Require a word boundary before the keyword — substring
-		// match alone would mis-classify "SELECTOR" or column names.
-		idx := strings.Index(upperSQL, " "+kw+" ")
-		if idx >= 0 {
+
+	// Walk the string once. Track parenthesis depth. At depth 0 (outside
+	// any CTE body), the first DML keyword bounded by whitespace is the
+	// owning operation. We must skip the leading "WITH" itself, which
+	// lives at depth 0.
+	depth := 0
+	i := 0
+	// Skip past the leading WITH token.
+	if strings.HasPrefix(upperSQL, "WITH") {
+		i = len("WITH")
+	}
+	for i < len(upperSQL) {
+		c := upperSQL[i]
+		switch c {
+		case '(':
+			depth++
+			i++
+			continue
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+			i++
+			continue
+		}
+		if depth > 0 {
+			i++
+			continue
+		}
+		// At depth 0: check for a DML keyword starting at i, with a
+		// left whitespace boundary (i==0 or s[i-1] whitespace) and a
+		// right whitespace boundary (or EOF).
+		if i != 0 && !isASCIISpace(upperSQL[i-1]) {
+			i++
+			continue
+		}
+		for _, kw := range [...]string{"SELECT", "INSERT", "UPDATE", "DELETE"} {
+			end := i + len(kw)
+			if end > len(upperSQL) {
+				continue
+			}
+			if upperSQL[i:end] != kw {
+				continue
+			}
+			if end != len(upperSQL) && !isASCIISpace(upperSQL[end]) {
+				continue
+			}
 			return strings.ToLower(kw)
 		}
+		i++
 	}
 	return ""
+}
+
+func isASCIISpace(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r' || b == '\f' || b == '\v'
 }
 
 // classifyError buckets driver/server errors into a small set of operational
