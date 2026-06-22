@@ -6,7 +6,7 @@ Shared Go packages used by both the API service and the controller. All packages
 
 | Package | Purpose |
 |---------|---------|
-| `apis/llmsafespaces/v1` | CRD Go types (kubebuilder-annotated) for Workspace, RuntimeEnvironment |
+| `apis/llmsafespaces/v1` | CRD Go types (kubebuilder-annotated) for Workspace, RuntimeEnvironment, InferenceRelay |
 | `agentd` | Types for the workspace-agentd sidecar HTTP API (healthz, readyz, statusz) |
 | `config` | Kubernetes client configuration structs |
 | `credentials` | Credential set entity types + encryption service (AES-256-GCM, key rotation) |
@@ -43,14 +43,15 @@ Key features: in-cluster or kubeconfig auth, connection pooling (QPS 100, Burst 
 
 ## CRD Types (`apis/llmsafespaces/v1`)
 
-Two CRDs in the `llmsafespaces.dev/v1` API group:
+Three CRDs in the `llmsafespaces.dev/v1` API group:
 
-| Kind | Scope | Purpose |
-|------|-------|---------|
-| `Workspace` | Namespaced | PVC-backed persistent environment + pod lifecycle |
-| `RuntimeEnvironment` | Cluster | Mapping from runtime name → container image |
+| Kind | Scope | Short | Purpose |
+|------|-------|-------|---------|
+| `Workspace` | Namespaced | `ws` | PVC-backed persistent environment + pod lifecycle |
+| `RuntimeEnvironment` | Cluster | `rte` | Mapping from runtime name → container image |
+| `InferenceRelay` | Cluster | `irelay` | Managed fleet of relay VMs proxying free-tier inference (opt-in, Epic 42) |
 
-Workspace phases: `Pending → Active → Suspending → Suspended → Resuming → Active`
+Nine Workspace phases: `Pending → Creating → Active → Suspending → Suspended → Resuming → Active`, with `Terminating → Terminated` and `Failed` terminal exits.
 
 ---
 

@@ -55,12 +55,13 @@ Repository: `github.com/lenaxia/llmsafespaces`
 
 ### Custom Resource Definitions
 
-Two CRDs in the `llmsafespaces.dev/v1` API group:
+Three CRDs in the `llmsafespaces.dev/v1` API group:
 
-| Kind | Scope | Purpose |
-|------|-------|---------|
-| `Workspace` | Namespaced | PVC-backed persistent environment + pod running `opencode serve` |
-| `RuntimeEnvironment` | Cluster | Mapping from runtime name → container image |
+| Kind | Scope | Short | Purpose |
+|------|-------|-------|---------|
+| `Workspace` | Namespaced | `ws` | PVC-backed persistent environment + pod running `opencode serve` |
+| `RuntimeEnvironment` | Cluster | `rte` | Mapping from runtime name → container image |
+| `InferenceRelay` | Cluster | `irelay` | Managed fleet of relay VMs (AWS/OCI/GCP) that proxy free-tier inference — feature-gated, see [Inference Relay](#inference-relay) |
 
 ### Lifecycle
 
@@ -75,6 +76,15 @@ Workspace: Pending → Creating → Active → Suspending → Suspended → Resu
 Nine phases: `Pending`, `Creating`, `Active`, `Suspending`, `Suspended`, `Resuming`, `Terminating`, `Terminated`, `Failed`.
 
 Suspending a workspace deletes the pod but retains the PVC. Activating a suspended workspace re-creates the pod, which reattaches to the existing PVC so opencode session history (stored in `/workspace/.local/opencode`) survives suspend/activate.
+
+### Inference Relay
+
+Free-tier LLM inference (opencode Zen models) is reached through a relay so workspace pods never hold the upstream secret. Two interchangeable deployments, selected by the configured relay URL:
+
+- **Cloudflare Worker relay** (`workers/inference-relay/`) — a single stateless Worker; the simplest path and the default (`inferenceRelayURL`).
+- **Self-hosted multi-cloud fleet** (Epic 42, `InferenceRelay` CRD) — the controller provisions and health-checks relay VMs across AWS (paid primary), OCI (free secondary), and optionally GCP. Workspace pods route through the in-cluster **relay-router** (`cmd/relay-router/`), which distributes traffic across healthy relay VMs over HTTP with per-VM token auth and falls back to direct upstream access when all VMs are down. Each VM runs **relay-proxy** (`cmd/relay-proxy/`), distributed to VMs via cloud-init with SHA-256 verification. Feature-gated behind `controller.inferenceRelay.enabled`; requires `rbac.scope=cluster` because `InferenceRelay` is cluster-scoped.
+
+See `design/stories/epic-42-multi-cloud-inference-relay/README.md`.
 
 ---
 
@@ -228,6 +238,22 @@ These endpoints are reverse-proxied to the workspace pod's `opencode serve` inst
 | `POST` | `/api/v1/account/change-password` | Change password |
 | `POST` | `/api/v1/account/recover` | Recover account |
 
+### Relay Fleet (admin)
+
+Operator setup wizard + status dashboard for the self-hosted multi-cloud relay fleet (Epic 42 / 48). Only registered when the relay admin handler is wired.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/admin/relay/setup` | Prerequisite checklist (router deployed, CRD installed, provider creds present) |
+| `GET` | `/api/v1/admin/relay/status` | Fleet health + per-VM observed state |
+| `POST` | `/api/v1/admin/relay/aws-creds` | Store AWS provider credentials (Secret) |
+| `POST` | `/api/v1/admin/relay/oci-creds` | Store OCI provider credentials (Secret) |
+| `POST` | `/api/v1/admin/relay/gcp-creds` | Store GCP provider credentials (Secret) |
+| `POST` | `/api/v1/admin/relay/deploy` | Create/reconcile the `InferenceRelay` CR |
+| `POST` | `/api/v1/admin/relay/rotate/:id` | Destroy + reprovision a relay VM |
+| `POST` | `/api/v1/admin/relay/pause` | Pause fleet reconciliation |
+| `POST` | `/api/v1/admin/relay/resume` | Resume fleet reconciliation |
+
 #### `?verbose=true` flag
 
 By default, the proxy strips parts of `type=="patch"` from message and history responses. opencode emits a `patch` part for every assistant turn, listing every workspace file it touched (~2 KB per response of internal snapshot paths). For most clients this is noise.
@@ -357,6 +383,8 @@ api/                     # Go API service (Gin) + MCP server
 
 cmd/
   workspace-agentd/      # Sidecar binary for workspace pods (health probes, session metadata, secret reload)
+  relay-router/          # In-cluster HTTP router distributing traffic across relay VMs (Epic 42)
+  relay-proxy/           # Reverse proxy binary run on each relay VM, token-gated (Epic 42)
   mcp/                   # MCP server entrypoint (imports pkg/mcp)
   redact/                # Redact binary entrypoint (imports pkg/redact)
   repolint/              # Repository layout linter (imports pkg/repolint)
@@ -365,7 +393,8 @@ cmd/
 controller/              # Kubernetes operator (controller-runtime)
   internal/
     workspace/           # Workspace reconciler (pod lifecycle, PVC, credentials, health)
-    webhooks/            # Validating webhooks (RuntimeEnvironment)
+    relay/               # InferenceRelay reconciler + AWS/OCI/GCP drivers, cloud-init, health, rotation (Epic 42)
+    webhooks/            # Validating webhooks (Workspace, RuntimeEnvironment, per-tenant quota)
     common/              # Leader election, metrics, utilities
 
 frontend/                # React 19 + TypeScript + Vite SPA
@@ -389,7 +418,7 @@ pkg/                     # Shared Go packages
 
 charts/llmsafespaces/     # Helm chart (API, controller, frontend, CRDs, RBAC, webhooks)
 sdks/                    # Client SDKs (Go, TypeScript, Python, Java, VS Code extension)
-workers/inference-relay/ # Cloudflare Worker for free-tier inference relay
+workers/inference-relay/ # Cloudflare Worker relay for free-tier inference (the simpler alternative to the self-hosted InferenceRelay fleet)
 local/                   # bootstrap.sh, test.sh, teardown.sh for kind
 design/                  # Architecture and design docs (EVOLUTION-V2.md is authoritative)
 ```
@@ -445,7 +474,12 @@ docker build -f runtimes/base/Dockerfile -t llmsafespaces/runtime-base:dev runti
 
 # Frontend
 docker build -f frontend/Dockerfile -t llmsafespaces/frontend:dev frontend
+
+# relay-router (in-cluster; run via the Helm chart's relay-router Deployment)
+docker build -f cmd/relay-router/Dockerfile -t llmsafespaces/relay-router:dev cmd/relay-router
 ```
+
+The relay-proxy binary for relay VMs is cross-compiled (not containerized) — `make relay-bin` produces `deploy/relay-proxy-{arm64,amd64}` for cloud-init distribution.
 
 CI builds and pushes these to `ghcr.io/lenaxia/llmsafespaces/{api,controller,base,frontend}:dev` on every push to `main` (see `.github/workflows/ci.yml`).
 
@@ -454,14 +488,17 @@ CI builds and pushes these to `ghcr.io/lenaxia/llmsafespaces/{api,controller,bas
 ## Security
 
 - **Pod hardening**: read-only root, `runAsNonRoot`, drop all capabilities, no privilege escalation, AppArmor + seccomp profiles
+- **Container-runtime isolation**: optional gVisor (`runsc`) RuntimeClass (Epic 51) for kernel-level isolation of tenant pods; enabled via `gvisor.defaultRuntimeClass`, with per-workspace opt-out via `spec.runtimeClass`
+- **Per-tenant resource quotas**: validating admission webhook (Epic 51 S51.2) keyed on the `llmsafespaces.dev/tenant` pod label — caps workspaces / CPU / memory per tenant; disabled by default
 - **Zero-knowledge secret store**: user secrets encrypted with per-user DEK (AES-256-GCM), derived from password via HKDF-SHA256. Platform never stores plaintext.
+- **Master KEK delivery**: the server root key (root of trust for credential encryption) is projected as a read-only file mount (`/etc/llmsafespaces/master-secret`), not an env var, eliminating `/proc/1/environ` exposure (Epic 50 US-50.1). Legacy env delivery remains as an opt-in for non-Helm deploys.
 - **Workspace credentials** stored exclusively as Kubernetes Secrets — never in PostgreSQL, Redis, or logs
 - **Egress filtering** via NetworkPolicies (configurable per Workspace)
 - **API hardening**: rate limiting (Redis-backed, configurable via admin settings), account lockout, restrictive CORS defaults, JWT cache hashing, no token-in-query-string
 - **Secret redaction**: 16-rule regex pipeline (`pkg/redact`) used by the runtime to scrub credentials from agent stdout
 - **Audit logging**: every secret operation recorded in append-only audit log
 
-See `design/0027_2026-05-24_security-policy-v21.md` and `design/0021_2026-05-21_evolution-v2.md` for the full threat model.
+See `design/0027_2026-05-24_security-policy-v21.md`, `design/stories/epic-50-master-kek-hardening/README.md`, and `design/0021_2026-05-21_evolution-v2.md` §9 for the full threat model.
 
 ---
 
