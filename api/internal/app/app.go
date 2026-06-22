@@ -238,6 +238,13 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var secretsPool *pgxpool.Pool            // closed on Shutdown
 	var dekCacheClient *redis.Client         // closed on Shutdown
 	{
+		// US-50.2: construct per-purpose RootKeyProviders before the earliest
+		// consumer (the Redis DEK cache below). Each purpose yields an
+		// independent HKDF-derived key; the provider wraps it for the
+		// Encrypt/Decrypt interface.
+		providerCredsProv := newPurposeProvider("provider-credentials")
+		orgCredsProv := newPurposeProvider("org-credentials")
+
 		mk := dekMasterKey()
 		if mk == nil {
 			// Unreachable after validateMasterSecret passed — env var is
@@ -317,13 +324,13 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		// US-29.4: WorkspaceEnvHandler owns the env-var endpoints.
 		workspaceEnvHandler = handlers.NewWorkspaceEnvHandler(secretService)
 		workspaceEnvHandler.SetLogger(log)
-		adminProvCredHandler = handlers.NewAdminProviderCredentialsHandler(pgStore, deriveServerKey)
+		adminProvCredHandler = handlers.NewAdminProviderCredentialsHandler(pgStore, providerCredsProv)
 		adminProvCredHandler.SetAutoApplyStore(pgStore)
 		userProvCredHandler = handlers.NewUserProviderCredentialsHandler(pgStore, pgStore, keyService, secrets.NewPgKeyStore(secretsPool))
 		userProvCredHandler.SetCredentialStateWriter(dbSvc)
 
 		// Seed the free-tier opencode credential (Epic 30 US-30.4).
-		if err := ensureFreeTierCredential(context.Background(), pgStore, log); err != nil {
+		if err := ensureFreeTierCredential(context.Background(), pgStore, providerCredsProv, log); err != nil {
 			log.Warn("free-tier credential seeding skipped", "error", err.Error())
 		}
 		// Wire pod-IP resolver so reload-secrets can reach in-pod agentd.
@@ -357,7 +364,8 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		// routes lives in WorkspaceAccessMiddleware (design 0041 D1+D5). The
 		// SecretService trusts that decision and no longer carries its own
 		// verifier — see pkg/secrets/secret_service.go.
-		secretService.SetAdminKeyDeriver(deriveServerKey)
+		secretService.SetAdminProvider(providerCredsProv)
+		secretService.SetOrgProvider(orgCredsProv)
 		rotateKeyHandler = handlers.NewRotateKeyHandler(keyService)
 		rotateKeyHandler.SetPasswordUpdater(&bcryptPasswordUpdater{db: svc.Database})
 		rotateKeyHandler.SetAuditFunc(func(userID, action string) {
@@ -373,22 +381,28 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		})
 
 		rkp := newRootKeyProvider(cfg, log)
+		// US-50.2: apiKeyProv unifies the two else branches — it is rkp when the
+		// configured provider is healthy, else a StaticKeyProvider from the
+		// dek-cache derived key (the same key the Redis DEK cache uses).
+		apiKeyProv := rkp
+		if apiKeyProv == nil {
+			if mk := dekMasterKey(); mk != nil {
+				apiKeyProv, _ = secrets.NewStaticKeyProvider(mk)
+			}
+		}
 
 		if authSvc, ok := svc.Auth.(*auth.Service); ok {
 			authSvc.SetKeyService(keyService)
 			authSvc.SetInstanceSettings(instanceSettings)
 
-			if rkp != nil {
-				authSvc.SetRootKeyProvider(rkp)
-			} else {
-				authSvc.SetMasterKey(dekMasterKey())
+			if apiKeyProv != nil {
+				authSvc.SetRootKeyProvider(apiKeyProv)
 			}
 		}
 
 		pgOrgStore = database.NewPgOrgStore(dbSvc.DB)
 		orgsHandler = handlers.NewOrgsHandler(pgOrgStore, svc.GetAuth())
-		orgsHandler.SetLogger(log)
-		orgCredsHandler = handlers.NewOrgCredentialsHandler(pgStore, pgStore, deriveServerKey, svc.GetAuth())
+		orgCredsHandler = handlers.NewOrgCredentialsHandler(pgStore, pgStore, orgCredsProv, svc.GetAuth())
 
 		// US-43.10: OIDC SSO. The service reuses the auth service as the JWT
 		// issuer (GenerateToken) and the server KEK (RootKeyProvider) to encrypt
@@ -423,24 +437,15 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		platformAdminHandler = handlers.NewPlatformAdminHandler(pgOrgStore, dbSvc, svc.GetAuth(), svc.GetAuth(), log)
 		internalOrgStatusHandler = handlers.NewInternalOrgStatusHandler(pgOrgStore)
 
-		// Epic 54, US-54.1: email-led login discovery. Resolves an email to a
-		// single redirectUrl pointing at the user's org (subdomain when configured,
-		// direct SSO start URL otherwise). Always constructed when pgOrgStore is
-		// available — the endpoint is harmless when subdomain routing is disabled
-		// (it falls back to the direct SSO URL). Enumeration-safe by construction.
+		// US-54.1: login discovery handler for POST /api/v1/auth/lookup. Harmless
+		// when subdomain routing is disabled (falls back to direct SSO URL).
 		loginDiscoveryHandler = handlers.NewLoginDiscoveryHandler(
 			svc.Database, pgOrgStore,
 			cfg.OrgSubdomainRouting.BaseDomain, log,
 		)
 
-		if rkp != nil {
-			keyService.SetAPIKeyStore(&apiKeyStoreAdapter{db: dbSvc}, rkp)
-		} else {
-			mk := dekMasterKey()
-			if mk != nil {
-				sp, _ := secrets.NewStaticKeyProvider(mk)
-				keyService.SetAPIKeyStore(&apiKeyStoreAdapter{db: dbSvc}, sp)
-			}
+		if apiKeyProv != nil {
+			keyService.SetAPIKeyStore(&apiKeyStoreAdapter{db: dbSvc}, apiKeyProv)
 		}
 		wsSvc, wsSvcOk := svc.Workspace.(*workspace.Service)
 		if wsSvcOk {

@@ -121,6 +121,16 @@ func (f *fakeCredentialStore) DeleteCredential(_ context.Context, ownerType, own
 // alias for minimal diff against existing test bodies.
 func newFakeAdminCredStore() *fakeCredentialStore { return newFakeCredentialStore() }
 
+// mustStaticProv wraps a raw 32-byte key as a RootKeyProvider for handler
+// tests (US-50.2: replaces the old AdminKeyDeriver callback).
+func mustStaticProv(key []byte) secrets.RootKeyProvider {
+	if key == nil {
+		return nil
+	}
+	p, _ := secrets.NewStaticKeyProvider(key)
+	return p
+}
+
 func setupAdminCredRouter(h *AdminProviderCredentialsHandler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -140,7 +150,7 @@ func TestAdminProviderCredentials_Create_Success(t *testing.T) {
 	for i := range kek {
 		kek[i] = byte(i)
 	}
-	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
+	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(kek))
 	router := setupAdminCredRouter(h)
 
 	body := `{"name":"my-anthropic","provider":"anthropic","apiKey":"sk-ant-123"}`
@@ -160,7 +170,7 @@ func TestAdminProviderCredentials_Create_Success(t *testing.T) {
 
 func TestAdminProviderCredentials_Create_MissingAPIKey(t *testing.T) {
 	store := newFakeAdminCredStore()
-	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return make([]byte, 32) })
+	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(make([]byte, 32)))
 	router := setupAdminCredRouter(h)
 
 	body := `{"name":"my-anthropic","provider":"anthropic"}`
@@ -174,7 +184,7 @@ func TestAdminProviderCredentials_Create_MissingAPIKey(t *testing.T) {
 
 func TestAdminProviderCredentials_Create_NilKEK(t *testing.T) {
 	store := newFakeAdminCredStore()
-	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return nil })
+	h := NewAdminProviderCredentialsHandler(store, nil)
 	router := setupAdminCredRouter(h)
 
 	body := `{"name":"my-anthropic","provider":"anthropic","apiKey":"sk-ant-123"}`
@@ -189,7 +199,7 @@ func TestAdminProviderCredentials_Create_NilKEK(t *testing.T) {
 func TestAdminProviderCredentials_List(t *testing.T) {
 	store := newFakeAdminCredStore()
 	kek := make([]byte, 32)
-	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
+	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(kek))
 	router := setupAdminCredRouter(h)
 
 	// Create one first.
@@ -212,7 +222,7 @@ func TestAdminProviderCredentials_List(t *testing.T) {
 
 func TestAdminProviderCredentials_Get_NotFound(t *testing.T) {
 	store := newFakeAdminCredStore()
-	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return make([]byte, 32) })
+	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(make([]byte, 32)))
 	router := setupAdminCredRouter(h)
 
 	req, _ := http.NewRequest("GET", "/api/v1/admin/provider-credentials/nonexistent", nil)
@@ -226,7 +236,7 @@ func TestAdminProviderCredentials_Delete(t *testing.T) {
 	store := newFakeAdminCredStore()
 	store.creds["del-id"] = &secrets.CredentialRow{
 		OwnerType: "admin", OwnerID: "_platform", ID: "del-id", Name: "x", Provider: "anthropic"}
-	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return make([]byte, 32) })
+	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(make([]byte, 32)))
 	router := setupAdminCredRouter(h)
 
 	req, _ := http.NewRequest("DELETE", "/api/v1/admin/provider-credentials/del-id", nil)
@@ -248,7 +258,7 @@ func TestAdminProviderCredentials_Update_Success(t *testing.T) {
 		ID: "upd-id", Name: "old", Provider: "anthropic",
 		Ciphertext: mustEncrypt(t, kek, `{"provider":"anthropic","apiKey":"old-key"}`),
 	}
-	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
+	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(kek))
 	router := setupAdminCredRouter(h)
 
 	body := `{"name":"new-name","provider":"anthropic","apiKey":"new-key","baseURL":"https://custom.api"}`
@@ -275,7 +285,7 @@ func mustEncrypt(t *testing.T, kek []byte, plaintext string) []byte {
 // non-existent credential returns 404, not 204.
 func TestAdminProviderCredentials_Delete_NotFound(t *testing.T) {
 	store := newFakeAdminCredStore() // empty store — nothing to delete
-	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return make([]byte, 32) })
+	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(make([]byte, 32)))
 	router := setupAdminCredRouter(h)
 
 	req, _ := http.NewRequest("DELETE", "/api/v1/admin/provider-credentials/missing-id", nil)
@@ -304,7 +314,7 @@ func TestAdminProviderCredentials_Update_CorruptCiphertext_Returns500(t *testing
 		Provider:   "openai",
 		Ciphertext: mustEncrypt(t, differentKEK, `{"provider":"openai","apiKey":"original"}`),
 	}
-	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
+	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(kek))
 	router := setupAdminCredRouter(h)
 
 	body := `{"apiKey":"new-rotated-key"}` // triggers re-encrypt path
@@ -332,7 +342,7 @@ func TestAdminProviderCredentials_Update_DuplicateProvider_Returns409(t *testing
 	}
 	// updateErr is consumed ONLY by UpdateCredential; GetCredential won't touch it.
 	store.updateErr = &pgconn.PgError{Code: "23505", Message: "duplicate key value violates unique constraint"}
-	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
+	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(kek))
 	router := setupAdminCredRouter(h)
 
 	body := `{"name":"renamed"}`
@@ -349,7 +359,7 @@ func TestAdminProviderCredentials_Update_DuplicateProvider_Returns409(t *testing
 func TestAdminProviderCredentials_AutoApply_NilStore_Returns503(t *testing.T) {
 	store := newFakeAdminCredStore()
 	kek := make([]byte, 32)
-	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
+	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(kek))
 	// autoApplyStore is nil by default — do NOT call SetAutoApplyStore
 	g := gin.New()
 	g.POST("/api/v1/admin/provider-credentials/:id/auto-apply", h.CreateAutoApply)
@@ -388,7 +398,7 @@ func TestAdminProviderCredentials_AutoApply_NilStore_Returns503(t *testing.T) {
 func TestAdminProviderCredentials_Create_ModelContextLimits(t *testing.T) {
 	store := newFakeAdminCredStore()
 	kek := make([]byte, 32)
-	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
+	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(kek))
 	router := setupAdminCredRouter(h)
 
 	body := `{
@@ -418,7 +428,7 @@ func TestAdminProviderCredentials_Update_ModelContextLimits(t *testing.T) {
 	for i := range kek {
 		kek[i] = byte(i + 1)
 	}
-	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
+	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(kek))
 	router := setupAdminCredRouter(h)
 
 	// Create first.
@@ -454,7 +464,7 @@ func TestAdminProviderCredentials_ProbeModels_NoBaseURL(t *testing.T) {
 	for i := range kek {
 		kek[i] = byte(i + 2)
 	}
-	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
+	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(kek))
 	router := setupAdminCredRouter(h)
 
 	// Create a credential without baseURL (native provider).
@@ -482,7 +492,7 @@ func TestAdminProviderCredentials_ProbeModels_NoBaseURL(t *testing.T) {
 func TestAdminProviderCredentials_ProbeModels_NotFound(t *testing.T) {
 	store := newFakeAdminCredStore()
 	kek := make([]byte, 32)
-	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
+	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(kek))
 	router := setupAdminCredRouter(h)
 
 	req, _ := http.NewRequest("GET", "/api/v1/admin/provider-credentials/does-not-exist/models", nil)
@@ -500,7 +510,7 @@ func TestAdminProviderCredentials_ProbeModels_WithBaseURL_CallsProvider(t *testi
 	for i := range kek {
 		kek[i] = byte(i + 3)
 	}
-	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
+	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(kek))
 	router := setupAdminCredRouter(h)
 
 	// Create with a baseURL that won't be reachable in tests.
@@ -541,7 +551,7 @@ func TestAdminProviderCredentials_ProbeModels_WithBaseURL_Success(t *testing.T) 
 	for i := range kek {
 		kek[i] = byte(i + 4)
 	}
-	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
+	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(kek))
 	router := setupAdminCredRouter(h)
 
 	// Create with saved context limits for two of the three models.
@@ -587,7 +597,7 @@ func TestAdminProviderCredentials_ProbeModels_WithBaseURL_Success(t *testing.T) 
 func TestAdminProviderCredentials_Response_NoOrgID(t *testing.T) {
 	store := newFakeAdminCredStore()
 	kek := make([]byte, 32)
-	h := NewAdminProviderCredentialsHandler(store, func(string) []byte { return kek })
+	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(kek))
 	router := setupAdminCredRouter(h)
 
 	// Create a credential.

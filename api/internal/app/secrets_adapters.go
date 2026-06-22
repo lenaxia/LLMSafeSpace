@@ -413,6 +413,23 @@ func (u *bcryptPasswordUpdater) UpdatePasswordHash(ctx context.Context, userID s
 	return u.db.UpdateUser(ctx, userID, types.UserUpdates{PasswordHash: &hashStr})
 }
 
+// newPurposeProvider constructs a per-purpose RootKeyProvider from the master
+// KEK via deriveServerKey (US-50.2). Each purpose string ("provider-credentials",
+// "org-credentials") produces a cryptographically independent key via HKDF. Used
+// at boot to wire handlers and services with provider-bound encrypt/decrypt.
+// Returns nil when deriveServerKey yields no key (master secret not configured).
+func newPurposeProvider(purpose string) secrets.RootKeyProvider {
+	key := deriveServerKey(purpose)
+	if key == nil {
+		return nil
+	}
+	p, err := secrets.NewStaticKeyProvider(key)
+	if err != nil {
+		return nil
+	}
+	return p
+}
+
 func newRootKeyProvider(cfg *config.Config, log *logger.Logger) secrets.RootKeyProvider {
 	provider := cfg.Security.RootKeyProvider
 	switch provider {
@@ -705,13 +722,12 @@ type credentialSeeder interface {
 
 // ensureFreeTierCredential upserts the platform free-tier opencode credential
 // at API startup and backfills bindings for existing workspaces. Idempotent.
-func ensureFreeTierCredential(ctx context.Context, seeder credentialSeeder, logger pkginterfaces.LoggerInterface) error {
-	kek := deriveServerKey("provider-credentials")
-	if kek == nil {
-		return fmt.Errorf("LLMSAFESPACES_MASTER_SECRET not set; skipping free-tier credential seed")
+func ensureFreeTierCredential(ctx context.Context, seeder credentialSeeder, provider secrets.RootKeyProvider, logger pkginterfaces.LoggerInterface) error {
+	if provider == nil {
+		return fmt.Errorf("admin RootKeyProvider not configured; skipping free-tier credential seed")
 	}
 	plaintext := []byte(`{"provider":"opencode","apiKey":"public"}`)
-	ciphertext, err := secrets.EncryptSecret(kek, plaintext)
+	ciphertext, err := provider.Encrypt(ctx, plaintext)
 	if err != nil {
 		return fmt.Errorf("encrypt free-tier key: %w", err)
 	}
