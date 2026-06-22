@@ -1055,6 +1055,7 @@ func (s *Service) CreateAPIKey(ctx context.Context, userID string, req types.Cre
 			return nil, fmt.Errorf("failed to encrypt key ciphertext: %w", err)
 		}
 		apiKey.KeyCiphertext = keyCiphertext
+		apiKey.KeyVersion = secrets.ActiveVersionOf(s.rootKeyProvider)
 	}
 
 	if err := s.dbService.CreateAPIKey(ctx, apiKey); err != nil {
