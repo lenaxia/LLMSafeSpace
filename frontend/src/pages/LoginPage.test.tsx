@@ -1,16 +1,29 @@
-import { describe, expect, it, vi } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import { screen, waitFor, fireEvent } from "@testing-library/react";
 import { render } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { AuthProvider } from "../providers/AuthProvider";
 import { LoginPage } from "./LoginPage";
 
+// Default mocks — individual tests override via mockConfig/mockDomains.
+const mockGetConfig = vi.fn();
+const mockDomains = vi.fn();
+const mockLookup = vi.fn();
+
 vi.mock("../api/auth", () => ({
   authApi: {
     me: vi.fn().mockRejectedValue(new Error("401")),
-    getConfig: vi.fn().mockResolvedValue({ registrationEnabled: true, oidcEnabled: false, instanceName: "TestSpace" }),
+    getConfig: () => mockGetConfig(),
     login: vi.fn(),
+    lookup: (email: string) => mockLookup(email),
   },
+}));
+
+vi.mock("../api/sso", () => ({
+  ssoApi: {
+    domains: () => mockDomains(),
+  },
+  ssoRedirectURL: (orgSlug: string) => `/api/v1/auth/sso/${orgSlug}/start`,
 }));
 
 function renderLoginPage() {
@@ -24,6 +37,19 @@ function renderLoginPage() {
 }
 
 describe("LoginPage", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetConfig.mockResolvedValue({
+      registrationEnabled: true,
+      oidcEnabled: false,
+      instanceName: "TestSpace",
+    });
+    mockDomains.mockResolvedValue({ domains: [] });
+    mockLookup.mockResolvedValue({ redirectUrl: "https://example.com" });
+    // Clear query params between tests
+    window.history.replaceState({}, "", "/login");
+  });
+
   it("renders sign in form", async () => {
     renderLoginPage();
     await waitFor(() => expect(screen.getByText("Welcome to TestSpace")).toBeInTheDocument());
@@ -34,5 +60,186 @@ describe("LoginPage", () => {
   it("shows register link when registration is enabled", async () => {
     renderLoginPage();
     await waitFor(() => expect(screen.getByText("Create an account")).toBeInTheDocument());
+  });
+
+  it("shows SSO button when email domain matches claimed domain", async () => {
+    mockGetConfig.mockResolvedValue({
+      registrationEnabled: true,
+      oidcEnabled: true,
+      instanceName: "TestSpace",
+    });
+    mockDomains.mockResolvedValue({
+      domains: [{ domain: "acme.com", orgSlug: "acme", orgName: "Acme" }],
+    });
+
+    renderLoginPage();
+    await waitFor(() => expect(screen.getByPlaceholderText("Email")).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText("Email"), { target: { value: "alice@acme.com" } });
+
+    await waitFor(() => {
+      expect(screen.getByText("Sign in with Acme")).toBeInTheDocument();
+    });
+  });
+
+  it("shows Continue button when SSO enabled and email domain does not match", async () => {
+    mockGetConfig.mockResolvedValue({
+      registrationEnabled: true,
+      oidcEnabled: true,
+      instanceName: "TestSpace",
+    });
+    mockDomains.mockResolvedValue({
+      domains: [{ domain: "acme.com", orgSlug: "acme", orgName: "Acme" }],
+    });
+
+    renderLoginPage();
+    await waitFor(() => expect(screen.getByPlaceholderText("Email")).toBeInTheDocument());
+
+    // BYO email — domain doesn't match any claimed domain
+    fireEvent.change(screen.getByPlaceholderText("Email"), { target: { value: "alice@gmail.com" } });
+
+    await waitFor(() => {
+      expect(screen.getByText("Continue with email")).toBeInTheDocument();
+    });
+    // SSO button should NOT appear (no domain match)
+    expect(screen.queryByText("Sign in with Acme")).not.toBeInTheDocument();
+  });
+
+  it("does not show Continue button when SSO is disabled", async () => {
+    // oidcEnabled: false — no SSO configured, discovery is pointless
+    renderLoginPage();
+    await waitFor(() => expect(screen.getByPlaceholderText("Email")).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText("Email"), { target: { value: "alice@gmail.com" } });
+
+    expect(screen.queryByText("Continue with email")).not.toBeInTheDocument();
+  });
+
+  it("does not show Continue button for invalid email", async () => {
+    mockGetConfig.mockResolvedValue({
+      registrationEnabled: true,
+      oidcEnabled: true,
+      instanceName: "TestSpace",
+    });
+    mockDomains.mockResolvedValue({
+      domains: [{ domain: "acme.com", orgSlug: "acme", orgName: "Acme" }],
+    });
+
+    renderLoginPage();
+    await waitFor(() => expect(screen.getByPlaceholderText("Email")).toBeInTheDocument());
+
+    // No dot in domain part — invalid
+    fireEvent.change(screen.getByPlaceholderText("Email"), { target: { value: "alice@" } });
+
+    expect(screen.queryByText("Continue with email")).not.toBeInTheDocument();
+  });
+
+  it("calls lookup and redirects on Continue click", async () => {
+    mockGetConfig.mockResolvedValue({
+      registrationEnabled: true,
+      oidcEnabled: true,
+      instanceName: "TestSpace",
+    });
+    mockDomains.mockResolvedValue({
+      domains: [{ domain: "acme.com", orgSlug: "acme", orgName: "Acme" }],
+    });
+    const redirectUrl = "/api/v1/auth/sso/acme/start";
+    mockLookup.mockResolvedValue({ redirectUrl });
+
+    // Spy on window.location.href setter — restores automatically via spyOn.
+    const hrefSetter = vi.fn();
+    const originalDescriptor = Object.getOwnPropertyDescriptor(window, "location");
+    Object.defineProperty(window, "location", {
+      value: { href: "https://localhost/login" },
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(window.location, "href", {
+      get: () => "https://localhost/login",
+      set: hrefSetter,
+      configurable: true,
+    });
+
+    try {
+      renderLoginPage();
+      await waitFor(() => expect(screen.getByPlaceholderText("Email")).toBeInTheDocument());
+
+      fireEvent.change(screen.getByPlaceholderText("Email"), { target: { value: "alice@gmail.com" } });
+
+      const continueBtn = await screen.findByText("Continue with email");
+      fireEvent.click(continueBtn);
+
+      await waitFor(() => {
+        expect(mockLookup).toHaveBeenCalledWith("alice@gmail.com");
+      });
+      await waitFor(() => {
+        expect(hrefSetter).toHaveBeenCalledWith(redirectUrl);
+      });
+    } finally {
+      // Restore original window.location so subsequent tests aren't affected.
+      if (originalDescriptor) {
+        Object.defineProperty(window, "location", originalDescriptor);
+      }
+    }
+  });
+
+  it("shows not-found message when ?lookup=not_found in URL", async () => {
+    window.history.replaceState({}, "", "/login?lookup=not_found");
+
+    renderLoginPage();
+    await waitFor(() => {
+      expect(screen.getByText(/couldn't find an account/i)).toBeInTheDocument();
+    });
+  });
+
+  it("shows rate-limited message when lookup returns 429", async () => {
+    mockGetConfig.mockResolvedValue({
+      registrationEnabled: true,
+      oidcEnabled: true,
+      instanceName: "TestSpace",
+    });
+    mockDomains.mockResolvedValue({
+      domains: [{ domain: "acme.com", orgSlug: "acme", orgName: "Acme" }],
+    });
+
+    const { ApiClientError } = await import("../api/client");
+    mockLookup.mockRejectedValue(new ApiClientError(429, { error: "rate limited" }));
+
+    renderLoginPage();
+    await waitFor(() => expect(screen.getByPlaceholderText("Email")).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText("Email"), { target: { value: "alice@gmail.com" } });
+
+    const continueBtn = await screen.findByText("Continue with email");
+    fireEvent.click(continueBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Too many attempts/i)).toBeInTheDocument();
+    });
+  });
+
+  it("shows error message when lookup fails with network error", async () => {
+    mockGetConfig.mockResolvedValue({
+      registrationEnabled: true,
+      oidcEnabled: true,
+      instanceName: "TestSpace",
+    });
+    mockDomains.mockResolvedValue({
+      domains: [{ domain: "acme.com", orgSlug: "acme", orgName: "Acme" }],
+    });
+
+    mockLookup.mockRejectedValue(new Error("network error"));
+
+    renderLoginPage();
+    await waitFor(() => expect(screen.getByPlaceholderText("Email")).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText("Email"), { target: { value: "alice@gmail.com" } });
+
+    const continueBtn = await screen.findByText("Continue with email");
+    fireEvent.click(continueBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Something went wrong/i)).toBeInTheDocument();
+    });
   });
 });
