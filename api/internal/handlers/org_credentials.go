@@ -93,7 +93,7 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 		Name:               req.Name,
 		Provider:           req.Provider,
 		Ciphertext:         ciphertext,
-		KeyVersion:         1,
+		KeyVersion:         secrets.ActiveVersionOf(h.provider),
 		ModelAllowlist:     allowlist,
 		ModelContextLimits: req.ModelContextLimits,
 		CreatedAt:          now,

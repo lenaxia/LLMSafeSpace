@@ -21,6 +21,32 @@ type RootKeyProvider interface {
 	Decrypt(ctx context.Context, ciphertext []byte) ([]byte, error)
 }
 
+// VersionedProvider is implemented by providers that expose an active key
+// version (US-50.3/50.4). Callers that need the version for key_version column
+// writes assert this interface on the concrete provider — it is intentionally
+// NOT on RootKeyProvider so a future external provider (Vault Transit, which
+// handles versioning server-side) doesn't need to implement it.
+type VersionedProvider interface {
+	ActiveVersion() int
+}
+
+// ActiveVersionOf returns the active key version of a provider, or 1 if the
+// provider does not implement VersionedProvider (e.g. nil or a future external
+// provider). This is the safe default — version 1 is the initial migration
+// default for all tables.
+func ActiveVersionOf(p RootKeyProvider) int {
+	if p == nil {
+		return 1
+	}
+	if vp, ok := p.(VersionedProvider); ok {
+		v := vp.ActiveVersion()
+		if v > 0 {
+			return v
+		}
+	}
+	return 1
+}
+
 // keyEntry pairs a versioned key with its version number. The provider holds
 // a slice sorted by version descending so Decrypt tries the newest first.
 type keyEntry struct {
