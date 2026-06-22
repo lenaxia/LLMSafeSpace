@@ -114,6 +114,12 @@ func (p *StaticKeyProvider) Decrypt(_ context.Context, ciphertext []byte) ([]byt
 // pod — once the key is unsealed at boot it lives in memory, and an attacker
 // who can run code in the pod can call Decrypt exactly as the application does.
 // See pkg/secrets/README.md for the full threat model.
+//
+// US-50.4 multi-key support (NewStaticKeyProviderMultiVersion) is NOT mirrored
+// here yet. The sealed provider is constructed once at boot from a single
+// sealed file; multi-file rotation-window support for the sealed path will be
+// added alongside US-50.5 (rotate-kek CLI) when the rotation workflow is
+// exercised end-to-end. The StaticKeyProvider covers the default Helm path.
 type SealedKeyProvider struct {
 	key []byte
 }
