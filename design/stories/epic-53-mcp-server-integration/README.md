@@ -88,7 +88,7 @@ A user-facing tool-allowlist policy, MCP-server marketplace/discovery, running M
 
 **UC-10 — Org member attempts personal MCP server (blocked).** A member of the "Payments" org tries to register a personal MCP server. The platform refuses: they are in an org, so the org admin — not the member — owns the tool surface (D11). The "MCP Servers" tab is hidden in their personal settings. If they attempt the API directly, they get `403`.
 
-**UC-11 — Feature-disabled individual attempts MCP servers (capability-denied).** A solo developer whose `personal_mcp_servers` flag is not enabled opens their personal settings. The "MCP Servers" tab shows a "not available on your plan" prompt instead of the management UI (the frontend may render an upgrade path if billing context is available, but that is a frontend concern, not a feature-flag concern). Direct API attempts return `402` with `{feature, planId, reason}`.
+**UC-11 — Feature-disabled individual attempts MCP servers (capability-denied).** A solo developer whose `personal_mcp_servers` flag is not enabled opens their personal settings. The "MCP Servers" tab shows a "not available on your plan" prompt instead of the management UI (the frontend may render an upgrade path if billing context is available, but that is a frontend concern, not a feature-flag concern). Direct API attempts return `402` with `{feature, planId, hint}`.
 
 ---
 
@@ -294,7 +294,7 @@ The platform already has a feature-flag layer: `PlanFeatures` struct + `IsFeatur
 
 1. Add a `PersonalMcpServers bool` flag to `PlanFeatures`, enabled on `team`/`business`/`enterprise`, disabled on `free`.
 2. Wire it into `IsFeatureAllowed` as the `"personal_mcp_servers"` feature name.
-3. Add a `UserFeatureGuard` middleware (parallel to the existing org-scoped `FeatureGuard`) that reads the caller's plan and checks the flag. On denial → `402` (the established convention for plan-tier denial in this codebase, matching the existing `FeatureGuard` at `feature_guard.go:55`; the response body carries `{feature, planId, reason}` so the client can act).
+3. Add a `UserFeatureGuard` middleware (parallel to the existing org-scoped `FeatureGuard`) that reads the caller's plan and checks the flag. On denial → `402` (the established convention for plan-tier denial in this codebase, matching the existing `FeatureGuard` at `feature_guard.go:55`; the response body carries `{feature, planId, hint}` so the client can act).
 
 That is the entirety of the feature-enablement work. It depends on no billing code.
 
@@ -599,14 +599,14 @@ POST   /api/v1/me/mcp-servers/:id/auto-apply    (target_type hardcoded 'user', t
 **Files:**
 - `api/internal/handlers/user_mcp_servers.go` (new) — `UserMCPServersHandler`. The `me` path resolves the caller's `userID` from auth context (no `:id` path param). Two gates run on **all** routes (including GET/List — an org member or feature-disabled user should not discover personal MCP servers exist):
   1. **Org-disqualification (D11):** `orgStore.GetUserOrgID(ctx, userID)`; non-empty → `403` ("you are a member of an organization; ask your org admin to add MCP servers").
-  2. **Feature-flag gate (D12):** `UserFeatureGuard` from US-53.11b; flag disabled for the caller's plan → `402` with `{feature, planId, reason}`.
+  2. **Feature-flag gate (D12):** `UserFeatureGuard` from US-53.11b; flag disabled for the caller's plan → `402` with `{feature, planId, hint}`.
 - User-scope crypto requires the session DEK: the handler threads the `sessionID` from auth context into the store calls (US-53.3 user path). Read-only List/Get do NOT require a session (display fields are plaintext); only the secret-bearing paths (Create/Update inject, Get-for-injection) need it.
 - Auto-apply is `target_type='user'`, `target_id=callerUserID` (the user auto-applies to their own workspaces).
 - Validation: identical transport/URL/SSRF/name rules as US-53.4.
 
 **Acceptance criteria:**
 - User in an org → `403` on every mutating route (UC-10); List/Get also hidden (the UI hides the tab, but the API enforces it too).
-- User not in an org, flag disabled → `402` with `{feature, planId, reason}` on mutating routes (UC-11).
+- User not in an org, flag disabled → `402` with `{feature, planId, hint}` on mutating routes (UC-11).
 - User not in an org, flag enabled → full CRUD works; secrets encrypted with the user DEK; auto-apply to own workspaces.
 - Cross-user isolation: user A cannot read/modify user B's servers (`owner_id = caller` enforced in every query).
 - Session required for Create/Update; absent session → `401`/`403` (cannot derive DEK).
@@ -745,7 +745,7 @@ POST   /api/v1/me/mcp-servers/:id/auto-apply    (target_type hardcoded 'user', t
 **Files:**
 - `pkg/billing/plan_tiers.go:9-16` — add `PersonalMcpServers bool` to `PlanFeatures`; set `true` on `PlanTeam`, `PlanBusiness`, `PlanEnterprise`; `false` on `PlanFree`. (This file is the feature-flag layer — it maps plan tier → capability flags and contains no payment code, despite living in the `billing` package.)
 - `pkg/billing/plan_tiers.go:57-71` — add `case "personal_mcp_servers": return f.PersonalMcpServers` to `IsFeatureAllowed`.
-- `api/internal/middleware/feature_guard.go` — add `UserFeatureGuard(userPlanReader, feature string) gin.HandlerFunc` parallel to `FeatureGuard`. It reads the caller's `userID` from auth context, loads the caller's plan, and checks `IsFeatureAllowed`. On denial → `402` with the same body shape as `FeatureGuard` (`{error, feature, planId, reason}`). The `userPlanReader` interface is `GetUserPlan(ctx, userID) (types.OrgPlan, error)` — minimal, Interface Segregation, same discipline as the existing `orgPlanReader`.
+- `api/internal/middleware/feature_guard.go` — add `UserFeatureGuard(userPlanReader, feature string) gin.HandlerFunc` parallel to `FeatureGuard`. It reads the caller's `userID` from auth context, loads the caller's plan, and checks `IsFeatureAllowed`. On denial → `402` with the same body shape as `FeatureGuard` (`{error, feature, planId, hint}`). The `userPlanReader` interface is `GetUserPlan(ctx, userID) (types.OrgPlan, error)` — minimal, Interface Segregation, same discipline as the existing `orgPlanReader`.
 - `api/internal/services/database/` — a `GetUserPlan` query (single-column read of `users.plan_id`); or extend the user store interface if a suitable method exists.
 
 **Explicitly NOT in this story:** any Stripe integration, checkout-session creation, webhook handling, subscription lifecycle, or price/product configuration. The flag is set per plan tier in the static `PlanTiers` map — that is the feature-enablement mechanism. How a user ends up on a tier that has the flag is out of scope (see "Out of Scope — Billing for MCP servers").
