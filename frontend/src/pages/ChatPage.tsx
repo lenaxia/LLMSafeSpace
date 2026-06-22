@@ -137,6 +137,12 @@ export function ChatPage() {
   });
   const activeSessionData = sessionsListData?.find((s) => s.id === sessionId);
 
+  // Subtask (subagent) sessions have a parentId — they are spawned by the
+  // opencode `task` tool and driven by their parent. They must be read-only:
+  // chatting in them would spawn an extra active session and circumvent the
+  // workspace's max-active-sessions limit. See ChatView.viewOnly.
+  const isSubtask = !!activeSessionData?.parentId;
+
   // Current model for prompt injection — subscribes to the same cache key that
   // ModelSelector populates. enabled:!!workspaceId (not gated on isReady) so
   // it fires at the same time as ModelSelector's query and shares the cache.
@@ -989,6 +995,7 @@ export function ChatPage() {
             onQueueDismiss={queue.dismiss}
             models={modelsData?.models}
             lastSeenAt={lastSeenAt}
+            viewOnly={isSubtask}
             prompts={
               (pendingQuestions.length > 0 || pendingPermissions.length > 0) ? (
                 <>
