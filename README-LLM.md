@@ -569,7 +569,7 @@ The **inference relay fleet** (Epic 42) is the self-hosted alternative to the Cl
 |-----------|----------|------|
 | `InferenceRelay` CRD | `pkg/apis/llmsafespaces/v1/inferencerelay_types.go` | Desired fleet state: providers (AWS/OCI/GCP), health-check, 429-rotation, fallback config. Cluster-scoped (`irelay`). |
 | Relay reconciler | `controller/internal/relay/` | Provisions VMs via cloud-init, health-checks them, destroys + reprovisions on 429 storms or sustained unhealthiness. AWS (`aws_driver.go`), OCI (`oci_driver.go`) drivers; GCP via the provider enum. |
-| relay-router | `cmd/relay-router/` | In-cluster Deployment (1 replica). Distributes workspace traffic across healthy relay VMs (weighted: OCI primary, GCP on failure), detects 429 storms, and falls back to direct upstream when all VMs are down. Reads the `relay-router-peers` ConfigMap written by the controller. |
+| relay-router | `cmd/relay-router/` | In-cluster Deployment (1 replica). Distributes workspace traffic across healthy relay VMs (weighted: AWS primary, OCI secondary, GCP tertiary), detects 429 storms, and falls back to direct upstream when all VMs are down. Reads the `relay-router-peers` ConfigMap written by the controller. |
 | relay-proxy | `cmd/relay-proxy/` | Reverse proxy run *on each relay VM*. Distributed via cloud-init (SHA-256 verified) from `controller.inferenceRelay.artifact.urls`. Token-gated (`X-Relay-Token` header). |
 | Admin API | `api/internal/handlers/relay_admin.go` | Setup wizard + status dashboard (`/api/v1/admin/relay/*`); creates the `InferenceRelay` CR and stores provider credentials as Secrets. |
 

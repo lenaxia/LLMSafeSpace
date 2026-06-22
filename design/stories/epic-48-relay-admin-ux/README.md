@@ -32,12 +32,12 @@ and validation.
 A **Status Dashboard** (ongoing) that shows real-time fleet health, per-relay
 metrics, and recent events.
 
-The relay fleet uses **OCI** (Always Free, primary, 10 TB egress) and **GCP**
-(Always Free, failover, 1 GB egress) — matching the InferenceRelay CRD enum
-`Enum=oci;gcp`. Both providers are free-tier, so cost tracking is $0.
+The relay fleet uses **AWS** (paid primary, ~$7/mo) and **OCI** (Always Free
+secondary, 10 TB egress), with optional **GCP** as a tertiary IP source —
+matching the InferenceRelay CRD enum `Enum=aws;oci;gcp`.
 
-Epic 42 uses **WireGuard** as the security boundary — no PKI, no cert-manager,
-no TLS certificates to manage.
+Epic 42 uses **HTTPS + per-VM token auth** (`X-Relay-Token`) as the security
+boundary — WireGuard was removed in worklog 0447.
 
 ---
 
