@@ -289,7 +289,7 @@ func (h *InvitationsHandler) VerifyUserForInvitation(c *gin.Context) {
 		return
 	}
 
-	userID, err := h.store.GetUserIDByEmail(ctx, inv.Email)
+	userID, err := h.store.GetUserIDByEmail(ctx, strings.ToLower(strings.TrimSpace(inv.Email)))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve user by email"})
 		return

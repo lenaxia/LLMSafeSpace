@@ -34,10 +34,21 @@ type mockInvitationStore struct {
 	userEmail      string
 	userEmailErr   error
 
-	// usersByEmail backs GetUserIDByEmail. Keys are lowercased emails.
-	// Empty map means "no users registered" — GetUserIDByEmail returns
-	// ("", nil) for misses (matches the production PgOrgStore signature
-	// where a missing user is a non-error case the caller must inspect).
+	// getInvitationByIDErr lets tests exercise the DB-error path on
+	// GetInvitationByID. Distinct from a missing invitation (returns
+	// nil, nil), which exercises the 404 branch.
+	getInvitationByIDErr error
+
+	// usersByEmail backs GetUserIDByEmail. Keys must match the email
+	// in EXACT casing — the mock does not case-fold, mirroring
+	// PgOrgStore's case-sensitive `WHERE email = $1` SELECT. Tests
+	// that want to exercise the handler's email normalization should
+	// register users with the lowercased+trimmed email and pass any
+	// casing in the invitation row; the handler is expected to
+	// normalize before calling GetUserIDByEmail. Empty map means "no
+	// users registered" — GetUserIDByEmail returns ("", nil) for misses
+	// (matches the production PgOrgStore signature where a missing user
+	// is a non-error case the caller must inspect).
 	usersByEmail        map[string]string
 	getUserIDByEmailErr error
 
@@ -103,6 +114,9 @@ func (m *mockInvitationStore) GetInvitationByTokenHash(_ context.Context, hash s
 func (m *mockInvitationStore) GetInvitationByID(_ context.Context, invID string) (*types.OrgInvitation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.getInvitationByIDErr != nil {
+		return nil, m.getInvitationByIDErr
+	}
 	inv, ok := m.invitations[invID]
 	if !ok {
 		return nil, nil
@@ -199,16 +213,26 @@ func (m *mockInvitationStore) GetUserEmail(_ context.Context, _ string) (string,
 	return m.userEmail, nil
 }
 
-// GetUserIDByEmail mirrors PgOrgStore.GetUserIDByEmail: returns ("", nil)
-// when no user is registered with that email (a non-error miss).
-// Tests register accounts via store.usersByEmail.
+// GetUserIDByEmail mirrors PgOrgStore.GetUserIDByEmail's exact behavior:
+// the production query is `SELECT id FROM users WHERE email = $1`, which
+// is CASE-SENSITIVE on a VARCHAR column. The users table stores emails
+// pre-lowercased on signup (auth.go's strings.ToLower), but the
+// invitations table stores Email as-supplied. The HANDLER is responsible
+// for normalizing inv.Email before calling this method; the mock
+// faithfully refuses to case-fold so that omission would produce a
+// false-negative (422 no_account_for_email) and break the test.
+//
+// PR #352 reviewer-flagged: an earlier version of this mock case-folded
+// here, masking the production case-sensitivity bug. Restored to match
+// the production contract; the handler now does the normalization.
 func (m *mockInvitationStore) GetUserIDByEmail(_ context.Context, email string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.getUserIDByEmailErr != nil {
 		return "", m.getUserIDByEmailErr
 	}
-	return m.usersByEmail[strings.ToLower(strings.TrimSpace(email))], nil
+	// Intentionally NOT case-folding — see method-level comment.
+	return m.usersByEmail[email], nil
 }
 
 func (m *mockInvitationStore) MarkUserEmailVerified(_ context.Context, userID string) error {
@@ -1200,3 +1224,59 @@ type invLogCapture struct {
 
 func (c *invLogCapture) Warn(_ string, _ ...any)           { c.warnCount++ }
 func (c *invLogCapture) Error(_ string, _ error, _ ...any) { c.errorCount++ }
+
+// TestInvitations_VerifyUser_GetInvitationByIDError pins the DB-error
+// path on the invitation lookup. Distinct from "invitation not found"
+// (which is `inv == nil` returning 404) — this is the upstream error
+// case (e.g. connection drop) that must surface as 500. Reviewer-flagged
+// missing test from PR #352.
+func TestInvitations_VerifyUser_GetInvitationByIDError(t *testing.T) {
+	store := newMockInvitationStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.getInvitationByIDErr = errors.New("DB unreachable")
+	r := setupVerifyInviteRouter(t, store)
+
+	w := doRequest(r, "POST", "/api/v1/orgs/org-1/invitations/inv-1/verify-user", "")
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("DB error during invitation lookup must surface as 500; got %d", w.Code)
+	}
+	if len(store.markVerifiedCalls) != 0 {
+		t.Error("must not write when invitation lookup itself failed")
+	}
+	if len(store.auditEvents) != 0 {
+		t.Error("must not audit when invitation lookup itself failed")
+	}
+}
+
+// TestInvitations_VerifyUser_NilLogger_DoesNotPanic exercises the
+// nil-logger guard in the audit-failure path. The handler tolerates a
+// nil logger (h.logger != nil check) — production wiring always passes
+// a logger, but defense in depth: a nil logger MUST NOT panic.
+// Reviewer-flagged missing test from PR #352.
+func TestInvitations_VerifyUser_NilLogger_DoesNotPanic(t *testing.T) {
+	store := newMockInvitationStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.registerUser("invitee@example.com", "user-42")
+	store.auditErr = errors.New("audit table outage") // forces the logger branch
+	seedPendingInvitation(store, "org-1", "inv-1", "invitee@example.com")
+
+	gin.SetMode(gin.TestMode)
+	// Explicitly pass nil logger — production app.go always passes a
+	// real logger via SetLogger / NewInvitationsHandler, but the nil
+	// guard must hold.
+	h := NewInvitationsHandler(store, nil, &mockOrgAuthService{userID: "admin-1"}, "https://app.test", nil)
+	r := gin.New()
+	r.POST("/api/v1/orgs/:id/invitations/:invID/verify-user", h.VerifyUserForInvitation)
+
+	// If the nil guard is missing, this call panics inside the gin
+	// recovery middleware and the response is 500. We assert 200.
+	w := doRequest(r, "POST", "/api/v1/orgs/org-1/invitations/inv-1/verify-user", "")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("nil logger + audit failure must still return 200 (verification succeeded); got %d", w.Code)
+	}
+	if len(store.markVerifiedCalls) != 1 {
+		t.Errorf("verification must have run; got %d calls", len(store.markVerifiedCalls))
+	}
+}
