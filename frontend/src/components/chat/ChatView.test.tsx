@@ -68,6 +68,63 @@ describe("ChatView", () => {
     expect(screen.getByPlaceholderText("Type a message...")).toBeDisabled();
   });
 
+  // ── viewOnly (subtask read-only) ─────────────────────────────────────────
+
+  it("hides the composer when viewOnly is true", () => {
+    render(<ChatView {...defaultProps} viewOnly={true} />);
+    expect(screen.queryByPlaceholderText("Type a message...")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /send/i })).not.toBeInTheDocument();
+  });
+
+  it("shows the default view-only message when viewOnly is true", () => {
+    render(<ChatView {...defaultProps} viewOnly={true} />);
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    expect(screen.getByText(/Subtasks are view-only/i)).toBeInTheDocument();
+  });
+
+  it("shows a custom view-only message when provided", () => {
+    render(<ChatView {...defaultProps} viewOnly={true} viewOnlyMessage="Custom read-only reason" />);
+    expect(screen.getByText("Custom read-only reason")).toBeInTheDocument();
+  });
+
+  it("does not render the queue section when viewOnly is true", () => {
+    render(
+      <ChatView
+        {...defaultProps}
+        viewOnly={true}
+        queuedMessages={[{ id: "q1", text: "queued", status: "pending", sessionId: "sess-1" }]}
+        onQueueRetry={vi.fn()}
+        onQueueDismiss={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText("queued")).not.toBeInTheDocument();
+  });
+
+  it("still renders messages when viewOnly is true (read-only view)", () => {
+    const messages: Message[] = [
+      { id: "1", role: "assistant", parts: [{ type: "text", text: "Subtask output" }] },
+    ];
+    render(<ChatView {...defaultProps} viewOnly={true} messages={messages} />);
+    expect(screen.getByText("Subtask output")).toBeInTheDocument();
+  });
+
+  it("renders the composer when viewOnly is false (default)", () => {
+    render(<ChatView {...defaultProps} viewOnly={false} />);
+    expect(screen.getByPlaceholderText("Type a message...")).toBeInTheDocument();
+  });
+
+  it("still renders prompts when viewOnly is true (agent-driven, not user chatting)", () => {
+    render(
+      <ChatView
+        {...defaultProps}
+        viewOnly={true}
+        prompts={<div>Agent has a question</div>}
+      />,
+    );
+    expect(screen.getByText("Agent has a question")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
+  });
+
   it("shows streamed text parts", () => {
     render(<ChatView {...defaultProps} streaming={true} streamParts={[{ type: "text", text: "Partial response..." }]} />);
     expect(screen.getByText("Partial response...")).toBeInTheDocument();
