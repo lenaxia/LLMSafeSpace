@@ -70,7 +70,7 @@ type updateAdminCredentialRequest struct {
 // failure is non-fatal: baseURL is omitted and the remaining metadata is
 // returned (the credential remains usable — only the display field is lost).
 // The decrypted plaintext (which contains the API key) is zeroed before return.
-func buildCredentialResponse(row *secrets.CredentialRow, key []byte) CredentialResponse {
+func buildCredentialResponse(ctx context.Context, row *secrets.CredentialRow, provider secrets.RootKeyProvider) CredentialResponse {
 	resp := CredentialResponse{
 		ID:                 row.ID,
 		Name:               row.Name,
@@ -91,8 +91,8 @@ func buildCredentialResponse(row *secrets.CredentialRow, key []byte) CredentialR
 	if resp.ModelContextLimits == nil {
 		resp.ModelContextLimits = map[string]int{}
 	}
-	if key != nil {
-		if plain, err := secrets.DecryptSecret(key, row.Ciphertext); err == nil {
+	if provider != nil {
+		if plain, err := provider.Decrypt(ctx, row.Ciphertext); err == nil {
 			var pd secrets.LLMProviderData
 			if json.Unmarshal(plain, &pd) == nil {
 				resp.BaseURL = pd.BaseURL
@@ -107,19 +107,12 @@ func buildCredentialResponse(row *secrets.CredentialRow, key []byte) CredentialR
 type AdminProviderCredentialsHandler struct {
 	store          CredentialStore
 	autoApplyStore AutoApplyStore
-	deriveKey      secrets.AdminKeyDeriver
+	provider       secrets.RootKeyProvider
 }
 
 // NewAdminProviderCredentialsHandler creates a new handler.
-func NewAdminProviderCredentialsHandler(store CredentialStore, deriveKey secrets.AdminKeyDeriver) *AdminProviderCredentialsHandler {
-	return &AdminProviderCredentialsHandler{store: store, deriveKey: deriveKey}
-}
-
-func (h *AdminProviderCredentialsHandler) kek() []byte {
-	if h.deriveKey == nil {
-		return nil
-	}
-	return h.deriveKey("provider-credentials")
+func NewAdminProviderCredentialsHandler(store CredentialStore, provider secrets.RootKeyProvider) *AdminProviderCredentialsHandler {
+	return &AdminProviderCredentialsHandler{store: store, provider: provider}
 }
 
 // Create handles POST /api/v1/admin/provider-credentials.
@@ -137,13 +130,12 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 	req.Provider = strings.TrimSpace(req.Provider)
 	req.Name = strings.TrimSpace(req.Name)
 
-	kek := h.kek()
-	if kek == nil {
+	if h.provider == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "master secret not configured"})
 		return
 	}
 
-	ciphertext, err := encryptCredentialData(kek, req.Provider, req.APIKey, req.BaseURL)
+	ciphertext, err := encryptCredentialData(c.Request.Context(), h.provider.Encrypt, req.Provider, req.APIKey, req.BaseURL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode credential"})
 		return
@@ -197,10 +189,9 @@ func (h *AdminProviderCredentialsHandler) List(c *gin.Context) {
 		return
 	}
 
-	kek := h.kek()
 	resp := make([]CredentialResponse, 0, len(rows))
 	for _, row := range rows {
-		resp = append(resp, buildCredentialResponse(row, kek))
+		resp = append(resp, buildCredentialResponse(c.Request.Context(), row, h.provider))
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -217,7 +208,7 @@ func (h *AdminProviderCredentialsHandler) Get(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "credential not found"})
 		return
 	}
-	c.JSON(http.StatusOK, buildCredentialResponse(row, h.kek()))
+	c.JSON(http.StatusOK, buildCredentialResponse(c.Request.Context(), row, h.provider))
 }
 
 // Update handles PUT /api/v1/admin/provider-credentials/:id.
@@ -255,15 +246,14 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 
 	// Re-encrypt only when the caller is changing an encrypted field (apiKey or baseURL).
 	if req.APIKey != nil || req.BaseURL != nil {
-		kek := h.kek()
-		if kek == nil {
+		if h.provider == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "master secret not configured"})
 			return
 		}
 		// Decrypt the existing ciphertext to get current values (C-4 fix).
 		// If decryption fails, return 500 — do NOT proceed with a zeroed struct,
 		// which would silently corrupt the stored credential.
-		existingPlain, decErr := secrets.DecryptSecret(kek, existing.Ciphertext)
+		existingPlain, decErr := h.provider.Decrypt(c.Request.Context(), existing.Ciphertext)
 		if decErr != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error": "existing credential data is unreadable; manual remediation required before key rotation",
@@ -293,7 +283,7 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode credential"})
 			return
 		}
-		ciphertext, encErr := secrets.EncryptSecret(kek, plaintext)
+		ciphertext, encErr := h.provider.Encrypt(c.Request.Context(), plaintext)
 		zeroBytes(plaintext)
 		if encErr != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "encryption failed"})
@@ -314,7 +304,7 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 
 	// existing.UpdatedAt is now populated from RETURNING updated_at (M-8 fix).
 	// buildCredentialResponse decrypts to include baseURL (consistent with GET/List).
-	c.JSON(http.StatusOK, buildCredentialResponse(existing, h.kek()))
+	c.JSON(http.StatusOK, buildCredentialResponse(c.Request.Context(), existing, h.provider))
 }
 
 // Delete handles DELETE /api/v1/admin/provider-credentials/:id.
