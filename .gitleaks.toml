@@ -34,7 +34,7 @@ paths = [
   # Synthetic test fixtures for the auth-method classifier. Tokens are
   # short, low-entropy, and explicitly invalid — they exist only to
   # exercise the prefix/shape branches of authMethodForToken. Verified
-  # 2026-06-22 (worklog 0502): the lsp_ value is 16 'a' chars, the JWT
+  # 2026-06-22 (worklog 0508): the lsp_ value is 16 'a' chars, the JWT
   # uses {alg:none} and a single-char signature.
   '''api/internal/middleware/auth_method_test\.go''',
   # Worklog 0030 documents a real e2e test run; the JWT shown is a

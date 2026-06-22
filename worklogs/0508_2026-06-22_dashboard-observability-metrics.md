@@ -1,4 +1,4 @@
-# Worklog 0502: Wire dashboard observability metrics (DB / Redis / dependency / auth)
+# Worklog 0508: Wire dashboard observability metrics (DB / Redis / dependency / auth)
 
 **Date:** 2026-06-22
 **Session:** Diagnose and fix ~10 Grafana dashboard panels showing "No data" by wiring previously-unused `Record*` helpers at the architecturally correct layer.
@@ -66,7 +66,7 @@ PR #356 received a `REQUEST CHANGES` review with three items:
 
 1. **CTE classifier bug** — Fix described as "use last-position keyword" was a partial answer. Production `CreateUser` query is `INSERT INTO … SELECT $1, $2, …` so SELECT trails INSERT — last-position would still classify as `"select"`. Correct fix: track parenthesis depth and return the first keyword at depth 0 outside the CTE bodies. Added regression test for the actual production query.
 2. **Missing `authMethodForToken` tests** — Added `auth_method_test.go` with all four classification branches.
-3. **Missing worklog** — This file (worklog 0502).
+3. **Missing worklog** — This file (worklog 0508).
 
 Also fixed reviewer's secondary findings: the lockout early-exit path now calls `RecordAuthAttempt("password", "failure")` so the failure-ratio denominator is complete when lockout is enabled; the 4096-byte truncation for very long CTEs is documented in the function comment.
 
