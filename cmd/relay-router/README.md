@@ -4,10 +4,10 @@ In-cluster HTTP router that distributes workspace traffic across healthy relay V
 
 ## Responsibilities
 
-1. **Weighted relay selection** — OCI gets 100% of traffic when healthy; GCP receives traffic only during OCI failure or rotation
+1. **Weighted relay selection** — AWS receives 100% of traffic when healthy (weight 1000); OCI receives traffic only when AWS is unavailable or draining (weight 100); GCP only when both are down (weight 1, optional). See `relayWeight` in `fleet.go`.
 2. **Health checking** — Probes each relay `/healthz` every 15s; marks unhealthy after 3 consecutive failures (45s)
 3. **429 detection (two-tier)** — Immediate probe on first 429; storm detection via 5-minute rolling window at 50% threshold
-4. **Failover** — When OCI goes down, all traffic routes to GCP
+4. **Failover** — When AWS goes down, all traffic routes to OCI; when both are down, to GCP
 5. **Fallback mode** — When all relays are down, proxies directly to upstream at 0.5 req/s, max 1 concurrent
 
 ## Endpoints
@@ -36,7 +36,8 @@ On the relay path the router injects `X-Relay-Token` from the selected peer's to
 |----------|---------|-------------|
 | `LISTEN_ADDR` | `:8080` | Listen address |
 | `UPSTREAM_URL` | `https://opencode.ai/zen/v1` | Direct fallback upstream |
-| `UPSTREAM_AUTH_HEADER` | `""` | Optional header value injected on the fallback path (router-side upstream key; see `controller.inferenceRelay.upstreamAuth`) |
+| `UPSTREAM_AUTH_KEY` | `""` | Optional upstream API key value injected on the fallback path (router-side; see `controller.inferenceRelay.upstreamAuth`). Empty for a Zen free-model fleet. |
+| `UPSTREAM_AUTH_HEADER` | `""` | Header **name** under which `UPSTREAM_AUTH_KEY` is sent (default empty → `Authorization`). |
 | `PEER_CONFIG_PATH` | `/etc/relay-router/peers.json` | ConfigMap mount path |
 | `PEER_POLL_INTERVAL` | `5s` | ConfigMap re-read interval |
 | `HEALTH_INTERVAL` | `15s` | Health check interval |

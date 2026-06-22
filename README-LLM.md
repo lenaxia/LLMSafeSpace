@@ -598,7 +598,7 @@ Controller flags mirror these: `--enable-inference-relay`, `--relay-router-url`,
 
 ### Operational notes
 
-- The router's `SelectRelay` is weighted: OCI (free) gets traffic when healthy; GCP (paid) receives traffic only during OCI failure or rotation. Fallback mode rate-limits direct upstream access (default 0.5 req/s, max 1 concurrent) to avoid worsening IP throttling.
+- The router's `SelectRelay` is weighted: **AWS receives 100% of traffic when healthy (weight 1000)**; OCI (weight 100) receives traffic only when AWS is unavailable or draining; GCP (weight 1, optional) only when both AWS and OCI are unavailable. Fallback mode rate-limits direct upstream access (default 0.5 req/s, max 1 concurrent) to avoid worsening IP throttling. See `relayWeight` in `cmd/relay-router/fleet.go`.
 - Fleet validation is gated on a real cloud deploy (in-cluster testing requirements in worklog 0462; full validation run in worklogs 0464–0471). Unit + integration tests cover the state machine, peer polling, health, cloud-init rendering, and token round-trip.
 
 ---
