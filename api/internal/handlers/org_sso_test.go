@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/lenaxia/llmsafespaces/api/internal/services/sso"
@@ -215,7 +216,7 @@ func buildSSOHandler(t *testing.T) (*SSOHandler, *mockSSOStore, *mockSSOHandlerU
 	store := newMockSSOStore()
 	users := newMockSSOHandlerUserStore()
 	svc := newSSOServiceForHandler(t, store, users, "https://api.test.local")
-	h := NewSSOHandler(svc, store, &mockOrgAuthService{userID: "admin-1"}, "lsp_session", "https://app.test.local", nil)
+	h := NewSSOHandler(svc, store, &mockOrgAuthService{userID: "admin-1"}, "lsp_session", "", "https://app.test.local", nil)
 
 	r := gin.New()
 	r.GET("/api/v1/orgs/:id/sso", h.Get)
@@ -616,7 +617,7 @@ func TestE2E_SSO_ResolveCallbackURL_WarnsOnForwardedHeaderFallback(t *testing.T)
 	// RedirectBaseURL = "" → the fallback path (forwarded headers).
 	svc := newSSOServiceForHandler(t, store, users, "")
 	log := &capturingSSOLogger{}
-	h := NewSSOHandler(svc, store, &mockOrgAuthService{userID: "admin-1"}, "lsp_session", "https://app.test.local", log)
+	h := NewSSOHandler(svc, store, &mockOrgAuthService{userID: "admin-1"}, "lsp_session", "", "https://app.test.local", log)
 
 	// Simulate a request with forwarded headers (the attacker-influenceable
 	// surface F11 documents).
@@ -647,7 +648,7 @@ func TestE2E_SSO_ResolveCallbackURL_NoWarnWhenRedirectBaseURLSet(t *testing.T) {
 	users := newMockSSOHandlerUserStore()
 	svc := newSSOServiceForHandler(t, store, users, "https://api.production.local")
 	log := &capturingSSOLogger{}
-	h := NewSSOHandler(svc, store, &mockOrgAuthService{userID: "admin-1"}, "lsp_session", "https://app.test.local", log)
+	h := NewSSOHandler(svc, store, &mockOrgAuthService{userID: "admin-1"}, "lsp_session", "", "https://app.test.local", log)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -671,7 +672,7 @@ func buildVerifyHandler(t *testing.T) (*SSOHandler, *mockSSOStore, *gin.Engine, 
 	svc := newSSOServiceForHandler(t, store, users, "https://api.test.local")
 	dns := &fakeVerifyDNSResolver{records: map[string][]string{}}
 	svc.SetDNSResolver(dns)
-	h := NewSSOHandler(svc, store, &mockOrgAuthService{userID: "admin-1"}, "lsp_session", "https://app.test.local", nil)
+	h := NewSSOHandler(svc, store, &mockOrgAuthService{userID: "admin-1"}, "lsp_session", "", "https://app.test.local", nil)
 	r := gin.New()
 	r.POST("/api/v1/orgs/:id/sso/domains/:domain/verify", h.VerifyDomain)
 	r.POST("/api/v1/orgs/:id/sso/verification-token/rotate", h.RotateToken)
@@ -791,4 +792,69 @@ func TestSSOHandler_Get_ReturnsVerifiedDomainsAndToken(t *testing.T) {
 	require.Equal(t, []string{"acme.com", "acme.io"}, resp.ClaimedDomains)
 	require.Equal(t, []string{"acme.com"}, resp.VerifiedDomains)
 	require.Equal(t, "tok-xyz", resp.VerificationToken)
+}
+
+// TestSSOHandler_Callback_CookieDomainSet verifies that when the SSO handler
+// is constructed with a non-empty cookieDomain, the session cookie set on
+// successful callback carries the Domain attribute. Without this, the cookie
+// would be host-only and invisible to org subdomains — breaking Epic 54.
+func TestSSOHandler_Callback_CookieDomainSet(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := newMockSSOStore()
+	users := newMockSSOHandlerUserStore()
+	svc := newSSOServiceForHandler(t, store, users, "https://api.test.local")
+	// Construct with cookieDomain=".app.example.com" — simulating subdomain routing enabled.
+	h := NewSSOHandler(svc, store, &mockOrgAuthService{userID: "admin-1"}, "lsp_session", ".app.example.com", "https://app.test.local", nil)
+
+	idp := newHandlerFakeIdP(t, "cid")
+	defer idp.close()
+	store.slugToOrg["acme"] = &types.Organization{ID: "org-acme", Slug: "acme", Status: types.OrgStatusActive}
+	blob, err := h.svc.EncryptClientSecret(context.Background(), "secret")
+	require.NoError(t, err)
+	store.configs["org-acme"] = &types.OrgSSOConfig{
+		OrgID: "org-acme", DiscoveryURL: idp.issuer(), ClientID: "cid", ClientSecret: blob, AutoProvision: true,
+	}
+	idp.tokenFn = func(string) (map[string]any, error) {
+		return map[string]any{"email": "zoe@acme.com"}, nil
+	}
+
+	r := gin.New()
+	r.GET("/api/v1/auth/sso/:orgSlug/start", h.Start)
+	r.GET("/api/v1/auth/sso/:orgSlug/callback", h.Callback)
+
+	// 1. Start to get the state cookie.
+	wStart := doRequest(r, "GET", "/api/v1/auth/sso/acme/start", "")
+	require.Equal(t, http.StatusFound, wStart.Code)
+	startURL, _ := url.Parse(wStart.Header().Get("Location"))
+	state := startURL.Query().Get("state")
+	var cookieVal string
+	for _, c := range wStart.Result().Cookies() {
+		if c.Name == h.svc.CookieName() {
+			cookieVal = c.Value
+		}
+	}
+	require.NotEmpty(t, cookieVal)
+
+	// 2. Drive the callback.
+	cbURL := "/api/v1/auth/sso/acme/callback?code=the-code&state=" + state
+	req := httptest.NewRequest("GET", cbURL, nil)
+	req.AddCookie(&http.Cookie{Name: h.svc.CookieName(), Value: cookieVal})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusFound, w.Code, w.Body.String())
+
+	// The session cookie must carry Domain="app.example.com" (Go's cookie
+	// parser strips the leading dot per RFC 6265 §4.1.2.3; the Set-Cookie
+	// header itself contains ".app.example.com" which is what browsers see).
+	var sessionCookie *http.Cookie
+	for _, c := range w.Result().Cookies() {
+		if c.Name == "lsp_session" {
+			sessionCookie = c
+			break
+		}
+	}
+	require.NotNil(t, sessionCookie, "session cookie must be set on callback")
+	assert.Equal(t, "app.example.com", sessionCookie.Domain,
+		"SSO callback cookie Domain must match the configured cookieDomain for subdomain routing")
 }
