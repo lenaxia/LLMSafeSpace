@@ -79,6 +79,10 @@ const UNVERIFIED_MEMBER: OrgMember = {
 // Pending invitation fixture used by the Pending Invitations table tests.
 // emailVerified does not apply at this stage — there may not even be a
 // users row yet.
+// Pending invitation fixture used by the Pending Invitations table
+// tests. Default shape: invitee already has a users row but their email
+// is unverified — i.e. force-verify is actionable. Tests that need a
+// different state (already verified, or no account) override the flags.
 const PENDING_INVITATION: OrgInvitation = {
   id: "inv-1",
   orgId: "org-1",
@@ -87,6 +91,24 @@ const PENDING_INVITATION: OrgInvitation = {
   invitedBy: "admin-1",
   expiresAt: "2026-12-31T00:00:00Z",
   createdAt: "2026-01-03T00:00:00Z",
+  inviteeUserExists: true,
+  inviteeEmailVerified: false,
+};
+
+const PENDING_INVITATION_ALREADY_VERIFIED: OrgInvitation = {
+  ...PENDING_INVITATION,
+  id: "inv-already-verified",
+  email: "verified-invitee@example.com",
+  inviteeUserExists: true,
+  inviteeEmailVerified: true,
+};
+
+const PENDING_INVITATION_NO_USER: OrgInvitation = {
+  ...PENDING_INVITATION,
+  id: "inv-no-user",
+  email: "ghost@example.com",
+  inviteeUserExists: false,
+  inviteeEmailVerified: undefined,
 };
 
 function renderTab(isAdmin = true) {
@@ -267,5 +289,97 @@ describe("OrgMembersTab", () => {
     await waitFor(() => {
       expect(screen.queryByText("invitee@example.com")).toBeNull();
     });
+  });
+
+  // ---------------------------------------------------------------------
+  // Account Status column + conditional Verify button
+  // (closes the UX gap reported after PR #352 deploy: the Verify button
+  // persisted indefinitely after a successful verify because the
+  // invitation row stays pending and the prior fixture had no concept
+  // of the invitee's verification state).
+  // ---------------------------------------------------------------------
+
+  it("hides the Verify button when invitee email is already verified", async () => {
+    // Members table has all-verified members so its own Verify button
+    // is also absent — leaves the screen with NO Verify buttons total.
+    mockListMembers.mockResolvedValue([VERIFIED_ADMIN]);
+    mockListInvitations.mockResolvedValue([PENDING_INVITATION_ALREADY_VERIFIED]);
+    renderTab();
+    await screen.findByText("verified-invitee@example.com");
+    expect(screen.queryByRole("button", { name: /^Verify$/i })).toBeNull();
+  });
+
+  it("renders a 'Verified' badge in the Account Status column for already-verified invitees", async () => {
+    mockListMembers.mockResolvedValue([VERIFIED_ADMIN]);
+    mockListInvitations.mockResolvedValue([PENDING_INVITATION_ALREADY_VERIFIED]);
+    renderTab();
+    await screen.findByText("verified-invitee@example.com");
+    // 2 Verified badges are visible — one from the Members table for
+    // VERIFIED_ADMIN, one from the Pending Invitations table for the
+    // already-verified invitee. Confirms the new column renders.
+    const badges = screen.getAllByText(/^Verified$/i);
+    expect(badges.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("hides the Verify button when invitee has no account yet (button can't help, would 422)", async () => {
+    mockListMembers.mockResolvedValue([VERIFIED_ADMIN]);
+    mockListInvitations.mockResolvedValue([PENDING_INVITATION_NO_USER]);
+    renderTab();
+    await screen.findByText("ghost@example.com");
+    // Verify button must be absent — clicking it would 422.
+    expect(screen.queryByRole("button", { name: /^Verify$/i })).toBeNull();
+    // A "No account" badge is shown so the admin understands why the
+    // button is missing.
+    expect(screen.getByText(/no account/i)).toBeInTheDocument();
+  });
+
+  it("shows a success notice after Verify succeeds (acknowledgement was missing pre-fix)", async () => {
+    const user = userEvent.setup();
+    mockListMembers.mockResolvedValue([VERIFIED_ADMIN]);
+    mockListInvitations.mockResolvedValue([PENDING_INVITATION]);
+    renderTab();
+    const verifyBtn = await screen.findByRole("button", { name: /^Verify$/i });
+    await user.click(verifyBtn);
+    await waitFor(() => {
+      expect(mockVerifyInvitee).toHaveBeenCalledWith("org-1", "inv-1");
+    });
+    // The user-visible notice must include the email so the admin
+    // knows which row's verification succeeded — a generic "verified"
+    // wouldn't be enough for tables with multiple pending invitations.
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent(
+        /Verified invitee@example\.com/i,
+      );
+    });
+  });
+
+  it("clears the success notice when a subsequent action errors", async () => {
+    const user = userEvent.setup();
+    mockListMembers.mockResolvedValue([VERIFIED_ADMIN]);
+    mockListInvitations.mockResolvedValue([PENDING_INVITATION]);
+    // First click succeeds, second click fails.
+    mockVerifyInvitee
+      .mockResolvedValueOnce({ message: "User verified" })
+      .mockRejectedValueOnce(new Error("DB unreachable"));
+    renderTab();
+    const verifyBtn = await screen.findByRole("button", { name: /^Verify$/i });
+
+    // First click: success notice appears.
+    await user.click(verifyBtn);
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent(
+        /Verified invitee@example\.com/i,
+      );
+    });
+
+    // Force a second click on the (still rendered, since refresh keeps
+    // the same fixture) Verify button. The mock now rejects.
+    await user.click(verifyBtn);
+    await waitFor(() => {
+      expect(screen.getByText(/db unreachable/i)).toBeInTheDocument();
+    });
+    // The success notice must be gone — the user should not see a stale
+    // green "Verified" message after an error.
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });

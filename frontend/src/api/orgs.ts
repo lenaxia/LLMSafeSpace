@@ -66,6 +66,22 @@ export interface OrgInvitation {
   bounceType?: string;
   bouncedAt?: string;
   createdAt: string;
+
+  /**
+   * True when a `users` row exists with this invitation's email
+   * (case-folded match). Surfaced so the org admin UI can render the
+   * per-row Verify button only when force-verify is actionable.
+   * Optional for backward compat with cached responses from older
+   * API versions.
+   */
+  inviteeUserExists?: boolean;
+
+  /**
+   * Mirrors `users.email_verified` for the row matched by
+   * inviteeUserExists. Undefined when no users row exists. The org
+   * admin UI hides the Verify button when this is true.
+   */
+  inviteeEmailVerified?: boolean;
 }
 
 export interface AuditEntry {

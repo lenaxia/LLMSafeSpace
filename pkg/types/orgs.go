@@ -147,6 +147,20 @@ type OrgInvitation struct {
 	BounceType string     `json:"bounceType,omitempty"`
 	BouncedAt  *time.Time `json:"bouncedAt,omitempty"`
 	CreatedAt  time.Time  `json:"createdAt"`
+
+	// InviteeUserExists is true when a `users` row exists with this
+	// invitation's email (case-folded match). Surfaced so the org admin
+	// UI can render the per-row Verify button only when force-verify is
+	// actionable. Pointer so a missing-from-payload value is
+	// distinguishable from a definite false on older API responses.
+	InviteeUserExists *bool `json:"inviteeUserExists,omitempty"`
+
+	// InviteeEmailVerified mirrors users.email_verified for the row
+	// matched by InviteeUserExists. Nil when no users row exists. The
+	// org admin UI hides the Verify button when this is true (the
+	// override has already been applied or the user verified through
+	// the normal flow).
+	InviteeEmailVerified *bool `json:"inviteeEmailVerified,omitempty"`
 }
 
 // CreateInvitationsRequest is the body for POST /orgs/:id/invitations.

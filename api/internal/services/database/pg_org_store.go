@@ -1024,11 +1024,28 @@ func (s *PgOrgStore) CreateInvitation(ctx context.Context, inv *types.OrgInvitat
 }
 
 func (s *PgOrgStore) ListPendingInvitations(ctx context.Context, orgID string) ([]*types.OrgInvitation, error) {
+	// LEFT JOIN with users so the response carries the invitee's
+	// email-verification state. The org admin UI uses this to render the
+	// per-row Verify button only when force-verify is actionable
+	// (existing user account whose email is unverified). Without this,
+	// the UI shows a Verify button even after the override has been
+	// applied because the invitation row stays pending until the user
+	// clicks the invitation link.
+	//
+	// users.email is stored pre-lowercased (auth.go's strings.ToLower on
+	// signup); org_invitations.email is stored as-supplied. Lowercase
+	// the invitations side for the join.
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, org_id, email, role, invited_by, expires_at, bounce_type, bounced_at, created_at
-		 FROM org_invitations
-		 WHERE org_id = $1 AND accepted_at IS NULL AND declined_at IS NULL
-		 ORDER BY created_at DESC`,
+		`SELECT i.id, i.org_id, i.email, i.role, i.invited_by, i.expires_at,
+		        i.bounce_type, i.bounced_at, i.created_at,
+		        u.id IS NOT NULL AS invitee_user_exists,
+		        u.email_verified
+		   FROM org_invitations i
+		   LEFT JOIN users u ON u.email = LOWER(i.email)
+		  WHERE i.org_id = $1
+		    AND i.accepted_at IS NULL
+		    AND i.declined_at IS NULL
+		  ORDER BY i.created_at DESC`,
 		orgID,
 	)
 	if err != nil {
@@ -1041,13 +1058,26 @@ func (s *PgOrgStore) ListPendingInvitations(ctx context.Context, orgID string) (
 		var inv types.OrgInvitation
 		var bounceType sql.NullString
 		var bouncedAt sql.NullTime
+		var inviteeUserExists sql.NullBool
+		var inviteeEmailVerified sql.NullBool
 		if err := rows.Scan(&inv.ID, &inv.OrgID, &inv.Email, &inv.Role, &inv.InvitedBy,
-			&inv.ExpiresAt, &bounceType, &bouncedAt, &inv.CreatedAt); err != nil {
+			&inv.ExpiresAt, &bounceType, &bouncedAt, &inv.CreatedAt,
+			&inviteeUserExists, &inviteeEmailVerified); err != nil {
 			return nil, fmt.Errorf("scan invitation: %w", err)
 		}
 		inv.BounceType = bounceType.String
 		if bouncedAt.Valid {
 			inv.BouncedAt = &bouncedAt.Time
+		}
+		// inviteeUserExists comes back from `IS NOT NULL` so it's never
+		// SQL NULL; the NullBool wrapper just guards against a hypothetical
+		// driver edge case. Materialize it as a pointer so the JSON
+		// surface stays consistent.
+		exists := inviteeUserExists.Valid && inviteeUserExists.Bool
+		inv.InviteeUserExists = &exists
+		if exists && inviteeEmailVerified.Valid {
+			verified := inviteeEmailVerified.Bool
+			inv.InviteeEmailVerified = &verified
 		}
 		out = append(out, &inv)
 	}
