@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/lenaxia/llmsafespaces/api/internal/config"
 	apierrors "github.com/lenaxia/llmsafespaces/api/internal/errors"
 	"github.com/lenaxia/llmsafespaces/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespaces/api/internal/logger"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespaces/pkg/types"
 	"github.com/lib/pq"
 )
@@ -36,10 +38,19 @@ func New(cfg *config.Config, log *logger.Logger) (*Service, error) {
 		cfg.Database.SSLMode,
 	)
 
-	db, err := sql.Open("pgx", connString)
+	// Open via stdlib.OpenDB so we can attach a pgx QueryTracer at the
+	// driver layer. Every query — including those issued by the secrets
+	// pgxpool — flows through the same tracer and emits
+	// llmsafespaces_db_query_duration_seconds and
+	// llmsafespaces_db_errors_total. Switching from sql.Open("pgx", …)
+	// to OpenDB is required: the registered driver path has no hook for
+	// per-connection configuration.
+	connConfig, err := pgx.ParseConfig(connString)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to database: %w", err)
+		return nil, fmt.Errorf("failed to parse database connection string: %w", err)
 	}
+	connConfig.Tracer = newQueryTracer()
+	db := stdlib.OpenDB(*connConfig)
 
 	db.SetMaxOpenConns(cfg.Database.MaxOpenConns)
 	db.SetMaxIdleConns(cfg.Database.MaxIdleConns)
@@ -48,14 +59,20 @@ func New(cfg *config.Config, log *logger.Logger) (*Service, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	return &Service{
+	svc := &Service{
 		Logger: log,
 		Config: cfg,
 		DB:     db,
-	}, nil
+	}
+	// Seed the connection-pool gauges so they appear in /metrics from
+	// startup, not only after the first periodic poll.
+	stats := db.Stats()
+	metrics.RecordDBPoolStats(stats.InUse, stats.Idle, stats.MaxOpenConnections)
+	return svc, nil
 }
 
 // Start starts the database service

@@ -36,6 +36,13 @@ func New(cfg *config.Config, log *logger.Logger) (*Service, error) {
 		PoolSize: cfg.Redis.PoolSize,
 	})
 
+	// Attach the metrics hook so every command emits the
+	// llmsafespaces_redis_command_duration_seconds histogram and the
+	// llmsafespaces_redis_errors_total counter. Reused by callers that
+	// share this client via GetClient() (rate limiter, message queue,
+	// wsstate store).
+	client.AddHook(newMetricsHook())
+
 	// Test connection
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
