@@ -102,4 +102,4 @@ Docs-only PR — no code changes. CI verifies: Lint ✓, all migration checks �
 - `frontend/README.md`
 - `api/migrations/README.md`
 - `COORDINATE.md`
-- `worklogs/0498_2026-06-22_doc-audit-stale-readmes-v1-cleanup.md` (this entry)
+- `worklogs/0499_2026-06-22_doc-audit-stale-readmes-v1-cleanup.md` (this entry)
