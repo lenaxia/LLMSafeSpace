@@ -233,6 +233,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var platformAdminHandler *handlers.PlatformAdminHandler
 	var internalOrgStatusHandler *handlers.InternalOrgStatusHandler
 	var ssoHandler *handlers.SSOHandler
+	var loginDiscoveryHandler *handlers.LoginDiscoveryHandler
 	var asyncAudit *secrets.AsyncAuditLogger // populated when secrets are enabled; drained on Shutdown
 	var secretsPool *pgxpool.Pool            // closed on Shutdown
 	var dekCacheClient *redis.Client         // closed on Shutdown
@@ -420,6 +421,16 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		// surfaces best-effort audit-write + revocation-write failures.
 		platformAdminHandler = handlers.NewPlatformAdminHandler(pgOrgStore, dbSvc, svc.GetAuth(), svc.GetAuth(), log)
 		internalOrgStatusHandler = handlers.NewInternalOrgStatusHandler(pgOrgStore)
+
+		// Epic 54, US-54.1: email-led login discovery. Resolves an email to a
+		// single redirectUrl pointing at the user's org (subdomain when configured,
+		// direct SSO start URL otherwise). Always constructed when pgOrgStore is
+		// available — the endpoint is harmless when subdomain routing is disabled
+		// (it falls back to the direct SSO URL). Enumeration-safe by construction.
+		loginDiscoveryHandler = handlers.NewLoginDiscoveryHandler(
+			svc.Database, pgOrgStore,
+			cfg.OrgSubdomainRouting.BaseDomain, log,
+		)
 
 		if rkp != nil {
 			keyService.SetAPIKeyStore(&apiKeyStoreAdapter{db: dbSvc}, rkp)
@@ -718,6 +729,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		PlatformAdminHandler:            platformAdminHandler,
 		InternalOrgStatusHandler:        internalOrgStatusHandler,
 		SSOHandler:                      ssoHandler,
+		LoginDiscoveryHandler:           loginDiscoveryHandler,
 		CookieName:                      cfg.Auth.CookieName,
 	})
 

@@ -137,6 +137,19 @@ type Config struct {
 		// StateCookieName is the signed PKCE/state cookie name.
 		StateCookieName string `mapstructure:"stateCookieName"`
 	} `mapstructure:"oidc"`
+
+	// OrgSubdomainRouting holds Epic 54 (US-54.1) email-led login discovery
+	// config. When BaseDomain is non-empty, POST /auth/lookup redirects found
+	// users to https://<orgSlug>.<baseDomain>. When empty (subdomain routing
+	// disabled — the default), the lookup falls back to the direct SSO start
+	// URL (/api/v1/auth/sso/<slug>/start), which works regardless of chart
+	// config. CookieDomain is the value set on the lsp_session cookie's
+	// Domain attribute so the session survives root→subdomain redirects; it
+	// is consumed by the auth cookie setter (US-54.3 wires it through Helm).
+	OrgSubdomainRouting struct {
+		BaseDomain   string `mapstructure:"baseDomain"`
+		CookieDomain string `mapstructure:"cookieDomain"`
+	} `mapstructure:"orgSubdomainRouting"`
 }
 
 // Load loads configuration from file and environment variables

@@ -124,6 +124,13 @@ type RouterConfig struct {
 	// SSOHandler handles org-admin SSO config CRUD + the public OIDC login flow
 	// (start/callback) and claimed-domain discovery (US-43.10, D17).
 	SSOHandler *handlers.SSOHandler
+
+	// LoginDiscoveryHandler handles POST /api/v1/auth/lookup — the email-led
+	// login discovery endpoint (Epic 54, US-54.1). Returns a single redirectUrl
+	// pointing the browser at the user's org subdomain (or direct SSO start URL
+	// when subdomain routing is disabled). Enumeration-safe: uniform 200 +
+	// uniform body shape across all non-validation branches; DB errors masked.
+	LoginDiscoveryHandler *handlers.LoginDiscoveryHandler
 }
 
 // cookieName returns the session cookie name, falling back to "lsp_session" when empty.
@@ -208,6 +215,13 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 	if cfg.EmailVerifyHandler != nil {
 		authGroup.POST("/verify-email", cfg.EmailVerifyHandler.Verify)
 		authGroup.POST("/verify-email/resend", cfg.EmailVerifyHandler.Resend)
+	}
+
+	// Epic 54, US-54.1: Email-led login discovery (public — enumeration-safe).
+	// Resolves an email to a single redirectUrl pointing at the user's org.
+	// Always returns 200 with { redirectUrl } on valid input; DB errors masked.
+	if cfg.LoginDiscoveryHandler != nil {
+		authGroup.POST("/lookup", cfg.LoginDiscoveryHandler.Lookup)
 	}
 
 	// Authenticated workspace routes
