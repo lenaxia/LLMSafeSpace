@@ -62,7 +62,7 @@ Re-verified after a few seconds — both `terminated`.
 
 ## Root Cause Analysis
 
-The controller log message "InferenceRelay deleted — all relay VMs destroyed" is logged at `controller/internal/relay/reconciler.go:611` after `handleDeletion` iterates `relay.Status.Instances` and calls `driver.Destroy(ctx, inst.ID, inst.Region)` for each.
+The controller log message "InferenceRelay deleted — all relay VMs destroyed" is logged at `controller/internal/relay/reconciler.go:610` after `handleDeletion` iterates `relay.Status.Instances` and calls `driver.Destroy(ctx, inst.ID, inst.Region)` for each.
 
 **The bug**: instances are persisted to `relay.Status.Instances` via `r.Status().Update(ctx, relay)` at line 332, AFTER `r.provisionRelay` already created the EC2 instance at line 235. If the Status Update fails (most commonly: optimistic-concurrency `"the object has been modified"`), the function returns the error — but the EC2 instance is already alive in AWS. The reconciler will be re-invoked and call `provisionRelay` AGAIN, creating a duplicate. The original instance is leaked because no Kubernetes resource references it.
 
