@@ -19,6 +19,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // OCIDriver implements ProviderDriver for Oracle Cloud Infrastructure.
@@ -347,8 +348,12 @@ func (d *OCIDriver) ListInstances(ctx context.Context, region string) ([]VMInsta
 		// retry. Skip the lookup for non-running instances (no IP yet
 		// or already gone).
 		if vm.State == VMStateRunning || vm.State == VMStatePending {
-			if ip, ipErr := d.getPublicIP(ctx, cfg, inst.ID, listRegion); ipErr == nil {
+			ip, ipErr := d.getPublicIP(ctx, cfg, inst.ID, listRegion)
+			if ipErr == nil {
 				vm.PublicIP = ip
+			} else {
+				log.FromContext(ctx).V(1).Info("OCI getPublicIP failed during list (non-fatal, will retry next sweep)",
+					"instanceID", inst.ID, "region", listRegion, "error", ipErr.Error())
 			}
 		}
 		result = append(result, vm)

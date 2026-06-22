@@ -377,3 +377,38 @@ func TestHandleDeletion_StatusInstancesAndTaggedOrphans_NoDoubleDestroy(t *testi
 	assert.Contains(t, destroyedIDs, "i-known")
 	assert.Contains(t, destroyedIDs, "i-orphan")
 }
+
+// TestAdoption_LegacyEmptyProvider_StillAdoptsByUID pins the transition-
+// period contract: a tagged VM with OwnerUID set but Provider="" (e.g.
+// from a controller version that tagged UID first, before we added the
+// Provider tag) must STILL be adoptable. The filter in
+// adoptOrphanedInstances explicitly allows empty Provider:
+//
+//	if vm.Provider != "" && vm.Provider != providerSpec.Provider { continue }
+//
+// Without this guard, an upgrade from old → new controller would
+// orphan all the previously-tagged VMs because they'd be silently
+// excluded from adoption. (Reviewer-flagged regression vector for
+// PR #344.)
+func TestAdoption_LegacyEmptyProvider_StillAdoptsByUID(t *testing.T) {
+	relay := adoptionRelayCR("legacy-uid")
+	driver := &stubDriver{
+		listInstances: []VMInstance{
+			// OwnerUID set (good) but Provider tag is empty (legacy).
+			{InstanceID: "i-legacy", State: VMStateRunning, OwnerUID: "legacy-uid", Provider: "", PublicIP: "10.0.0.99"},
+		},
+	}
+	r := adoptionTestReconciler(t, relay, driver)
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: "relay-fleet"}})
+	require.NoError(t, err)
+
+	assert.Empty(t, driver.provisionCalls,
+		"a legacy-tagged VM (UID set, Provider empty) MUST still be adopted; "+
+			"any future change to the filter that strictly requires non-empty Provider "+
+			"would orphan all VMs from older controller versions")
+	updated := &v1.InferenceRelay{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "relay-fleet"}, updated))
+	require.Len(t, updated.Status.Instances, 1)
+	assert.Equal(t, "i-legacy", updated.Status.Instances[0].ID)
+}

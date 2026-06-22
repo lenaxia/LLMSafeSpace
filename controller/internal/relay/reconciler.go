@@ -754,7 +754,10 @@ func (r *InferenceRelayReconciler) handleDeletion(ctx context.Context, relay *v1
 	// Tag-based sweep: list any cloud VMs tagged with this CR's UID
 	// across the spec providers/regions and destroy them. Catches
 	// orphans from prior reconciles whose Status update was lost
-	// (worklog 0473/0474). Best-effort — failures don't block deletion.
+	// (worklog 0473/0474). Failures here mark allDestroyed=false and
+	// block finalizer removal — the safer behavior since proceeding
+	// would leak the EC2 instance permanently. The reconciler retries
+	// via requeue.
 	if uid := string(relay.UID); uid != "" {
 		// Skip instance IDs that the Status.Instances loop above already
 		// processed (regardless of destroy success/failure) — the cloud
