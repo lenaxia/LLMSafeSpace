@@ -280,17 +280,32 @@ func ociProvisionTags(req ProvisionRequest) map[string]string {
 	return tags
 }
 
-// ListInstances returns relay VMs managed by this driver. The OwnerUID
-// and Provider fields are populated from the instance's FreeformTags so
-// callers can filter by InferenceRelay CR ownership (worklog 0474).
-// Pre-fix VMs that lack the tags will have empty OwnerUID/Provider.
+// ListInstances returns relay VMs managed by this driver in the given
+// region. The OwnerUID and Provider fields are populated from the
+// instance's FreeformTags; PublicIP is fetched per-instance from the
+// VNIC attachments so adopted instances have a working endpoint.
+//
+// Pre-fix VMs that lack the tags will have empty OwnerUID/Provider —
+// the orphan detector then preserves them (manual-audit policy).
+//
+// Worklog 0474.
 func (d *OCIDriver) ListInstances(ctx context.Context, region string) ([]VMInstance, error) {
 	cfg, err := d.getConfig(ctx, d.credentialSecret)
 	if err != nil {
 		return nil, err
 	}
 
-	url := fmt.Sprintf("https://iaas.%s.oraclecloud.com/20160918/instances/?compartmentId=%s", cfg.Region, cfg.Tenancy)
+	// Use the passed-in region, NOT cfg.Region — the credentials secret
+	// may carry a default region but the caller (orphan detector,
+	// reconciler adopt pre-pass) is asking about a specific spec
+	// region. Honoring cfg.Region would silently sweep the wrong
+	// region and miss orphans.
+	listRegion := region
+	if listRegion == "" {
+		listRegion = cfg.Region
+	}
+
+	url := fmt.Sprintf("https://iaas.%s.oraclecloud.com/20160918/instances/?compartmentId=%s", listRegion, cfg.Tenancy)
 	resp, err := d.signedRequest(ctx, cfg, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -319,12 +334,24 @@ func (d *OCIDriver) ListInstances(ctx context.Context, region string) ([]VMInsta
 		if inst.FreeformTags[TagManagedBy] != TagManagedByValue {
 			continue
 		}
-		result = append(result, VMInstance{
+		vm := VMInstance{
 			InstanceID: inst.ID,
 			State:      ociStateToVMState(inst.LifecycleState),
 			OwnerUID:   inst.FreeformTags[TagOwnerUID],
 			Provider:   inst.FreeformTags[TagProvider],
-		})
+		}
+		// Fetch PublicIP for adoption purposes — without it, the
+		// reconciler would adopt the instance with an empty endpoint
+		// and the router could never reach it. Failure here is
+		// non-fatal: leave PublicIP empty and let the next reconcile
+		// retry. Skip the lookup for non-running instances (no IP yet
+		// or already gone).
+		if vm.State == VMStateRunning || vm.State == VMStatePending {
+			if ip, ipErr := d.getPublicIP(ctx, cfg, inst.ID, listRegion); ipErr == nil {
+				vm.PublicIP = ip
+			}
+		}
+		result = append(result, vm)
 	}
 	return result, nil
 }

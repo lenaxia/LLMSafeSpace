@@ -483,7 +483,26 @@ func (r *InferenceRelayReconciler) adoptOrphanedInstances(
 			candidates = append(candidates, vm)
 		}
 
-		if _, alreadyKnown := existingByProvider[providerSpec.Provider]; !alreadyKnown && len(candidates) > 0 {
+		if existing, alreadyKnown := existingByProvider[providerSpec.Provider]; alreadyKnown {
+			// We already have a Status entry for this provider. Don't
+			// adopt new candidates — but DO refresh PublicIP from the
+			// cloud listing if the Status entry is missing it. This
+			// handles the case where an earlier adoption (or a fresh
+			// Provision whose post-Provision Status update was lost)
+			// captured an empty IP because the instance was still
+			// pending. Without this refresh, the IP would stay empty
+			// forever and the router could never reach the relay.
+			if existing.PublicIP == "" {
+				for _, vm := range candidates {
+					if vm.InstanceID == existing.ID && vm.PublicIP != "" {
+						existing.PublicIP = vm.PublicIP
+						logger.Info("refreshed PublicIP for adopted relay (was empty in Status)",
+							"provider", providerSpec.Provider, "instanceID", existing.ID, "publicIP", vm.PublicIP)
+						break
+					}
+				}
+			}
+		} else if len(candidates) > 0 {
 			// Adopt the first candidate — synthesize a RelayInstanceStatus
 			// so the main loop treats it as already-provisioned. Health
 			// state will catch up on the next router scrape.
@@ -520,8 +539,6 @@ func (r *InferenceRelayReconciler) adoptOrphanedInstances(
 	return extras
 }
 
-// provisionRelay creates a new relay VM for the given provider.
-// Returns the provision result, WG public key, and error.
 // provisionRelay creates a new relay VM for the given provider.
 // Returns the provision result, the per-VM token (read from existingToken or
 // freshly generated), and error.
@@ -739,6 +756,17 @@ func (r *InferenceRelayReconciler) handleDeletion(ctx context.Context, relay *v1
 	// orphans from prior reconciles whose Status update was lost
 	// (worklog 0473/0474). Best-effort — failures don't block deletion.
 	if uid := string(relay.UID); uid != "" {
+		// Skip instance IDs that the Status.Instances loop above already
+		// processed (regardless of destroy success/failure) — the cloud
+		// may briefly still report them as running due to eventual
+		// consistency, and we don't want to double-Destroy them.
+		alreadyProcessed := make(map[string]bool, len(relay.Status.Instances))
+		for _, inst := range relay.Status.Instances {
+			if inst.ID != "" {
+				alreadyProcessed[inst.ID] = true
+			}
+		}
+
 		seenRegions := make(map[string]map[string]bool)
 		for _, ps := range relay.Spec.Providers {
 			driver, ok := r.Drivers[ps.Provider]
@@ -761,6 +789,9 @@ func (r *InferenceRelayReconciler) handleDeletion(ctx context.Context, relay *v1
 			}
 			for _, vm := range listed {
 				if vm.OwnerUID != uid {
+					continue
+				}
+				if alreadyProcessed[vm.InstanceID] {
 					continue
 				}
 				if vm.State != VMStateRunning && vm.State != VMStatePending {

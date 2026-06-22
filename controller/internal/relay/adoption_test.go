@@ -228,3 +228,152 @@ func TestHandleDeletion_TagSweep_DestroysOrphans(t *testing.T) {
 	// (since finalizer was removed and DeletionTimestamp was set). What
 	// matters is the destroy was called.
 }
+
+// TestAdoption_OCIStyle_EmptyPublicIP_AdoptsThenRefreshesNextCycle
+// pins the OCI adoption fix from PR #344 review. Scenario:
+//
+//  1. First reconcile: ListInstances returns a VM matching this CR's UID
+//     but with PublicIP="" (the listed VM is in pending state — IP not
+//     yet attached). adoptOrphanedInstances synthesizes a Status entry
+//     with empty PublicIP.
+//  2. Next reconcile: ListInstances returns the SAME instance, now with
+//     PublicIP="203.0.113.10". The existing-Status path must refresh
+//     the IP, otherwise the relay-router could never reach the VM.
+//
+// Without the refresh, the empty IP persists forever (the main loop
+// copies existing forward without re-querying).
+func TestAdoption_OCIStyle_EmptyPublicIP_AdoptsThenRefreshesNextCycle(t *testing.T) {
+	relay := adoptionRelayCR("oci-style-uid")
+	driver := &stubDriver{
+		listInstances: []VMInstance{
+			{InstanceID: "i-pending", State: VMStateRunning, OwnerUID: "oci-style-uid", Provider: "aws", PublicIP: ""},
+		},
+	}
+	r := adoptionTestReconciler(t, relay, driver)
+
+	// First reconcile: adopts with empty IP.
+	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: "relay-fleet"}})
+	require.NoError(t, err)
+	updated := &v1.InferenceRelay{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "relay-fleet"}, updated))
+	require.Len(t, updated.Status.Instances, 1)
+	assert.Equal(t, "i-pending", updated.Status.Instances[0].ID)
+	assert.Empty(t, updated.Status.Instances[0].PublicIP,
+		"first cycle: IP not yet attached, status should reflect that")
+
+	// Now the cloud assigns the IP — driver returns the same instance with IP.
+	driver.listInstances = []VMInstance{
+		{InstanceID: "i-pending", State: VMStateRunning, OwnerUID: "oci-style-uid", Provider: "aws", PublicIP: "203.0.113.10"},
+	}
+
+	// Second reconcile: must refresh the IP on the existing Status entry.
+	_, err = r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: "relay-fleet"}})
+	require.NoError(t, err)
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "relay-fleet"}, updated))
+	require.Len(t, updated.Status.Instances, 1)
+	assert.Equal(t, "203.0.113.10", updated.Status.Instances[0].PublicIP,
+		"second cycle: ListInstances now returns IP, refresh must propagate to Status — "+
+			"otherwise the router can never reach the adopted relay (PR #344 review)")
+	assert.Empty(t, driver.provisionCalls,
+		"adoption must reuse the same VM across reconcile cycles, never re-provision")
+}
+
+// TestAdoption_MultiProvider_AdoptsCorrectSlot pins multi-provider
+// behavior. With AWS and OCI both in spec, an AWS-tagged VM must be
+// adopted under the AWS slot and an OCI-tagged VM under the OCI slot.
+// Cross-provider mismatches must NOT cause adoption.
+func TestAdoption_MultiProvider_AdoptsCorrectSlot(t *testing.T) {
+	scheme := testScheme(t)
+	relay := &v1.InferenceRelay{
+		ObjectMeta: metav1.ObjectMeta{Name: "relay-fleet", UID: types.UID("multi-uid")},
+		Spec: v1.InferenceRelaySpec{
+			UpstreamURL: "https://opencode.ai/zen/v1",
+			Providers: []v1.RelayProviderSpec{
+				{Provider: "aws", Region: "us-west-2", CredentialsRef: corev1.LocalObjectReference{Name: "aws-relay-irwa"}},
+				{Provider: "oci", Region: "us-ashburn-1", CredentialsRef: corev1.LocalObjectReference{Name: "oci-credentials"}},
+			},
+		},
+	}
+	controllerutil.AddFinalizer(relay, InferenceRelayFinalizer)
+
+	awsDriver := &stubDriver{
+		listInstances: []VMInstance{
+			{InstanceID: "i-aws-1", State: VMStateRunning, OwnerUID: "multi-uid", Provider: "aws", PublicIP: "10.0.0.1"},
+		},
+	}
+	ociDriver := &stubDriver{
+		listInstances: []VMInstance{
+			{InstanceID: "ocid-1", State: VMStateRunning, OwnerUID: "multi-uid", Provider: "oci", PublicIP: "10.0.0.2"},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).WithObjects(relay).WithStatusSubresource(&v1.InferenceRelay{}).Build()
+	r := &InferenceRelayReconciler{
+		Client:              fakeClient,
+		Scheme:              scheme,
+		Namespace:           "test-ns",
+		Drivers:             map[string]ProviderDriver{"aws": awsDriver, "oci": ociDriver},
+		ArtifactURLs:        []string{"https://example.com"},
+		ArtifactSHA256Arm64: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		ArtifactSHA256Amd64: "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+	}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: "relay-fleet"}})
+	require.NoError(t, err)
+
+	// Neither driver should have provisioned — both adopted their tagged VM.
+	assert.Empty(t, awsDriver.provisionCalls,
+		"AWS slot must adopt i-aws-1, not provision")
+	assert.Empty(t, ociDriver.provisionCalls,
+		"OCI slot must adopt ocid-1, not provision")
+
+	// Both instances must end up in Status under the correct provider slots.
+	updated := &v1.InferenceRelay{}
+	require.NoError(t, r.Get(context.Background(), types.NamespacedName{Name: "relay-fleet"}, updated))
+	require.Len(t, updated.Status.Instances, 2,
+		"both providers must have one Status entry each after adoption")
+
+	byProvider := make(map[string]v1.RelayInstanceStatus)
+	for _, inst := range updated.Status.Instances {
+		byProvider[inst.Provider] = inst
+	}
+	assert.Equal(t, "i-aws-1", byProvider["aws"].ID, "AWS slot must contain i-aws-1")
+	assert.Equal(t, "ocid-1", byProvider["oci"].ID, "OCI slot must contain ocid-1")
+}
+
+// TestHandleDeletion_StatusInstancesAndTaggedOrphans_NoDoubleDestroy
+// pins the deletion-sweep correctness: when Status.Instances has entries
+// AND the cloud has additional tagged VMs, each VM must be destroyed
+// exactly once. The Status loop processes its known IDs; the tag sweep
+// processes only IDs not already-processed by the Status loop.
+func TestHandleDeletion_StatusInstancesAndTaggedOrphans_NoDoubleDestroy(t *testing.T) {
+	now := metav1.Now()
+	relay := adoptionRelayCR("mixed-uid")
+	relay.DeletionTimestamp = &now
+	// Status has one entry; cloud also has a second tagged orphan.
+	relay.Status.Instances = []v1.RelayInstanceStatus{
+		{ID: "i-known", Provider: "aws", Region: "us-west-2", State: string(v1.RelayStateHealthy), Healthy: true},
+	}
+
+	driver := &stubDriver{
+		listInstances: []VMInstance{
+			// Cloud reports both, including the one already in Status.
+			{InstanceID: "i-known", State: VMStateRunning, OwnerUID: "mixed-uid", Provider: "aws"},
+			{InstanceID: "i-orphan", State: VMStateRunning, OwnerUID: "mixed-uid", Provider: "aws"},
+		},
+	}
+	r := adoptionTestReconciler(t, relay, driver)
+
+	_, err := r.handleDeletion(context.Background(), relay)
+	require.NoError(t, err)
+
+	// EXACTLY 2 destroys: i-known once (from Status loop), i-orphan once
+	// (from tag sweep). No double-destroy.
+	require.Len(t, driver.destroyCalls, 2,
+		"each VM must be destroyed exactly once; no double-destroy when cloud "+
+			"reports a still-running VM that the Status loop already terminated")
+	destroyedIDs := []string{driver.destroyCalls[0].ID, driver.destroyCalls[1].ID}
+	assert.Contains(t, destroyedIDs, "i-known")
+	assert.Contains(t, destroyedIDs, "i-orphan")
+}
