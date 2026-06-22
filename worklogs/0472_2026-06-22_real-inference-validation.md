@@ -158,9 +158,19 @@ kubectl delete inferencerelay relay-fleet -n default
 ## Cleanup
 
 - Deleted `relay-fleet` InferenceRelay
-- Controller destroyed EC2 instance `i-08965c577712f74ee`
+- Controller destroyed EC2 instance `i-08965c577712f74ee` (verified `terminated` via `aws ec2 describe-instances` in worklog 0473)
 - Removed `test-inference` debug pod
-- Cluster back to clean state (no orphan CRs, no orphan EC2)
+- Cluster back to clean state (no orphan CRs, no orphan EC2 from this session — but worklog 0473 found 2 orphans from prior sessions)
+
+---
+
+## Next Steps
+
+1. **Audit prior validation claims** for the same gap class — done in worklog 0473.
+2. **Streaming inference path** — this session only validated non-streaming. Streaming is the dominant production workload; should be validated separately.
+3. **Concurrent / load test** — only tested 3 sequential requests. Concurrent connection handling not exercised.
+4. **Multi-provider failover** — only AWS in the fleet. OCI and GCP failover paths only covered by unit tests, not in-cluster.
+5. **Cosmetic follow-ups from worklog 0471** still open (metric leak, silent IO error log).
 
 ---
 
