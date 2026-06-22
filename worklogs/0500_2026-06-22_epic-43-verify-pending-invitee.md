@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-22
 **Session:** Close the gap surfaced during in-cluster validation of PR #343: the existing "Verify" surface only acted on already-accepted members, but org admins also need to override the email-verification gate for invitees who already have a users row but never completed verification.
-**Status:** Complete — backend handler + frontend Verify button on pending invitations, 12 backend tests, 5 frontend tests.
+**Status:** Complete — backend handler + frontend Verify button on pending invitations, 14 backend tests, 5 frontend tests.
 
 ---
 
@@ -42,7 +42,7 @@ This session adds a Verify button to the **Pending Invitations** table that flip
 
 ### Tests
 
-#### Backend (12 tests in `invitations_test.go`)
+#### Backend (14 tests in `invitations_test.go`)
 
 Extended `mockInvitationStore` with `usersByEmail` map, `markVerifiedCalls`, `auditEvents`, plus error-injection fields. Reuses `mockAuditEvent` from `orgs_test.go` (same package).
 
@@ -60,6 +60,8 @@ Extended `mockInvitationStore` with `usersByEmail` map, `markVerifiedCalls`, `au
 | `GetUserIDError` | 500 on DB error during lookup |
 | `MarkVerifiedError` | 500 on UPDATE failure; no audit event (verification didn't happen) |
 | `AuditFailureNonFatal` | 200 — audit failure does NOT undo verification; warn logged via `invLogCapture` |
+| `GetInvitationByIDError` | 500 — DB error during the invitation lookup is a distinct path from `inv == nil` (404). Reviewer-flagged missing branch from PR #352. |
+| `NilLogger_DoesNotPanic` | 200 + audit-failure path — the nil-logger guard tolerates the (defense-in-depth) case where a caller wires `NewInvitationsHandler(..., nil)`. Reviewer-flagged missing branch from PR #352. |
 
 A small `invLogCapture` test type (Warn-counting + Error-counting) was added because the existing `warnCaptureLogger` in `orgs_test.go` only satisfies the smaller `OrgsHandler` logger interface (Warn-only, no Error), while `invitationLogger` requires both.
 
@@ -129,7 +131,7 @@ None.
 
 ```bash
 # Backend — affected packages
-GOPROXY=direct GONOSUMCHECK=* GONOSUMDB=* go test -timeout 60s -run 'TestInvitations_VerifyUser' ./api/internal/handlers/   # 12/12 PASS
+GOPROXY=direct GONOSUMCHECK=* GONOSUMDB=* go test -timeout 60s -run 'TestInvitations_VerifyUser' ./api/internal/handlers/   # 14/14 PASS
 GOPROXY=direct GONOSUMCHECK=* GONOSUMDB=* go test -timeout 120s ./api/internal/handlers/                                    # all PASS
 
 # Backend — formatting
