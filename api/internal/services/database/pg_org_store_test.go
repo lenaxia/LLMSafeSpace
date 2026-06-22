@@ -992,11 +992,14 @@ func TestPgOrgStore_ListPendingInvitations_PopulatesInviteeFlags(t *testing.T) {
 			time.Now().Add(7*24*time.Hour), nil, nil, time.Now(),
 			false, nil)
 
-	// The new query MUST: (a) LEFT JOIN users on LOWER(invitations.email),
+	// The new query MUST: (a) LEFT JOIN users on LOWER(BTRIM(invitations.email)),
 	// (b) project u.id IS NOT NULL as invitee_user_exists, (c) project
-	// u.email_verified. Match the structural shape with a non-anchored
-	// regex so cosmetic whitespace tweaks don't break the test.
-	mock.ExpectQuery(`LEFT JOIN users u ON u\.email = LOWER\(i\.email\)`).
+	// u.email_verified. The BTRIM mirrors the handler's strings.TrimSpace
+	// in VerifyUserForInvitation so the JOIN match contract matches the
+	// runtime resolution exactly. Match the structural shape with a
+	// non-anchored regex so cosmetic whitespace tweaks don't break the
+	// test.
+	mock.ExpectQuery(`LEFT JOIN users u ON u\.email = LOWER\(BTRIM\(i\.email\)\)`).
 		WithArgs("org-1").
 		WillReturnRows(rows)
 
@@ -1037,7 +1040,7 @@ func TestPgOrgStore_ListPendingInvitations_NoInvitations(t *testing.T) {
 
 	store := NewPgOrgStore(db)
 
-	mock.ExpectQuery(`LEFT JOIN users u ON u\.email = LOWER\(i\.email\)`).
+	mock.ExpectQuery(`LEFT JOIN users u ON u\.email = LOWER\(BTRIM\(i\.email\)\)`).
 		WithArgs("org-1").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "org_id", "email", "role", "invited_by", "expires_at",

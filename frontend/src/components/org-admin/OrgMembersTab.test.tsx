@@ -76,9 +76,6 @@ const UNVERIFIED_MEMBER: OrgMember = {
   createdAt: "2026-01-02T00:00:00Z",
 };
 
-// Pending invitation fixture used by the Pending Invitations table tests.
-// emailVerified does not apply at this stage — there may not even be a
-// users row yet.
 // Pending invitation fixture used by the Pending Invitations table
 // tests. Default shape: invitee already has a users row but their email
 // is unverified — i.e. force-verify is actionable. Tests that need a
@@ -380,6 +377,92 @@ describe("OrgMembersTab", () => {
     });
     // The success notice must be gone — the user should not see a stale
     // green "Verified" message after an error.
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("renders the em-dash fallback when invitee account state is unknown (older API response)", async () => {
+    // Older API responses or stale browser caches won't include the new
+    // inviteeUserExists / inviteeEmailVerified fields. The Account
+    // Status column must render an em-dash placeholder rather than
+    // crashing or rendering an empty cell.
+    const PENDING_INVITATION_OLD_API: OrgInvitation = {
+      id: "inv-old-api",
+      orgId: "org-1",
+      email: "old-api@example.com",
+      role: "member",
+      invitedBy: "admin-1",
+      expiresAt: "2026-12-31T00:00:00Z",
+      createdAt: "2026-01-03T00:00:00Z",
+      // inviteeUserExists / inviteeEmailVerified intentionally absent
+    };
+    mockListMembers.mockResolvedValue([VERIFIED_ADMIN]);
+    mockListInvitations.mockResolvedValue([PENDING_INVITATION_OLD_API]);
+    renderTab();
+    await screen.findByText("old-api@example.com");
+    // The em-dash is rendered when both flags are undefined.
+    expect(screen.getByText("—")).toBeInTheDocument();
+    // The Verify button is also absent since `undefined === true` is
+    // false — the conditional render correctly handles the unknown case.
+    expect(screen.queryByRole("button", { name: /^Verify$/i })).toBeNull();
+  });
+
+  it("shows a success notice after Resend succeeds", async () => {
+    const user = userEvent.setup();
+    mockListMembers.mockResolvedValue([VERIFIED_ADMIN]);
+    mockListInvitations.mockResolvedValue([PENDING_INVITATION]);
+    renderTab();
+    const resendBtn = await screen.findByRole("button", { name: /resend/i });
+    await user.click(resendBtn);
+    await waitFor(() => {
+      expect(mockResendInvitation).toHaveBeenCalledWith("org-1", "inv-1");
+    });
+    // The notice must reference the invitee's email so the admin knows
+    // which row's resend succeeded.
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent(
+        /Invitation resent to invitee@example\.com/i,
+      );
+    });
+  });
+
+  it("shows a success notice after Revoke succeeds", async () => {
+    const user = userEvent.setup();
+    mockListMembers.mockResolvedValue([VERIFIED_ADMIN]);
+    mockListInvitations.mockResolvedValue([PENDING_INVITATION]);
+    renderTab();
+    const revokeBtn = await screen.findByRole("button", { name: /revoke/i });
+    await user.click(revokeBtn);
+    await waitFor(() => {
+      expect(mockRevokeInvitation).toHaveBeenCalledWith("org-1", "inv-1");
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent(
+        /Invitation revoked for invitee@example\.com/i,
+      );
+    });
+  });
+
+  it("clears the Resend success notice when a subsequent action errors", async () => {
+    const user = userEvent.setup();
+    mockListMembers.mockResolvedValue([VERIFIED_ADMIN]);
+    mockListInvitations.mockResolvedValue([PENDING_INVITATION]);
+    mockResendInvitation.mockResolvedValue(undefined);
+    mockRevokeInvitation.mockRejectedValue(new Error("Revoke transient failure"));
+    renderTab();
+
+    // First: Resend succeeds → notice appears
+    await user.click(await screen.findByRole("button", { name: /resend/i }));
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent(/Invitation resent/i);
+    });
+
+    // Then: Revoke fails → error appears, notice clears
+    await user.click(screen.getByRole("button", { name: /revoke/i }));
+    await waitFor(() => {
+      expect(
+        screen.getByText(/revoke transient failure/i),
+      ).toBeInTheDocument();
+    });
     expect(screen.queryByRole("status")).toBeNull();
   });
 });

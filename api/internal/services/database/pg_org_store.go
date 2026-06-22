@@ -1032,16 +1032,23 @@ func (s *PgOrgStore) ListPendingInvitations(ctx context.Context, orgID string) (
 	// applied because the invitation row stays pending until the user
 	// clicks the invitation link.
 	//
-	// users.email is stored pre-lowercased (auth.go's strings.ToLower on
-	// signup); org_invitations.email is stored as-supplied. Lowercase
-	// the invitations side for the join.
+	// users.email is stored pre-lowercased and trimmed (auth.go's
+	// strings.ToLower + strings.TrimSpace on signup); org_invitations.email
+	// is stored as-supplied. The JOIN must apply the SAME case-folding
+	// AND trimming to the invitations side as the handler does (see
+	// invitations.go's VerifyUserForInvitation:
+	// strings.ToLower(strings.TrimSpace(inv.Email))). Otherwise an
+	// invitation stored with leading/trailing whitespace would JOIN-miss
+	// even though the handler would resolve the user — resulting in the
+	// UI hiding the Verify button on a row where the action would
+	// actually succeed.
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT i.id, i.org_id, i.email, i.role, i.invited_by, i.expires_at,
 		        i.bounce_type, i.bounced_at, i.created_at,
 		        u.id IS NOT NULL AS invitee_user_exists,
 		        u.email_verified
 		   FROM org_invitations i
-		   LEFT JOIN users u ON u.email = LOWER(i.email)
+		   LEFT JOIN users u ON u.email = LOWER(BTRIM(i.email))
 		  WHERE i.org_id = $1
 		    AND i.accepted_at IS NULL
 		    AND i.declined_at IS NULL
