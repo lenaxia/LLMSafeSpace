@@ -1,10 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { render } from "../../test/utils";
 import { ChatView } from "./ChatView";
-import type { Message } from "../../api/types";
+import { PermissionPrompt } from "./PermissionPrompt";
+import { QuestionPrompt } from "./QuestionPrompt";
+import type { Message, PermissionRequest, QuestionRequest } from "../../api/types";
 import type { ModelInfo } from "../../api/workspaces";
+
+vi.mock("../../api/input", () => ({
+  inputApi: {
+    permissionReply: vi.fn().mockResolvedValue(true),
+    questionReply: vi.fn().mockResolvedValue(true),
+    questionReject: vi.fn().mockResolvedValue(true),
+  },
+}));
 
 describe("ChatView", () => {
   const defaultProps = {
@@ -149,5 +159,77 @@ describe("ChatView", () => {
     ];
     render(<ChatView {...defaultProps} messages={messages} models={models} />);
     expect(screen.getByText(/gpt-4o/i)).toBeInTheDocument();
+  });
+
+  it("renders prompts inside the scroll container (inline with messages)", () => {
+    const messages: Message[] = [{ id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] }];
+    render(
+      <ChatView
+        {...defaultProps}
+        messages={messages}
+        prompts={<div data-testid="test-prompt">Permission needed</div>}
+      />,
+    );
+    const scrollContainer = screen.getByRole("log");
+    const prompt = screen.getByTestId("test-prompt");
+    expect(scrollContainer.contains(prompt)).toBe(true);
+  });
+
+  it("renders prompts even when there are no messages", () => {
+    render(
+      <ChatView
+        {...defaultProps}
+        messages={[]}
+        prompts={<div data-testid="test-prompt">Question</div>}
+      />,
+    );
+    expect(screen.getByTestId("test-prompt")).toBeInTheDocument();
+  });
+
+  it("renders real PermissionPrompt inside the scroll container and allows interaction", async () => {
+    const onResolved = vi.fn();
+    const request: PermissionRequest = {
+      id: "per_int",
+      session_id: "ses_1",
+      permission: "shell",
+      patterns: ["rm -rf /tmp/cache"],
+    };
+    render(
+      <ChatView
+        {...defaultProps}
+        messages={[{ id: "1", role: "user", parts: [{ type: "text", text: "do something" }] }]}
+        prompts={<PermissionPrompt workspaceId="ws-1" request={request} onResolved={onResolved} />}
+      />,
+    );
+    const scrollContainer = screen.getByRole("log");
+    expect(scrollContainer.contains(screen.getByText("Run shell command"))).toBe(true);
+    expect(scrollContainer.contains(screen.getByText("rm -rf /tmp/cache"))).toBe(true);
+    fireEvent.click(screen.getByText("Allow once"));
+    await waitFor(() => expect(onResolved).toHaveBeenCalled());
+  });
+
+  it("renders real QuestionPrompt inside the scroll container and allows interaction", async () => {
+    const onResolved = vi.fn();
+    const request: QuestionRequest = {
+      id: "que_int",
+      session_id: "ses_1",
+      questions: [{
+        header: "Pick one",
+        question: "Which language?",
+        options: [{ label: "Go", description: "fast" }],
+      }],
+    };
+    render(
+      <ChatView
+        {...defaultProps}
+        messages={[{ id: "1", role: "user", parts: [{ type: "text", text: "help" }] }]}
+        prompts={<QuestionPrompt workspaceId="ws-1" request={request} onResolved={onResolved} />}
+      />,
+    );
+    const scrollContainer = screen.getByRole("log");
+    expect(scrollContainer.contains(screen.getByText("Which language?"))).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    fireEvent.click(screen.getByText("Submit answers"));
+    await waitFor(() => expect(onResolved).toHaveBeenCalled());
   });
 });

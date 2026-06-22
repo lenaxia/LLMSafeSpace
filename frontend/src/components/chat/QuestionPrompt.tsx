@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { inputApi } from "../../api/input";
 import type { QuestionRequest } from "../../api/types";
+import { AgentPrompt } from "./AgentPrompt";
 
 interface QuestionPromptProps {
   workspaceId: string;
@@ -62,12 +63,7 @@ export function QuestionPrompt({ workspaceId, request, onResolved }: QuestionPro
   };
 
   return (
-    <div className="border border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-950/30 rounded-lg p-4 mb-3" role="dialog" aria-label="Agent has a question">
-      <div className="flex items-center justify-between mb-3">
-        <span className="font-semibold text-sm">🤖 Agent has a question</span>
-        <button onClick={handleDismiss} disabled={submitting} className="text-muted-foreground hover:text-foreground" aria-label="Dismiss">✕</button>
-      </div>
-
+    <AgentPrompt variant="question" onDismiss={handleDismiss} dismissDisabled={submitting}>
       {request.questions.map((q, qIdx) => (
         <div key={qIdx} className="border border-blue-200 dark:border-blue-800 rounded p-3 mb-3">
           <div className="font-medium text-sm mb-1">{q.header}</div>
@@ -112,6 +108,6 @@ export function QuestionPrompt({ workspaceId, request, onResolved }: QuestionPro
           {submitting ? "Submitting..." : "Submit answers"}
         </button>
       </div>
-    </div>
+    </AgentPrompt>
   );
 }
