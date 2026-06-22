@@ -99,6 +99,24 @@ paths = [
   # normalizing user-provided PEM input. No real key material is stored
   # in this file — it's code that handles the PEM format, not a secret.
   '''controller/internal/relay/rsa\.go''',
+  # Auth-method classification test (PR #356) uses two synthetic test
+  # fixtures to exercise authMethodForToken across its branches:
+  #   - "lsp_aabbccdd...0011223344" — a 40-hex-digit fake LSP-prefixed
+  #     API key. Not a real credential; not valid against any running
+  #     instance. Constructed to match the LSP_ prefix shape the
+  #     classifier inspects.
+  #   - "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1MSJ9.signature" — a
+  #     structurally-invalid JWT with the literal text "signature" in
+  #     place of a real HS256 MAC. The header decodes to {"alg":"HS256"}
+  #     and the payload to {"sub":"u1"}; both are trivial documentation
+  #     placeholders. The classifier branches on shape only — it does
+  #     NOT verify the signature, which is fortunate because there
+  #     isn't one.
+  # Both fixtures are gitleaks false positives: they look like the real
+  # thing because the test exists to prove the classifier handles real-
+  # looking shapes, but neither has any secret material. Verified by
+  # inspection 2026-06-22.
+  '''api/internal/middleware/auth_method_test\.go''',
 ]
 
 # Allow specific regex patterns in any file. Use sparingly; prefer
