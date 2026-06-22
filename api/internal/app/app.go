@@ -233,6 +233,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var platformAdminHandler *handlers.PlatformAdminHandler
 	var internalOrgStatusHandler *handlers.InternalOrgStatusHandler
 	var ssoHandler *handlers.SSOHandler
+	var loginDiscoveryHandler *handlers.LoginDiscoveryHandler
 	var asyncAudit *secrets.AsyncAuditLogger // populated when secrets are enabled; drained on Shutdown
 	var secretsPool *pgxpool.Pool            // closed on Shutdown
 	var dekCacheClient *redis.Client         // closed on Shutdown
@@ -435,6 +436,13 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		// surfaces best-effort audit-write + revocation-write failures.
 		platformAdminHandler = handlers.NewPlatformAdminHandler(pgOrgStore, dbSvc, svc.GetAuth(), svc.GetAuth(), log)
 		internalOrgStatusHandler = handlers.NewInternalOrgStatusHandler(pgOrgStore)
+
+		// US-54.1: login discovery handler for POST /api/v1/auth/lookup. Harmless
+		// when subdomain routing is disabled (falls back to direct SSO URL).
+		loginDiscoveryHandler = handlers.NewLoginDiscoveryHandler(
+			svc.Database, pgOrgStore,
+			cfg.OrgSubdomainRouting.BaseDomain, log,
+		)
 
 		if apiKeyProv != nil {
 			keyService.SetAPIKeyStore(&apiKeyStoreAdapter{db: dbSvc}, apiKeyProv)
@@ -727,6 +735,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		PlatformAdminHandler:            platformAdminHandler,
 		InternalOrgStatusHandler:        internalOrgStatusHandler,
 		SSOHandler:                      ssoHandler,
+		LoginDiscoveryHandler:           loginDiscoveryHandler,
 		CookieName:                      cfg.Auth.CookieName,
 	})
 
