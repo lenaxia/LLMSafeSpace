@@ -67,13 +67,22 @@ type Organization struct {
 }
 
 // OrgMember is the API DTO for an organization membership.
+//
+// EmailVerified mirrors users.email_verified for the member's user account. It
+// is exposed so org admins can see which members have not yet completed the
+// email-verification flow, and offers a "Verify" action to bypass it
+// (POST /orgs/:id/members/:userID/verify). Verification state lives on the
+// user row (not the membership) — there is exactly one user account per
+// member, and a single user belongs to at most one org under single-org
+// enforcement (D8).
 type OrgMember struct {
-	OrgID     string    `json:"orgId"`
-	UserID    string    `json:"userId"`
-	Username  string    `json:"username"`
-	Email     string    `json:"email"`
-	Role      OrgRole   `json:"role"`
-	CreatedAt time.Time `json:"createdAt"`
+	OrgID         string    `json:"orgId"`
+	UserID        string    `json:"userId"`
+	Username      string    `json:"username"`
+	Email         string    `json:"email"`
+	Role          OrgRole   `json:"role"`
+	EmailVerified bool      `json:"emailVerified"`
+	CreatedAt     time.Time `json:"createdAt"`
 }
 
 // CreateOrgRequest is the request body for creating an organization. The slug is

@@ -119,6 +119,87 @@ func TestPgOrgStore_GetUserOrgID_DBError(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestPgOrgStore_ListOrgMembers_IncludesEmailVerified is the regression guard
+// for the admin "Verify" feature: the SELECT must include u.email_verified so
+// the org-admin members table can show verified vs. pending members. Drops of
+// this column would silently render every member as verified (bool zero value).
+func TestPgOrgStore_ListOrgMembers_IncludesEmailVerified(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	store := NewPgOrgStore(db)
+
+	mock.ExpectQuery(`SELECT m.org_id, m.user_id, u.username, u.email, m.role, u.email_verified, m.created_at`).
+		WithArgs("org-1").
+		WillReturnRows(sqlmock.NewRows([]string{"org_id", "user_id", "username", "email", "role", "email_verified", "created_at"}).
+			AddRow("org-1", "user-1", "alice", "alice@example.com", "admin", true, time.Now()).
+			AddRow("org-1", "user-2", "bob", "bob@example.com", "member", false, time.Now()))
+
+	members, err := store.ListOrgMembers(context.Background(), "org-1")
+	require.NoError(t, err)
+	require.Len(t, members, 2)
+	assert.True(t, members[0].EmailVerified, "alice must be email_verified=true")
+	assert.False(t, members[1].EmailVerified, "bob must be email_verified=false")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestPgOrgStore_GetOrgMember_IncludesEmailVerified mirrors the ListOrgMembers
+// guard for the single-row path used by the VerifyMember handler.
+func TestPgOrgStore_GetOrgMember_IncludesEmailVerified(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	store := NewPgOrgStore(db)
+
+	mock.ExpectQuery(`SELECT m.org_id, m.user_id, u.username, u.email, m.role, u.email_verified, m.created_at`).
+		WithArgs("org-1", "user-2").
+		WillReturnRows(sqlmock.NewRows([]string{"org_id", "user_id", "username", "email", "role", "email_verified", "created_at"}).
+			AddRow("org-1", "user-2", "bob", "bob@example.com", "member", false, time.Now()))
+
+	m, err := store.GetOrgMember(context.Background(), "org-1", "user-2")
+	require.NoError(t, err)
+	require.NotNil(t, m)
+	assert.False(t, m.EmailVerified, "GetOrgMember must surface email_verified=false")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestPgOrgStore_MarkUserEmailVerified_IssuesCorrectUpdate verifies the
+// admin force-verify UPDATE: it sets email_verified=TRUE and bumps updated_at,
+// scoped to the user row. The regex anchors the WHERE id = $1 so a regression
+// that drops the scoping (e.g. updating ALL users) is caught.
+func TestPgOrgStore_MarkUserEmailVerified_IssuesCorrectUpdate(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	store := NewPgOrgStore(db)
+
+	mock.ExpectExec(`UPDATE users SET email_verified = TRUE, updated_at = NOW\(\) WHERE id = \$1`).
+		WithArgs("user-2").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	require.NoError(t, store.MarkUserEmailVerified(context.Background(), "user-2"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgOrgStore_MarkUserEmailVerified_DBError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	store := NewPgOrgStore(db)
+
+	mock.ExpectExec(`UPDATE users SET email_verified = TRUE`).
+		WithArgs("user-boom").
+		WillReturnError(errors.New("connection refused"))
+
+	err = store.MarkUserEmailVerified(context.Background(), "user-boom")
+	require.Error(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 // TestSoftDeleteOrg_F6_DoesNotNullWorkspaceOrgID verifies F6: SoftDeleteOrg
 // must NOT null workspaces.org_id. It only sets organizations.deleted_at. The
 // workspaces keep their org_id and become frozen via IsOrgMember's deleted_at

@@ -37,11 +37,24 @@ type orgStore interface {
 	GetUserOrgID(ctx context.Context, userID string) (string, error)
 	GetStripeCustomerID(ctx context.Context, orgID string) (string, error)
 	UpdateOrgStatus(ctx context.Context, orgID string, status *types.OrgStatus, subStatus *types.OrgSubscriptionStatus, planID *types.OrgPlan) error
+	// MarkUserEmailVerified bypasses the email-verification token flow and
+	// marks the user as email-verified. Used by the org-admin Verify action.
+	MarkUserEmailVerified(ctx context.Context, userID string) error
+	// LogOrgEvent emits an org-scoped audit entry (domain='org'). Used by the
+	// Verify action to record the admin override.
+	LogOrgEvent(ctx context.Context, orgID, actorID, action, targetID string, metadata map[string]any) error
 }
 
 // orgAuthService is the minimal auth interface used by OrgsHandler.
 type orgAuthService interface {
 	GetUserID(c *gin.Context) string
+}
+
+// orgsLogger is the optional logger surface used to record non-fatal audit
+// emission failures. Matches the policyLogger / ssoLogger shapes used by the
+// other org-scoped handlers. Nil ⇒ silent (test default).
+type orgsLogger interface {
+	Warn(msg string, args ...any)
 }
 
 // OrgsHandler handles org CRUD endpoints.
@@ -52,6 +65,7 @@ type OrgsHandler struct {
 	successURL string
 	cancelURL  string
 	portalURL  string
+	logger     orgsLogger
 }
 
 // NewOrgsHandler creates a new OrgsHandler.
@@ -73,6 +87,13 @@ func (h *OrgsHandler) SetBilling(b OrgBilling, successURL, cancelURL, portalURL 
 	h.successURL = successURL
 	h.cancelURL = cancelURL
 	h.portalURL = portalURL
+}
+
+// SetLogger wires an optional logger used to surface non-fatal audit emission
+// failures (e.g. a VerifyMember action that succeeds but whose audit row could
+// not be written). When not called, audit failures are silent.
+func (h *OrgsHandler) SetLogger(l orgsLogger) {
+	h.logger = l
 }
 
 // GetOrg exposes orgStore.GetOrg so middleware.FeatureGuard can read the org's
@@ -527,6 +548,50 @@ func (h *OrgsHandler) ChangeMemberRole(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Member role updated"})
+}
+
+// VerifyMember handles POST /api/v1/orgs/:id/members/:userID/verify.
+//
+// Org-admin only (OrgAdminGuard middleware). Marks the member's user account
+// as email_verified=true, bypassing the email-verification token flow. Use
+// cases: the admin has confirmed the member's identity out-of-band (e.g. in
+// person, via a trusted channel), or the member cannot receive the
+// verification email and the admin chooses to override.
+//
+// Idempotent: verifying an already-verified member returns 200. The action
+// is recorded in the org audit log (domain='org', action='member.verify')
+// with the actor and target IDs so the override is traceable.
+func (h *OrgsHandler) VerifyMember(c *gin.Context) {
+	orgID := c.Param("id")
+	targetUserID := c.Param("userID")
+	callerUserID := h.authSvc.GetUserID(c)
+	ctx := c.Request.Context()
+
+	target, err := h.orgStore.GetOrgMember(ctx, orgID, targetUserID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check membership"})
+		return
+	}
+	if target == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "member not found"})
+		return
+	}
+
+	if err := h.orgStore.MarkUserEmailVerified(ctx, targetUserID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify member"})
+		return
+	}
+
+	if err := h.orgStore.LogOrgEvent(ctx, orgID, callerUserID, "member.verify", targetUserID, map[string]any{
+		"email": target.Email,
+	}); err != nil && h.logger != nil {
+		// Non-fatal: the verification succeeded; only the audit trail is
+		// missing. Surface it so operators can investigate, but do not undo
+		// the verification — the admin's intent was recorded on the user row.
+		h.logger.Warn("audit log emission failed", "action", "member.verify", "orgID", orgID, "targetUserID", targetUserID, "error", err.Error())
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Member verified"})
 }
 
 func zeroBytes(b []byte) {

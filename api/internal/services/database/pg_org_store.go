@@ -60,6 +60,11 @@ type OrgStore interface {
 	// GetUserEmail resolves a user ID to their email (inverse of GetUserIDByEmail).
 	// Used by invitation acceptance to verify email binding.
 	GetUserEmail(ctx context.Context, userID string) (string, error)
+	// MarkUserEmailVerified sets users.email_verified=true for the given user,
+	// bypassing the email-verification token flow. Used by the org-admin
+	// "Verify" action when an admin has confirmed the member's identity
+	// out-of-band. Idempotent.
+	MarkUserEmailVerified(ctx context.Context, userID string) error
 	// GetUserOrgID returns the user's single org ID (or "" if not in any org).
 	// With single-org enforcement (D8), a user belongs to at most one org. Used
 	// by invitation acceptance (S3 cross-org check) and workspace auto-attribution
@@ -332,12 +337,12 @@ func (s *PgOrgStore) AddOrgMember(ctx context.Context, orgID, userID string, rol
 func (s *PgOrgStore) GetOrgMember(ctx context.Context, orgID, userID string) (*types.OrgMember, error) {
 	var m types.OrgMember
 	err := s.db.QueryRowContext(ctx,
-		`SELECT m.org_id, m.user_id, u.username, u.email, m.role, m.created_at
+		`SELECT m.org_id, m.user_id, u.username, u.email, m.role, u.email_verified, m.created_at
 		 FROM org_memberships m
 		 JOIN users u ON u.id = m.user_id
 		 WHERE m.org_id = $1 AND m.user_id = $2`,
 		orgID, userID,
-	).Scan(&m.OrgID, &m.UserID, &m.Username, &m.Email, &m.Role, &m.CreatedAt)
+	).Scan(&m.OrgID, &m.UserID, &m.Username, &m.Email, &m.Role, &m.EmailVerified, &m.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -349,7 +354,7 @@ func (s *PgOrgStore) GetOrgMember(ctx context.Context, orgID, userID string) (*t
 
 func (s *PgOrgStore) ListOrgMembers(ctx context.Context, orgID string) ([]*types.OrgMember, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT m.org_id, m.user_id, u.username, u.email, m.role, m.created_at
+		`SELECT m.org_id, m.user_id, u.username, u.email, m.role, u.email_verified, m.created_at
 		 FROM org_memberships m
 		 JOIN users u ON u.id = m.user_id
 		 WHERE m.org_id = $1
@@ -364,7 +369,7 @@ func (s *PgOrgStore) ListOrgMembers(ctx context.Context, orgID string) ([]*types
 	var members []*types.OrgMember
 	for rows.Next() {
 		var m types.OrgMember
-		if err := rows.Scan(&m.OrgID, &m.UserID, &m.Username, &m.Email, &m.Role, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.OrgID, &m.UserID, &m.Username, &m.Email, &m.Role, &m.EmailVerified, &m.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan org member: %w", err)
 		}
 		members = append(members, &m)
@@ -796,6 +801,23 @@ func (s *PgOrgStore) GetUserEmail(ctx context.Context, userID string) (string, e
 		return "", fmt.Errorf("get user email: %w", err)
 	}
 	return email, nil
+}
+
+// MarkUserEmailVerified sets users.email_verified=true for the given user,
+// bypassing the email-verification token flow. Used by the org-admin "Verify"
+// action (POST /orgs/:id/members/:userID/verify) when an admin has confirmed
+// the member's identity out-of-band. The membership is verified by the caller
+// (OrgAdminGuard + GetOrgMember) before this is invoked, so a bare userID is
+// safe here. Idempotent: re-verifying an already-verified user is a no-op.
+func (s *PgOrgStore) MarkUserEmailVerified(ctx context.Context, userID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET email_verified = TRUE, updated_at = NOW() WHERE id = $1`,
+		userID,
+	)
+	if err != nil {
+		return fmt.Errorf("mark user email verified: %w", err)
+	}
+	return nil
 }
 
 func (s *PgOrgStore) GetUserOrgID(ctx context.Context, userID string) (string, error) {

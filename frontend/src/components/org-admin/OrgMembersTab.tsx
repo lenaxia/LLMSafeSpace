@@ -45,7 +45,6 @@ export function OrgMembersTab() {
   }, [refresh]);
 
   if (loading) return <p className="text-sm text-muted-foreground">Loading…</p>;
-  if (error) return <p className="text-sm text-red-500">{error}</p>;
 
   return (
     <div className="space-y-6">
@@ -75,6 +74,7 @@ export function OrgMembersTab() {
               <th className="px-4 py-2 text-left font-medium">Name</th>
               <th className="px-4 py-2 text-left font-medium">Email</th>
               <th className="px-4 py-2 text-left font-medium">Role</th>
+              <th className="px-4 py-2 text-left font-medium">Email Status</th>
               <th className="px-4 py-2 text-left font-medium">Key Status</th>
               {isAdmin && <th className="px-4 py-2 text-right font-medium">Actions</th>}
             </tr>
@@ -90,6 +90,13 @@ export function OrgMembersTab() {
                   </Badge>
                 </td>
                 <td className="px-4 py-2">
+                  {m.emailVerified ? (
+                    <Badge variant="default">Verified</Badge>
+                  ) : (
+                    <Badge variant="warning">Pending</Badge>
+                  )}
+                </td>
+                <td className="px-4 py-2">
                   <span className="text-xs text-muted-foreground">Active</span>
                 </td>
                 {isAdmin && (
@@ -98,6 +105,7 @@ export function OrgMembersTab() {
                       orgId={org.id}
                       member={m}
                       onChanged={refresh}
+                      onError={setError}
                     />
                   </td>
                 )}
@@ -185,13 +193,31 @@ function MemberActions({
   orgId,
   member,
   onChanged,
+  onError,
 }: {
   orgId: string;
   member: OrgMember;
   onChanged: () => void;
+  onError: (msg: string) => void;
 }) {
   return (
     <div className="flex justify-end gap-2">
+      {!member.emailVerified && (
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={async () => {
+            try {
+              await orgsApi.verifyMember(orgId, member.userId);
+              onChanged();
+            } catch (e) {
+              onError(e instanceof Error ? e.message : "Verify failed");
+            }
+          }}
+        >
+          Verify
+        </Button>
+      )}
       <Button
         size="sm"
         variant="ghost"
@@ -200,8 +226,8 @@ function MemberActions({
           try {
             await orgsApi.changeMemberRole(orgId, member.userId, newRole);
             onChanged();
-          } catch {
-            /* handled by parent */
+          } catch (e) {
+            onError(e instanceof Error ? e.message : "Role change failed");
           }
         }}
       >
@@ -214,8 +240,8 @@ function MemberActions({
           try {
             await orgsApi.removeMember(orgId, member.userId);
             onChanged();
-          } catch {
-            /* handled by parent */
+          } catch (e) {
+            onError(e instanceof Error ? e.message : "Remove failed");
           }
         }}
       >

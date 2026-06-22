@@ -1153,6 +1153,7 @@ func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *hand
 	orgAdminGroup.POST("/members", h.AddMember)
 	orgAdminGroup.DELETE("/members/:userID", h.RemoveMember)
 	orgAdminGroup.PUT("/members/:userID", h.ChangeMemberRole)
+	orgAdminGroup.POST("/members/:userID/verify", h.VerifyMember)
 	orgAdminGroup.POST("/billing/checkout", h.Checkout)
 	orgAdminGroup.POST("/billing/portal", h.Portal)
 	if invH != nil {
