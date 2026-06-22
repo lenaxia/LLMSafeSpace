@@ -42,9 +42,13 @@ type stubDriver struct {
 	statusResult    *VMStatus
 	statusErr       error
 	destroyCalls    []struct{ ID, Region string }
+	provisionCalls  []ProvisionRequest
+	listInstances   []VMInstance
+	listErr         error
 }
 
-func (d *stubDriver) Provision(_ context.Context, _ ProvisionRequest) (*ProvisionResult, error) {
+func (d *stubDriver) Provision(_ context.Context, req ProvisionRequest) (*ProvisionResult, error) {
+	d.provisionCalls = append(d.provisionCalls, req)
 	if d.provisionErr != nil {
 		return nil, d.provisionErr
 	}
@@ -70,7 +74,10 @@ func (d *stubDriver) GetStatus(_ context.Context, _, _ string) (*VMStatus, error
 }
 
 func (d *stubDriver) ListInstances(_ context.Context, _ string) ([]VMInstance, error) {
-	return nil, nil
+	if d.listErr != nil {
+		return nil, d.listErr
+	}
+	return d.listInstances, nil
 }
 
 func makeRelayCR() *v1.InferenceRelay {

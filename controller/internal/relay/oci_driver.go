@@ -156,9 +156,7 @@ func (d *OCIDriver) Provision(ctx context.Context, req ProvisionRequest) (*Provi
 		Metadata: map[string]string{
 			"user_data": req.CloudInit,
 		},
-		FreeformTags: map[string]string{
-			"managed-by": "llmsafespaces-relay",
-		},
+		FreeformTags: ociProvisionTags(req),
 	}
 
 	bodyBytes, _ := json.Marshal(launchBody)
@@ -265,7 +263,27 @@ func (d *OCIDriver) GetStatus(ctx context.Context, instanceID, region string) (*
 	}, nil
 }
 
-// ListInstances returns relay VMs managed by this driver.
+// ociProvisionTags builds the FreeformTags map applied to provisioned
+// instances. Always includes managed-by; conditionally includes the
+// owner UID and provider tags so the reconciler can adopt instances
+// when the post-Provision Status update is lost (worklog 0473/0474).
+func ociProvisionTags(req ProvisionRequest) map[string]string {
+	tags := map[string]string{
+		TagManagedBy: TagManagedByValue,
+	}
+	if req.OwnerUID != "" {
+		tags[TagOwnerUID] = req.OwnerUID
+	}
+	if req.Provider != "" {
+		tags[TagProvider] = req.Provider
+	}
+	return tags
+}
+
+// ListInstances returns relay VMs managed by this driver. The OwnerUID
+// and Provider fields are populated from the instance's FreeformTags so
+// callers can filter by InferenceRelay CR ownership (worklog 0474).
+// Pre-fix VMs that lack the tags will have empty OwnerUID/Provider.
 func (d *OCIDriver) ListInstances(ctx context.Context, region string) ([]VMInstance, error) {
 	cfg, err := d.getConfig(ctx, d.credentialSecret)
 	if err != nil {
@@ -285,8 +303,9 @@ func (d *OCIDriver) ListInstances(ctx context.Context, region string) ([]VMInsta
 
 	var list struct {
 		Data []struct {
-			ID             string `json:"id"`
-			LifecycleState string `json:"lifecycleState"`
+			ID             string            `json:"id"`
+			LifecycleState string            `json:"lifecycleState"`
+			FreeformTags   map[string]string `json:"freeformTags"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
@@ -295,9 +314,16 @@ func (d *OCIDriver) ListInstances(ctx context.Context, region string) ([]VMInsta
 
 	result := make([]VMInstance, 0, len(list.Data))
 	for _, inst := range list.Data {
+		// Skip instances not managed by this controller. The compartment
+		// list is unfiltered, so we enforce the managed-by check here.
+		if inst.FreeformTags[TagManagedBy] != TagManagedByValue {
+			continue
+		}
 		result = append(result, VMInstance{
 			InstanceID: inst.ID,
 			State:      ociStateToVMState(inst.LifecycleState),
+			OwnerUID:   inst.FreeformTags[TagOwnerUID],
+			Provider:   inst.FreeformTags[TagProvider],
 		})
 	}
 	return result, nil

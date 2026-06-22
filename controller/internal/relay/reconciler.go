@@ -204,6 +204,23 @@ func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1
 		}
 	}
 
+	// Adopt pre-pass: for any spec provider that doesn't have a status
+	// entry, look for an existing cloud VM tagged with this CR's UID +
+	// provider. If found, adopt it instead of provisioning a new one.
+	//
+	// This closes the worklog 0473/0474 leak: if a previous reconcile
+	// successfully provisioned a VM but failed to persist Status (e.g.
+	// optimistic-concurrency conflict on r.Status().Update), the VM is
+	// alive in the cloud but unrecorded in the CR. Without adoption, the
+	// next reconcile would call Provision again, creating a duplicate
+	// and orphaning the original. With adoption, the original is found
+	// by tag and re-attached.
+	//
+	// Also collect duplicates (tagged instances whose ID doesn't match
+	// the adopted/existing one) for cleanup. These are previous orphans
+	// that now-stranded.
+	extraInstancesToDestroy := r.adoptOrphanedInstances(ctx, relay, existingByProvider)
+
 	// Read relay per-VM tokens from persistent Secret
 	relayTokens := r.readRelayTokens(ctx)
 
@@ -281,6 +298,20 @@ func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1
 			Healthy:  false,
 		})
 		needsRequeue = true
+	}
+
+	// Destroy any extra tagged-but-unaccounted instances surfaced by
+	// the adopt pre-pass (worklog 0474). These are duplicates from
+	// prior conflict-induced re-provisions.
+	for _, dup := range extraInstancesToDestroy {
+		logger.Info("destroying duplicate relay VM (tag-based orphan cleanup)",
+			"provider", dup.Provider, "instanceID", dup.InstanceID, "region", dup.Region)
+		if driver, ok := r.Drivers[dup.Provider]; ok {
+			if err := driver.Destroy(ctx, dup.InstanceID, dup.Region); err != nil {
+				logger.Error(err, "failed to destroy duplicate relay",
+					"instanceID", dup.InstanceID, "provider", dup.Provider)
+			}
+		}
 	}
 
 	// Count healthy replicas
@@ -376,6 +407,119 @@ func (r *InferenceRelayReconciler) updateConditions(relay *v1.InferenceRelay, he
 	}
 }
 
+// orphanInstance describes a tagged cloud VM that does not belong to the
+// current Status.Instances slot. The reconciler destroys these after the
+// main provisioning loop. See worklog 0474.
+type orphanInstance struct {
+	Provider   string
+	Region     string
+	InstanceID string
+}
+
+// adoptOrphanedInstances lists cloud VMs tagged with this CR's UID and
+// reconciles them against existingByProvider. For each spec provider that
+// is missing from Status, if a tagged running/pending VM exists, adopt it
+// (insert a synthesized RelayInstanceStatus into existingByProvider so
+// the main loop sees it as already-provisioned). Any tagged VMs that
+// don't match an active status entry are returned for destruction.
+//
+// This closes the worklog 0473/0474 leak: a Status update conflict during
+// provisioning leaves an EC2 alive but unrecorded; without adoption, the
+// next reconcile creates a duplicate and the original is forever orphaned.
+//
+// Failures here are logged but do not abort reconcile — adoption is
+// best-effort. The next reconcile cycle will retry.
+func (r *InferenceRelayReconciler) adoptOrphanedInstances(
+	ctx context.Context,
+	relay *v1.InferenceRelay,
+	existingByProvider map[string]*v1.RelayInstanceStatus,
+) []orphanInstance {
+	logger := log.FromContext(ctx)
+	uid := string(relay.UID)
+	if uid == "" {
+		// No UID means we can't safely identify ownership. Skip adoption.
+		return nil
+	}
+
+	// Build set of instance IDs we already know about (and shouldn't try
+	// to destroy as duplicates).
+	knownIDs := make(map[string]bool)
+	for _, inst := range relay.Status.Instances {
+		if inst.ID != "" {
+			knownIDs[inst.ID] = true
+		}
+	}
+
+	var extras []orphanInstance
+
+	// For each provider in the spec, list driver instances and look for
+	// a matching tagged VM. Drivers list per region; we use the spec
+	// region for adoption queries (same region we'd provision into).
+	for _, providerSpec := range relay.Spec.Providers {
+		driver, ok := r.Drivers[providerSpec.Provider]
+		if !ok {
+			continue
+		}
+		listed, err := driver.ListInstances(ctx, providerSpec.Region)
+		if err != nil {
+			logger.V(1).Info("adoption: ListInstances failed (continuing)",
+				"provider", providerSpec.Provider, "region", providerSpec.Region, "error", err.Error())
+			continue
+		}
+
+		// Find candidates: tagged with this UID + provider, in
+		// running or pending state.
+		var candidates []VMInstance
+		for _, vm := range listed {
+			if vm.OwnerUID != uid {
+				continue
+			}
+			if vm.Provider != "" && vm.Provider != providerSpec.Provider {
+				continue
+			}
+			if vm.State != VMStateRunning && vm.State != VMStatePending {
+				continue
+			}
+			candidates = append(candidates, vm)
+		}
+
+		if _, alreadyKnown := existingByProvider[providerSpec.Provider]; !alreadyKnown && len(candidates) > 0 {
+			// Adopt the first candidate — synthesize a RelayInstanceStatus
+			// so the main loop treats it as already-provisioned. Health
+			// state will catch up on the next router scrape.
+			adopted := candidates[0]
+			now := metav1.Now()
+			synthetic := &v1.RelayInstanceStatus{
+				ID:        adopted.InstanceID,
+				Provider:  providerSpec.Provider,
+				Region:    providerSpec.Region,
+				PublicIP:  adopted.PublicIP,
+				State:     string(v1.RelayStateProvisioning),
+				Healthy:   false,
+				LastCheck: &now,
+			}
+			existingByProvider[providerSpec.Provider] = synthetic
+			knownIDs[adopted.InstanceID] = true
+			logger.Info("adopted orphaned relay VM (Status update was lost previously)",
+				"provider", providerSpec.Provider, "region", providerSpec.Region, "instanceID", adopted.InstanceID)
+			candidates = candidates[1:]
+		}
+
+		// Any remaining candidates are duplicates — mark for destroy.
+		for _, dup := range candidates {
+			if knownIDs[dup.InstanceID] {
+				continue
+			}
+			extras = append(extras, orphanInstance{
+				Provider:   providerSpec.Provider,
+				Region:     providerSpec.Region,
+				InstanceID: dup.InstanceID,
+			})
+		}
+	}
+	return extras
+}
+
 // provisionRelay creates a new relay VM for the given provider.
 // Returns the provision result, WG public key, and error.
 // provisionRelay creates a new relay VM for the given provider.
@@ -435,13 +579,18 @@ func (r *InferenceRelayReconciler) provisionRelay(ctx context.Context, relay *v1
 		return nil, "", fmt.Errorf("render cloud-init: %w", err)
 	}
 
-	// Call the provider driver
+	// Call the provider driver. Pass OwnerUID + Provider so the driver
+	// tags the VM. If the post-Provision Status update is lost, the next
+	// reconcile pre-pass adopts the VM by tag instead of creating a
+	// duplicate (worklog 0473/0474 leak fix).
 	start := time.Now()
 	result, err := driver.Provision(ctx, ProvisionRequest{
 		Name:      fmt.Sprintf("relay-%s", providerSpec.Provider),
 		Region:    providerSpec.Region,
 		Shape:     shape,
 		CloudInit: cloudInit,
+		OwnerUID:  string(relay.UID),
+		Provider:  providerSpec.Provider,
 	})
 	if err != nil {
 		return nil, "", fmtError("provision", providerSpec.Provider, err)
@@ -582,6 +731,49 @@ func (r *InferenceRelayReconciler) handleDeletion(ctx context.Context, relay *v1
 	if anyDestroyed {
 		if err := r.Status().Update(ctx, relay); err != nil {
 			return ctrl.Result{}, err
+		}
+	}
+
+	// Tag-based sweep: list any cloud VMs tagged with this CR's UID
+	// across the spec providers/regions and destroy them. Catches
+	// orphans from prior reconciles whose Status update was lost
+	// (worklog 0473/0474). Best-effort — failures don't block deletion.
+	if uid := string(relay.UID); uid != "" {
+		seenRegions := make(map[string]map[string]bool)
+		for _, ps := range relay.Spec.Providers {
+			driver, ok := r.Drivers[ps.Provider]
+			if !ok {
+				continue
+			}
+			if seenRegions[ps.Provider] == nil {
+				seenRegions[ps.Provider] = make(map[string]bool)
+			}
+			if seenRegions[ps.Provider][ps.Region] {
+				continue
+			}
+			seenRegions[ps.Provider][ps.Region] = true
+
+			listed, err := driver.ListInstances(ctx, ps.Region)
+			if err != nil {
+				logger.V(1).Info("deletion sweep: ListInstances failed (continuing)",
+					"provider", ps.Provider, "region", ps.Region, "error", err.Error())
+				continue
+			}
+			for _, vm := range listed {
+				if vm.OwnerUID != uid {
+					continue
+				}
+				if vm.State != VMStateRunning && vm.State != VMStatePending {
+					continue
+				}
+				logger.Info("deletion sweep: destroying tagged VM not in Status",
+					"provider", ps.Provider, "region", ps.Region, "instanceID", vm.InstanceID)
+				if err := driver.Destroy(ctx, vm.InstanceID, ps.Region); err != nil {
+					logger.Error(err, "deletion sweep: destroy failed",
+						"instanceID", vm.InstanceID, "provider", ps.Provider)
+					allDestroyed = false
+				}
+			}
 		}
 	}
 
