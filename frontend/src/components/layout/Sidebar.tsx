@@ -24,6 +24,7 @@ import {
   ChevronDown,
   Play,
   Loader2,
+  Shield,
 } from "lucide-react";
 import type { WorkspaceListItem } from "../../api/types";
 import { sessionDisplayTitle, generateWorkspaceName } from "../../lib/names";
@@ -250,6 +251,11 @@ export function Sidebar({ onNavigate }: Props) {
         <div className="flex items-center justify-between">
           <span className="truncate px-2 text-xs text-muted-foreground">{user?.username}</span>
           <div className="flex gap-1">
+            {user?.role === "admin" && (
+              <button onClick={() => { navigate("/admin"); onNavigate?.(); }} className="rounded p-1.5 hover:bg-accent" aria-label="Platform Administration" title="Platform Administration">
+                <Shield className="h-4 w-4" />
+              </button>
+            )}
             {orgAdminLink && (
               <button onClick={() => { navigate(orgAdminLink); onNavigate?.(); }} className="rounded p-1.5 hover:bg-accent" aria-label="Organisation" title="Organisation">
                 <Building2 className="h-4 w-4" />

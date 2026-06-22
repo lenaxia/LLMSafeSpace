@@ -15,6 +15,13 @@ import { OrgWorkspacesTab } from "./components/org-admin/OrgWorkspacesTab";
 import { OrgAuditTab } from "./components/org-admin/OrgAuditTab";
 import { OrgBillingTab } from "./components/org-admin/OrgBillingTab";
 import { OrgSSOTab } from "./components/org-admin/OrgSSOTab";
+import { PlatformAdminLayout } from "./components/platform-admin/PlatformAdminLayout";
+import { AdminSettingsPage } from "./pages/AdminSettingsPage";
+import { AdminProviderCredentialsTab } from "./components/settings/AdminProviderCredentialsTab";
+import { OrgSettingsTab } from "./components/settings/OrgSettingsTab";
+import { PlatformUsersTab } from "./components/settings/PlatformUsersTab";
+import { PlatformAuditTab } from "./components/settings/PlatformAuditTab";
+import { RelayTab } from "./components/settings/RelayTab";
 
 function RequireAuth() {
   const { user, loading } = useAuth();
@@ -62,6 +69,19 @@ export const router = createBrowserRouter([
           { path: "audit", element: <OrgAuditTab /> },
           { path: "billing", element: <OrgBillingTab /> },
           { path: "sso", element: <OrgSSOTab /> },
+        ],
+      },
+      {
+        path: "/admin",
+        element: <PlatformAdminLayout />,
+        children: [
+          { index: true, element: <Navigate to="users" replace /> },
+          { path: "users", element: <PlatformUsersTab /> },
+          { path: "organisations", element: <OrgSettingsTab /> },
+          { path: "credentials", element: <AdminProviderCredentialsTab /> },
+          { path: "relay", element: <RelayTab /> },
+          { path: "settings", element: <AdminSettingsPage /> },
+          { path: "audit", element: <PlatformAuditTab /> },
         ],
       },
     ],

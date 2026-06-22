@@ -127,9 +127,8 @@ test.describe("Relay admin UI", () => {
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(mockSetupNotDeployed) });
     });
 
-    await page.goto("/settings");
+    await page.goto("/admin/relay");
     await page.waitForLoadState("networkidle");
-    await page.getByRole("button", { name: "Relay" }).click();
 
     await expect(page.getByText("Inference Relay")).toBeVisible({ timeout: 8000 });
     await expect(page.getByText("Relay router deployed")).toBeVisible();
@@ -141,9 +140,8 @@ test.describe("Relay admin UI", () => {
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(mockSetupNotDeployed) });
     });
 
-    await page.goto("/settings");
+    await page.goto("/admin/relay");
     await page.waitForLoadState("networkidle");
-    await page.getByRole("button", { name: "Relay" }).click();
 
     await expect(page.getByText("Add Relay Provider")).toBeVisible();
     await page.getByText("Add Relay Provider").click();
@@ -159,9 +157,8 @@ test.describe("Relay admin UI", () => {
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(mockSetupNotDeployed) });
     });
 
-    await page.goto("/settings");
+    await page.goto("/admin/relay");
     await page.waitForLoadState("networkidle");
-    await page.getByRole("button", { name: "Relay" }).click();
 
     await page.getByText("Add Relay Provider").click();
     await expect(page.getByText("Select Provider")).toBeVisible();
@@ -179,9 +176,8 @@ test.describe("Relay admin UI", () => {
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(mockStatusHealthy) });
     });
 
-    await page.goto("/settings");
+    await page.goto("/admin/relay");
     await page.waitForLoadState("networkidle");
-    await page.getByRole("button", { name: "Relay" }).click();
 
     await expect(page.getByText("2/2 relays active")).toBeVisible({ timeout: 5000 });
     await expect(page.getByText("150.230.67.89")).toBeVisible();
@@ -196,9 +192,8 @@ test.describe("Relay admin UI", () => {
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(mockStatusUnhealthy) });
     });
 
-    await page.goto("/settings");
+    await page.goto("/admin/relay");
     await page.waitForLoadState("networkidle");
-    await page.getByRole("button", { name: "Relay" }).click();
 
     await expect(page.getByText("Provisioning failed")).toBeVisible({ timeout: 5000 });
     await expect(page.getByText(/Out of host capacity/)).toBeVisible();
@@ -212,9 +207,8 @@ test.describe("Relay admin UI", () => {
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(mockStatusUnhealthy) });
     });
 
-    await page.goto("/settings");
+    await page.goto("/admin/relay");
     await page.waitForLoadState("networkidle");
-    await page.getByRole("button", { name: "Relay" }).click();
 
     await expect(page.getByText("FIRING").first()).toBeVisible({ timeout: 8000 });
   });
@@ -232,9 +226,8 @@ test.describe("Relay admin UI", () => {
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ rotating: "oci-1" }) });
     });
 
-    await page.goto("/settings");
+    await page.goto("/admin/relay");
     await page.waitForLoadState("networkidle");
-    await page.getByRole("button", { name: "Relay" }).click();
 
     await expect(page.getByText("2/2 relays active")).toBeVisible({ timeout: 5000 });
     await page.getByText("Rotate").first().click();
@@ -242,7 +235,7 @@ test.describe("Relay admin UI", () => {
     expect(rotated).toBe(true);
   });
 
-  test("relay tab not visible to non-admin users", async ({ page }) => {
+  test("relay not accessible to non-admin users", async ({ page }) => {
     await page.route(`${API_PREFIX}/auth/me`, async (route: Route) => {
       await route.fulfill({
         status: 200,
@@ -251,7 +244,8 @@ test.describe("Relay admin UI", () => {
       });
     });
 
-    await page.goto("/settings");
-    await expect(page.getByRole("button", { name: "Relay" })).not.toBeVisible({ timeout: 3000 });
+    await page.goto("/admin/relay");
+    await expect(page.getByText(/Platform administrator access required/i)).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText("Inference Relay")).not.toBeVisible();
   });
 });

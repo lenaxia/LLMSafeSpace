@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { ToastProvider } from "../providers/ToastProvider";
 import { ApiClientError } from "../api/client";
 
@@ -121,5 +122,34 @@ describe("AdminSettingsPage", () => {
       expect(screen.getByText(/Enter a recipient email address/i)).toBeInTheDocument();
     });
     expect(settingsApi.testEmailSend).not.toHaveBeenCalled();
+  });
+
+  it("shows 'Admin access required' when the backend returns 404", async () => {
+    vi.mocked(settingsApi.getAdminSchema).mockRejectedValueOnce(
+      new ApiClientError(404, { error: "Not Found" }),
+    );
+    vi.mocked(settingsApi.getAdminSettings).mockRejectedValueOnce(
+      new ApiClientError(404, { error: "Not Found" }),
+    );
+
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.getByText(/Admin access required/i)).toBeInTheDocument();
+    });
+  });
+
+  it("shows an error toast when setAdminSetting throws", async () => {
+    vi.mocked(settingsApi.setAdminSetting).mockRejectedValueOnce(new Error("Network error"));
+    const user = userEvent.setup();
+
+    renderPage();
+
+    const toggle = await screen.findByRole("switch", { name: /registration/i });
+    await user.click(toggle);
+
+    await waitFor(() => {
+      expect(screen.getByText("Network error")).toBeInTheDocument();
+    });
   });
 });
