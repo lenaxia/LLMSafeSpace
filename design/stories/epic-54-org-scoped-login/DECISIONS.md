@@ -48,15 +48,15 @@ All decisions below were confirmed during the 2026-06-22 scoping conversation. T
 | Control | Implementation |
 |---|---|
 | Status code | Always 200. Never 404, never 500. DB errors fall through to the not-found branch. |
-| Body shape | Always `{ redirectUrl: string }`. The string differs (real subdomain vs. root-with-query-param) but the JSON shape is identical. |
-| Timing | Not-found branch sleeps to match the p99 of the found branch (~5ms baseline). Gated by `auth.lookupTimingPad` config flag so tests can disable. |
+| Body shape | Always `{ redirectUrl: string }`. The string differs (real subdomain vs. root-with-`?lookup=not_found`) but the JSON shape is identical. |
 | Rate limit | Per-IP and per-email. Recommended: 10/min/IP, 5/hour/email. |
 | DB error handling | Follows `password_reset.go:119` precedent exactly — return the not-found branch, never surface the error. Test at `password_reset_test.go:425` ("must return 202 (not 500) to avoid enumeration") is the model. |
+| **No timing pad** (matches precedent exactly) | `password_reset.go:119` does NOT sleep — it returns 202 uniformly with no `time.Sleep`. This endpoint does the same. The resolver performs the same DB round-trips on both branches (`GetUserByEmail` + `GetUserOrgID`), so wall-clock variance is bounded by DB load, not by branch choice. A static sleep was considered (pad not-found to match found-branch p99) but rejected: it adds a config flag + test-disable mechanism, and a static value can't track found-branch variance under DB load anyway. **If implementation-time measurement reveals meaningful divergence**, a pad can be added then — but the shipped, audited precedent does not require one. |
 
-**Not-found redirect target (open question — default decided, alternative noted):**
+**Not-found redirect target (decided — root login with query param):**
 
-- **Default:** `redirectUrl = "https://<root>/?lookup=not_found"`. Frontend renders "We couldn't find an account for that email" with a "try a different email" + "create an account" CTA.
-- **Alternative considered:** redirect to a generic "check your email" page (magic-link theater without sending email). Rejected — feels deceptive and offers no real benefit over the honest not-found page.
+- `redirectUrl = "https://<root>/?lookup=not_found"`. Frontend renders "We couldn't find an account for that email" with a "try a different email" + "create an account" CTA.
+- Alternative considered: a generic "check your email" page (magic-link theater without sending email). Rejected — feels deceptive and offers no real benefit over the honest not-found page.
 
 **Impact on stories:**
 - US-54.1 acceptance criteria enumerate all four branches (found/1-org, found/0-orgs, not-found, db-error) and require uniform response shape.
@@ -69,40 +69,40 @@ All decisions below were confirmed during the 2026-06-22 scoping conversation. T
 **Status:** Confirmed (2026-06-22)
 **Source:** User direction ("We may add multi-org support in the future, but will not do so immediately.")
 
-**Context:** The current schema (`org_memberships`, migration 000029) allows multi-org at the DB level — `PRIMARY KEY (org_id, user_id)`, plain index on `user_id`, no unique constraint. The 1:1 invariant is enforced at the application layer (`orgs.go:125-145` for create, `:405-418` for add-member). Dropping 1:1 is a one-line code change + a new `users.default_org_id` column.
+**Context:** The current schema enforces 1:1 at two layers. **DB layer:** migration `000036_single_org_enforcement.up.sql:12-13` creates `CREATE UNIQUE INDEX IF NOT EXISTS idx_org_memberships_single_user ON org_memberships(user_id)` — a hard schema constraint. The composite PK `(org_id, user_id)` from migration 000029 is orthogonal (prevents duplicate rows for the same pair); the unique index on `user_id` alone is what enforces one-membership-per-user. **App layer:** `orgs.go:125-145` (create) and `:409-420` (add-member) pre-check via `GetUserOrgID` and return a clear 409 before the DB constraint would fire as a raw 23505 error. Dropping 1:1 requires a migration to `DROP INDEX idx_org_memberships_single_user` **plus** removing the app-layer pre-check **plus** a new `users.default_org_id` column for the resolver to pick.
 
-**Decision:** Keep 1:1 for now. The `POST /auth/lookup` contract returns a single `redirectUrl` — under 1:1, the resolver is trivially `ListOrgsForUser(user.ID)[0]` (always ≤1 row). When multi-org lands:
+**Decision:** Keep 1:1 for now. The `POST /auth/lookup` contract returns a single `redirectUrl` — under 1:1, the resolver is trivially `GetUserOrgID(user.ID)` (returns `""` or one org_id). When multi-org lands:
 
 1. **API contract unchanged.** Still `{ redirectUrl: string }`. The resolver picks one org via `ORDER BY last_used_at DESC LIMIT 1` or `users.default_org_id`.
 2. **Frontend unchanged.** Root discovery page still submits email, still follows the single redirect.
 3. **Schema change** (future epic, not this one):
    ```sql
+   DROP INDEX IF EXISTS idx_org_memberships_single_user;  -- removes DB 1:1 constraint
    ALTER TABLE users ADD COLUMN default_org_id UUID REFERENCES organizations(id);
    ALTER TABLE users ADD COLUMN last_used_org_id UUID REFERENCES organizations(id);
    ALTER TABLE users ADD COLUMN last_used_org_at TIMESTAMPTZ;
-   -- Drop the app-layer 1:1 check in orgs.go:125-145 and :405-418.
    ```
-4. **Resolver change** (future epic):
+4. **App change** (future epic): remove the pre-check in `orgs.go:125-145, 409-420`.
+5. **Resolver change** (future epic):
    ```go
-   // Today (1:1):
-   orgIDs := orgs.ListOrgsForUser(ctx, user.ID)
-   if len(orgIDs) == 0 { return notFoundBranch() }
-   return redirectFor(orgIDs[0])
+   // Today (1:1, DB-enforced):
+   orgID, _ := orgs.GetUserOrgID(ctx, user.ID)  // returns "" or single id
+   if orgID == "" { return notFoundBranch() }
+   return redirectFor(orgID)
 
    // Future (multi-org):
    if user.DefaultOrgID != nil { return redirectFor(*user.DefaultOrgID) }
    if user.LastUsedOrgID != nil && time.Since(user.LastUsedOrgAt) < 30*24*time.Hour {
        return redirectFor(*user.LastUsedOrgID)
    }
-   orgIDs := orgs.ListOrgsForUser(ctx, user.ID)
-   if len(orgIDs) == 0 { return notFoundBranch() }
-   return redirectFor(orgIDs[0])  // or surface a "pick an org" UI on the subdomain — but that's a subdomain-scoped decision, not a public-surface leak
+   // Fall back to most-recent membership; if multiple, surface a "pick an org" UI
+   // on the SUBDOMAIN (authenticated context), never on the root (public surface).
    ```
 
 **Why this matters for the contract:** The whole point of D54-2 is that the public surface never reveals org membership. A future "user is in 5 orgs, pick one" UI must live on the **subdomain** (authenticated context), never on the **root** (unauthenticated). The single-redirect contract enforces that boundary at the API layer.
 
 **Impact on stories:**
-- US-54.1 resolver today: `ListOrgsForUser` → first (only) row → redirect. Documented as "under 1:1 invariant" so a future reader knows the simplification is intentional.
+- US-54.1 resolver today: `GetUserOrgID(user.ID)` → single org_id (or `""`) → redirect. The DB unique index (migration 000036) guarantees at most one row, so no "pick one" logic is needed at the resolver. When multi-org lands, only this resolver body changes — not the API contract.
 - No migration in this epic. Multi-org migration is the future epic's responsibility.
 
 ---

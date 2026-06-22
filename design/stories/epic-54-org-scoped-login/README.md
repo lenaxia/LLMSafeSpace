@@ -31,7 +31,7 @@ The platform is multi-tenant with potentially multiple BYO-email orgs, so per-or
 | Email-lookup primitive (`GetUserByEmail`) | ✅ Shipped | `database.go:115`, interface `interfaces.go:61`. Used by SSO, auth, register, email-verify, password-reset. |
 | Enumeration-safe response pattern | ✅ Shipped | `password_reset.go:119` + test at `password_reset_test.go:425` ("must return 202 (not 500) to avoid enumeration"). Establishes the convention this epic will follow. |
 | Invitation system | ✅ Shipped | `InvitationsHandler` (`invitations.go`). Token-based accept flow carries `orgID` — invitation links already serve as first-login onboarding. |
-| Single-org invariant (1 user → ≤1 org) | ✅ Enforced (app layer) | `orgs.go:125-145, 405-418`. **Not** a DB unique index — `org_memberships(user_id)` has a plain index (`migration 000029:38`), composite PK `(org_id, user_id)` only. Multi-org requires dropping this app-layer check + adding a `default_org_id` column later (see D54-3). |
+| Single-org invariant (1 user → ≤1 org) | ✅ Enforced (DB + app layer) | DB: `CREATE UNIQUE INDEX idx_org_memberships_single_user ON org_memberships(user_id)` (`migration 000036_single_org_enforcement.up.sql:12-13`). App: pre-check in `orgs.go:125-145` (create) and `:409-420` (add-member) returns a clear 409 before hitting the raw constraint. Dropping 1:1 requires a migration to `DROP INDEX idx_org_memberships_single_user` + app code change + new `users.default_org_id` column (see D54-3). |
 | Wildcard subdomain ingress | ❌ Not present | `frontend-ingress.yaml` supports `additionalHosts` (list of explicit hosts) but no wildcard host or wildcard cert. `cert-manager.io/v1` is already installed for the webhook cert (`templates/webhook-cert.yaml`) — reusable for a wildcard Issuer. |
 | Cross-subdomain session cookie | ❌ Not configured | `lsp_session` JWT cookie is set without an explicit `Domain=` attribute (`auth.go` cookie path). Subdomain routing requires `Domain=.app.example.com` (or equivalent) so the session survives the redirect. |
 | Passkeys / WebAuthn | ❌ Not present | Zero matches for `passkey`, `webauthn`, `WebAuthn` anywhere in the repo. Deferred (see Non-Goals). |
@@ -93,49 +93,54 @@ Content-Type: application/json
      - not found → user == nil, err == nil
      - db error → user == nil, err != nil
 3. If user != nil:
-     a. ListOrgsForUser(ctx, user.ID) — `pg_org_store.go:804` already returns []org_id.
-        Under 1:1 invariant (D54-3), len ≤ 1.
-     b. If len == 1: resolve org → slug → return { redirectUrl: subdomainFor(slug) }
-     c. If len == 0: fall through to "not found" branch (user has no org; e.g. personal-only user).
-        Decision: still return a redirectUrl to the root login with ?sso=provisioning_disabled
-        so the response shape is uniform.
+     a. GetUserOrgID(ctx, user.ID) — `pg_org_store.go:801` returns the single
+        org_id via `SELECT org_id FROM org_memberships WHERE user_id = $1`.
+        Under 1:1 invariant (DB unique index from migration 000036, D54-3),
+        the query returns 0 or 1 row.
+     b. If orgID != "": fetch org slug → return { redirectUrl: subdomainFor(slug) }
+     c. If orgID == "": fall through to "not found" branch (user has no org;
+        e.g. personal-only user). Return redirectUrl to the root login with
+        ?lookup=not_found so the response shape is uniform.
 4. If user == nil (not found OR db error):
-     Return a plausible-looking redirectUrl to the root login with ?lookup=not_found.
-     Identical status code, identical body shape, identical response time (see hardening).
+     Return the same redirectUrl as 3c: root login with ?lookup=not_found.
+     Identical status code, identical body shape (see hardening).
 ```
 
 **`subdomainFor(slug)` helper:**
 
 ```go
 // subdomainFor constructs the org's subdomain URL. The base domain comes from
-// config (new setting: auth.orgSubdomainBase, e.g. "app.example.com").
+// config (auth.orgSubdomainRouting.baseDomain, e.g. "app.example.com").
+// If baseDomain is empty (subdomain routing disabled), the helper returns the
+// root login URL with ?lookup=not_found so the endpoint degrades gracefully.
 func subdomainFor(slug, base string) string {
+    if base == "" {
+        return "/?lookup=not_found"
+    }
     return fmt.Sprintf("https://%s.%s", slug, strings.TrimPrefix(base, "."))
 }
 ```
 
-**Enumeration hardening** (mandatory — follows `password_reset.go:119` precedent):
+**Enumeration hardening** (mandatory — matches `password_reset.go:119` precedent exactly: uniform response, no timing pad):
 
 | Control | Implementation |
 |---|---|
 | Uniform status code | Always 200 OK. Never 404, never 500 (DB errors return the not-found redirect). |
-| Uniform body shape | Always `{ redirectUrl: string }`. Never `{ error: ... }`. |
-| Timing padding | The not-found branch sleeps for the p99 latency of the found branch (~5ms baseline, measured). Use a `time.Sleep` gated on a flag (`auth.lookupTimingPad`, default true) so tests can disable it. |
+| Uniform body shape | Always `{ redirectUrl: string }`. Never `{ error: ... }`. The string differs (real subdomain vs. root-with-`?lookup=not_found`) but the JSON shape is identical. |
 | Rate limit | Per-IP and per-email. Recommended: 10 lookups/min/IP, 5 lookups/hour/email. Use existing rate-limit middleware. |
-| No user enumeration via timing | `GetUserByEmail` is constant-time-ish today; the lookup handler must not branch on user existence in a way that leaks (e.g. no early return before the sleep). |
+| No timing pad (matches precedent) | `password_reset.go:119` does NOT sleep — it returns 202 uniformly. This endpoint does the same: no `time.Sleep`, no config flag. The resolver performs the same DB round-trips on both branches (`GetUserByEmail` + `GetUserOrgID`), so wall-clock variance is bounded by DB load, not by branch choice. **If implementation-time measurement shows meaningful divergence**, a pad can be added then — but the precedent (shipped, audited) does not require one, and adding one introduces a config flag + test-disable mechanism that the simpler uniform-response approach avoids. |
 
 **Acceptance criteria:**
 
 - `POST /auth/lookup {email}` returns 200 with `{ redirectUrl }` for a known user → URL is `https://<orgSlug>.<base>`.
-- Same request for an unknown email returns 200 with `{ redirectUrl: "https://<base>/?lookup=not_found" }` — indistinguishable from the known-user path to a network observer.
+- Same request for an unknown email returns 200 with `{ redirectUrl: "https://<base>/?lookup=not_found" }` — same status code, same body shape.
 - DB error on `GetUserByEmail` returns the not-found branch (never 500), per `password_reset.go:119` precedent.
-- `ListOrgsForUser` returns 0 orgs → not-found branch (covers personal-only users).
+- `GetUserOrgID` returns `""` (no membership) → not-found branch (covers personal-only users).
 - Rate limit triggers after threshold → 429.
-- Timing of found vs. not-found branches within ±2ms under test (timing pad enabled).
 - Handler unit test covers all four branches (found/1-org, found/0-orgs, not-found, db-error).
 - Integration test: full lookup → 302 → SSO start → callback → session cookie set on subdomain.
 
-**Open question for D54-2 (see DECISIONS.md):** does the not-found branch redirect to root login, or to a "create account" page? Default: root login. Decision deferred to implementation.
+**Not-found redirect target:** decided in D54-2 — root login with `?lookup=not_found`. Frontend renders "We couldn't find an account for that email" + "try a different email" + "create an account" CTA.
 
 ---
 
@@ -240,7 +245,7 @@ frontend:
 | **Multi-org membership** | Future epic | User: "We may add multi-org support in the future, but will not do so immediately." The `POST /auth/lookup` contract returns a single `redirectUrl` (not a list), so multi-org later only changes the resolver (pick by `last_used_org_id` or `default_org_id`), not the API contract. See D54-3. |
 | **Magic-link email login** | Rejected | User: "absolutely no magic link shit." Email-link-as-auth is explicitly out. The transactional email infra (SES, Epic 43 D2) is used only for invitations and notifications, never for auth. |
 | **Org picker dropdown** | Rejected | Leaks customer list. The whole point of email-led discovery is to avoid rendering any org list to unauthenticated users. |
-| **Email→org membership lookup as the primary discovery** | Subsumed | Replaced by email-led discovery with response masking (this epic). The raw `GetUserByEmail` → `ListOrgsForUser` query is the implementation, but the public surface is a single `redirectUrl` — never a list. |
+| **Email→org membership lookup as the primary discovery** | Subsumed | Replaced by email-led discovery with response masking (this epic). The raw `GetUserByEmail` → `GetUserOrgID` query is the implementation, but the public surface is a single `redirectUrl` — never a list. |
 | **Custom IdP per user (not per org)** | Out of scope | IdP is org-scoped today (`org_sso_configs`). A user without an org has no SSO path — they use password (or passkeys, when built). |
 | **SAML / SCIM** | Out of scope | Epic 43 D3 — deferred. OIDC covers modern IdPs including Authelia, Authentik, Keycloak. |
 
@@ -249,8 +254,8 @@ frontend:
 ## Decisions (see [DECISIONS.md](./DECISIONS.md))
 
 - **D54-1:** No magic links. Email is for invitations + notifications only, never auth.
-- **D54-2:** `POST /auth/lookup` returns a single `redirectUrl`, never a list. Found and not-found responses are indistinguishable to a network observer (uniform status, body, timing).
-- **D54-3:** Keep 1 user → ≤1 org invariant (currently app-layer enforced in `orgs.go:125-145, 405-418`). The `redirectUrl` contract is forward-compatible with multi-org: a future epic only changes the resolver (pick `default_org_id` / `last_used_org_id`), not the API surface.
+- **D54-2:** `POST /auth/lookup` returns a single `redirectUrl`, never a list. Found and not-found responses match the `password_reset.go:119` precedent: uniform status (200) + uniform body shape, no timing pad (see hardening table in US-54.1).
+- **D54-3:** Keep 1 user → ≤1 org invariant (DB-enforced via `UNIQUE INDEX idx_org_memberships_single_user` in migration 000036, plus app-layer pre-check in `orgs.go:125-145, 409-420`). The `redirectUrl` contract is forward-compatible with multi-org: a future epic only changes the resolver (pick `default_org_id` / `last_used_org_id`), not the API surface.
 - **D54-4:** Spike first (S54-0). The epic is gated on wildcard subdomain routing being viable on the operator's cluster. If the spike fails, replan toward org picker (rejected here for customer-list-leak reasons but defensible if infra blocks subdomains).
 - **D54-5:** `orgSubdomainRouting.enabled=false` by default. Operators must opt in (requires wildcard DNS + cert). Single-host deploys continue to work unchanged.
 
@@ -263,9 +268,10 @@ Current highest migration: `000041` (org SSO domain verification). Next availabl
 **This epic adds no migrations.** The lookup endpoint reads existing `users` + `org_memberships` tables; subdomain routing is config + chart changes only.
 
 When multi-org lands (future epic), the migration will be:
+- `DROP INDEX IF EXISTS idx_org_memberships_single_user;` (removes the DB 1:1 constraint from migration 000036)
 - `ALTER TABLE users ADD COLUMN default_org_id UUID REFERENCES organizations(id);`
-- Drop the app-layer 1:1 check in `orgs.go`.
-- (Optional) `CREATE INDEX idx_org_memberships_user_active ON org_memberships(user_id) WHERE ...` — performance, not constraint.
+- `ALTER TABLE users ADD COLUMN last_used_org_id UUID REFERENCES organizations(id);`
+- Drop the app-layer 1:1 pre-check in `orgs.go:125-145, 409-420`.
 
 ---
 
@@ -274,17 +280,18 @@ When multi-org lands (future epic), the migration will be:
 | Concern | Location |
 |---------|----------|
 | Email lookup primitive | `api/internal/services/database/database.go:115` (`GetUserByEmail`) |
-| User → orgs query | `api/internal/services/database/pg_org_store.go:804` (`SELECT org_id FROM org_memberships WHERE user_id = $1`) |
+| User → org query (1:1) | `api/internal/services/database/pg_org_store.go:801` (`GetUserOrgID` — returns `(string, error)`, single org_id via `SELECT org_id FROM org_memberships WHERE user_id = $1`) |
 | Enumeration-safe precedent | `api/internal/handlers/password_reset.go:119` (+ test `password_reset_test.go:425`) |
 | SSO start (target of redirect) | `api/internal/services/sso/sso.go:419` (`StartLogin`), route `GET /auth/sso/:orgSlug/start` |
 | SSO callback (sets session cookie) | `api/internal/services/sso/sso.go` (`HandleCallback`), route `GET /auth/sso/:orgSlug/callback` |
 | Session cookie setter | `api/internal/services/auth/auth.go` (cookie path; needs `Domain=` when subdomain routing enabled) |
-| Single-org enforcement (app layer) | `api/internal/handlers/orgs.go:125-145` (create), `:405-418` (add member) |
+| Single-org enforcement (app layer pre-check) | `api/internal/handlers/orgs.go:125-145` (create), `:409-420` (add member) |
+| DB single-org constraint | `api/migrations/000036_single_org_enforcement.up.sql:12-13` (`UNIQUE INDEX ... ON org_memberships(user_id)`) |
 | Login page (subdomain, current) | `frontend/src/pages/LoginPage.tsx` |
 | Frontend ingress (current) | `charts/llmsafespaces/templates/frontend-ingress.yaml` |
 | Frontend ingress values | `charts/llmsafespaces/values.yaml:794-829` (`frontend.ingress` block, has `additionalHosts`) |
 | cert-manager Issuer (existing, for webhook) | `charts/llmsafespaces/templates/webhook-cert.yaml` (reusable pattern for wildcard cert) |
-| API config | `api/internal/config/config.go:128-138` (OIDC block; new `auth.orgSubdomainRouting` block alongside) |
+| API config | `api/internal/config/config.go:129-139` (OIDC struct at `:134-139`; new `auth.orgSubdomainRouting` block alongside) |
 | Chart configmap | `charts/llmsafespaces/templates/configmap-api.yaml` (emit new config keys) |
 
 ---
