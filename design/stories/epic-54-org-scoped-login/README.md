@@ -111,11 +111,15 @@ Content-Type: application/json
 ```go
 // subdomainFor constructs the org's subdomain URL. The base domain comes from
 // config (auth.orgSubdomainRouting.baseDomain, e.g. "app.example.com").
-// If baseDomain is empty (subdomain routing disabled), the helper returns the
-// root login URL with ?lookup=not_found so the endpoint degrades gracefully.
+// If baseDomain is empty (subdomain routing disabled), the helper falls back
+// to the direct SSO start URL — which works today regardless of chart config,
+// so the lookup endpoint is useful even before an operator enables subdomain
+// routing (email → direct SSO start URL, skipping the broken domain-match step
+// on the current LoginPage). The user is never told "not found" when they ARE
+// found.
 func subdomainFor(slug, base string) string {
     if base == "" {
-        return "/?lookup=not_found"
+        return fmt.Sprintf("/api/v1/auth/sso/%s/start", slug)
     }
     return fmt.Sprintf("https://%s.%s", slug, strings.TrimPrefix(base, "."))
 }

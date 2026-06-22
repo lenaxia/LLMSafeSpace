@@ -40,7 +40,7 @@ All decisions below were confirmed during the 2026-06-22 scoping conversation. T
 
 **Rationale:**
 - **Customer list leak:** Option A renders org names to unauthenticated users. On a multi-tenant platform with sensitive customers (health, finance, stealth startups), that's a non-starter. Even on a casual platform, it's a competitive-intel gift.
-- **Enumeration oracle:** Option A's response shape differs by existence (empty list vs. populated list), making user-existence enumeration trivial. Option B's response is uniform; only timing differs, and we pad that.
+- **Enumeration oracle:** Option A's response shape differs by existence (empty list vs. populated list), making user-existence enumeration trivial. Option B's response is uniform (same status, same body shape on both branches); the branches do asymmetric DB work but the added lookups are indexed and fast, matching the `password_reset.go:119` precedent which has the same asymmetry and does not pad (see hardening table).
 - **Forward-compatible with multi-org:** When 1→N orgs per user lands, the resolver picks one (default / last-used), but the response shape doesn't change. Frontend, rate limiter, and any caching layer stay untouched.
 
 **Enumeration hardening — required controls (US-54.1 acceptance criteria):**
@@ -146,11 +146,11 @@ All decisions below were confirmed during the 2026-06-22 scoping conversation. T
   1. Configure wildcard DNS (`*.app.example.com` → ingress LB).
   2. Set `auth.orgSubdomainRouting.enabled=true`, `baseDomain="app.example.com"`, `cookieDomain=".app.example.com"`.
   3. Configure `wildcardCert.issuerRef` (or supply a pre-issued TLS secret via `tlsSecret`).
-- The `POST /auth/lookup` endpoint works regardless of the chart setting — it always returns a `redirectUrl`. If subdomain routing isn't enabled, the URL falls back to the root login with a query param (degraded but functional). This lets the backend ship without coordinating with operator infra changes.
+- The `POST /auth/lookup` endpoint works regardless of the chart setting — it always returns a `redirectUrl`. If subdomain routing isn't enabled (`baseDomain` empty), the URL falls back to the **direct SSO start URL** (`/api/v1/auth/sso/<slug>/start`) — which works today regardless of chart config, so the endpoint is fully functional even before an operator enables subdomain routing. This lets the backend ship without coordinating with operator infra changes, and means US-54.1 has standalone value even if the spike (S54-0) fails.
 
 **Impact on stories:**
 - US-54.3 (chart): all new resources gated on `orgSubdomainRouting.enabled`. Default-off.
-- US-54.1 (endpoint): reads `auth.orgSubdomainRouting.baseDomain` from config; if empty, falls back to root-redirect-with-query-param behavior. Documented in the resolver.
+- US-54.1 (endpoint): reads `auth.orgSubdomainRouting.baseDomain` from config; if empty, falls back to the direct SSO start URL (`/api/v1/auth/sso/<slug>/start`) — see `subdomainFor` helper in README US-54.1.
 
 ---
 
