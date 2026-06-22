@@ -138,14 +138,6 @@ func AuthMiddleware(authService apiinterfaces.AuthService, log pkginterfaces.Log
 			}
 		}
 
-		// Add user ID to span if tracing is enabled - commented out until we properly import trace packages
-		/*
-			if span := trace.SpanFromContext(c.Request.Context()); span != nil {
-				span.SetAttributes(attribute.String("user.id", authResult.UserID))
-				span.SetAttributes(attribute.String("user.role", authResult.Role))
-			}
-		*/
-
 		c.Next()
 	}
 }

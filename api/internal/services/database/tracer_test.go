@@ -150,9 +150,27 @@ func TestClassifyOperation_CTEFoldsToTrailingDML(t *testing.T) {
 }
 
 func TestClassifyOperation_LeadingComments(t *testing.T) {
-	got := classifyOperation("/* tagged: GetUser */\n  SELECT 1")
-	if !strings.EqualFold(got, "select") {
-		t.Fatalf("got %q want select", got)
+	cases := map[string]string{
+		// Block comment (pgx-style query tag).
+		"/* tagged: GetUser */\n  SELECT 1": "select",
+		// Line comment — must skip past the trailing newline so the
+		// classifier sees the SQL verb on the next line. A regression
+		// that mis-advanced past `--` (e.g. dropping the +1) would
+		// either return "other" or hang the loop.
+		"-- name: GetUser\nSELECT 1":                            "select",
+		"-- audit: trace-id=abc\nINSERT INTO users VALUES ($1)": "insert",
+		// Mixed comments: line comment followed by block comment then
+		// the verb. Exercises the loop in stripLeadingNoise.
+		"-- header\n/* tag */ DELETE FROM s WHERE id=$1": "delete",
+		// Line comment with no trailing newline — content is entirely
+		// commented out, classifier must return "other".
+		"-- this is the whole query": "other",
+	}
+	for sql, want := range cases {
+		got := classifyOperation(sql)
+		if !strings.EqualFold(got, want) {
+			t.Errorf("classifyOperation(%q): got %q want %q", sql, got, want)
+		}
 	}
 }
 
