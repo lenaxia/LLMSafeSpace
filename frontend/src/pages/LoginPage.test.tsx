@@ -183,13 +183,32 @@ describe("LoginPage", () => {
     }
   });
 
-  it("shows not-found message when ?lookup=not_found in URL", async () => {
-    window.history.replaceState({}, "", "/login?lookup=not_found");
+  it("shows not-found message when lookup returns not-found redirect", async () => {
+    mockGetConfig.mockResolvedValue({
+      registrationEnabled: true,
+      oidcEnabled: true,
+      instanceName: "TestSpace",
+    });
+    mockDomains.mockResolvedValue({
+      domains: [{ domain: "acme.com", orgSlug: "acme", orgName: "Acme" }],
+    });
+    // US-54.1 returns { redirectUrl: "/?lookup=not_found" } for unknown emails.
+    // The frontend must handle this in-memory (SPA routing would lose the param).
+    mockLookup.mockResolvedValue({ redirectUrl: "/?lookup=not_found" });
 
     renderLoginPage();
+    await waitFor(() => expect(screen.getByPlaceholderText("Email")).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText("Email"), { target: { value: "nobody@gmail.com" } });
+
+    const continueBtn = await screen.findByText("Continue with email");
+    fireEvent.click(continueBtn);
+
     await waitFor(() => {
       expect(screen.getByText(/couldn't find an account/i)).toBeInTheDocument();
     });
+    // The lookup was called; no navigation happened.
+    expect(mockLookup).toHaveBeenCalledWith("nobody@gmail.com");
   });
 
   it("shows rate-limited message when lookup returns 429", async () => {

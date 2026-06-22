@@ -63,6 +63,15 @@ export function LoginPage() {
     setLookupStatus(null);
     try {
       const { redirectUrl } = await authApi.lookup(email);
+      // The not-found redirect URL is "/?lookup=not_found". In this SPA,
+      // navigating there triggers a full page load → router redirect to /login
+      // → query param lost. Handle it in-memory instead so the user sees the
+      // error message without a broken redirect.
+      if (redirectUrl.includes("lookup=not_found")) {
+        setLookupStatus("not_found");
+        setLookingUp(false);
+        return;
+      }
       window.location.href = redirectUrl;
     } catch (err) {
       if (err instanceof ApiClientError && err.status === 429) {
