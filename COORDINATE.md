@@ -34,41 +34,19 @@ Agents waiting to work on files currently held by an active claim. When the bloc
 
 | Completed | Agent | What | Commit |
 |-----------|-------|------|--------|
-| 2026-06-06 | agent-audit-0606 | fix ModelSelector disappear (placeholderData, remove redundant filter, fix duplicate query race); Helm nginx-html emptyDir+initContainer; worklog sequence fix | 70fdb62 |
-| 2026-06-06 | agent-audit-0606 | CredentialBindingInfo json tags (camelCase) + regression test | db8ba34 |
-| 2026-06-06 | agent-oc-jun05-2330 | API key SHA-256 hashing (migration 000017) + CPU/disk/memory cgroup metering + controller metrics taxonomy | this commit |
-| 2026-06-06 | agent-audit-0606 | Epic 28 S28.8 — goroutine leak + write-deadline tests | f1af270 |
-| 2026-06-06 | agent-audit-0606 | sseConnection cleanup + 2 new weak-point tests + worklog 0171 | 1baac7d |
-| 2026-06-06 | agent-audit-0606 | Fix pre-existing flaky test: sseConnection.test.ts backoff-with-jitter pinned Math.random → deterministic | dc38ad8 |
-| 2026-06-06 | agent-relay-jun06 | Fix metric cardinality: remove workspace_id/user_id from high-cardinality labels (deployed ts-1780777762 rev 157) | 5df27b0 |
-| 2026-06-06 | agent-relay-jun06 | Active workspace gauge + session duration + auth failure counter (deployed ts-1780733287 rev 155) | 7f9dcd8 |
-| 2026-06-06 | agent-relay-jun06 | Fix #1: resolveModelIDFromCatalog relay providerID remap + billing/metering/ops metrics | b77b9c0 |
-| 2026-06-06 | agent-relay-jun06 | CF Worker secret-path auth + phase-2 relay injector + opencode-relay model surfacing | d836c94 |
-| 2026-06-05 | agent-oc-jun05-2330 | Epic 30 credential audit fixes | 0170cb4 |
-| 2026-06-05 | agent-oc-jun05-2330 | CPU metering migration files only | 7b6e234 |
-| 2026-06-05 | agent-relay-jun06 | API-side billing/metering metrics + relay model surfacing | b77b9c0 |
-| 2026-06-05 | — | Live bugs + high-value items (proxy, drain, MCP, settings) | 9a672cc |
+
+> Entries older than ~2 weeks are pruned — see `worklogs/` for the historical record.
 
 ---
 
 ## Known Conflicts / Merge Notes
 
-- `api/internal/services/metrics/metrics.go` — agent-relay-jun06 owns API-side billing metrics. **Do not overwrite.** Controller metrics live in `controller/internal/metrics/metrics.go` (separate file).
-- `api/internal/app/app.go` — modified by b77b9c0 and 0170cb4. Pull before touching.
-- `api/internal/handlers/session_tracker.go` — modified by b77b9c0. Pull before touching.
-- `api/internal/handlers/models.go` — modified by b77b9c0. Pull before touching.
-- `pkg/secrets/` — heavily modified by 0170cb4. Pull before touching.
-- `frontend/src/components/settings/` — modified by 0170cb4. Pull before touching.
+(None currently active.)
 
 ---
 
 ## Pending Work (unclaimed)
 
-See `worklogs/0169_2026-06-05_open-work-report.md` for the full list.
-High priority unclaimed items:
-
-- Epic 09 US-9.16 — preferredModel wiring in ModelSelector (`frontend/src/components/chat/ModelSelector.tsx`)
-- Epic 24 US-24.17 — Disk pressure detection (`controller/internal/workspace/health.go`)
-- Epic 16 US-16.13 — Backend integration test for question flow (`api/internal/tests/integration/`)
-- Epic 27a US-27a.9 — Credflow integration test (`api/internal/handlers/agent_reload_e2e_test.go`)
-- Epic 27b US-27b.5 — Chat error enrichment body buffering (`api/internal/handlers/proxy.go`)
+See `design/stories/README.md` for the authoritative epic/story status and
+recommended implementation order. High-value open items are tracked there with
+verified gaps per epic.

@@ -56,7 +56,7 @@ copy entirely. Until then:
 2. `cmd/repolint` validates the two directories match byte-for-byte on
    every commit and CI run.
 
-## Future refactor (tracked in design/stories/epic-19/, TBD)
+## Future refactor
 
 The current arrangement has two structural problems:
 

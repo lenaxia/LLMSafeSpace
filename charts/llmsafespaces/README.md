@@ -11,9 +11,11 @@ controller, CRDs, ValidatingWebhookConfiguration, and database migrations.
 - Helm: >= 3.13 (also tested with Helm 4)
 - Tested locally with `helm lint` and `helm template`
 
-This chart deploys two Deployments (API, controller), two CRDs, a
-validating webhook, RBAC, a ConfigMap-driven config, and a pre-install
-migration Job.
+This chart deploys the API, controller, frontend, and MCP Deployments, three
+CRDs (Workspace, RuntimeEnvironment, InferenceRelay), validating webhooks
+(Workspace, RuntimeEnvironment, optional per-tenant quota), RBAC, a
+ConfigMap-driven config, and a pre-install migration Job. The relay-router
+Deployment and optional gVisor RuntimeClass are gated by feature flags.
 
 It does **not** deploy Postgres, Redis, or cert-manager. See "Prerequisites"
 below.
@@ -186,7 +188,7 @@ make helm-package                # produce dist/llmsafespaces-0.1.0.tgz
 ```sh
 helm uninstall llmsafespaces -n llmsafespaces
 kubectl -n llmsafespaces delete pvc --all   # PVCs are not deleted by Helm
-kubectl delete crd workspaces.llmsafespaces.dev runtimeenvironments.llmsafespaces.dev
+kubectl delete crd workspaces.llmsafespaces.dev runtimeenvironments.llmsafespaces.dev inferencerelays.llmsafespaces.dev
 ```
 
 CRDs are intentionally not deleted by `helm uninstall` (Helm 3 default

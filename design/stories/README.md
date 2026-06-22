@@ -2,7 +2,7 @@
 
 Organized by epic, following the V2 design roadmap (design/EVOLUTION-V2.md v2.4).
 
-**Last audited:** 2026-06-18 (code-verified; worklogs used as navigation hints, not source of truth)
+**Last audited:** 2026-06-22 (code-verified; worklogs used as navigation hints, not source of truth)
 
 ---
 
@@ -69,7 +69,7 @@ Organized by epic, following the V2 design roadmap (design/EVOLUTION-V2.md v2.4)
 | 44 | Session Reliability & Transparency — terminal SSE events on agent death, session-aware restart, OOM detection, memory pressure warnings, request buffering, fix api-key restart bug | 🔶 Partial | **US-44.1a ✅ Shipped** (PR #202): proxy emits terminal `agent_died` SSE event on stream death (`proxy.go:434-468`). Design docs complete (PR #198). **Remaining**: US-44.1b+ — session-aware restart, OOM detection, memory pressure warnings, request buffering. |
 | 45 | Multi-Replica State Consistency — externalize `ProxyHandler` per-replica state to Valkey/Redis (`activeSess`, `pwCache`, etc.). Eliminates today's stuck-session bug class at multi-replica. | 🔶 Partial | **US-45.1 ✅** (PR #204): `wsstate.Store` abstraction extracted (`wsstate/store.go`, `inmemory.go`, `redis.go`). **US-45.2 ✅** (PR #205): Redis-backed `activeSess` eliminates multi-replica drift. **US-45.3 ✅** (PR #207): Redis-backed `deletedSessions` prevents cross-replica zombie resurrection. **Remaining**: US-45.4+ stories for full state migration. |
 | 48 | Relay Admin UX — operator setup wizard + status dashboard for the inference relay fleet | ✅ Complete | Renamed from `epic-43` collision (US-46.1). US-43.1–43.12 done: OCI+GCP credential config, InferenceRelay CR deploy, rotate/pause/resume actions, status dashboard. Depends on Epic 42. |
-| 51 | Tenant Isolation — gVisor + Resource Quotas — container-runtime isolation (gVisor RuntimeClass) + per-tenant resource quotas via admission webhook, shared namespace (no per-tenant namespaces) | ❌ Not Started | Consolidates superseded Epic 10 US-10.6 (virtual namespaces) + Epic 18 S18.7 (gVisor, moved here). Epic 18 S18.8 reduced to EFS storage isolation only. Most of original US-10.6 already satisfied: network isolation (chart NetPols), secret scoping (namespace-scoped Role), tenant identity (`WorkspaceOwner`). Genuinely missing: gVisor (container escape) + quota webhook (noisy-neighbor). |
+| 51 | Tenant Isolation — gVisor + Resource Quotas — container-runtime isolation (gVisor RuntimeClass) + per-tenant resource quotas via admission webhook, shared namespace (no per-tenant namespaces) | ✅ Complete | S51.1–S51.4 shipped (`controller/internal/webhooks/pod_tenant_quota_webhook.go`, `charts/.../templates/runtime-class.yaml`, `epic51_chart_test.go`; PRs #310, #317). gVisor RuntimeClass opt-in (`gvisor.enabled`, default off); `PodTenantQuotaValidator` webhook keyed on `llmsafespaces.dev/tenant` label, disabled when all quota limits are 0. Org-specific quota overrides + billing-tier→quota mapping deferred to Epic 43. |
 
 ---
 
