@@ -147,6 +147,37 @@ export function OrgMembersTab() {
                           variant="ghost"
                           onClick={async () => {
                             try {
+                              await orgsApi.verifyInvitee(org.id, inv.id);
+                              setError("");
+                              refresh();
+                            } catch (e) {
+                              // 422 with body {"error":"no_account_for_email"}
+                              // means the invitee has no users row yet — render
+                              // a clear actionable message instead of the raw
+                              // "no_account_for_email" string.
+                              if (
+                                e instanceof ApiClientError &&
+                                e.status === 422 &&
+                                e.body.error === "no_account_for_email"
+                              ) {
+                                setError(
+                                  "No account exists for this email yet. The invitee must sign up before you can verify them.",
+                                );
+                              } else {
+                                setError(
+                                  e instanceof Error ? e.message : "Verify failed",
+                                );
+                              }
+                            }
+                          }}
+                        >
+                          Verify
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={async () => {
+                            try {
                               await orgsApi.resendInvitation(org.id, inv.id);
                               refresh();
                             } catch (e) {

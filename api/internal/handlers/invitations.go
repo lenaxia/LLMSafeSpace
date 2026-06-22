@@ -46,6 +46,22 @@ type invitationStore interface {
 	// GetUserEmail resolves a user ID to their email address. Used by invitation
 	// acceptance to verify the accepting user matches the invited email.
 	GetUserEmail(ctx context.Context, userID string) (string, error)
+
+	// GetUserIDByEmail resolves an email to a user ID, or returns ("", nil)
+	// when no user is registered. Non-error miss. Used by VerifyUserForInvitation
+	// to find the existing users row for an invitee whose email is pending
+	// verification (epic-43 follow-up).
+	GetUserIDByEmail(ctx context.Context, email string) (string, error)
+
+	// MarkUserEmailVerified flips users.email_verified=true for the given
+	// user. Idempotent at the DB level. Used by VerifyUserForInvitation to
+	// override the email-verification gate when the org admin has confirmed
+	// the invitee's identity out-of-band.
+	MarkUserEmailVerified(ctx context.Context, userID string) error
+
+	// LogOrgEvent appends an org-scoped audit-log entry. Used by
+	// VerifyUserForInvitation to record the override for traceability.
+	LogOrgEvent(ctx context.Context, orgID, actorID, action, targetID string, metadata map[string]any) error
 }
 
 // orgCredentialBinder binds org credentials to org workspaces. Used after
@@ -222,6 +238,95 @@ func (h *InvitationsHandler) Resend(c *gin.Context) {
 	h.sendInvitationEmail(ctx, existing.Email, token, "", orgID, existing.Role)
 
 	c.JSON(http.StatusOK, inv)
+}
+
+// VerifyUserForInvitation handles
+// POST /api/v1/orgs/:id/invitations/:invID/verify-user.
+//
+// Org-admin only (registered under orgAdminGroup). The "member force-verify"
+// surface added in PR #343 only acted on already-accepted members; this
+// handler closes the gap for *pending* invitations: an admin can flip the
+// invitee's users.email_verified=true so the invitee (who already has an
+// account but never completed email verification) can log in. The
+// invitation row stays pending — the user must still click the
+// invitation link to accept and join the org.
+//
+// Behavior:
+//   - Invitation exists, belongs to this org, and is still pending → look up
+//     users.id by inv.email; if found, MarkUserEmailVerified(userID); audit.
+//   - User does NOT exist → 422 {"error":"no_account_for_email"}. The frontend
+//     uses the machine-parseable code to render a clear "user must sign up
+//     first" message rather than treating it as a transient error.
+//   - Cross-org invitation → 404 (do not leak invitation existence across orgs).
+//   - Already accepted/declined → 409 (use member.verify on the resulting member).
+//   - Expired → 410 (matches Accept's behavior).
+//
+// Idempotent at the DB level. The audit event records the admin's intent
+// regardless of whether the user was previously verified.
+func (h *InvitationsHandler) VerifyUserForInvitation(c *gin.Context) {
+	orgID := c.Param("id")
+	invID := c.Param("invID")
+	actorID := h.authSvc.GetUserID(c)
+	ctx := c.Request.Context()
+
+	inv, err := h.store.GetInvitationByID(ctx, invID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get invitation"})
+		return
+	}
+	// Cross-org invitations are reported as 404, not 403, so admins of org A
+	// cannot probe whether an invitation exists in org B.
+	if inv == nil || inv.OrgID != orgID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "invitation not found"})
+		return
+	}
+	if inv.AcceptedAt != nil || inv.DeclinedAt != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "invitation is no longer pending"})
+		return
+	}
+	if time.Now().After(inv.ExpiresAt) {
+		c.JSON(http.StatusGone, gin.H{"error": "invitation expired"})
+		return
+	}
+
+	userID, err := h.store.GetUserIDByEmail(ctx, inv.Email)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve user by email"})
+		return
+	}
+	if userID == "" {
+		// Distinct status (422) and machine-parseable error code so the
+		// frontend can render a specific "user must sign up first" message.
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"error":   "no_account_for_email",
+			"message": "no account exists for this email yet; the invitee must sign up before you can verify them",
+		})
+		return
+	}
+
+	if err := h.store.MarkUserEmailVerified(ctx, userID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify user"})
+		return
+	}
+
+	if err := h.store.LogOrgEvent(ctx, orgID, actorID, "invitation.verify_user", userID, map[string]any{
+		"email":        inv.Email,
+		"invitationID": invID,
+	}); err != nil && h.logger != nil {
+		// Non-fatal: the verification succeeded; only the audit trail is
+		// missing. Surface it so operators can investigate, but do not undo
+		// the verification — the admin's intent was already recorded on the
+		// user row, and rolling it back would leave the user unverified with
+		// no recourse and no audit. Mirrors OrgsHandler.VerifyMember.
+		h.logger.Warn("audit log emission failed",
+			"action", "invitation.verify_user",
+			"orgID", orgID,
+			"invitationID", invID,
+			"targetUserID", userID,
+			"error", err.Error())
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "User verified"})
 }
 
 // GetByToken handles GET /api/v1/invitations/:token (public — no auth).

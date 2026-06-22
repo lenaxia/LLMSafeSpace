@@ -33,6 +33,25 @@ type mockInvitationStore struct {
 	userOrgIDErr   error
 	userEmail      string
 	userEmailErr   error
+
+	// usersByEmail backs GetUserIDByEmail. Keys are lowercased emails.
+	// Empty map means "no users registered" — GetUserIDByEmail returns
+	// ("", nil) for misses (matches the production PgOrgStore signature
+	// where a missing user is a non-error case the caller must inspect).
+	usersByEmail        map[string]string
+	getUserIDByEmailErr error
+
+	// markVerifiedCalls captures every userID passed to
+	// MarkUserEmailVerified so tests can assert intent (not just outcome).
+	markVerifiedCalls []string
+	markVerifiedErr   error
+
+	// auditEvents captures every LogOrgEvent call. The mock reuses
+	// orgs_test.go's mockAuditEvent type since both test files share
+	// the package; this keeps assertion shape consistent across the
+	// two surfaces (member.verify and invitation.verify_user).
+	auditEvents []mockAuditEvent
+	auditErr    error
 }
 
 func newMockInvitationStore() *mockInvitationStore {
@@ -41,6 +60,7 @@ func newMockInvitationStore() *mockInvitationStore {
 		tokenHashIndex: make(map[string]string),
 		orgs:           make(map[string]*types.Organization),
 		members:        make(map[string][]*types.OrgMember),
+		usersByEmail:   make(map[string]string),
 	}
 }
 
@@ -177,6 +197,50 @@ func (m *mockInvitationStore) GetUserEmail(_ context.Context, _ string) (string,
 		return "", m.userEmailErr
 	}
 	return m.userEmail, nil
+}
+
+// GetUserIDByEmail mirrors PgOrgStore.GetUserIDByEmail: returns ("", nil)
+// when no user is registered with that email (a non-error miss).
+// Tests register accounts via store.usersByEmail.
+func (m *mockInvitationStore) GetUserIDByEmail(_ context.Context, email string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.getUserIDByEmailErr != nil {
+		return "", m.getUserIDByEmailErr
+	}
+	return m.usersByEmail[strings.ToLower(strings.TrimSpace(email))], nil
+}
+
+func (m *mockInvitationStore) MarkUserEmailVerified(_ context.Context, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.markVerifiedErr != nil {
+		return m.markVerifiedErr
+	}
+	m.markVerifiedCalls = append(m.markVerifiedCalls, userID)
+	return nil
+}
+
+func (m *mockInvitationStore) LogOrgEvent(_ context.Context, orgID, actorID, action, targetID string, metadata map[string]any) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.auditErr != nil {
+		return m.auditErr
+	}
+	// Copy metadata to avoid the caller mutating it post-call (defense
+	// against test-introduced flakes).
+	mcopy := make(map[string]any, len(metadata))
+	for k, v := range metadata {
+		mcopy[k] = v
+	}
+	m.auditEvents = append(m.auditEvents, mockAuditEvent{
+		OrgID:    orgID,
+		ActorID:  actorID,
+		Action:   action,
+		TargetID: targetID,
+		Metadata: mcopy,
+	})
+	return nil
 }
 
 // mockCredBinder records calls to BindAllOrgCredentialsToOrgWorkspaces for
@@ -779,3 +843,360 @@ func TestInvitations_GetByToken_DoesNotConsume(t *testing.T) {
 		t.Errorf("GET must not set DeclinedAt; got %v", *inv.DeclinedAt)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// VerifyUserForInvitation: force-verify the user account associated with a
+// pending invitation (epic-43 follow-up — the original PR #343 only handled
+// already-accepted members; this surface handles invitees whose email is
+// pending verification on their existing account).
+// ---------------------------------------------------------------------------
+
+// helper: registers an existing user account in the mock so
+// GetUserIDByEmail returns its userID.
+func (m *mockInvitationStore) registerUser(email, userID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.usersByEmail[strings.ToLower(strings.TrimSpace(email))] = userID
+}
+
+// setupVerifyInviteRouter wires the route under test. The handler is
+// registered on a path the router uses in production via orgAdminGroup.
+func setupVerifyInviteRouter(t *testing.T, store *mockInvitationStore) *gin.Engine {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	h := NewInvitationsHandler(store, nil, &mockOrgAuthService{userID: "admin-1"}, "https://app.test", nil)
+	r := gin.New()
+	r.POST("/api/v1/orgs/:id/invitations/:invID/verify-user", h.VerifyUserForInvitation)
+	return r
+}
+
+func seedPendingInvitation(store *mockInvitationStore, orgID, invID, email string) {
+	store.invitations[invID] = &types.OrgInvitation{
+		ID:        invID,
+		OrgID:     orgID,
+		Email:     email,
+		Role:      types.OrgRoleMember,
+		ExpiresAt: time.Now().Add(time.Hour),
+	}
+}
+
+// TestInvitations_VerifyUser_Success_ExistingUser pins the headline
+// scenario: invitation pending, the invitee already has a users row,
+// admin clicks Verify. Result: MarkUserEmailVerified called with the
+// resolved userID, audit event recorded, 200 OK.
+func TestInvitations_VerifyUser_Success_ExistingUser(t *testing.T) {
+	store := newMockInvitationStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.registerUser("invitee@example.com", "user-42")
+	seedPendingInvitation(store, "org-1", "inv-1", "invitee@example.com")
+	r := setupVerifyInviteRouter(t, store)
+
+	w := doRequest(r, "POST", "/api/v1/orgs/org-1/invitations/inv-1/verify-user", "")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(store.markVerifiedCalls) != 1 || store.markVerifiedCalls[0] != "user-42" {
+		t.Errorf("MarkUserEmailVerified must be called once with the resolved userID; got %v", store.markVerifiedCalls)
+	}
+	if len(store.auditEvents) != 1 {
+		t.Fatalf("expected one audit event, got %d", len(store.auditEvents))
+	}
+	ev := store.auditEvents[0]
+	if ev.OrgID != "org-1" || ev.ActorID != "admin-1" {
+		t.Errorf("audit org/actor mismatch: %+v", ev)
+	}
+	if ev.Action != "invitation.verify_user" {
+		t.Errorf("audit action must be 'invitation.verify_user' to distinguish from member.verify; got %q", ev.Action)
+	}
+	if ev.TargetID != "user-42" {
+		t.Errorf("audit target must be the resolved user, not the invitation ID; got %q", ev.TargetID)
+	}
+	if ev.Metadata["email"] != "invitee@example.com" {
+		t.Errorf("audit metadata.email = %v, want invitee@example.com", ev.Metadata["email"])
+	}
+	if ev.Metadata["invitationID"] != "inv-1" {
+		t.Errorf("audit metadata must include invitationID for traceability; got %v", ev.Metadata["invitationID"])
+	}
+}
+
+// TestInvitations_VerifyUser_NoUserAccount returns 422 (not 404, not
+// 200) so the frontend can show a clear "the invitee must sign up
+// first" message rather than treating it as success.
+func TestInvitations_VerifyUser_NoUserAccount(t *testing.T) {
+	store := newMockInvitationStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	// No registerUser call — the email has no users row.
+	seedPendingInvitation(store, "org-1", "inv-1", "ghost@example.com")
+	r := setupVerifyInviteRouter(t, store)
+
+	w := doRequest(r, "POST", "/api/v1/orgs/org-1/invitations/inv-1/verify-user", "")
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 when invitee has no users row; got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["error"] != "no_account_for_email" {
+		t.Errorf("error code must be machine-parseable 'no_account_for_email' for the frontend's switch on it; got %q", body["error"])
+	}
+	if len(store.markVerifiedCalls) != 0 {
+		t.Errorf("MarkUserEmailVerified must NOT be called when no user exists; got %v", store.markVerifiedCalls)
+	}
+	if len(store.auditEvents) != 0 {
+		t.Errorf("no audit event for a no-op; got %d events", len(store.auditEvents))
+	}
+}
+
+// TestInvitations_VerifyUser_EmailNormalization the invitee's
+// invitation row may have any casing; the lookup must be case-folded.
+func TestInvitations_VerifyUser_EmailNormalization(t *testing.T) {
+	store := newMockInvitationStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.registerUser("invitee@example.com", "user-42")
+	// Invitation stored with non-canonical casing — production
+	// invitations.go does not normalize on Create.
+	seedPendingInvitation(store, "org-1", "inv-1", "INVITEE@Example.COM")
+	r := setupVerifyInviteRouter(t, store)
+
+	w := doRequest(r, "POST", "/api/v1/orgs/org-1/invitations/inv-1/verify-user", "")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 with case-folded email lookup; got %d: %s", w.Code, w.Body.String())
+	}
+	if len(store.markVerifiedCalls) != 1 || store.markVerifiedCalls[0] != "user-42" {
+		t.Errorf("expected MarkUserEmailVerified('user-42'), got %v", store.markVerifiedCalls)
+	}
+}
+
+// TestInvitations_VerifyUser_Idempotent the SQL UPDATE is naturally
+// idempotent; verifying an already-verified user is harmless. We still
+// emit the audit event because the admin's intent matters even if
+// the row is unchanged.
+func TestInvitations_VerifyUser_Idempotent(t *testing.T) {
+	store := newMockInvitationStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.registerUser("invitee@example.com", "user-42")
+	seedPendingInvitation(store, "org-1", "inv-1", "invitee@example.com")
+	r := setupVerifyInviteRouter(t, store)
+
+	// Two consecutive calls should both succeed.
+	w1 := doRequest(r, "POST", "/api/v1/orgs/org-1/invitations/inv-1/verify-user", "")
+	w2 := doRequest(r, "POST", "/api/v1/orgs/org-1/invitations/inv-1/verify-user", "")
+
+	if w1.Code != http.StatusOK || w2.Code != http.StatusOK {
+		t.Fatalf("idempotent call must return 200 both times; got %d / %d", w1.Code, w2.Code)
+	}
+	if len(store.markVerifiedCalls) != 2 {
+		t.Errorf("each call must reach MarkUserEmailVerified (idempotency is at DB level); got %d", len(store.markVerifiedCalls))
+	}
+	if len(store.auditEvents) != 2 {
+		t.Errorf("each call must emit an audit event for traceability; got %d", len(store.auditEvents))
+	}
+}
+
+// TestInvitations_VerifyUser_InvitationNotFound 404 with no DB writes.
+func TestInvitations_VerifyUser_InvitationNotFound(t *testing.T) {
+	store := newMockInvitationStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	r := setupVerifyInviteRouter(t, store)
+
+	w := doRequest(r, "POST", "/api/v1/orgs/org-1/invitations/missing/verify-user", "")
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+	if len(store.markVerifiedCalls) != 0 {
+		t.Error("must not write when the invitation does not exist")
+	}
+	if len(store.auditEvents) != 0 {
+		t.Error("must not audit when the invitation does not exist")
+	}
+}
+
+// TestInvitations_VerifyUser_CrossOrgIsolation returns 404 (NOT 403,
+// not 422) when the invitation exists but belongs to a different org.
+// This avoids leaking invitation existence across orgs — an admin of
+// org A asking about an invitation belonging to org B receives the
+// same response as if the invitation didn't exist.
+func TestInvitations_VerifyUser_CrossOrgIsolation(t *testing.T) {
+	store := newMockInvitationStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.orgs["org-2"] = &types.Organization{ID: "org-2"}
+	store.registerUser("invitee@example.com", "user-42")
+	seedPendingInvitation(store, "org-2", "inv-1", "invitee@example.com")
+	r := setupVerifyInviteRouter(t, store)
+
+	// Admin of org-1 hits the route with their own org-1 in the path
+	// but inv-1 belongs to org-2.
+	w := doRequest(r, "POST", "/api/v1/orgs/org-1/invitations/inv-1/verify-user", "")
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 to avoid leaking cross-org invitation existence; got %d", w.Code)
+	}
+	if len(store.markVerifiedCalls) != 0 {
+		t.Error("must not act on a cross-org invitation")
+	}
+	if len(store.auditEvents) != 0 {
+		t.Error("must not audit a cross-org invitation lookup")
+	}
+}
+
+// TestInvitations_VerifyUser_AlreadyAccepted 409: the invitation is
+// no longer pending; the regular member.verify surface should be used.
+func TestInvitations_VerifyUser_AlreadyAccepted(t *testing.T) {
+	store := newMockInvitationStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.registerUser("invitee@example.com", "user-42")
+	now := time.Now()
+	store.invitations["inv-1"] = &types.OrgInvitation{
+		ID:         "inv-1",
+		OrgID:      "org-1",
+		Email:      "invitee@example.com",
+		Role:       types.OrgRoleMember,
+		ExpiresAt:  time.Now().Add(time.Hour),
+		AcceptedAt: &now,
+	}
+	r := setupVerifyInviteRouter(t, store)
+
+	w := doRequest(r, "POST", "/api/v1/orgs/org-1/invitations/inv-1/verify-user", "")
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("already-accepted invitation must return 409 (use member.verify instead); got %d", w.Code)
+	}
+	if len(store.markVerifiedCalls) != 0 {
+		t.Error("must not act on accepted invitations")
+	}
+}
+
+// TestInvitations_VerifyUser_AlreadyDeclined 409 — same rationale as
+// already-accepted. The admin should re-invite if they want the user.
+func TestInvitations_VerifyUser_AlreadyDeclined(t *testing.T) {
+	store := newMockInvitationStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.registerUser("invitee@example.com", "user-42")
+	now := time.Now()
+	store.invitations["inv-1"] = &types.OrgInvitation{
+		ID:         "inv-1",
+		OrgID:      "org-1",
+		Email:      "invitee@example.com",
+		Role:       types.OrgRoleMember,
+		ExpiresAt:  time.Now().Add(time.Hour),
+		DeclinedAt: &now,
+	}
+	r := setupVerifyInviteRouter(t, store)
+
+	w := doRequest(r, "POST", "/api/v1/orgs/org-1/invitations/inv-1/verify-user", "")
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("declined invitation must return 409; got %d", w.Code)
+	}
+}
+
+// TestInvitations_VerifyUser_Expired 410 to match Accept's behavior.
+func TestInvitations_VerifyUser_Expired(t *testing.T) {
+	store := newMockInvitationStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.registerUser("invitee@example.com", "user-42")
+	store.invitations["inv-1"] = &types.OrgInvitation{
+		ID:        "inv-1",
+		OrgID:     "org-1",
+		Email:     "invitee@example.com",
+		Role:      types.OrgRoleMember,
+		ExpiresAt: time.Now().Add(-time.Hour), // already expired
+	}
+	r := setupVerifyInviteRouter(t, store)
+
+	w := doRequest(r, "POST", "/api/v1/orgs/org-1/invitations/inv-1/verify-user", "")
+
+	if w.Code != http.StatusGone {
+		t.Fatalf("expired invitation must return 410 (matches Accept); got %d", w.Code)
+	}
+	if len(store.markVerifiedCalls) != 0 {
+		t.Error("must not act on expired invitations")
+	}
+}
+
+// TestInvitations_VerifyUser_GetUserIDError 500 on DB error during
+// the email lookup — distinguishable from "user does not exist" (422).
+func TestInvitations_VerifyUser_GetUserIDError(t *testing.T) {
+	store := newMockInvitationStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.getUserIDByEmailErr = errors.New("DB unreachable")
+	seedPendingInvitation(store, "org-1", "inv-1", "invitee@example.com")
+	r := setupVerifyInviteRouter(t, store)
+
+	w := doRequest(r, "POST", "/api/v1/orgs/org-1/invitations/inv-1/verify-user", "")
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("DB error during user lookup must surface as 500; got %d", w.Code)
+	}
+	if len(store.markVerifiedCalls) != 0 {
+		t.Error("must not write when the lookup itself failed")
+	}
+}
+
+// TestInvitations_VerifyUser_MarkVerifiedError 500 on DB error during
+// the actual UPDATE; no audit event because the verification did not
+// succeed. (The PR #343 audit-failure-non-fatal pattern is for the
+// audit emission path; this test exercises the verification-failed path.)
+func TestInvitations_VerifyUser_MarkVerifiedError(t *testing.T) {
+	store := newMockInvitationStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.registerUser("invitee@example.com", "user-42")
+	store.markVerifiedErr = errors.New("update failed")
+	seedPendingInvitation(store, "org-1", "inv-1", "invitee@example.com")
+	r := setupVerifyInviteRouter(t, store)
+
+	w := doRequest(r, "POST", "/api/v1/orgs/org-1/invitations/inv-1/verify-user", "")
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("UPDATE failure must surface as 500; got %d", w.Code)
+	}
+	if len(store.auditEvents) != 0 {
+		t.Error("must not audit when the verification itself failed")
+	}
+}
+
+// TestInvitations_VerifyUser_AuditFailureNonFatal proves the
+// verification is not undone when only the audit emission fails. The
+// admin's intent was already persisted on the user row; rolling back
+// would leave the user unverified with no recourse and no record.
+// (Mirrors TestOrgsHandler_VerifyMember_AuditFailureNonFatal.)
+func TestInvitations_VerifyUser_AuditFailureNonFatal(t *testing.T) {
+	store := newMockInvitationStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.registerUser("invitee@example.com", "user-42")
+	store.auditErr = errors.New("audit table outage")
+	seedPendingInvitation(store, "org-1", "inv-1", "invitee@example.com")
+
+	cap := &invLogCapture{}
+	gin.SetMode(gin.TestMode)
+	h := NewInvitationsHandler(store, nil, &mockOrgAuthService{userID: "admin-1"}, "https://app.test", cap)
+	r := gin.New()
+	r.POST("/api/v1/orgs/:id/invitations/:invID/verify-user", h.VerifyUserForInvitation)
+
+	w := doRequest(r, "POST", "/api/v1/orgs/org-1/invitations/inv-1/verify-user", "")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("audit failure must NOT undo a successful verification; got %d", w.Code)
+	}
+	if len(store.markVerifiedCalls) != 1 {
+		t.Errorf("verification must have been performed; got %d MarkUserEmailVerified calls", len(store.markVerifiedCalls))
+	}
+	if cap.warnCount == 0 {
+		t.Errorf("audit emission failure must surface as a Warn log entry (Rule 3 — no swallowed errors)")
+	}
+}
+
+// invLogCapture satisfies invitationLogger for tests that need to
+// observe that a Warn was emitted. The existing warnCaptureLogger in
+// orgs_test.go satisfies a smaller interface (Warn-only) which doesn't
+// include Error — invitationLogger requires both.
+type invLogCapture struct {
+	warnCount  int
+	errorCount int
+}
+
+func (c *invLogCapture) Warn(_ string, _ ...any)           { c.warnCount++ }
+func (c *invLogCapture) Error(_ string, _ error, _ ...any) { c.errorCount++ }
