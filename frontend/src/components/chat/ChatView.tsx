@@ -71,6 +71,7 @@ export function ChatView({ messages, streaming, streamParts, disabled, onSend, o
               />
             ) : undefined
           }
+          trailingPrompts={prompts}
           onLoadEarlier={onLoadEarlier}
           hasOlderMessages={hasOlderMessages}
           loadingOlder={loadingOlder}
@@ -78,8 +79,6 @@ export function ChatView({ messages, streaming, streamParts, disabled, onSend, o
         />
         {streaming && <StreamingIndicator />}
       </div>
-
-      {prompts && <div className="px-4">{prompts}</div>}
 
       {viewOnly ? (
         <ReadOnlyBanner message={viewOnlyMessage} />

@@ -80,6 +80,47 @@ describe("MessageList", () => {
     expect(screen.getByTestId("stream-bubble")).toBeInTheDocument();
   });
 
+  it("renders trailingPrompts inside the scroll container", () => {
+    render(<MessageList messages={messages} trailingPrompts={<div data-testid="test-prompt">prompt</div>} />);
+    const scrollContainer = screen.getByRole("log");
+    const prompt = screen.getByTestId("test-prompt");
+    expect(scrollContainer.contains(prompt)).toBe(true);
+  });
+
+  it("renders trailingPrompts instead of empty state when there are no messages", () => {
+    render(<MessageList messages={[]} trailingPrompts={<div data-testid="test-prompt">prompt</div>} />);
+    expect(screen.getByTestId("test-prompt")).toBeInTheDocument();
+    expect(screen.queryByText("Send a message to start the conversation")).not.toBeInTheDocument();
+  });
+
+  it("renders trailingPrompts after the streaming bubble", () => {
+    render(
+      <MessageList
+        messages={messages}
+        streaming={true}
+        streamingBubble={<div data-testid="stream-bubble">streaming</div>}
+        trailingPrompts={<div data-testid="test-prompt">prompt</div>}
+      />,
+    );
+    const scrollContainer = screen.getByRole("log");
+    const bubble = screen.getByTestId("stream-bubble");
+    const prompt = screen.getByTestId("test-prompt");
+    expect(scrollContainer.contains(bubble)).toBe(true);
+    expect(scrollContainer.contains(prompt)).toBe(true);
+    const children = Array.from(scrollContainer.querySelector(".flex.flex-col.gap-2")!.children);
+    expect(children.indexOf(bubble)).toBeLessThan(children.indexOf(prompt));
+  });
+
+  it("scrolls to bottom when trailingPrompts appear (stickToBottom)", () => {
+    const { rerender } = render(<MessageList messages={messages} />);
+    const scrollContainer = screen.getByRole("log");
+    Object.defineProperty(scrollContainer, "scrollHeight", { value: 1000, configurable: true });
+    Object.defineProperty(scrollContainer, "clientHeight", { value: 200, configurable: true });
+    Object.defineProperty(scrollContainer, "scrollTop", { value: 0, writable: true, configurable: true });
+    rerender(<MessageList messages={messages} trailingPrompts={<div data-testid="test-prompt">prompt</div>} />);
+    expect(scrollContainer.scrollTop).toBe(1000);
+  });
+
   it("prevents horizontal scroll on the scroll container", () => {
     render(<MessageList messages={messages} />);
     const scrollContainer = screen.getByRole("log");

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { inputApi } from "../../api/input";
 import type { PermissionRequest } from "../../api/types";
+import { AgentPrompt } from "./AgentPrompt";
 
 interface PermissionPromptProps {
   workspaceId: string;
@@ -43,9 +44,7 @@ export function PermissionPrompt({ workspaceId, request, onResolved }: Permissio
   };
 
   return (
-    <div className="border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 rounded-lg p-4 mb-3" role="dialog" aria-label="Permission required">
-      <div className="font-semibold text-sm mb-2">⚠️ Permission required</div>
-
+    <AgentPrompt variant="permission">
       <div className="text-sm mb-1">
         The agent wants to: <strong>{formatPermission(request.permission)}</strong>
       </div>
@@ -84,6 +83,6 @@ export function PermissionPrompt({ workspaceId, request, onResolved }: Permissio
           {showFeedback ? "Confirm deny" : "Deny"}
         </button>
       </div>
-    </div>
+    </AgentPrompt>
   );
 }
