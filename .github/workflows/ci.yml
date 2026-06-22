@@ -1366,6 +1366,13 @@ jobs:
       - name: Assign numbers to NNNN_ worklogs and fix collisions
         id: autofix
         run: |
+          # Capture the PR number from the CURRENT HEAD (the merge commit)
+          # before we commit any renames below. After the commit+push, HEAD
+          # becomes the bot's own commit ("chore(repolint): ..."), which has
+          # no PR number.
+          PR_NUM=$(git log -1 --pretty=%B | grep -oE '#[0-9]+' | tail -1 | tr -d '#')
+          echo "pr_num=$PR_NUM" >> "$GITHUB_OUTPUT"
+
           OUTPUT=$(./bin/repolint -fix-worklogs-only 2>&1) || true
           echo "$OUTPUT"
           # Capture rename lines for the PR comment. Format:
@@ -1396,10 +1403,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Extract the PR number from the merge commit message.
-          # Squash-merge format: "feat: ... (#343)"
-          # Use the LAST #NNN to avoid matching issue refs in the title.
-          PR_NUM=$(git log -1 --pretty=%B | grep -oE '#[0-9]+' | tail -1 | tr -d '#')
+          PR_NUM="${{ steps.autofix.outputs.pr_num }}"
           if [ -z "$PR_NUM" ]; then
             echo "No PR number found in merge commit — skipping comment"
             exit 0
