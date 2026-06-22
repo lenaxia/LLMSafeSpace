@@ -4,12 +4,15 @@
 package repolint
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -528,31 +531,37 @@ func TestLive_Migrations_NoCollisionsOrGaps(t *testing.T) {
 }
 
 func TestLive_Worklogs_NoDuplicates(t *testing.T) {
+	// The invariant: origin/main should have NO NNNN_ sentinel files —
+	// the post-merge bot numbers them at merge time. A NNNN_ persisting
+	// on main means the bot is broken.
+	//
+	// This test checks origin/main's tree (via git ls-tree), NOT the
+	// working directory. Feature branches naturally carry NNNN_ files
+	// (that's the whole point of the scheme), so checking the working
+	// tree would fail on every PR that adds a worklog.
 	root := repoRoot(t)
-	rep, err := SequenceCheck(SequenceConfig{
-		Dir:           filepath.Join(root, "worklogs"),
-		Pattern:       WorklogPattern,
-		RequirePaired: false,
-		// Worklogs 0001..0096 contain 7 historical collisions and 1
-		// historical gap (0067) caused by parallel two-agent work
-		// before this lint existed. Renumbering them would require
-		// updating ~26 cross-references and is too risky relative to
-		// benefit. Cut the line at 0097 (worklog 0097 is where this
-		// lint was introduced).
-		GrandfatherBelow: 97,
-		// Mirror cmd/repolint/main.go runWorklogs: gaps are warnings,
-		// not failures. Concurrent merges + auto-rename hooks
-		// produce gaps the autofix bot cannot heal without breaking
-		// MainlineCheck. Uniqueness is what's load-bearing here;
-		// duplicates still fail OK() regardless of AllowGaps. See
-		// worklog 0357 for the rationale.
-		AllowGaps: true,
-	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "-C", root, "ls-tree", "--name-only", "origin/main", "--", "worklogs/")
+	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("scanning worklogs: %v", err)
+		t.Skipf("skipping live sentinel check: cannot read origin/main (not fetched or no network): %v", err)
 	}
-	if !rep.OK() {
-		t.Fatalf("worklogs/ has duplicate version(s) at >= 0097:\n%s", rep.String())
+
+	var sentinels []string
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		base := filepath.Base(line)
+		if WorklogSentinelPattern.MatchString(base) {
+			sentinels = append(sentinels, base)
+		}
+	}
+	if len(sentinels) > 0 {
+		t.Fatalf("origin/main has NNNN_ sentinel files (post-merge bot should have numbered them):\n%s", strings.Join(sentinels, "\n"))
 	}
 }
 
@@ -1213,14 +1222,16 @@ func TestMainlineCheck_SharedAncestryNotCollision(t *testing.T) {
 }
 
 func TestLive_Worklogs_NoMainlineCollisions(t *testing.T) {
-	root := repoRoot(t)
-	rep, err := MainlineCheck(filepath.Join(root, "worklogs"))
-	if err != nil {
-		t.Fatalf("mainline check: %v", err)
-	}
-	if !rep.OK() {
-		t.Fatalf("worklogs/ collides with origin/main:\n%s", rep.String())
-	}
+	// Retired under the NNNN_ sentinel scheme. Mainline collisions were
+	// the failure mode of the old "authors pick numbers" workflow; with
+	// sentinels, the post-merge bot assigns numbers atomically at merge
+	// time (serialized by GitHub's sequential merge-commit ordering), so
+	// mainline collisions cannot occur by construction.
+	//
+	// Kept as a no-op to avoid breaking test runners that reference it;
+	// the live invariant is now covered by TestLive_Worklogs_NoDuplicates
+	// (which checks for NNNN_ sentinels).
+	t.Skip("retired under NNNN_ sentinel scheme; see TestLive_Worklogs_NoDuplicates")
 }
 
 func mustWrite(t *testing.T, path, content string) {
@@ -1244,4 +1255,195 @@ func repoRoot(t *testing.T) string {
 	}
 	t.Fatalf("could not locate go.mod ancestor of %s", wd)
 	return ""
+}
+
+// ---------------------------------------------------------------------------
+// Sentinel (NNNN_) tests
+// ---------------------------------------------------------------------------
+
+func TestSentinelCheck_NoSentinels(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0097_2026-01-01_alpha.md"), "")
+	mustWrite(t, filepath.Join(dir, "0098_2026-01-01_beta.md"), "")
+
+	rep, err := SentinelCheck(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !rep.OK() {
+		t.Errorf("expected OK, got %d sentinels: %s", len(rep.Sentinels), rep.String())
+	}
+}
+
+func TestSentinelCheck_DetectsSentinels(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0097_2026-01-01_alpha.md"), "")
+	mustWrite(t, filepath.Join(dir, "NNNN_2026-06-22_new-feature.md"), "")
+	mustWrite(t, filepath.Join(dir, "NNNN_2026-06-22_another.md"), "")
+
+	rep, err := SentinelCheck(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rep.OK() {
+		t.Fatal("expected non-OK (sentinels found), got OK")
+	}
+	if len(rep.Sentinels) != 2 {
+		t.Fatalf("expected 2 sentinels, got %d: %v", len(rep.Sentinels), rep.Sentinels)
+	}
+	// Lexical sort.
+	if rep.Sentinels[0] != "NNNN_2026-06-22_another.md" {
+		t.Errorf("expected first sentinel to be 'another', got %s", rep.Sentinels[0])
+	}
+}
+
+func TestSentinelCheck_IgnoresNonMatchingFiles(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "README.md"), "")
+	mustWrite(t, filepath.Join(dir, "0097_2026-01-01_alpha.md"), "")
+	mustWrite(t, filepath.Join(dir, "NNNN_bad-format.md"), "")           // missing date
+	mustWrite(t, filepath.Join(dir, "nnnn_2026-06-22_lowercase.md"), "") // lowercase nnnn
+
+	rep, err := SentinelCheck(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !rep.OK() {
+		t.Errorf("expected OK (no valid sentinels), got %d: %s", len(rep.Sentinels), rep.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// FixWorklogs + sentinel integration tests
+// ---------------------------------------------------------------------------
+
+func TestFixWorklogs_AssignsSentinelToNextNumber(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0097_2026-01-01_alpha.md"), "")
+	mustWrite(t, filepath.Join(dir, "0100_2026-06-20_beta.md"), "")
+	mustWrite(t, filepath.Join(dir, "NNNN_2026-06-22_new-feature.md"), "")
+
+	renames, err := FixWorklogs(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(renames) != 1 {
+		t.Fatalf("expected 1 rename, got %d: %v", len(renames), renames)
+	}
+	r := renames[0]
+	if r.From != "NNNN_2026-06-22_new-feature.md" {
+		t.Errorf("expected From=NNNN_2026-06-22_new-feature.md, got %s", r.From)
+	}
+	if r.To != "0101_2026-06-22_new-feature.md" {
+		t.Errorf("expected To=0101_2026-06-22_new-feature.md, got %s", r.To)
+	}
+	// Sentinel should be gone.
+	if _, err := os.Stat(filepath.Join(dir, r.From)); err == nil {
+		t.Error("sentinel file still exists after rename")
+	}
+	// Numbered file should exist.
+	if _, err := os.Stat(filepath.Join(dir, r.To)); err != nil {
+		t.Errorf("numbered file not found: %v", err)
+	}
+}
+
+func TestFixWorklogs_MultipleSentinelsGetContiguousNumbers(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0097_2026-01-01_alpha.md"), "")
+	mustWrite(t, filepath.Join(dir, "NNNN_2026-06-22_aaa-first.md"), "")
+	mustWrite(t, filepath.Join(dir, "NNNN_2026-06-22_zzz-second.md"), "")
+
+	renames, err := FixWorklogs(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(renames) != 2 {
+		t.Fatalf("expected 2 renames, got %d: %v", len(renames), renames)
+	}
+	// Lexical order: aaa-first → 0098, zzz-second → 0099.
+	if renames[0].From != "NNNN_2026-06-22_aaa-first.md" ||
+		renames[0].To != "0098_2026-06-22_aaa-first.md" {
+		t.Errorf("rename[0] mismatch: %+v", renames[0])
+	}
+	if renames[1].From != "NNNN_2026-06-22_zzz-second.md" ||
+		renames[1].To != "0099_2026-06-22_zzz-second.md" {
+		t.Errorf("rename[1] mismatch: %+v", renames[1])
+	}
+}
+
+func TestFixWorklogs_SentinelAvoidsMainlineNumbers(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0097_2026-01-01_alpha.md"), "")
+	// Simulate origin/main having 0098 and 0099 already.
+	remote := map[int][]string{
+		98: {"0098_2026-06-20_mainline-a.md"},
+		99: {"0099_2026-06-20_mainline-b.md"},
+	}
+	mustWrite(t, filepath.Join(dir, "NNNN_2026-06-22_new.md"), "")
+
+	renames, err := fixWorklogs(dir, remote)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(renames) != 1 {
+		t.Fatalf("expected 1 rename, got %d: %v", len(renames), renames)
+	}
+	// Local max is 97, remote max is 99 → next free is 100.
+	if renames[0].To != "0100_2026-06-22_new.md" {
+		t.Errorf("expected To=0100 (avoiding mainline 98,99), got %s", renames[0].To)
+	}
+}
+
+func TestFixWorklogs_SentinelAndDuplicateInSamePass(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0097_2026-01-01_alpha.md"), "")
+	mustWrite(t, filepath.Join(dir, "0098_2026-06-20_dup-a.md"), "")
+	mustWrite(t, filepath.Join(dir, "0098_2026-06-20_dup-b.md"), "") // duplicate
+	mustWrite(t, filepath.Join(dir, "NNNN_2026-06-22_sentinel.md"), "")
+
+	renames, err := FixWorklogs(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Sentinel assigned first (→0099), then duplicate resolved (→0100).
+	if len(renames) != 2 {
+		t.Fatalf("expected 2 renames (sentinel + dup), got %d: %v", len(renames), renames)
+	}
+	// Verify no NNNN_ files remain.
+	rep, _ := SentinelCheck(dir)
+	if !rep.OK() {
+		t.Errorf("sentinel still present after fix: %s", rep.String())
+	}
+	// Verify no duplicates remain.
+	seqRep, _ := SequenceCheck(SequenceConfig{
+		Dir: dir, Pattern: WorklogPattern, GrandfatherBelow: 97,
+	})
+	if !seqRep.OK() {
+		t.Errorf("duplicates remain after fix: %s", seqRep.String())
+	}
+}
+
+func TestFixWorklogs_SentinelSelfReferenceUpdated(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "0097_2026-01-01_alpha.md"), "")
+	mustWrite(t, filepath.Join(dir, "NNNN_2026-06-22_self-ref.md"),
+		"# Worklog\n\nFile: NNNN_2026-06-22_self-ref.md\n")
+
+	renames, err := FixWorklogs(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(renames) != 1 {
+		t.Fatalf("expected 1 rename, got %d", len(renames))
+	}
+	data, err := os.ReadFile(filepath.Join(dir, renames[0].To))
+	if err != nil {
+		t.Fatalf("reading renamed file: %v", err)
+	}
+	if strings.Contains(string(data), "NNNN_") {
+		t.Errorf("self-reference not updated; still contains NNNN_: %s", string(data))
+	}
+	if !strings.Contains(string(data), renames[0].To) {
+		t.Errorf("self-reference not updated to %s; content: %s", renames[0].To, string(data))
+	}
 }

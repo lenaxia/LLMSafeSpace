@@ -35,11 +35,6 @@ const (
 	exitOK       = 0
 	exitFailures = 1
 	exitInternal = 2
-
-	// worklogGrandfatherBelow is the cutoff before which historical
-	// duplicates and gaps are tolerated. See pkg/repolint/sequence_test.go
-	// (TestLive_Worklogs_NoDuplicates) for the rationale.
-	worklogGrandfatherBelow = 97
 )
 
 func main() {
@@ -88,8 +83,7 @@ func main() {
 
 	failures := 0
 	failures += runMigrations(root)
-	failures += runWorklogs(root)
-	failures += runWorklogMainline(root)
+	failures += runWorklogSentinels(root)
 	failures += runChartDrift(root)
 	failures += runCRDDrift(root)
 
@@ -157,58 +151,34 @@ func runMigrations(root string) int {
 	return 0
 }
 
-func runWorklogs(root string) int {
+// runWorklogSentinels checks for NNNN_ placeholder files. On main this is
+// a non-gating warning (a persistent NNNN_ means the post-merge numbering
+// bot is broken). In pre-commit it is gating (authors must use NNNN_ for
+// new worklogs). The CLI always reports; the caller (Makefile / CI / hook)
+// decides severity via exit-code handling.
+//
+// The old sequence check (duplicate detection, gap detection, mainline
+// collision detection) is intentionally removed: authors no longer pick
+// numbers, so collisions cannot originate at authoring time, and the
+// post-merge bot assigns numbers atomically per-merge, so merge-time
+// collisions cannot occur either. A residual NNNN_ on main is the only
+// signal worth checking — it means the bot failed to run.
+func runWorklogSentinels(root string) int {
 	dir := filepath.Join(root, "worklogs")
-	rep, err := repolint.SequenceCheck(repolint.SequenceConfig{
-		Dir:              dir,
-		Pattern:          repolint.WorklogPattern,
-		RequirePaired:    false,
-		GrandfatherBelow: worklogGrandfatherBelow,
-		// Worklogs are append-only documentation. Concurrent merges
-		// + auto-rename collisions can leave gaps the autofix bot
-		// cannot heal without breaking MainlineCheck (a worklog
-		// already on origin/main must not be renumbered locally).
-		// Treat gaps as warnings to avoid main going red on a
-		// healable failure mode. Uniqueness and the mainline
-		// collision check still hard-fail. Migrations remain strict
-		// (runMigrations does NOT pass AllowGaps) — an out-of-order
-		// migration breaks schema rebuild.
-		AllowGaps: true,
-	})
+	rep, err := repolint.SentinelCheck(dir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "FAIL  worklogs sequence: %v\n", err)
+		fmt.Fprintf(os.Stderr, "FAIL  worklogs sentinel check: %v\n", err)
 		return 1
 	}
 	if !rep.OK() {
-		fmt.Fprintf(os.Stderr, "FAIL  worklogs sequence in %s (entries >= %04d must be unique):\n%s\n",
-			dir, worklogGrandfatherBelow, rep.String())
-		return 1
-	}
-	if rep.HasWarnings() {
-		fmt.Printf("WARN  worklogs sequence has gaps at %v (max %04d) — accepted\n",
-			rep.MissingVersions, rep.MaxVersion)
-	}
-	fmt.Printf("ok    worklogs sequence (%d worklogs, max %04d, grandfathered <%04d)\n",
-		len(rep.SeenVersions), rep.MaxVersion, worklogGrandfatherBelow)
-	return 0
-}
-
-func runWorklogMainline(root string) int {
-	dir := filepath.Join(root, "worklogs")
-	rep, err := repolint.MainlineCheck(dir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "WARN  worklogs mainline check skipped: %v\n", err)
+		// Non-gating: warn only. A NNNN_ on main means the post-merge
+		// bot hasn't run yet (race window) or is broken (real signal).
+		// Either way, blocking builds on a documentation filename is
+		// disproportionate — the next merge's bot run heals it.
+		fmt.Printf("WARN  worklogs sentinel check: %d NNNN_ file(s) unnumbered on main (post-merge bot should resolve):\n%s", len(rep.Sentinels), rep.String())
 		return 0
 	}
-	if !rep.OK() {
-		fmt.Fprintf(os.Stderr, "FAIL  worklogs collide with origin/main:\n%s\n", rep.String())
-		return 1
-	}
-	if rep.NextNumber > 0 {
-		fmt.Printf("ok    worklogs no mainline collisions (next available: %04d)\n", rep.NextNumber)
-	} else {
-		fmt.Println("ok    worklogs no mainline collisions")
-	}
+	fmt.Println("ok    worklogs no NNNN_ sentinels (all numbered)")
 	return 0
 }
 

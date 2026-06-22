@@ -697,18 +697,28 @@ If in doubt: **write the worklog**.
 NNNN_YYYY-MM-DD_short-description.md
 ```
 
-- `NNNN` is a zero-padded sequential number starting at `0001`
+- `NNNN` is a literal sentinel placeholder — **do not pick a number yourself**. The post-merge bot assigns the real sequential number when your PR merges and comments the assigned number on the merged PR.
 - Date is the actual date the work was done
 - Description is lowercase, hyphen-separated, 3–6 words
-- Next entry: check the highest existing number and increment by 1
+- The pre-commit hook blocks new worklogs that don't match the `NNNN_` prefix
 
 Examples:
 
 ```
-0001_2026-05-01_initial-project-setup.md
-0002_2026-05-02_api-service-foundation.md
-0003_2026-05-03_controller-tdd-sandbox.md
+NNNN_2026-05-01_initial-project-setup.md
+NNNN_2026-05-02_api-service-foundation.md
+NNNN_2026-05-03_controller-tdd-sandbox.md
 ```
+
+After merge, the bot renames them:
+
+```
+0545_2026-05-01_initial-project-setup.md
+0546_2026-05-02_api-service-foundation.md
+0547_2026-05-03_controller-tdd-sandbox.md
+```
+
+**Why sentinels:** picking numbers manually races under concurrent PRs (two branches both observe `max=543`, both pick `544`, merge collision). The sentinel scheme eliminates the race — the bot assigns numbers atomically at merge time, serialized by GitHub's sequential merge-commit ordering.
 
 ### Worklog format
 
