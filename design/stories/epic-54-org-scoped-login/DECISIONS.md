@@ -36,7 +36,7 @@ All decisions below were confirmed during the 2026-06-22 scoping conversation. T
 
 **Context:** The lookup endpoint has to answer "which org does this email belong to?" Two response shapes were considered: (A) `{ orgs: [...] }` — a list the frontend picks from (the "org picker" UX); (B) `{ redirectUrl: "..." }` — a single redirect target the frontend blindly follows.
 
-**Decision:** Option B. Always. The response is a single `redirectUrl`, never a list. Found and not-found branches return identical status (200), identical body shape, and identical timing (within ±2ms).
+**Decision:** Option B. Always. The response is a single `redirectUrl`, never a list. Found and not-found branches return identical status (200) and identical body shape (`{ redirectUrl: string }`). No timing pad — matches the `password_reset.go:119` precedent exactly (see hardening table).
 
 **Rationale:**
 - **Customer list leak:** Option A renders org names to unauthenticated users. On a multi-tenant platform with sensitive customers (health, finance, stealth startups), that's a non-starter. Even on a casual platform, it's a competitive-intel gift.
@@ -51,7 +51,7 @@ All decisions below were confirmed during the 2026-06-22 scoping conversation. T
 | Body shape | Always `{ redirectUrl: string }`. The string differs (real subdomain vs. root-with-`?lookup=not_found`) but the JSON shape is identical. |
 | Rate limit | Per-IP and per-email. Recommended: 10/min/IP, 5/hour/email. |
 | DB error handling | Follows `password_reset.go:119` precedent exactly — return the not-found branch, never surface the error. Test at `password_reset_test.go:425` ("must return 202 (not 500) to avoid enumeration") is the model. |
-| **No timing pad** (matches precedent exactly) | `password_reset.go:119` does NOT sleep — it returns 202 uniformly with no `time.Sleep`. This endpoint does the same. The resolver performs the same DB round-trips on both branches (`GetUserByEmail` + `GetUserOrgID`), so wall-clock variance is bounded by DB load, not by branch choice. A static sleep was considered (pad not-found to match found-branch p99) but rejected: it adds a config flag + test-disable mechanism, and a static value can't track found-branch variance under DB load anyway. **If implementation-time measurement reveals meaningful divergence**, a pad can be added then — but the shipped, audited precedent does not require one. |
+| **No timing pad** (matches precedent exactly) | `password_reset.go:119` does NOT sleep — it returns 202 uniformly with no `time.Sleep`. This endpoint does the same. **The branches do asymmetric DB work** — the not-found branch returns after `GetUserByEmail` (1 indexed lookup), while the found branch adds `GetUserOrgID` + a slug fetch (2-3 indexed lookups). This mirrors the password_reset asymmetry (found path does token generation + DB writes, not-found returns immediately). The decision to skip a pad rests on: the additional lookups are indexed and fast (sub-millisecond each on PG), so the added latency is small relative to network jitter and DB-load variance. This is an empirical claim that **must be measured at implementation time** — acceptance criterion added to US-54.1 requiring a recorded p50/p99 comparison of the two branches. If measurement shows the asymmetry is observable (e.g. found-branch p99 > not-found-branch p99 + meaningful margin), a pad is a trivial addition. The shipped, audited precedent (password_reset) does not pad and has not been an enumeration vector in practice. |
 
 **Not-found redirect target (decided — root login with query param):**
 
@@ -158,7 +158,7 @@ All decisions below were confirmed during the 2026-06-22 scoping conversation. T
 
 **Is:**
 - A Slack-style email → silent redirect → org-scoped login flow.
-- Enumeration-safe by construction (uniform response, timing-padded, rate-limited).
+- Enumeration-safe by construction (uniform response, rate-limited; no timing pad — matches `password_reset.go` precedent, with implementation-time measurement mandated to confirm the found/not-found DB-work asymmetry is not observable).
 - Backward compatible (default-off, single-host deploys unaffected).
 - Forward-compatible with multi-org (resolver change only, API contract stable).
 - A 1-day spike + ~4 days of stories, conditional on spike success.

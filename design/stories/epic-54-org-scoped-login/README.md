@@ -97,7 +97,7 @@ Content-Type: application/json
         org_id via `SELECT org_id FROM org_memberships WHERE user_id = $1`.
         Under 1:1 invariant (DB unique index from migration 000036, D54-3),
         the query returns 0 or 1 row.
-     b. If orgID != "": fetch org slug → return { redirectUrl: subdomainFor(slug) }
+     b. If orgID != "": fetch org slug → return { redirectUrl: subdomainFor(slug, base) }
      c. If orgID == "": fall through to "not found" branch (user has no org;
         e.g. personal-only user). Return redirectUrl to the root login with
         ?lookup=not_found so the response shape is uniform.
@@ -106,7 +106,7 @@ Content-Type: application/json
      Identical status code, identical body shape (see hardening).
 ```
 
-**`subdomainFor(slug)` helper:**
+**`subdomainFor(slug, base)` helper:**
 
 ```go
 // subdomainFor constructs the org's subdomain URL. The base domain comes from
@@ -128,7 +128,7 @@ func subdomainFor(slug, base string) string {
 | Uniform status code | Always 200 OK. Never 404, never 500 (DB errors return the not-found redirect). |
 | Uniform body shape | Always `{ redirectUrl: string }`. Never `{ error: ... }`. The string differs (real subdomain vs. root-with-`?lookup=not_found`) but the JSON shape is identical. |
 | Rate limit | Per-IP and per-email. Recommended: 10 lookups/min/IP, 5 lookups/hour/email. Use existing rate-limit middleware. |
-| No timing pad (matches precedent) | `password_reset.go:119` does NOT sleep — it returns 202 uniformly. This endpoint does the same: no `time.Sleep`, no config flag. The resolver performs the same DB round-trips on both branches (`GetUserByEmail` + `GetUserOrgID`), so wall-clock variance is bounded by DB load, not by branch choice. **If implementation-time measurement shows meaningful divergence**, a pad can be added then — but the precedent (shipped, audited) does not require one, and adding one introduces a config flag + test-disable mechanism that the simpler uniform-response approach avoids. |
+| No timing pad (matches precedent) | `password_reset.go:119` does NOT sleep — it returns 202 uniformly. This endpoint does the same: no `time.Sleep`, no config flag. **The branches do asymmetric DB work** (not-found returns after `GetUserByEmail`; found adds `GetUserOrgID` + slug fetch) — mirroring password_reset's own asymmetry. The decision to skip a pad rests on the added lookups being indexed and fast relative to network jitter; this is an empirical claim that **must be measured at implementation time** (see acceptance criterion below). If measurement shows the asymmetry is observable, a pad is a trivial addition. The precedent (shipped, audited) does not pad and has not been an enumeration vector in practice. |
 
 **Acceptance criteria:**
 
@@ -138,6 +138,7 @@ func subdomainFor(slug, base string) string {
 - `GetUserOrgID` returns `""` (no membership) → not-found branch (covers personal-only users).
 - Rate limit triggers after threshold → 429.
 - Handler unit test covers all four branches (found/1-org, found/0-orgs, not-found, db-error).
+- **Timing measurement (load-bearing for the no-pad rationale):** record p50/p99 of found-branch (with org) vs. not-found-branch over ≥1000 iterations each. Document the result in the implementation worklog. If found-branch p99 exceeds not-found-branch p99 by a margin that would be observable through network jitter (rough threshold: >5ms divergence), add a timing pad at that point and note it in the worklog. The default is no pad (matches `password_reset.go`).
 - Integration test: full lookup → 302 → SSO start → callback → session cookie set on subdomain.
 
 **Not-found redirect target:** decided in D54-2 — root login with `?lookup=not_found`. Frontend renders "We couldn't find an account for that email" + "try a different email" + "create an account" CTA.
