@@ -784,8 +784,8 @@ func (s *Service) CountActiveWorkspacesByUserAndOrg(ctx context.Context, userID,
 func (s *Service) CreateAPIKey(ctx context.Context, apiKey *types.APIKey) error {
 	query := `
         INSERT INTO api_keys (id, user_id, key, name, active, created_at, expires_at, key_prefix, key_legacy,
-                              decrypt_access, kek_salt, wrapped_dek, dek_synced, key_ciphertext, allowed_cidrs)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                              decrypt_access, kek_salt, wrapped_dek, dek_synced, key_ciphertext, key_version, allowed_cidrs)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
     `
 	var expiresAt interface{}
 	if apiKey.ExpiresAt != nil {
@@ -810,6 +810,7 @@ func (s *Service) CreateAPIKey(ctx context.Context, apiKey *types.APIKey) error 
 		apiKey.WrappedDEK,
 		apiKey.DekSynced,
 		apiKey.KeyCiphertext,
+		apiKey.KeyVersion,
 		toNullableStringArray(apiKey.AllowedCIDRs),
 	)
 	if err != nil {
@@ -935,7 +936,7 @@ func (s *Service) UpdateAPIKeyDEK(ctx context.Context, keyID string, wrappedDEK,
 func (s *Service) ListAPIKeysWithDecrypt(ctx context.Context, userID string) ([]*types.APIKey, error) {
 	query := `
 		SELECT id, user_id, key, name, active, created_at, expires_at,
-		       decrypt_access, kek_salt, wrapped_dek, dek_synced, key_ciphertext
+		       decrypt_access, kek_salt, wrapped_dek, dek_synced, key_ciphertext, key_version
 		FROM api_keys
 		WHERE user_id = $1 AND decrypt_access = true AND active = true
 		ORDER BY created_at DESC
@@ -956,7 +957,7 @@ func (s *Service) ListAPIKeysWithDecrypt(ctx context.Context, userID string) ([]
 
 		if err := rows.Scan(
 			&k.ID, new(string), &keyStr, &k.Name, &k.Active, &k.CreatedAt, &expiresAt,
-			&k.DecryptAccess, &kekSalt, &wrappedDEK, &dekSynced, &keyCiphertext,
+			&k.DecryptAccess, &kekSalt, &wrappedDEK, &dekSynced, &keyCiphertext, &k.KeyVersion,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan api key: %w", err)
 		}
