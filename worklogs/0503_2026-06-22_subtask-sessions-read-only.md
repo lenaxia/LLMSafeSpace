@@ -85,4 +85,4 @@ None.
 - `frontend/src/components/chat/ChatView.test.tsx` (6 new tests)
 - `frontend/src/pages/ChatPage.tsx` (derive `isSubtask`, pass `viewOnly`)
 - `frontend/src/pages/ChatPage.subtask.test.tsx` (new — 2 integration tests)
-- `worklogs/0502_2026-06-22_subtask-sessions-read-only.md` (new)
+- `worklogs/0503_2026-06-22_subtask-sessions-read-only.md` (new)
