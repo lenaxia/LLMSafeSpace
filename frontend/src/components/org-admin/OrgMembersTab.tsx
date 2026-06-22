@@ -45,7 +45,6 @@ export function OrgMembersTab() {
   }, [refresh]);
 
   if (loading) return <p className="text-sm text-muted-foreground">Loading…</p>;
-  if (error) return <p className="text-sm text-red-500">{error}</p>;
 
   return (
     <div className="space-y-6">
@@ -106,6 +105,7 @@ export function OrgMembersTab() {
                       orgId={org.id}
                       member={m}
                       onChanged={refresh}
+                      onError={setError}
                     />
                   </td>
                 )}
@@ -193,10 +193,12 @@ function MemberActions({
   orgId,
   member,
   onChanged,
+  onError,
 }: {
   orgId: string;
   member: OrgMember;
   onChanged: () => void;
+  onError: (msg: string) => void;
 }) {
   return (
     <div className="flex justify-end gap-2">
@@ -208,8 +210,8 @@ function MemberActions({
             try {
               await orgsApi.verifyMember(orgId, member.userId);
               onChanged();
-            } catch {
-              /* handled by parent */
+            } catch (e) {
+              onError(e instanceof Error ? e.message : "Verify failed");
             }
           }}
         >
@@ -224,8 +226,8 @@ function MemberActions({
           try {
             await orgsApi.changeMemberRole(orgId, member.userId, newRole);
             onChanged();
-          } catch {
-            /* handled by parent */
+          } catch (e) {
+            onError(e instanceof Error ? e.message : "Role change failed");
           }
         }}
       >
@@ -238,8 +240,8 @@ function MemberActions({
           try {
             await orgsApi.removeMember(orgId, member.userId);
             onChanged();
-          } catch {
-            /* handled by parent */
+          } catch (e) {
+            onError(e instanceof Error ? e.message : "Remove failed");
           }
         }}
       >

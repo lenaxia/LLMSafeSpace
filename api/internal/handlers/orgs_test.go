@@ -36,6 +36,7 @@ type mockOrgStore struct {
 	markVerifiedErr       error
 	auditEvents           []mockAuditEvent
 	auditErr              error
+	getMemberErr          error
 }
 
 type mockAuditEvent struct {
@@ -144,6 +145,9 @@ func (m *mockOrgStore) IsOrgAdmin(_ context.Context, orgID, userID string) (bool
 }
 
 func (m *mockOrgStore) GetOrgMember(_ context.Context, orgID, userID string) (*types.OrgMember, error) {
+	if m.getMemberErr != nil {
+		return nil, m.getMemberErr
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, mem := range m.members[orgID] {
@@ -659,6 +663,20 @@ func TestOrgsHandler_VerifyMember_NotFound(t *testing.T) {
 	}
 	if len(store.markVerifiedCalls) != 0 {
 		t.Errorf("MarkUserEmailVerified must not be called for non-member, got %v", store.markVerifiedCalls)
+	}
+}
+
+func TestOrgsHandler_VerifyMember_GetMemberError_500(t *testing.T) {
+	store := newMockOrgStore()
+	store.getMemberErr = errors.New("db connectivity lost")
+	router, _ := setupOrgTestRouter(t, store)
+
+	w := doRequest(router, "POST", "/api/v1/orgs/org-1/members/member-1/verify", "")
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on GetOrgMember error, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(store.markVerifiedCalls) != 0 {
+		t.Errorf("MarkUserEmailVerified must not be called when membership check fails, got %v", store.markVerifiedCalls)
 	}
 }
 

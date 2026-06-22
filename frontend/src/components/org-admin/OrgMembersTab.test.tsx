@@ -134,4 +134,27 @@ describe("OrgMembersTab", () => {
     expect(screen.queryByRole("button", { name: /remove/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /promote|demote/i })).toBeNull();
   });
+
+  it("surfaces an error message when verifyMember fails (no swallowed errors)", async () => {
+    const user = userEvent.setup();
+    mockVerifyMember.mockRejectedValue(new Error("server is down"));
+    renderTab();
+    const verifyBtn = await screen.findByRole("button", { name: /^Verify$/i });
+    await user.click(verifyBtn);
+    // The error must be visible to the user — not swallowed.
+    await waitFor(() => {
+      expect(screen.getByText(/server is down/i)).toBeInTheDocument();
+    });
+  });
+
+  it("surfaces a fallback message when verifyMember rejects with a non-Error", async () => {
+    const user = userEvent.setup();
+    mockVerifyMember.mockRejectedValue("network dropped");
+    renderTab();
+    const verifyBtn = await screen.findByRole("button", { name: /^Verify$/i });
+    await user.click(verifyBtn);
+    await waitFor(() => {
+      expect(screen.getByText(/verify failed/i)).toBeInTheDocument();
+    });
+  });
 });
