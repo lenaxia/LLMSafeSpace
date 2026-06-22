@@ -106,7 +106,19 @@ func (d *AWSDriver) Provision(ctx context.Context, req ProvisionRequest) (*Provi
 		return nil, fmt.Errorf("%w: ensure security group: %v", ErrConfig, err)
 	}
 
-	// Run instances
+	// Run instances. Tag with OwnerUID and Provider so the reconciler
+	// can adopt this instance if the post-Provision Status update is lost
+	// (worklog 0473/0474 leak fix).
+	tags := []ec2types.Tag{
+		{Key: aws.String("Name"), Value: aws.String(req.Name)},
+		{Key: aws.String(TagManagedBy), Value: aws.String(TagManagedByValue)},
+	}
+	if req.OwnerUID != "" {
+		tags = append(tags, ec2types.Tag{Key: aws.String(TagOwnerUID), Value: aws.String(req.OwnerUID)})
+	}
+	if req.Provider != "" {
+		tags = append(tags, ec2types.Tag{Key: aws.String(TagProvider), Value: aws.String(req.Provider)})
+	}
 	runOutput, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
 		ImageId:          aws.String(imageID),
 		InstanceType:     ec2types.InstanceType(shape),
@@ -117,10 +129,7 @@ func (d *AWSDriver) Provision(ctx context.Context, req ProvisionRequest) (*Provi
 		TagSpecifications: []ec2types.TagSpecification{
 			{
 				ResourceType: ec2types.ResourceTypeInstance,
-				Tags: []ec2types.Tag{
-					{Key: aws.String("Name"), Value: aws.String(req.Name)},
-					{Key: aws.String("managed-by"), Value: aws.String("llmsafespaces-relay")},
-				},
+				Tags:         tags,
 			},
 		},
 	})
@@ -210,7 +219,10 @@ func (d *AWSDriver) GetStatus(ctx context.Context, instanceID, region string) (*
 	return &VMStatus{InstanceID: instanceID, State: VMStateNotFound}, nil
 }
 
-// ListInstances returns relay VMs managed by this driver.
+// ListInstances returns relay VMs managed by this driver. The OwnerUID
+// and Provider fields are populated from the instance's tags so callers
+// can filter by InferenceRelay CR ownership (worklog 0474). Pre-fix VMs
+// that lack the tags will have empty OwnerUID/Provider.
 func (d *AWSDriver) ListInstances(ctx context.Context, region string) ([]VMInstance, error) {
 	listRegion := region
 	if listRegion == "" {
@@ -226,8 +238,8 @@ func (d *AWSDriver) ListInstances(ctx context.Context, region string) ([]VMInsta
 	output, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []ec2types.Filter{
 			{
-				Name:   aws.String("tag:managed-by"),
-				Values: []string{"llmsafespaces-relay"},
+				Name:   aws.String("tag:" + TagManagedBy),
+				Values: []string{TagManagedByValue},
 			},
 		},
 	})
@@ -238,11 +250,20 @@ func (d *AWSDriver) ListInstances(ctx context.Context, region string) ([]VMInsta
 	result := make([]VMInstance, 0)
 	for _, reservation := range output.Reservations {
 		for _, inst := range reservation.Instances {
-			result = append(result, VMInstance{
+			vm := VMInstance{
 				InstanceID: aws.ToString(inst.InstanceId),
 				PublicIP:   aws.ToString(inst.PublicIpAddress),
 				State:      awsStateToVMState(inst.State.Name),
-			})
+			}
+			for _, tag := range inst.Tags {
+				switch aws.ToString(tag.Key) {
+				case TagOwnerUID:
+					vm.OwnerUID = aws.ToString(tag.Value)
+				case TagProvider:
+					vm.Provider = aws.ToString(tag.Value)
+				}
+			}
+			result = append(result, vm)
 		}
 	}
 	return result, nil
