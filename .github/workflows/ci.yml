@@ -6,6 +6,14 @@ on:
     tags: ['v*.*.*']
   pull_request:
     branches: [main]
+  # Manual trigger so a branch can produce a registry-pushed image set
+  # (sha-<short>, ts-<timestamp>) for live cluster verification before
+  # merge. The build steps gate on `event_name != 'pull_request'`, so
+  # workflow_dispatch invocations do push images. Without this, a PR
+  # branch only produces dockerbuild artifacts (not registry images),
+  # which means an out-of-cluster operator cannot pull the PR's image
+  # for a helm-upgrade dry run.
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io

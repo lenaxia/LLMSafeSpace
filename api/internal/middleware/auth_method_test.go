@@ -16,12 +16,12 @@ func TestAuthMethodForToken_Classifies(t *testing.T) {
 		want  string
 	}{
 		{"empty token returns missing", "", "missing"},
-		{"lsp_-prefixed token returns apikey", "lsp_aabbccddeeff0011223344556677889900112233", "apikey"},
+		{"lsp_-prefixed token returns apikey", "lsp_aaaaaaaaaaaaaaaa", "apikey"},
 		// JWT (RFC 7519) is three base64url-encoded segments separated
 		// by dots. utilities.IsAPIKey returns false for any string that
 		// doesn't start with the configured prefix, so the JWT path
 		// falls through to "jwt".
-		{"JWT-shaped token returns jwt", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1MSJ9.signature", "jwt"},
+		{"JWT-shaped token returns jwt", "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1In0.s", "jwt"},
 		// Edge: a non-JWT, non-prefixed credential still classifies as
 		// "jwt". This is intentional fallback behavior — the metric
 		// label is for operator dashboards, not security decisions, so
