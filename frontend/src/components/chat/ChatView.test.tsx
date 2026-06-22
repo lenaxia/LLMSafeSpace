@@ -113,6 +113,18 @@ describe("ChatView", () => {
     expect(screen.getByPlaceholderText("Type a message...")).toBeInTheDocument();
   });
 
+  it("still renders prompts when viewOnly is true (agent-driven, not user chatting)", () => {
+    render(
+      <ChatView
+        {...defaultProps}
+        viewOnly={true}
+        prompts={<div>Agent has a question</div>}
+      />,
+    );
+    expect(screen.getByText("Agent has a question")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
+  });
+
   it("shows streamed text parts", () => {
     render(<ChatView {...defaultProps} streaming={true} streamParts={[{ type: "text", text: "Partial response..." }]} />);
     expect(screen.getByText("Partial response...")).toBeInTheDocument();
