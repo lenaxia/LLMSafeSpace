@@ -539,6 +539,21 @@ func TestLive_Worklogs_NoDuplicates(t *testing.T) {
 	// working directory. Feature branches naturally carry NNNN_ files
 	// (that's the whole point of the scheme), so checking the working
 	// tree would fail on every PR that adds a worklog.
+	//
+	// Race-window skip: when CI runs on a push-to-main event (the merge
+	// commit), origin/main IS that merge commit — which legitimately
+	// carries NNNN_ sentinels from the just-merged PR. The post-merge
+	// bot (repolint-autofix job) renames them AFTER CI runs and commits
+	// with [skip ci], so CI never re-runs on the cleaned state. In that
+	// context the test would false-positive, so we skip it. The bot's
+	// correctness is still verified by every subsequent PR run (which
+	// reads origin/main and fails if sentinels persist). See ci.yml:1341-
+	// 1343 for the documented non-gating intent and worklog 0507 for the
+	// sentinel scheme rationale.
+	if os.Getenv("GITHUB_EVENT_NAME") == "push" && os.Getenv("GITHUB_REF") == "refs/heads/main" {
+		t.Skip("skipping sentinel check on push-to-main: the post-merge bot renames sentinels after CI runs")
+	}
+
 	root := repoRoot(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
