@@ -3,13 +3,17 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { OrgMembersTab } from "./OrgMembersTab";
-import type { OrgMember, OrgResponse } from "../../api/orgs";
+import type { OrgMember, OrgResponse, OrgInvitation } from "../../api/orgs";
+import { ApiClientError } from "../../api/client";
 
 const mockListMembers = vi.fn();
 const mockVerifyMember = vi.fn();
 const mockChangeMemberRole = vi.fn();
 const mockRemoveMember = vi.fn();
 const mockListInvitations = vi.fn();
+const mockVerifyInvitee = vi.fn();
+const mockResendInvitation = vi.fn();
+const mockRevokeInvitation = vi.fn();
 const mockOutletContext = vi.fn();
 
 vi.mock("../../api/orgs", () => ({
@@ -20,6 +24,11 @@ vi.mock("../../api/orgs", () => ({
       mockChangeMemberRole(id, userId, role),
     removeMember: (id: string, userId: string) => mockRemoveMember(id, userId),
     listInvitations: (id: string) => mockListInvitations(id),
+    verifyInvitee: (id: string, invId: string) => mockVerifyInvitee(id, invId),
+    resendInvitation: (id: string, invId: string) =>
+      mockResendInvitation(id, invId),
+    revokeInvitation: (id: string, invId: string) =>
+      mockRevokeInvitation(id, invId),
   },
 }));
 
@@ -67,6 +76,19 @@ const UNVERIFIED_MEMBER: OrgMember = {
   createdAt: "2026-01-02T00:00:00Z",
 };
 
+// Pending invitation fixture used by the Pending Invitations table tests.
+// emailVerified does not apply at this stage — there may not even be a
+// users row yet.
+const PENDING_INVITATION: OrgInvitation = {
+  id: "inv-1",
+  orgId: "org-1",
+  email: "invitee@example.com",
+  role: "member",
+  invitedBy: "admin-1",
+  expiresAt: "2026-12-31T00:00:00Z",
+  createdAt: "2026-01-03T00:00:00Z",
+};
+
 function renderTab(isAdmin = true) {
   mockOutletContext.mockReturnValue({ org: ORG, isAdmin });
   return render(
@@ -82,6 +104,9 @@ describe("OrgMembersTab", () => {
     mockListMembers.mockResolvedValue([VERIFIED_ADMIN, UNVERIFIED_MEMBER]);
     mockListInvitations.mockResolvedValue([]);
     mockVerifyMember.mockResolvedValue({ message: "Member verified" });
+    mockVerifyInvitee.mockResolvedValue({ message: "User verified" });
+    mockResendInvitation.mockResolvedValue(undefined);
+    mockRevokeInvitation.mockResolvedValue(undefined);
   });
 
   it("loads members via orgsApi.listMembers", async () => {
@@ -155,6 +180,92 @@ describe("OrgMembersTab", () => {
     await user.click(verifyBtn);
     await waitFor(() => {
       expect(screen.getByText(/verify failed/i)).toBeInTheDocument();
+    });
+  });
+
+  // ---------------------------------------------------------------------
+  // Pending Invitations: force-verify the invitee's account
+  // (epic-43 follow-up — closes the gap from PR #343 which only handled
+  // already-accepted members)
+  // ---------------------------------------------------------------------
+
+  it("renders a Verify button on each pending invitation row (admin)", async () => {
+    mockListInvitations.mockResolvedValue([PENDING_INVITATION]);
+    renderTab();
+    // Disambiguate from the Members-table Verify button (UNVERIFIED_MEMBER's row
+    // also has one). The pending-invitation Verify lives in the same DOM but
+    // adjacent to Resend/Revoke; checking we have two Verify buttons total
+    // confirms both surfaces are wired.
+    await screen.findByText("invitee@example.com");
+    const verifyButtons = screen.getAllByRole("button", { name: /^Verify$/i });
+    expect(verifyButtons.length).toBe(2);
+    // Resend + Revoke must still be present.
+    expect(screen.getByRole("button", { name: /resend/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /revoke/i })).toBeInTheDocument();
+  });
+
+  it("calls orgsApi.verifyInvitee(orgId, invId) when Verify is clicked on a pending invitation", async () => {
+    const user = userEvent.setup();
+    // Hide the Members-table Verify button by making everyone verified —
+    // leaves only the pending-invitation Verify on screen.
+    mockListMembers.mockResolvedValue([VERIFIED_ADMIN]);
+    mockListInvitations.mockResolvedValue([PENDING_INVITATION]);
+    renderTab();
+    await screen.findByText("invitee@example.com");
+    const verifyBtn = screen.getByRole("button", { name: /^Verify$/i });
+    await user.click(verifyBtn);
+    await waitFor(() => {
+      expect(mockVerifyInvitee).toHaveBeenCalledWith("org-1", "inv-1");
+    });
+    // Refresh re-fetches both members and invitations.
+    await waitFor(() => {
+      expect(mockListMembers).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("renders a clear 'must sign up first' message on 422 no_account_for_email", async () => {
+    const user = userEvent.setup();
+    mockListMembers.mockResolvedValue([VERIFIED_ADMIN]);
+    mockListInvitations.mockResolvedValue([PENDING_INVITATION]);
+    mockVerifyInvitee.mockRejectedValue(
+      new ApiClientError(422, { error: "no_account_for_email" }),
+    );
+    renderTab();
+    const verifyBtn = await screen.findByRole("button", { name: /^Verify$/i });
+    await user.click(verifyBtn);
+    // The user-visible message must be the friendly explanation, not the
+    // raw 'no_account_for_email' code — the frontend's job is to translate
+    // machine codes into human guidance.
+    await waitFor(() => {
+      expect(
+        screen.getByText(/no account exists for this email yet/i),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(/the invitee must sign up before/i),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("falls through to a generic error message on non-422 failures", async () => {
+    const user = userEvent.setup();
+    mockListMembers.mockResolvedValue([VERIFIED_ADMIN]);
+    mockListInvitations.mockResolvedValue([PENDING_INVITATION]);
+    mockVerifyInvitee.mockRejectedValue(new Error("DB unreachable"));
+    renderTab();
+    const verifyBtn = await screen.findByRole("button", { name: /^Verify$/i });
+    await user.click(verifyBtn);
+    await waitFor(() => {
+      expect(screen.getByText(/db unreachable/i)).toBeInTheDocument();
+    });
+  });
+
+  it("hides the pending-invitation Verify button for non-admins", async () => {
+    mockListInvitations.mockResolvedValue([PENDING_INVITATION]);
+    renderTab(false);
+    // Non-admin: the Pending Invitations section is not rendered at all,
+    // so the invitee email must not appear.
+    await waitFor(() => {
+      expect(screen.queryByText("invitee@example.com")).toBeNull();
     });
   });
 });

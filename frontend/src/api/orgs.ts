@@ -133,6 +133,22 @@ export const orgsApi = {
     api.delete<void>(`/orgs/${id}/invitations/${invId}`),
   resendInvitation: (id: string, invId: string) =>
     api.post<OrgInvitation>(`/orgs/${id}/invitations/${invId}/resend`),
+  /**
+   * Force-verify the user account associated with a pending invitation.
+   * Org-admin only. Idempotent. Used when the invitee already has an
+   * existing platform account but never completed email verification —
+   * the admin override sets users.email_verified=true so the invitee
+   * can log in. The invitation itself stays pending; the user must
+   * still click the invitation link to accept and join the org.
+   *
+   * On 422 with body `{"error":"no_account_for_email"}`, the invitee
+   * has no users row yet and must sign up before this action can be
+   * used. The frontend renders a clear message in that case.
+   */
+  verifyInvitee: (id: string, invId: string) =>
+    api.post<{ message: string }>(
+      `/orgs/${id}/invitations/${invId}/verify-user`,
+    ),
 
   getInvitationByToken: (token: string) =>
     api.get<InvitationDetail>(`/invitations/${token}`),

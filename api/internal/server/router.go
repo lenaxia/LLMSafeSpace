@@ -1174,6 +1174,13 @@ func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *hand
 		orgAdminGroup.POST("/invitations", invH.Create)
 		orgAdminGroup.DELETE("/invitations/:invID", invH.Delete)
 		orgAdminGroup.POST("/invitations/:invID/resend", invH.Resend)
+		// Force-verify the user account associated with a pending
+		// invitation (epic-43 follow-up — the invitee already has an
+		// unverified users row; this admin override sets
+		// users.email_verified=true so they can log in. The invitation
+		// itself stays pending — the user must still click the link
+		// to accept and join the org).
+		orgAdminGroup.POST("/invitations/:invID/verify-user", invH.VerifyUserForInvitation)
 	}
 
 	if credH != nil {
