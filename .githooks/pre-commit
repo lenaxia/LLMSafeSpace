@@ -5,10 +5,10 @@
 # production incidents or that lint can mechanically flag:
 #
 #   - duplicate / non-sequential migration version numbers (repolint)
-#   - duplicate worklog numbers (>= 0097) (repolint)
-#       • mainline collisions and post-rebase dups are AUTO-FIXED in
-#         this hook (run_repolint_gate) and in .githooks/post-rewrite;
-#         see pkg/repolint/sequence.go FixWorklogs.
+#   - new worklog files must use the NNNN_ sentinel prefix (repolint);
+#     the post-merge bot assigns the final number at merge time.
+#       • Mainline collisions and duplicate numbers are no longer possible
+#         at authoring time — authors never pick a number.
 #   - drift between api/migrations/ and charts/llmsafespaces/migrations/ (repolint)
 #   - drift between Go CRD struct fields and chart CRD schema (repolint)
 #   - un-gofmt'd Go source                              (fmt-check)
@@ -99,56 +99,19 @@ EOF
     fi
 }
 
-# run_repolint_gate: the repolint gate with a one-shot worklog auto-fix
-# retry. This is the safety net for the "I forgot to rebase before
-# committing" case — .githooks/post-rewrite handles the common
-# post-rebase case proactively, but a commit made on a stale branch with
-# a worklog number that mainline has since claimed would still trip the
-# gate. Auto-fixing it here turns that failure into a silent success.
-#
-# repolint runs ALL layout checks (migrations, worklogs, chart drift,
-# CRD drift). When it fails specifically on worklog numbering — local
-# duplicates or mainline collisions — the fix is mechanical and
-# deterministic: bump the local-only file to the next free number,
-# keeping any file that's on origin/main as the incumbent. So we apply
-# the fix, re-stage worklogs/, and retry the check. If the retry passes,
-# the commit proceeds.
+# run_repolint_gate: the repolint gate. Runs all layout checks (migrations,
+# worklog sentinels, chart drift, CRD drift). Worklog numbering is now
+# handled by the NNNN_ sentinel convention (see run_worklog_prefix_gate),
+# so there is no longer a worklog auto-fix retry in this hook — collisions
+# are structurally impossible because authors never pick numbers.
 #
 # Other failures (migrations, CRD drift, chart drift, gitleaks) require
-# human judgement and are NEVER auto-fixed here — they fall through to
-# the standard failure path with the remediation hint.
+# human judgement and are NEVER auto-fixed here.
 run_repolint_gate() {
     local hint="$1"
     echo "== pre-commit: repolint =="
-    local out
-    if out=$(make -s repolint 2>&1); then
-        return 0
-    fi
-
-    # Auto-fix only when the failure is worklog numbering. Match the
-    # exact "FAIL  worklogs …" prefixes that cmd/repolint emits.
-    if echo "$out" | grep -qE 'FAIL  worklogs (sequence|collide)' && [ -x bin/repolint ]; then
-        local fix_out
-        fix_out=$(./bin/repolint -fix-worklogs-only 2>&1 || true)
-        if echo "$fix_out" | grep -q '^fix-worklogs: renamed '; then
-            echo "== pre-commit: worklog collision auto-fix ==" >&2
-            echo "$fix_out" | grep '^fix-worklogs: renamed ' >&2
-            git add worklogs/ 2>/dev/null || true
-            echo "== pre-commit: re-staged worklogs/; retrying repolint ==" >&2
-            local retry
-            if retry=$(make -s repolint 2>&1); then
-                echo "== pre-commit: repolint passed after worklog auto-fix ==" >&2
-                return 0
-            fi
-            # Retry failed — surface the NEW failure state (the worklog
-            # issue is resolved but something else may remain).
-            out="$retry"
-        fi
-    fi
-
-    cat >&2 <<EOF
-
-${out}
+    if ! make -s repolint 2>&1; then
+        cat >&2 <<EOF
 
 Pre-commit blocked: repolint failed (see above).
 
@@ -160,15 +123,58 @@ Manual fix:
 
 To bypass in an emergency: git commit --no-verify
 EOF
-    exit 1
+        exit 1
+    fi
+}
+
+# run_worklog_prefix_gate: enforce the NNNN_ sentinel convention for NEW
+# worklog files. Authors write NNNN_<date>_<slug>.md; the post-merge bot
+# assigns the real number at merge time. This catches two failure modes:
+#   1. Author picks their own number (0543_foo.md) — would race with
+#      concurrent PRs, the exact problem the sentinel scheme solves.
+#   2. Author omits the prefix entirely (org-admin-verify.md) — file would
+#      not be numbered by the bot and would fail the sentinel check on main.
+#
+# Only ADDED files are checked (diff-filter=A). Modified existing worklogs
+# (e.g. typo fix on 0474_foo.md) pass through untouched — the convention
+# applies to new files only.
+run_worklog_prefix_gate() {
+    local bad=0
+    while IFS= read -r f; do
+        local base
+        base=$(basename "$f")
+        if [[ ! "$base" =~ ^NNNN_[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9._-]+\.md$ ]]; then
+            if [ "$bad" -eq 0 ]; then
+                echo "== pre-commit: worklog sentinel check ==" >&2
+            fi
+            echo "  FAIL: new worklog '$base' must use the NNNN_ sentinel prefix." >&2
+            echo "         expected: NNNN_YYYY-MM-DD_short-description.md" >&2
+            echo "         The post-merge bot assigns the final number at merge." >&2
+            echo "         fix: git mv '$f' 'worklogs/NNNN_$(date +%F)_slug.md'" >&2
+            bad=1
+        fi
+    done < <(git diff --cached --name-only --diff-filter=A -- 'worklogs/')
+    if [ "$bad" -ne 0 ]; then
+        cat >&2 <<EOF
+
+Pre-commit blocked: new worklog(s) must use the NNNN_ sentinel prefix.
+
+The NNNN_ prefix is a placeholder. The post-merge bot replaces it with
+the next free sequential number when your PR merges, so authors never
+need to pick or check numbers.
+
+To bypass in an emergency: git commit --no-verify
+EOF
+        exit 1
+    fi
+    echo "== pre-commit: worklog sentinel check (skipped — no new worklogs) =="
 }
 
 # Cheap, always-on gates first, fail fast.
+run_worklog_prefix_gate
 run_repolint_gate \
     "duplicate migration: rename to next 6-digit number (ls api/migrations/).
   chart migrations drift: run 'make chart-sync-migrations' and stage the result.
-  duplicate worklog: pick the next 4-digit number (ls worklogs/).
-  mainline worklog collision: renumber your worklog to avoid the version on origin/main.
   CRD drift: read the failure message; align chart CRD properties with Go
     JSON tags (see pkg/repolint/crd_drift.go and worklog 0119)."
 
