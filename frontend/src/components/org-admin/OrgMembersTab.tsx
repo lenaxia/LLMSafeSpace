@@ -75,6 +75,7 @@ export function OrgMembersTab() {
               <th className="px-4 py-2 text-left font-medium">Name</th>
               <th className="px-4 py-2 text-left font-medium">Email</th>
               <th className="px-4 py-2 text-left font-medium">Role</th>
+              <th className="px-4 py-2 text-left font-medium">Email Status</th>
               <th className="px-4 py-2 text-left font-medium">Key Status</th>
               {isAdmin && <th className="px-4 py-2 text-right font-medium">Actions</th>}
             </tr>
@@ -88,6 +89,13 @@ export function OrgMembersTab() {
                   <Badge variant={m.role === "admin" ? "default" : "muted"}>
                     {m.role}
                   </Badge>
+                </td>
+                <td className="px-4 py-2">
+                  {m.emailVerified ? (
+                    <Badge variant="default">Verified</Badge>
+                  ) : (
+                    <Badge variant="warning">Pending</Badge>
+                  )}
                 </td>
                 <td className="px-4 py-2">
                   <span className="text-xs text-muted-foreground">Active</span>
@@ -192,6 +200,22 @@ function MemberActions({
 }) {
   return (
     <div className="flex justify-end gap-2">
+      {!member.emailVerified && (
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={async () => {
+            try {
+              await orgsApi.verifyMember(orgId, member.userId);
+              onChanged();
+            } catch {
+              /* handled by parent */
+            }
+          }}
+        >
+          Verify
+        </Button>
+      )}
       <Button
         size="sm"
         variant="ghost"

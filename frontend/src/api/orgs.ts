@@ -37,6 +37,12 @@ export interface OrgMember {
   username: string;
   email: string;
   role: "admin" | "member";
+  /**
+   * Mirrors users.email_verified from the backend. Surfaced so org admins can
+   * see which members have not completed the email-verification flow and use
+   * the "Verify" action to bypass it (see verifyMember).
+   */
+  emailVerified: boolean;
   createdAt: string;
 }
 
@@ -110,6 +116,14 @@ export const orgsApi = {
     api.delete<void>(`/orgs/${id}/members/${userId}`),
   changeMemberRole: (id: string, userId: string, role: "admin" | "member") =>
     api.put<{ message: string }>(`/orgs/${id}/members/${userId}`, { role }),
+  /**
+   * Force-verify a member's email, bypassing the email-validation flow.
+   * Org-admin only. Idempotent. Used by the "Verify" button in the org admin
+   * members table when an admin has confirmed the member's identity
+   * out-of-band.
+   */
+  verifyMember: (id: string, userId: string) =>
+    api.post<{ message: string }>(`/orgs/${id}/members/${userId}/verify`),
 
   listInvitations: (id: string) =>
     api.get<OrgInvitation[]>(`/orgs/${id}/invitations`),

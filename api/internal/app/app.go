@@ -386,6 +386,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 
 		pgOrgStore = database.NewPgOrgStore(dbSvc.DB)
 		orgsHandler = handlers.NewOrgsHandler(pgOrgStore, svc.GetAuth())
+		orgsHandler.SetLogger(log)
 		orgCredsHandler = handlers.NewOrgCredentialsHandler(pgStore, pgStore, deriveServerKey, svc.GetAuth())
 
 		// US-43.10: OIDC SSO. The service reuses the auth service as the JWT
