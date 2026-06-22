@@ -517,11 +517,12 @@ Each phase ends with `make test && make build && make lint` green and a worklog 
 **Acceptance criteria:**
 - Round-trip per owner type: Create with secret env → Get returns display fields, NOT the secret; a `GetForInjection` path returns decrypted env+headers (admin/org always; user only with a valid `sessionID`).
 - `SeedWorkspaceMCPServers` correctly resolves `target_type='all'` + `target_type='org'` + `target_type='user'` rules + explicit bindings.
+- **D11 enforcement at seed time:** when `orgID != ""`, `target_type='user'` rules are **skipped** — a user who joins an org after creating personal MCP servers must not have those servers injected into org workspaces (org admin owns the tool surface). One conditional at seed time closes the gap that the CRUD-only gate leaves open.
 - User-scope Get without a session → error (cannot derive DEK), mirroring user-credential behaviour.
 - Delete cascades to bindings + auto-apply.
 - All store tests pass with `go-sqlmock` (DB) and `-race`.
 
-**Tests (TDD):** table-driven CRUD for each owner type; cross-org isolation; cross-user isolation (user A cannot Get user B's server); user-scope-without-session error; seeding precedence (explicit + auto all three scopes bind, no dedup conflict); backfill idempotency; concurrent seed + delete.
+**Tests (TDD):** table-driven CRUD for each owner type; cross-org isolation; cross-user isolation (user A cannot Get user B's server); user-scope-without-session error; seeding precedence (explicit + auto all three scopes bind, no dedup conflict); **D11 seed-time skip: user-scope rule exists but orgID is non-empty → not seeded**; backfill idempotency; concurrent seed + delete.
 
 ### US-53.4: Admin (platform) CRUD handler + routes + validation
 
@@ -596,7 +597,7 @@ POST   /api/v1/me/mcp-servers/:id/auto-apply    (target_type hardcoded 'user', t
 ```
 
 **Files:**
-- `api/internal/handlers/user_mcp_servers.go` (new) — `UserMCPServersHandler`. The `me` path resolves the caller's `userID` from auth context (no `:id` path param). Two gates run on every mutating route, in order:
+- `api/internal/handlers/user_mcp_servers.go` (new) — `UserMCPServersHandler`. The `me` path resolves the caller's `userID` from auth context (no `:id` path param). Two gates run on **all** routes (including GET/List — an org member or feature-disabled user should not discover personal MCP servers exist):
   1. **Org-disqualification (D11):** `orgStore.GetUserOrgID(ctx, userID)`; non-empty → `403` ("you are a member of an organization; ask your org admin to add MCP servers").
   2. **Feature-flag gate (D12):** `UserFeatureGuard` from US-53.11b; flag disabled for the caller's plan → `402` with `{feature, planId, reason}`.
 - User-scope crypto requires the session DEK: the handler threads the `sessionID` from auth context into the store calls (US-53.3 user path). Read-only List/Get do NOT require a session (display fields are plaintext); only the secret-bearing paths (Create/Update inject, Get-for-injection) need it.
