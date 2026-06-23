@@ -456,7 +456,7 @@ opencode merges config files via recursive deep-merge, last writer wins:
 
 `OPENCODE_CONFIG=/sandbox-runtime/agent-config.json` is set by `entrypoint-opencode.sh`. Therefore `agent-config.json` overrides all other config for any key it sets. opencode does **not** hot-reload this file — it is only read at process startup.
 
-**auth.json location** (validated): `XDG_DATA_HOME=/workspace/.local` is set before `exec workspace-agentd`, so agentd inherits it. `authJSONPath = /workspace/.local/opencode/auth.json` — on the PVC, persistent across pod restarts.
+**auth.json location** (validated): `XDG_DATA_HOME=/workspace/.local` is set before `exec workspace-agentd`, so agentd inherits it. `authJSONPath = /workspace/.local/opencode/auth.json` — US-35.7: this path is a symlink to `/sandbox-runtime/rt/auth.json` (tmpfs), created by the init container. Wiped on pod death; no plaintext on PVC at rest.
 
 ---
 

@@ -167,11 +167,11 @@ func (realFS) OpenForCreate(path string, flag int, perm os.FileMode) (io.WriteCl
 // constants; tests override.
 type Paths struct {
 	Home            string // user home (e.g. /home/sandbox)
-	SecretsBaseDir  string // secret-file root (e.g. /home/sandbox/.secrets)
-	SSHDir          string // SSH config directory (e.g. /home/sandbox/.ssh)
-	AgentConfigPath string // opencode config (e.g. /tmp/agent-config.json)
-	SecretsEnvPath  string // env-file (e.g. /tmp/secrets-env)
-	GitCredsPath    string // git-credentials file (e.g. /home/sandbox/.git-credentials)
+	SecretsBaseDir  string // secret-file root (/sandbox-runtime/rt/secrets)
+	SSHDir          string // SSH config directory (/sandbox-runtime/rt/ssh)
+	AgentConfigPath string // opencode config (/sandbox-runtime/agent-config.json)
+	SecretsEnvPath  string // env-file (/sandbox-runtime/secrets-env)
+	GitCredsPath    string // git-credentials file (/sandbox-runtime/rt/git-credentials)
 }
 
 // DefaultPaths returns production paths derived from the agentd package
