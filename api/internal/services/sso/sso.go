@@ -422,8 +422,9 @@ type SignedCookie struct {
 }
 
 // StartLogin begins the OIDC Authorization Code + PKCE flow for an org.
-// redirectURL is the absolute callback URL registered with the IdP; the handler
-// derives it from OIDC.RedirectBaseURL or the incoming request.
+// redirectURL is the absolute callback URL registered with the IdP. The handler
+// resolves it from OIDC.RedirectBaseURL and fails with ErrRedirectBaseURLNotSet
+// when that is unset (F11: the handler never derives it from the request).
 func (s *Service) StartLogin(ctx context.Context, orgSlug, redirectURL string) (*StartResult, error) {
 	if s.stateKey == nil {
 		return nil, errors.New("SSO state signing key not configured")
@@ -687,8 +688,9 @@ func (s *Service) decryptSecret(ctx context.Context, blob []byte) (string, error
 	return string(plain), nil
 }
 
-// RedirectBaseURL returns the configured absolute base for SSO callback URLs
-// (empty when unset — the handler then derives it from the request).
+// RedirectBaseURL returns the configured absolute base for SSO callback URLs.
+// When empty, the handler refuses to build a callback URL and returns
+// ErrRedirectBaseURLNotSet rather than deriving one from the request (F11).
 func (s *Service) RedirectBaseURL() string { return s.redirectBase }
 
 // --- HMAC-signed state cookie ---
