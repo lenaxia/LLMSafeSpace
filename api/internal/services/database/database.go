@@ -337,7 +337,7 @@ func (s *Service) ListAllUsers(ctx context.Context, limit, offset int, statusFil
 	listArgs = append(listArgs, limit, offset)
 	query := fmt.Sprintf( //nolint:gosec // G201: $N placeholder indexes only, no string interpolation of user input
 		`SELECT u.id, u.email, u.role, u.status, u.created_at,
-		        COALESCE(m.org_id, ''), COALESCE(o.name, '')
+		        COALESCE(m.org_id::text, ''), COALESCE(o.name, '')
 		 FROM users u
 		 LEFT JOIN org_memberships m ON m.user_id = u.id
 		 LEFT JOIN organizations o ON o.id = m.org_id AND o.deleted_at IS NULL%s
