@@ -126,4 +126,4 @@ None.
 - `frontend/src/pages/ChatPage.input.test.tsx` — real provider.
 - `frontend/src/pages/ChatPage.reconnect.test.tsx` — stateful prompt-store mock.
 - 11 other `ChatPage.*.test.tsx` / layout test mocks — added new-hook stubs.
-- `worklogs/NNNN_2026-06-23_fix-pending-prompts-lost-on-navigation.md` — this file.
+- `worklogs/0533_2026-06-23_fix-pending-prompts-lost-on-navigation.md` — this file.
