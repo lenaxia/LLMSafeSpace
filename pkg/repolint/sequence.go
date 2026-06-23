@@ -43,9 +43,16 @@ import (
 // `api/migrations/000001_initial_schema.up.sql` style.
 var MigrationPattern = regexp.MustCompile(`^(\d{6})_([a-z0-9_]+)\.(up|down)\.sql$`)
 
-// WorklogPattern matches `NNNN_YYYY-MM-DD_<slug>.md`. Captures:
+// WorklogPattern matches `NNNN_YYYY-MM-DD_<slug>.md` (numbered worklog,
+// the final form after the post-merge bot assigns a number). Captures:
 // 1=version, 2=date, 3=slug.
 var WorklogPattern = regexp.MustCompile(`^(\d{4})_(\d{4}-\d{2}-\d{2})_([a-z0-9._-]+)\.md$`)
+
+// WorklogSentinelPattern matches `NNNN_YYYY-MM-DD_<slug>.md` — the sentinel
+// form authors write before the post-merge bot assigns a real number. The
+// literal `NNNN` is a placeholder meaning "assign me a number at merge."
+// Captures: 1=date, 2=slug.
+var WorklogSentinelPattern = regexp.MustCompile(`^NNNN_(\d{4}-\d{2}-\d{2})_([a-z0-9._-]+)\.md$`)
 
 // ---------------------------------------------------------------------------
 // SequenceCheck — duplicate / gap / unpaired detection in a versioned dir
@@ -437,7 +444,13 @@ type WorklogRename struct {
 }
 
 // FixWorklogs resolves duplicate worklog numbers in dir by renaming the
-// conflicting file(s) to the next available number.
+// conflicting file(s) to the next available number, AND assigns real
+// numbers to all `NNNN_` sentinel files (the placeholder form authors
+// write before the post-merge bot runs).
+//
+// Sentinel pass runs first: each `NNNN_<date>_<slug>.md` is renamed to
+// `<next-number>_<date>_<slug>.md`. Sentinels are processed in lexical
+// order so same-branch batches get contiguous numbers in a stable order.
 //
 // When origin/main is reachable, files that exist there are treated as
 // incumbents — they stay; files unique to this working copy are renumbered.
@@ -452,14 +465,15 @@ type WorklogRename struct {
 // each duplicated version is treated as the newcomer — the original
 // pre-mainline-aware behavior.
 //
-// The function iterates until no duplicates or mainline collisions remain,
-// handling the pathological case where multiple files all collide on the
-// same number. It returns the list of renames performed (empty if nothing
-// was needed).
+// The function iterates until no sentinels, duplicates, or mainline
+// collisions remain, handling the pathological case where multiple files
+// all collide on the same number. It returns the list of renames
+// performed (empty if nothing was needed).
 //
-// Only files matching WorklogPattern are considered; other files in dir
-// are ignored. Versions below the grandfather threshold (97) are never
-// touched — historical duplicates stay grandfathered.
+// Only files matching WorklogPattern or WorklogSentinelPattern are
+// considered; other files in dir are ignored. Versions below the
+// grandfather threshold (97) are never touched — historical duplicates
+// stay grandfathered.
 //
 // After renaming, any occurrence of the old basename inside the file's
 // own content is replaced with the new basename, so self-referential
@@ -489,6 +503,17 @@ func fixWorklogs(dir string, remoteByVersion map[int][]string) ([]WorklogRename,
 			remoteSet[f] = true
 		}
 	}
+
+	// Sentinel pass: assign real numbers to all NNNN_ files first, in
+	// lexical order, so duplicate-resolution runs against an
+	// already-numbered tree. Sentinels never appear on origin/main
+	// (the post-merge bot rewrites them on every merge), so every
+	// sentinel is a newcomer by definition.
+	sentinelRenames, err := assignSentinels(dir, remoteByVersion)
+	if err != nil {
+		return renames, err
+	}
+	renames = append(renames, sentinelRenames...)
 
 	for {
 		entries, err := os.ReadDir(dir)
@@ -588,6 +613,7 @@ func fixWorklogs(dir string, remoteByVersion map[int][]string) ([]WorklogRename,
 			// re-scans the directory each iteration, so this is only
 			// relevant within a single dupVers sweep.)
 			maxVer = nextNum
+			localVersions[nextNum] = true
 
 			if err := os.Rename(
 				filepath.Join(dir, newcomer),
@@ -606,6 +632,92 @@ func fixWorklogs(dir string, remoteByVersion map[int][]string) ([]WorklogRename,
 
 			renames = append(renames, WorklogRename{From: newcomer, To: newName})
 		}
+	}
+	return renames, nil
+}
+
+// assignSentinels renames every NNNN_ sentinel file in dir to the next
+// free number, processing in lexical order so a batch of sentinels in
+// one branch gets contiguous numbers in a stable order. remoteByVersion
+// supplies the mainline-known versions so assigned numbers do not collide
+// with origin/main.
+func assignSentinels(dir string, remoteByVersion map[int][]string) ([]WorklogRename, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", dir, err)
+	}
+
+	// Single pass: collect sentinels AND seed the occupied-version set
+	// from local numbered worklogs. No second ReadDir needed — the
+	// directory hasn't been mutated yet.
+	occupied := map[int]bool{}
+	maxVer := 0
+	var sentinels []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if WorklogSentinelPattern.MatchString(e.Name()) {
+			sentinels = append(sentinels, e.Name())
+			continue
+		}
+		// Check if it's a numbered worklog to seed the occupied set.
+		if m := WorklogPattern.FindStringSubmatch(e.Name()); m != nil {
+			if v, err := strconv.Atoi(m[1]); err == nil {
+				occupied[v] = true
+				if v > maxVer {
+					maxVer = v
+				}
+			}
+		}
+	}
+	// Seed from remote (origin/main) versions too.
+	for v := range remoteByVersion {
+		occupied[v] = true
+		if v > maxVer {
+			maxVer = v
+		}
+	}
+	if len(sentinels) == 0 {
+		return nil, nil
+	}
+	sort.Strings(sentinels)
+
+	var renames []WorklogRename
+	for _, s := range sentinels {
+		m := WorklogSentinelPattern.FindStringSubmatch(s)
+		if m == nil {
+			continue
+		}
+		datePart, slugPart := m[1], m[2]
+
+		nextNum := maxVer
+		for {
+			nextNum++
+			if !occupied[nextNum] {
+				break
+			}
+		}
+		newName := fmt.Sprintf("%04d_%s_%s.md", nextNum, datePart, slugPart)
+		occupied[nextNum] = true
+		maxVer = nextNum
+
+		if err := os.Rename(
+			filepath.Join(dir, s),
+			filepath.Join(dir, newName),
+		); err != nil {
+			return renames, fmt.Errorf("rename sentinel %s → %s: %w", s, newName, err)
+		}
+
+		newPath := filepath.Join(dir, newName)
+		if data, err := os.ReadFile(newPath); err == nil {
+			updated := strings.ReplaceAll(string(data), s, newName)
+			if updated != string(data) {
+				_ = os.WriteFile(newPath, []byte(updated), 0o644) //nolint:gosec // markdown docs are not sensitive; 0644 is intentional
+			}
+		}
+
+		renames = append(renames, WorklogRename{From: s, To: newName})
 	}
 	return renames, nil
 }
@@ -634,6 +746,59 @@ func pickWorklogNewcomer(locals, sortedEffective []string, incumbents map[string
 		}
 	}
 	return locals[len(locals)-1]
+}
+
+// ---------------------------------------------------------------------------
+// SentinelCheck — detect NNNN_ placeholder files that still need numbering
+// ---------------------------------------------------------------------------
+
+// SentinelReport lists NNNN_ sentinel worklog files found in the dir.
+// On a healthy main, this is empty — the post-merge bot rewrites every
+// NNNN_ file to a real number immediately after merge. A non-empty
+// report on main means the bot is broken or hasn't run yet.
+type SentinelReport struct {
+	// Sentinels lists the basenames of NNNN_ files found, sorted lexically.
+	Sentinels []string
+}
+
+// OK reports whether no sentinel files were found.
+func (r SentinelReport) OK() bool {
+	return len(r.Sentinels) == 0
+}
+
+// String returns a human-readable description.
+func (r SentinelReport) String() string {
+	if r.OK() {
+		return "(ok)"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "  %d NNNN_ sentinel file(s) still unnumbered:\n", len(r.Sentinels))
+	for _, f := range r.Sentinels {
+		fmt.Fprintf(&b, "    - %s\n", f)
+	}
+	return b.String()
+}
+
+// SentinelCheck scans dir for NNNN_ placeholder worklog files. Used as a
+// non-gating warning on main (a persistent NNNN_ on main means the
+// post-merge bot is broken) and as a gating check in pre-commit (authors
+// must use the NNNN_ sentinel for new worklogs, not pick their own number).
+func SentinelCheck(dir string) (SentinelReport, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return SentinelReport{}, fmt.Errorf("read dir %s: %w", dir, err)
+	}
+	var sentinels []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if WorklogSentinelPattern.MatchString(e.Name()) {
+			sentinels = append(sentinels, e.Name())
+		}
+	}
+	sort.Strings(sentinels)
+	return SentinelReport{Sentinels: sentinels}, nil
 }
 
 // nextFreeWorklogNumber returns the smallest int strictly greater than

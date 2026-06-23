@@ -73,4 +73,9 @@ type CredentialStore interface {
 // AdminKeyDeriver derives a server-side encryption key for admin credentials.
 // The label parameter scopes the derived key (e.g. "provider-credentials").
 // Returns nil when LLMSAFESPACES_MASTER_SECRET is not set.
+//
+// Deprecated: US-50.2 unifies admin/org credential crypto under RootKeyProvider.
+// New code must not use this type; it is retained for one release so callers
+// can fall back to the legacy path if a production issue surfaces. Removed in a
+// follow-up release. See design/stories/epic-50-master-kek-hardening/README.md.
 type AdminKeyDeriver func(label string) []byte

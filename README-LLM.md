@@ -2,8 +2,8 @@
 
 > **Repository:** `github.com/lenaxia/llmsafespaces`
 
-**Version:** 1.18
-**Last Updated:** 2026-06-20
+**Version:** 1.19
+**Last Updated:** 2026-06-22
 **Project Status:** Active Development
 
 ---
@@ -15,15 +15,16 @@
 3. [Repository Structure](#repository-structure)
 4. [Architecture Overview](#architecture-overview)
 5. [Relay Config Subsystem](#relay-config-subsystem)
-6. [Storage Settings](#storage-settings)
-7. [Technology Stack](#technology-stack)
-8. [Worklog Requirements](#worklog-requirements)
-9. [Development Workflow](#development-workflow)
-10. [Multi-Agent Workflow](#multi-agent-workflow)
-11. [PR Review Guide](#pr-review-guide)
-12. [Common Commands](#common-commands)
-13. [Testing Requirements](#testing-requirements)
-14. [Multi-Tenant OIDC SSO](#multi-tenant-oidc-sso)
+6. [Inference Relay Fleet](#inference-relay-fleet)
+7. [Storage Settings](#storage-settings)
+8. [Technology Stack](#technology-stack)
+9. [Worklog Requirements](#worklog-requirements)
+10. [Development Workflow](#development-workflow)
+11. [Multi-Agent Workflow](#multi-agent-workflow)
+12. [PR Review Guide](#pr-review-guide)
+13. [Common Commands](#common-commands)
+14. [Testing Requirements](#testing-requirements)
+15. [Multi-Tenant OIDC SSO](#multi-tenant-oidc-sso)
 
 ---
 
@@ -43,8 +44,10 @@
 **Three deliverables:**
 
 1. `api` — Go API service (Gin) + MCP server — reverse proxy to workspace agents, workspace/credential/secret management, session tracking, event streaming
-2. `controller` — Kubernetes operator (controller-runtime) — manages Workspace CRD (pod lifecycle, PVC, credentials, health monitoring via agentd sidecar), validating webhooks for Workspace and RuntimeEnvironment
+2. `controller` — Kubernetes operator (controller-runtime) — manages Workspace CRD (pod lifecycle, PVC, credentials, health monitoring via agentd sidecar), validating webhooks for Workspace and RuntimeEnvironment, optional InferenceRelay reconciler (multi-cloud relay fleet, Epic 42)
 3. `runtimes` — Container images (Python, Node.js, Go) — hardened environments with `opencode serve`, `redact` binary, credential injection
+
+**Optional deployable binaries** (feature-gated, only when the self-hosted relay fleet is enabled): `cmd/relay-router` (in-cluster traffic distributor) and `cmd/relay-proxy` (token-gated reverse proxy run on each relay VM). See [Inference Relay Fleet](#inference-relay-fleet).
 
 **Authoritative design document:**
 
@@ -181,6 +184,9 @@ Key documents by area:
 | **V2 Architecture** | `design/0021_2026-05-21_evolution-v2.md` (authoritative) |
 | V2 Implementation stories | `design/stories/` |
 | Security model | `design/0027_2026-05-24_security-policy-v21.md`, `design/0021 §9` |
+| Inference relay fleet | `design/stories/epic-42-multi-cloud-inference-relay/README.md` |
+| Master KEK hardening | `design/stories/epic-50-master-kek-hardening/README.md` |
+| Tenant isolation (gVisor + quotas) | `design/stories/epic-51-tenant-isolation/README.md` |
 | System overview (V1) | `design/archive/v1/0001_2025-03-05_architecture.md` |
 | Controller + CRDs (V1) | `design/archive/v1/0003_2025-03-05_controller.md` |
 | Runtime environments (V1) | `design/archive/v1/0007_2025-03-05_runtimeenv.md` |
@@ -248,16 +254,16 @@ See also the [Adversarial Assessment](#adversarial-assessment) section in the PR
 
 ```
 llmsafespaces/
-├── cmd/           # Top-level binaries (api, mcp, redact, repolint, seal-key, workspace-agentd)
+├── cmd/           # Top-level binaries (api, mcp, redact, repolint, seal-key, workspace-agentd, relay-router, relay-proxy)
 ├── api/           # Go API service (Gin) + MCP server — reverse proxy, workspace/credential/secret management
-├── controller/    # Kubernetes operator (controller-runtime) — Workspace reconciler, validating webhooks
+├── controller/    # Kubernetes operator (controller-runtime) — Workspace reconciler, InferenceRelay reconciler, validating webhooks
 ├── runtimes/      # Container images (Python, Node.js, Go) with opencode serve, redact binary
 ├── pkg/           # Shared packages imported by api/ and controller/ (see CRD type ownership below)
 ├── mocks/         # Shared test mocks
 ├── sdks/          # Client SDKs (Go, TypeScript, Python, Java, VS Code extension) from OpenAPI spec
-├── workers/       # Cloudflare Workers (inference-relay)
+├── workers/       # Cloudflare Workers (inference-relay — the simpler relay alternative to the self-hosted fleet)
 ├── frontend/      # React 19 + TypeScript + Vite SPA
-├── charts/        # Helm chart (25 templates, 662-line values.yaml)
+├── charts/        # Helm chart (API, controller, frontend, CRDs, RBAC, webhooks, optional relay-router)
 ├── design/        # Design documents — 0021_evolution-v2.md is authoritative for V2
 ├── hack/          # Build and code generation scripts
 ├── local/         # kind bootstrap/test/teardown scripts
@@ -332,14 +338,15 @@ llmsafespaces/
 
 ### Custom Resource Definitions
 
-The controller manages 2 CRDs in the `llmsafespaces.dev/v1` API group:
+The controller manages 3 CRDs in the `llmsafespaces.dev/v1` API group:
 
 | CRD | Kind | Scope | Short | Purpose |
 |-----|------|-------|-------|---------|
 | `workspace.yaml` | `Workspace` | Namespaced | `ws` | PVC-backed persistent environment + pod running `opencode serve` |
 | `runtimeenvironment.yaml` | `RuntimeEnvironment` | Cluster | `rte` | Defines a runtime image (Python, Node.js, Go) |
+| `inferencerelay.yaml` | `InferenceRelay` | Cluster | `irelay` | Managed fleet of relay VMs (AWS/OCI/GCP) proxying free-tier inference — feature-gated (`controller.inferenceRelay.enabled`), requires `rbac.scope=cluster` |
 
-V1 CRDs (Sandbox, SandboxProfile, WarmPool, WarmPod) have been removed. The Workspace CRD absorbs all sandbox and profile functionality.
+V1 CRDs (Sandbox, SandboxProfile, WarmPool, WarmPod) have been removed. The Workspace CRD absorbs all sandbox and profile functionality. `InferenceRelay` is the only CRD beyond the core Workspace/RuntimeEnvironment pair and is opt-in.
 
 ### CRD type ownership
 
@@ -391,6 +398,26 @@ Metrics → Database → Cache → Auth → Workspace → SessionIndex → Secre
 ```
 
 Shutdown reverses this order.
+
+### Master KEK (server root key)
+
+The master KEK is the root of trust for at-rest encryption: it wraps API-key DEKs, org SSO client secrets, and (via the `AdminKeyDeriver` callback) every admin/org LLM provider credential. Two crypto layers consume it today (Layer 1 `RootKeyProvider` for `api_keys` + `org_sso_configs`; Layer 2 `AdminKeyDeriver` for `provider_credentials`); Epic 50 US-50.2 will unify them under `RootKeyProvider`.
+
+**Delivery (US-50.1, shipped):** projected as a read-only file mount at `/etc/llmsafespaces/master-secret` (Helm `masterSecret.deliveryMethod=file`, the default), read via `LLMSAFESPACES_MASTER_SECRET_FILE`. This eliminates `/proc/1/environ` exposure — the previous env-var delivery (`LLMSAFESPACES_MASTER_SECRET`) remains as a deprecated opt-in (`deliveryMethod=env`) for non-Helm deploys. Multi-file colon-separated paths support the future US-50.4 rotation window (active = last ≥32-byte file). See `design/stories/epic-50-master-kek-hardening/README.md`.
+
+### Tenant isolation
+
+Multi-tenant isolation rests on layered controls in a **shared namespace** (no per-tenant namespaces — they don't stop container escape and don't scale to 1,000+ tenants):
+
+| Control | Status | Mechanism |
+|---------|--------|-----------|
+| Network isolation | Shipped | Chart-level default-deny ingress + RFC1918/CGNAT-filtered egress NetworkPolicies |
+| Secret scoping | Shipped | `rbac.scope=namespace` default; namespace-scoped Secrets Role |
+| Tenant identity | Shipped | `WorkspaceOwner{UserID, OrgID}` on the CRD; `llmsafespaces.dev/tenant` pod label |
+| Container-runtime isolation | Opt-in (Epic 51 S51.1) | gVisor (`runsc`) RuntimeClass — the primary control against kernel-exploitation container escape; `--default-runtime-class=gvisor` + `gvisor.defaultRuntimeClass`; per-workspace opt-out via `spec.runtimeClass: "runc"` |
+| Per-tenant resource quotas | Opt-in (Epic 51 S51.2) | `PodTenantQuotaValidator` admission webhook keyed on the tenant label — caps max-workspaces / max-cpu-millis / max-memory-mi per tenant; disabled when all limits are 0; fails open on transient errors |
+
+Org-specific quota overrides and billing-tier→quota mapping are deferred to Epic 43. See `design/stories/epic-51-tenant-isolation/README.md`.
 
 ---
 
@@ -528,6 +555,54 @@ History supports keeping it: the guard was specifically *narrowed* (not added) i
 
 ---
 
+## Inference Relay Fleet
+
+### Overview
+
+The **inference relay fleet** (Epic 42) is the self-hosted alternative to the Cloudflare Worker relay (`workers/inference-relay/`, Epic 26). Both serve the same purpose — proxying free-tier opencode Zen model inference so workspace pods never hold the upstream secret — and are selected by the configured relay URL. The fleet exists because the CF Worker is rate-limited and single-provider; the fleet runs relay VMs across multiple clouds for IP diversity and rotation on 429.
+
+> **Not to be confused with the [Relay Config Subsystem](#relay-config-subsystem).** That section describes how `agent-config.json` is built *inside* the workspace pod. This section describes the *external* fleet of VMs the pod's relay injector may point at.
+
+### Components
+
+| Component | Location | Role |
+|-----------|----------|------|
+| `InferenceRelay` CRD | `pkg/apis/llmsafespaces/v1/inferencerelay_types.go` | Desired fleet state: providers (AWS/OCI/GCP), health-check, 429-rotation, fallback config. Cluster-scoped (`irelay`). |
+| Relay reconciler | `controller/internal/relay/` | Provisions VMs via cloud-init, health-checks them, destroys + reprovisions on 429 storms or sustained unhealthiness. AWS (`aws_driver.go`), OCI (`oci_driver.go`) drivers; GCP via the provider enum. |
+| relay-router | `cmd/relay-router/` | In-cluster Deployment (1 replica). Distributes workspace traffic across healthy relay VMs (weighted: AWS primary, OCI secondary, GCP tertiary), detects 429 storms, and falls back to direct upstream when all VMs are down. Reads the `relay-router-peers` ConfigMap written by the controller. |
+| relay-proxy | `cmd/relay-proxy/` | Reverse proxy run *on each relay VM*. Distributed via cloud-init (SHA-256 verified) from `controller.inferenceRelay.artifact.urls`. Token-gated (`X-Relay-Token` header). |
+| Admin API | `api/internal/handlers/relay_admin.go` | Setup wizard + status dashboard (`/api/v1/admin/relay/*`); creates the `InferenceRelay` CR and stores provider credentials as Secrets. |
+
+### Auth model (WireGuard removed)
+
+The router↔relay path was originally a WireGuard mesh. **Removed in worklog 0447** and replaced with plaintext HTTP + **per-VM shared-secret tokens** (`X-Relay-Token`, `crypto/subtle.ConstantTimeCompare`):
+
+- Per-VM (not fleet-wide) tokens preserve WG's tight blast radius — a compromised VM's token cannot be used against sibling relays. Stored in the `relay-vm-tokens` Secret keyed by provider slot; rotation = destroy + reprovision.
+- `/healthz` and `/metrics` on relay-proxy are token-exempt (the router probes health without the per-VM token).
+- Plaintext HTTP (not TLS) is an accepted trade-off: the exposure is identical to the shipped CF Worker relay (free-tier Zen access only). See the supersession banner in `design/stories/epic-42-multi-cloud-inference-relay/README.md`.
+
+### Feature gate and configuration
+
+Disabled by default. Enable via Helm:
+
+| Value | Purpose |
+|-------|---------|
+| `controller.inferenceRelay.enabled` | Feature gate. Requires `rbac.scope=cluster` (cluster-scoped CRD). |
+| `controller.inferenceRelay.routerURL` | Router `/metrics` scrape URL (controller → router, in-cluster). |
+| `controller.inferenceRelay.workspaceRouterURL` | URL workspace pods use to reach the router. Empty → derived cross-namespace FQDN. |
+| `controller.inferenceRelay.artifact.{urls,sha256Arm64,sha256Amd64}` | relay-proxy binary distribution (cloud-init downloads + verifies). |
+| `controller.inferenceRelay.upstreamURL` | Upstream the fleet proxies to (default `https://opencode.ai/zen/v1`). |
+| `controller.inferenceRelay.upstreamAuth.keySecret` | Optional real upstream key for router-side injection (paid gateway). |
+
+Controller flags mirror these: `--enable-inference-relay`, `--relay-router-url`, `--relay-artifact-url`, `--relay-artifact-sha256-{arm64,amd64}`. Build the VM binaries with `make relay-bin` (cross-compiles `deploy/relay-proxy-{arm64,amd64}`).
+
+### Operational notes
+
+- The router's `SelectRelay` is weighted: **AWS receives 100% of traffic when healthy (weight 1000)**; OCI (weight 100) receives traffic only when AWS is unavailable or draining; GCP (weight 1, optional) only when both AWS and OCI are unavailable. Fallback mode rate-limits direct upstream access (default 0.5 req/s, max 1 concurrent) to avoid worsening IP throttling. See `relayWeight` in `cmd/relay-router/fleet.go`.
+- Fleet validation is gated on a real cloud deploy (in-cluster testing requirements in worklog 0462; full validation run in worklogs 0464–0471). Unit + integration tests cover the state machine, peer polling, health, cloud-init rendering, and token round-trip.
+
+---
+
 ## Storage Settings
 
 ### Settings involved
@@ -622,18 +697,28 @@ If in doubt: **write the worklog**.
 NNNN_YYYY-MM-DD_short-description.md
 ```
 
-- `NNNN` is a zero-padded sequential number starting at `0001`
+- `NNNN` is a literal sentinel placeholder — **do not pick a number yourself**. The post-merge bot assigns the real sequential number when your PR merges and comments the assigned number on the merged PR.
 - Date is the actual date the work was done
 - Description is lowercase, hyphen-separated, 3–6 words
-- Next entry: check the highest existing number and increment by 1
+- The pre-commit hook blocks new worklogs that don't match the `NNNN_` prefix
 
 Examples:
 
 ```
-0001_2026-05-01_initial-project-setup.md
-0002_2026-05-02_api-service-foundation.md
-0003_2026-05-03_controller-tdd-sandbox.md
+NNNN_2026-05-01_initial-project-setup.md
+NNNN_2026-05-02_api-service-foundation.md
+NNNN_2026-05-03_controller-tdd-sandbox.md
 ```
+
+After merge, the bot renames them:
+
+```
+0545_2026-05-01_initial-project-setup.md
+0546_2026-05-02_api-service-foundation.md
+0547_2026-05-03_controller-tdd-sandbox.md
+```
+
+**Why sentinels:** picking numbers manually races under concurrent PRs (two branches both observe `max=543`, both pick `544`, merge collision). The sentinel scheme eliminates the race — the bot assigns numbers atomically at merge time, serialized by GitHub's sequential merge-commit ordering.
 
 ### Worklog format
 
@@ -1521,7 +1606,7 @@ The state-cookie signing key is `deriveServerKey("oidc-state-cookie")` (`api/int
 
 ## API Reference
 
-The complete REST API is documented in `README.md` under "REST API". The API has 83 routes covering:
+The complete REST API is documented in `README.md` under "REST API". The API has ~90 routes covering:
 
 - **Auth** (8 routes): register, login, logout, me, API key CRUD
 - **Workspaces** (9 routes): CRUD + suspend, activate, restart, status, agent reload
@@ -1538,6 +1623,7 @@ The complete REST API is documented in `README.md` under "REST API". The API has
 - **User provider credentials** (7 routes): CRUD + bindings
 - **Settings** (6 routes): admin instance + user preferences + schemas
 - **Account** (3 routes): key rotation, password change, recovery
+- **Relay fleet** (9 routes, conditional): setup wizard + status + provider creds + deploy/rotate/pause/resume — registered only when the relay admin handler is wired (Epic 42/48)
 - **Infrastructure** (4 routes): livez, health, readyz, metrics
 
 ### `?verbose=true` flag
@@ -1589,6 +1675,7 @@ The API service is configured via `api/config/config.yaml` with environment vari
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.19 | 2026-06-22 | Documented the self-hosted multi-cloud inference relay fleet (Epic 42): new `InferenceRelay` cluster-scoped CRD (3rd CRD), `cmd/relay-router` + `cmd/relay-proxy` binaries, `controller/internal/relay` reconciler with AWS/OCI/GCP drivers, and the `/api/v1/admin/relay/*` admin API; noted the WireGuard→HTTPS+per-VM-token transition (worklog 0447). Added Master KEK delivery subsection (Epic 50 US-50.1: file mount, not env var) and Tenant isolation subsection (Epic 51: gVisor RuntimeClass + per-tenant quota webhook). Updated CRD count (2→3), repository structure, deliverables framing, Rule 8 design-doc table, and API route inventory. |
 | 1.18 | 2026-06-20 | Shipped DNS verification of claimed SSO domains (D17 Q-S2): new `verified_domains` + `verification_token` columns (migration 000041); on-demand DNS verification via `POST /orgs/:id/sso/domains/:domain/verify`; token rotation endpoint; login-page discovery (`ListSSODomains`) now filters on verified only; existing domains grandfathered as verified; updated §14 endpoints + known gaps |
 | 1.17 | 2026-06-20 | Surfaced per-org OIDC SSO instance-plumbing config (`oidc.redirectBaseUrl`, `oidc.frontendRedirectUrl`, `oidc.stateCookieName`) in the Helm chart (`values.yaml` + `configmap-api.yaml`), closing the F11 header-trust gap in chart-managed deploys; updated §14 Configuration to document both chart and env-var paths |
 | 1.16 | 2026-06-20 | Added "Multi-Tenant OIDC SSO" section documenting the as-built per-org OIDC system (Epic 43 / US-43.10 / D17): data model, endpoints, PKCE login flow, org-admin config flow, auto-provisioning + role mapping, security controls, instance plumbing config, frontend, known gaps, and file reference |

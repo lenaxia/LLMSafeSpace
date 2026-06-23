@@ -31,7 +31,6 @@ func NewHealthChecker(routerURL string) *HealthChecker {
 // as reported by the router's /metrics endpoint.
 type RelayHealth struct {
 	ID            string
-	Provider      string
 	Healthy       bool
 	ActiveStreams int64
 	Requests      int64
@@ -72,6 +71,13 @@ func (h *HealthChecker) Scrape(ctx context.Context) (*HealthReport, error) {
 }
 
 // parseHealthMetrics extracts relay health data from Prometheus text format.
+//
+// Wire contract: this parser must read what cmd/relay-router/metrics.go
+// emits — see TestParseHealthMetrics_RouterEmittedFormat for the pinned
+// shape. The router emits the relay ID under the "relay" label and the
+// HTTP status under "status" on relay_router_requests_total. There is no
+// separate relay_router_requests_429_total metric: the 429 count is the
+// status="429" line of relay_router_requests_total.
 func parseHealthMetrics(raw string) *HealthReport {
 	report := &HealthReport{
 		Relays: make(map[string]*RelayHealth),
@@ -84,8 +90,6 @@ func parseHealthMetrics(raw string) *HealthReport {
 			continue
 		}
 
-		id := extractMetricLabel(line, "id")
-		provider := extractMetricLabel(line, "provider")
 		value := extractMetricValue(line)
 
 		if strings.HasPrefix(line, "relay_router_fallback_active") {
@@ -93,39 +97,35 @@ func parseHealthMetrics(raw string) *HealthReport {
 			continue
 		}
 
-		if id == "" && provider == "" {
+		id := extractMetricLabel(line, "relay")
+		if id == "" {
 			continue
 		}
 
-		key := relayKey(id, provider)
-		relay := report.Relays[key]
+		relay := report.Relays[id]
 		if relay == nil {
-			relay = &RelayHealth{ID: id, Provider: provider}
-			report.Relays[key] = relay
+			relay = &RelayHealth{ID: id}
+			report.Relays[id] = relay
 		}
 
 		switch {
 		case strings.HasPrefix(line, "relay_router_relay_healthy{"):
 			relay.Healthy = value > 0
-		case strings.HasPrefix(line, "relay_router_active_streams{id="):
+		case strings.HasPrefix(line, "relay_router_active_streams{"):
 			relay.ActiveStreams = value
-		case strings.HasPrefix(line, "relay_router_requests_total{id="):
-			relay.Requests = value
-		case strings.HasPrefix(line, "relay_router_requests_429_total{id="):
-			relay.Requests429 = value
-		case strings.HasPrefix(line, "relay_router_relay_egress_bytes{id="):
+		case strings.HasPrefix(line, "relay_router_requests_total{"):
+			// Router emits this per-status. Sum across statuses for total
+			// requests, and pull the status="429" subset separately.
+			relay.Requests += value
+			if extractMetricLabel(line, "status") == "429" {
+				relay.Requests429 += value
+			}
+		case strings.HasPrefix(line, "relay_router_relay_egress_bytes{"):
 			relay.EgressBytes = value
 		}
 	}
 
 	return report
-}
-
-func relayKey(id, provider string) string {
-	if id != "" {
-		return id
-	}
-	return provider
 }
 
 func extractMetricLabel(line, label string) string {

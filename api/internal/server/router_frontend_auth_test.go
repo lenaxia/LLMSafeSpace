@@ -513,3 +513,184 @@ func TestLogout_ClearsCorrectCookie(t *testing.T) {
 	require.NotNil(t, cleared, "custom cookie 'my_session' should be cleared on logout")
 	assert.True(t, cleared.MaxAge < 0, "MaxAge should be negative to delete cookie")
 }
+
+// --- Epic 54, US-54.3: CookieDomain wiring tests ---
+//
+// These tests verify that when RouterConfig.CookieDomain is set, the session
+// cookie carries the Domain attribute on login, register, and logout. Without
+// this, the cookie would be host-only and invisible to subdomains — breaking
+// wildcard subdomain routing.
+
+func TestCookieDomain_SetOnLogin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	log, _ := apilogger.New(false, "error", "json")
+
+	auth := &imocks.MockAuthMiddlewareService{}
+	met := &imocks.MockMetricsService{}
+	db := &imocks.MockDatabaseService{}
+	ca := &imocks.MockCacheService{}
+
+	met.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+	auth.On("AuthMiddleware").Return(gin.HandlerFunc(func(c *gin.Context) { c.Next() })).Maybe()
+	auth.On("GetUserID", mock.Anything).Return("").Maybe()
+	auth.On("Login", mock.Anything, mock.Anything).Return(&types.AuthResponse{
+		Token:    "jwt-domain",
+		User:     types.User{ID: "u1", Username: "alice", Email: "alice@test.com", Role: "user", Active: true},
+		TokenTTL: 24 * time.Hour,
+	}, nil)
+
+	svc := &authMockServices{auth: auth, metrics: met, database: db, cache: ca}
+	router := NewRouter(svc, log, nil, RouterConfig{
+		Debug:        false,
+		CookieName:   "lsp_session",
+		CookieDomain: ".app.example.com",
+	})
+
+	body, _ := json.Marshal(types.LoginRequest{Email: "alice@test.com", Password: "pass"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var found *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "lsp_session" {
+			found = c
+			break
+		}
+	}
+	require.NotNil(t, found, "session cookie must be set on login")
+	assert.Equal(t, "app.example.com", found.Domain,
+		"cookie Domain must match RouterConfig.CookieDomain for subdomain routing")
+}
+
+func TestCookieDomain_SetOnRegister(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	log, _ := apilogger.New(false, "error", "json")
+
+	auth := &imocks.MockAuthMiddlewareService{}
+	met := &imocks.MockMetricsService{}
+	db := &imocks.MockDatabaseService{}
+	ca := &imocks.MockCacheService{}
+
+	met.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+	auth.On("AuthMiddleware").Return(gin.HandlerFunc(func(c *gin.Context) { c.Next() })).Maybe()
+	auth.On("GetUserID", mock.Anything).Return("").Maybe()
+	auth.On("Register", mock.Anything, mock.Anything).Return(&types.AuthResponse{
+		Token:    "jwt-reg-domain",
+		User:     types.User{ID: "u1", Username: "bob", Email: "bob@test.com", Role: "user", Active: true},
+		TokenTTL: 24 * time.Hour,
+	}, nil)
+
+	svc := &authMockServices{auth: auth, metrics: met, database: db, cache: ca}
+	router := NewRouter(svc, log, nil, RouterConfig{
+		Debug:        false,
+		CookieName:   "lsp_session",
+		CookieDomain: ".app.example.com",
+	})
+
+	body, _ := json.Marshal(types.RegisterRequest{Username: "bob", Email: "bob@test.com", Password: "password123"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusCreated, rec.Code)
+	var found *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "lsp_session" {
+			found = c
+			break
+		}
+	}
+	require.NotNil(t, found, "session cookie must be set on register")
+	assert.Equal(t, "app.example.com", found.Domain,
+		"cookie Domain must match RouterConfig.CookieDomain on register")
+}
+
+func TestCookieDomain_ClearsOnLogout(t *testing.T) {
+	// Regression test for the logout bug: when CookieDomain is set, the
+	// deletion cookie MUST carry the same Domain — otherwise the browser
+	// won't match it to the domain-scoped cookie (RFC 6265 §5.3) and the
+	// stale cookie persists.
+	gin.SetMode(gin.TestMode)
+	log, _ := apilogger.New(false, "error", "json")
+
+	auth := &imocks.MockAuthMiddlewareService{}
+	met := &imocks.MockMetricsService{}
+	db := &imocks.MockDatabaseService{}
+	ca := &imocks.MockCacheService{}
+
+	met.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+	auth.On("AuthMiddleware").Return(gin.HandlerFunc(func(c *gin.Context) { c.Next() })).Maybe()
+	auth.On("GetUserID", mock.Anything).Return("").Maybe()
+	auth.On("RevokeToken", mock.Anything).Return(nil).Maybe()
+
+	svc := &authMockServices{auth: auth, metrics: met, database: db, cache: ca}
+	router := NewRouter(svc, log, nil, RouterConfig{
+		Debug:        false,
+		CookieName:   "lsp_session",
+		CookieDomain: ".app.example.com",
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	var cleared *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "lsp_session" {
+			cleared = c
+			break
+		}
+	}
+	require.NotNil(t, cleared, "session cookie must be cleared on logout")
+	assert.True(t, cleared.MaxAge < 0, "MaxAge should be negative to delete cookie")
+	assert.Equal(t, "app.example.com", cleared.Domain,
+		"deletion cookie Domain must match the login cookie's Domain; "+
+			"otherwise the browser won't match it (RFC 6265 §5.3) and the stale cookie persists")
+}
+
+func TestCookieDomain_EmptyByDefault(t *testing.T) {
+	// When CookieDomain is empty (default), the cookie is host-only —
+	// current behavior, unchanged by US-54.3.
+	gin.SetMode(gin.TestMode)
+	log, _ := apilogger.New(false, "error", "json")
+
+	auth := &imocks.MockAuthMiddlewareService{}
+	met := &imocks.MockMetricsService{}
+	db := &imocks.MockDatabaseService{}
+	ca := &imocks.MockCacheService{}
+
+	met.On("RecordRequest", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+	auth.On("AuthMiddleware").Return(gin.HandlerFunc(func(c *gin.Context) { c.Next() })).Maybe()
+	auth.On("GetUserID", mock.Anything).Return("").Maybe()
+	auth.On("Login", mock.Anything, mock.Anything).Return(&types.AuthResponse{
+		Token:    "jwt-host-only",
+		User:     types.User{ID: "u1", Username: "alice", Email: "alice@test.com", Role: "user", Active: true},
+		TokenTTL: 24 * time.Hour,
+	}, nil)
+
+	svc := &authMockServices{auth: auth, metrics: met, database: db, cache: ca}
+	router := NewRouter(svc, log, nil, RouterConfig{Debug: false, CookieName: "lsp_session"})
+
+	body, _ := json.Marshal(types.LoginRequest{Email: "alice@test.com", Password: "pass"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var found *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "lsp_session" {
+			found = c
+			break
+		}
+	}
+	require.NotNil(t, found, "session cookie must be set")
+	assert.Equal(t, "", found.Domain,
+		"cookie Domain must be empty (host-only) when CookieDomain is not configured")
+}

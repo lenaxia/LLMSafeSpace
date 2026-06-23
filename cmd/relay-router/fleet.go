@@ -18,10 +18,18 @@ const (
 	relayProviderOCI = "oci"
 	relayProviderGCP = "gcp"
 
-	relayStateHealthy   = "healthy"
-	relayStateDraining  = "draining"
-	relayStateUnhealthy = "unhealthy"
-	relayStateSuspect   = "suspect"
+	relayStateHealthy      = "healthy"
+	relayStateDraining     = "draining"
+	relayStateUnhealthy    = "unhealthy"
+	relayStateSuspect      = "suspect"
+	relayStateProvisioning = "provisioning"
+
+	// defaultHealthyThreshold is the number of consecutive successful active
+	// probes required before the router reports a relay as healthy regardless
+	// of peer.State. Two probes is enough to filter a single transient success
+	// while still letting a freshly-provisioned relay become healthy quickly
+	// (with the 15s probe interval, ~30s after the relay-proxy starts serving).
+	defaultHealthyThreshold = 2
 )
 
 // PeerConfig is the JSON shape of the relay-router-peers ConfigMap.
@@ -49,9 +57,10 @@ func ParsePeerConfig(data []byte) (PeerConfig, error) {
 
 // relayHealth tracks the router's independent health view of a relay.
 type relayHealth struct {
-	consecutiveFailures int
-	lastCheckAt         time.Time
-	lastSuccessAt       time.Time
+	consecutiveFailures  int
+	consecutiveSuccesses int
+	lastCheckAt          time.Time
+	lastSuccessAt        time.Time
 }
 
 // relay429State tracks 429 detection state per relay.
@@ -83,16 +92,28 @@ type relayFleet struct {
 	mu           sync.RWMutex
 	relays       map[string]*relayEntry
 	unhealthyThr int
+	healthyThr   int
 	window       time.Duration
 	rng          *rand.Rand
 }
 
 // newRelayFleet creates a fleet with the given health check unhealthy
-// threshold and 429 detection window.
+// threshold and 429 detection window. The healthy threshold defaults to
+// defaultHealthyThreshold; use newRelayFleetWithThresholds to configure both.
 func newRelayFleet(unhealthyThreshold int, window time.Duration) *relayFleet {
+	return newRelayFleetWithThresholds(unhealthyThreshold, defaultHealthyThreshold, window)
+}
+
+// newRelayFleetWithThresholds creates a fleet with explicit healthy and
+// unhealthy thresholds. unhealthyThreshold consecutive failures flip the
+// relay to unhealthy; healthyThreshold consecutive successes flip the relay
+// to healthy regardless of peer.State (subject to drain precedence — see
+// healthStateLocked). See worklog 0467 for the bug this resolves.
+func newRelayFleetWithThresholds(unhealthyThreshold, healthyThreshold int, window time.Duration) *relayFleet {
 	return &relayFleet{
 		relays:       make(map[string]*relayEntry),
 		unhealthyThr: unhealthyThreshold,
+		healthyThr:   healthyThreshold,
 		window:       window,
 		rng:          rand.New(rand.NewSource(time.Now().UnixNano())), //nolint:gosec // used for weighted random relay selection, not crypto
 	}
@@ -212,9 +233,25 @@ func (f *relayFleet) eligibleRelaysLocked() []*relayEntry {
 
 // healthStateLocked returns the effective health state of a relay,
 // combining the ConfigMap state with the router's independent health checks.
+//
+// State machine (worklog 0467 fix):
+//  1. peer.State="draining" always wins — controller-driven graceful shutdown
+//     must not be overridden by ongoing successful probes.
+//  2. consecutiveFailures >= unhealthyThr → unhealthy.
+//  3. consecutiveSuccesses >= healthyThr → healthy. This is the path that
+//     unblocks freshly-provisioned relays: peer.State arrives as "provisioning"
+//     from the controller, and once the router's active probes confirm
+//     reachability healthyThr times, the relay reports healthy regardless.
+//  4. Otherwise fall through to peer.State.
 func (f *relayFleet) healthStateLocked(e *relayEntry) string {
+	if e.peer.State == relayStateDraining {
+		return relayStateDraining
+	}
 	if e.health.consecutiveFailures >= f.unhealthyThr {
 		return relayStateUnhealthy
+	}
+	if f.healthyThr > 0 && e.health.consecutiveSuccesses >= f.healthyThr {
+		return relayStateHealthy
 	}
 	return e.peer.State
 }
@@ -293,7 +330,10 @@ func (f *relayFleet) RecordEgress(relayID string, bytes int64) {
 	}
 }
 
-// RecordHealthCheck updates the health state for a relay.
+// RecordHealthCheck updates the health state for a relay. A success increments
+// consecutiveSuccesses and resets consecutiveFailures; a failure does the
+// inverse. The two counters are mutually exclusive — they cannot both be
+// non-zero. See healthStateLocked for how thresholds are applied.
 func (f *relayFleet) RecordHealthCheck(relayID string, success bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -306,8 +346,10 @@ func (f *relayFleet) RecordHealthCheck(relayID string, success bool) {
 	e.health.lastCheckAt = now
 	if success {
 		e.health.consecutiveFailures = 0
+		e.health.consecutiveSuccesses++
 		e.health.lastSuccessAt = now
 	} else {
+		e.health.consecutiveSuccesses = 0
 		e.health.consecutiveFailures++
 	}
 }

@@ -9,6 +9,7 @@ interface Props {
   messages: Message[];
   streaming?: boolean;
   streamingBubble?: ReactNode;
+  trailingPrompts?: ReactNode;
   onLoadEarlier?: () => void;
   hasOlderMessages?: boolean;
   loadingOlder?: boolean;
@@ -21,7 +22,7 @@ const CLOCK_SKEW_BUFFER_MS = 1000;
 
 const MemoizedBubble = memo(MessageBubble);
 
-export function MessageList({ messages, streaming, streamingBubble, onLoadEarlier, hasOlderMessages, loadingOlder, models, lastSeenAt }: Props) {
+export function MessageList({ messages, streaming, streamingBubble, trailingPrompts, onLoadEarlier, hasOlderMessages, loadingOlder, models, lastSeenAt }: Props) {
   const modelMap = useMemo(() => new Map(models?.map(m => [m.id, m.name])), [models]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -69,12 +70,14 @@ export function MessageList({ messages, streaming, streamingBubble, onLoadEarlie
     setShowJumpButton(false);
   }, []);
 
+  const hasTrailingPrompts = trailingPrompts != null;
+
   useLayoutEffect(() => {
     if (stickToBottom.current) {
       const el = scrollRef.current;
       if (el) el.scrollTop = el.scrollHeight;
     }
-  }, [messages.length]);
+  }, [messages.length, hasTrailingPrompts]);
 
   useEffect(() => {
     if (streaming) {
@@ -103,7 +106,7 @@ export function MessageList({ messages, streaming, streamingBubble, onLoadEarlie
     };
   }, [streaming]);
 
-  if (messages.length === 0 && !streamingBubble) {
+  if (messages.length === 0 && !streamingBubble && !trailingPrompts) {
     return (
       <div className="flex flex-1 items-center justify-center text-muted-foreground">
         <p className="text-sm">Send a message to start the conversation</p>
@@ -153,6 +156,8 @@ export function MessageList({ messages, streaming, streamingBubble, onLoadEarlie
           ))}
 
           {streamingBubble && streamingBubble}
+
+          {trailingPrompts}
 
           <div ref={bottomRef} />
         </div>

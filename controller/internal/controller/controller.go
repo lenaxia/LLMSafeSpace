@@ -47,6 +47,7 @@ func SetupControllers(mgr ctrl.Manager, inferenceRelayURL, inferenceRelaySecret,
 		InferenceRelaySecret: inferenceRelaySecret,
 		OrgStatusClient:      orgStatusClient,
 		DefaultRuntimeClass:  defaultRuntimeClass,
+		APIServiceURL:        apiServiceURL,
 	}).SetupWithManager(mgr); err != nil {
 		logger.Error(err, "unable to create Workspace controller")
 		return err
@@ -70,8 +71,10 @@ type RelayArtifactConfig struct {
 	SHA256Amd64 string
 }
 
-// SetupRelayController registers the InferenceRelay reconciler.
-// It is feature-gated and only activated when enableRelay is true.
+// SetupRelayController registers the InferenceRelay reconciler and the
+// orphan detector (the periodic safety net that catches cloud VMs whose
+// owner CR has gone away). It is feature-gated and only activated when
+// enableRelay is true.
 func SetupRelayController(mgr ctrl.Manager, namespace, routerURL string, enableRelay bool, artifact RelayArtifactConfig) error {
 	if !enableRelay {
 		return nil
@@ -80,15 +83,19 @@ func SetupRelayController(mgr ctrl.Manager, namespace, routerURL string, enableR
 	logger := log.Log.WithName("controller")
 	logger.Info("Setting up InferenceRelay controller")
 
+	// Construct drivers once and share them between the reconciler and
+	// the orphan detector so both observe the same provider set.
+	drivers := map[string]relay.ProviderDriver{
+		"aws": relay.NewAWSDriver(mgr.GetClient(), namespace, "aws-relay-irwa"),
+		"oci": relay.NewOCIDriver(mgr.GetClient(), namespace, "oci-credentials"),
+	}
+
 	relayReconciler := &relay.InferenceRelayReconciler{
 		Client:        mgr.GetClient(),
 		Scheme:        mgr.GetScheme(),
 		Namespace:     namespace,
 		HealthChecker: relay.NewHealthChecker(routerURL),
-		Drivers: map[string]relay.ProviderDriver{
-			"aws": relay.NewAWSDriver(mgr.GetClient(), namespace, "aws-relay-irwa"),
-			"oci": relay.NewOCIDriver(mgr.GetClient(), namespace, "oci-credentials"),
-		},
+		Drivers:       drivers,
 		ExpectedCredentialSecrets: map[string]string{
 			"aws": "aws-relay-irwa",
 			"oci": "oci-credentials",
@@ -102,6 +109,23 @@ func SetupRelayController(mgr ctrl.Manager, namespace, routerURL string, enableR
 		logger.Error(err, "unable to create InferenceRelay controller")
 		return err
 	}
+
+	// Register the orphan detector as a manager runnable. It runs only
+	// on the leader (NeedLeaderElection() returns true) so multi-replica
+	// controllers don't race to destroy the same orphans. Catches the
+	// case where the per-CR adopt + sweep paths missed an instance —
+	// e.g. controller crashed mid-finalizer, or pre-fix-version VMs
+	// with the legacy tag schema. See worklog 0473/0474.
+	detector := &relay.OrphanDetector{
+		Client:  mgr.GetClient(),
+		Drivers: drivers,
+		// Default 5min interval is set inside Start() if Interval is zero.
+	}
+	if err := mgr.Add(detector); err != nil {
+		logger.Error(err, "unable to register relay OrphanDetector")
+		return err
+	}
+	logger.Info("relay OrphanDetector registered (leader-only, default 5m interval)")
 
 	return nil
 }

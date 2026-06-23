@@ -21,6 +21,10 @@ export function OrgMembersTab() {
   const [invitations, setInvitations] = useState<OrgInvitation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // notice carries non-error feedback (e.g. "Verified <email>") so admins
+  // see acknowledgement after destructive-feeling actions like force-verify.
+  // Auto-cleared on the next refresh.
+  const [notice, setNotice] = useState("");
   const [showInvite, setShowInvite] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -45,7 +49,6 @@ export function OrgMembersTab() {
   }, [refresh]);
 
   if (loading) return <p className="text-sm text-muted-foreground">Loading…</p>;
-  if (error) return <p className="text-sm text-red-500">{error}</p>;
 
   return (
     <div className="space-y-6">
@@ -75,6 +78,7 @@ export function OrgMembersTab() {
               <th className="px-4 py-2 text-left font-medium">Name</th>
               <th className="px-4 py-2 text-left font-medium">Email</th>
               <th className="px-4 py-2 text-left font-medium">Role</th>
+              <th className="px-4 py-2 text-left font-medium">Email Status</th>
               <th className="px-4 py-2 text-left font-medium">Key Status</th>
               {isAdmin && <th className="px-4 py-2 text-right font-medium">Actions</th>}
             </tr>
@@ -90,6 +94,13 @@ export function OrgMembersTab() {
                   </Badge>
                 </td>
                 <td className="px-4 py-2">
+                  {m.emailVerified ? (
+                    <Badge variant="default">Verified</Badge>
+                  ) : (
+                    <Badge variant="warning">Pending</Badge>
+                  )}
+                </td>
+                <td className="px-4 py-2">
                   <span className="text-xs text-muted-foreground">Active</span>
                 </td>
                 {isAdmin && (
@@ -98,6 +109,7 @@ export function OrgMembersTab() {
                       orgId={org.id}
                       member={m}
                       onChanged={refresh}
+                      onError={setError}
                     />
                   </td>
                 )}
@@ -117,6 +129,7 @@ export function OrgMembersTab() {
                   <th className="px-4 py-2 text-left font-medium">Email</th>
                   <th className="px-4 py-2 text-left font-medium">Role</th>
                   <th className="px-4 py-2 text-left font-medium">Expires</th>
+                  <th className="px-4 py-2 text-left font-medium">Account Status</th>
                   <th className="px-4 py-2 text-right font-medium">Actions</th>
                 </tr>
               </thead>
@@ -132,16 +145,75 @@ export function OrgMembersTab() {
                     <td className="px-4 py-2 text-muted-foreground">
                       {new Date(inv.expiresAt).toLocaleDateString()}
                     </td>
+                    <td className="px-4 py-2">
+                      {/* Surface the invitee's account/verification state so the admin
+                          knows whether Verify is actionable. Three cases:
+                            - exists + verified  → success badge ("Verified")
+                            - exists + pending   → warning badge ("Pending")
+                            - no users row yet   → muted "No account"
+                            - undefined (older API) → em-dash fallback */}
+                      {inv.inviteeUserExists === true && inv.inviteeEmailVerified === true ? (
+                        <Badge variant="success">Verified</Badge>
+                      ) : inv.inviteeUserExists === true ? (
+                        <Badge variant="warning">Pending</Badge>
+                      ) : inv.inviteeUserExists === false ? (
+                        <Badge variant="muted">No account</Badge>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
                     <td className="px-4 py-2 text-right">
                       <div className="flex justify-end gap-2">
+                        {/* Verify only renders when force-verify is actionable:
+                            an existing account whose email is unverified.
+                            Hides automatically after a successful verify
+                            because refresh() re-fetches inviteeEmailVerified=true. */}
+                        {inv.inviteeUserExists === true && inv.inviteeEmailVerified === false && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={async () => {
+                              try {
+                                await orgsApi.verifyInvitee(org.id, inv.id);
+                                setError("");
+                                setNotice(`Verified ${inv.email}`);
+                                refresh();
+                              } catch (e) {
+                                setNotice("");
+                                // 422 with body {"error":"no_account_for_email"}
+                                // means the invitee has no users row yet —
+                                // render a clear actionable message instead
+                                // of the raw "no_account_for_email" string.
+                                if (
+                                  e instanceof ApiClientError &&
+                                  e.status === 422 &&
+                                  e.body.error === "no_account_for_email"
+                                ) {
+                                  setError(
+                                    "No account exists for this email yet. The invitee must sign up before you can verify them.",
+                                  );
+                                } else {
+                                  setError(
+                                    e instanceof Error ? e.message : "Verify failed",
+                                  );
+                                }
+                              }
+                            }}
+                          >
+                            Verify
+                          </Button>
+                        )}
                         <Button
                           size="sm"
                           variant="ghost"
                           onClick={async () => {
                             try {
                               await orgsApi.resendInvitation(org.id, inv.id);
+                              setNotice(`Invitation resent to ${inv.email}`);
+                              setError("");
                               refresh();
                             } catch (e) {
+                              setNotice("");
                               setError(
                                 e instanceof Error ? e.message : "Resend failed",
                               );
@@ -156,8 +228,11 @@ export function OrgMembersTab() {
                           onClick={async () => {
                             try {
                               await orgsApi.revokeInvitation(org.id, inv.id);
+                              setNotice(`Invitation revoked for ${inv.email}`);
+                              setError("");
                               refresh();
                             } catch (e) {
+                              setNotice("");
                               setError(
                                 e instanceof Error ? e.message : "Revoke failed",
                               );
@@ -177,6 +252,11 @@ export function OrgMembersTab() {
       )}
 
       {error && <p className="text-sm text-red-500">{error}</p>}
+      {notice && !error && (
+        <p className="text-sm text-green-600 dark:text-green-400" role="status">
+          {notice}
+        </p>
+      )}
     </div>
   );
 }
@@ -185,13 +265,31 @@ function MemberActions({
   orgId,
   member,
   onChanged,
+  onError,
 }: {
   orgId: string;
   member: OrgMember;
   onChanged: () => void;
+  onError: (msg: string) => void;
 }) {
   return (
     <div className="flex justify-end gap-2">
+      {!member.emailVerified && (
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={async () => {
+            try {
+              await orgsApi.verifyMember(orgId, member.userId);
+              onChanged();
+            } catch (e) {
+              onError(e instanceof Error ? e.message : "Verify failed");
+            }
+          }}
+        >
+          Verify
+        </Button>
+      )}
       <Button
         size="sm"
         variant="ghost"
@@ -200,8 +298,8 @@ function MemberActions({
           try {
             await orgsApi.changeMemberRole(orgId, member.userId, newRole);
             onChanged();
-          } catch {
-            /* handled by parent */
+          } catch (e) {
+            onError(e instanceof Error ? e.message : "Role change failed");
           }
         }}
       >
@@ -214,8 +312,8 @@ function MemberActions({
           try {
             await orgsApi.removeMember(orgId, member.userId);
             onChanged();
-          } catch {
-            /* handled by parent */
+          } catch (e) {
+            onError(e instanceof Error ? e.message : "Remove failed");
           }
         }}
       >

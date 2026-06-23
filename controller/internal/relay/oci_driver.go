@@ -19,6 +19,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // OCIDriver implements ProviderDriver for Oracle Cloud Infrastructure.
@@ -156,9 +157,7 @@ func (d *OCIDriver) Provision(ctx context.Context, req ProvisionRequest) (*Provi
 		Metadata: map[string]string{
 			"user_data": req.CloudInit,
 		},
-		FreeformTags: map[string]string{
-			"managed-by": "llmsafespaces-relay",
-		},
+		FreeformTags: ociProvisionTags(req),
 	}
 
 	bodyBytes, _ := json.Marshal(launchBody)
@@ -265,14 +264,49 @@ func (d *OCIDriver) GetStatus(ctx context.Context, instanceID, region string) (*
 	}, nil
 }
 
-// ListInstances returns relay VMs managed by this driver.
+// ociProvisionTags builds the FreeformTags map applied to provisioned
+// instances. Always includes managed-by; conditionally includes the
+// owner UID and provider tags so the reconciler can adopt instances
+// when the post-Provision Status update is lost (worklog 0473/0474).
+func ociProvisionTags(req ProvisionRequest) map[string]string {
+	tags := map[string]string{
+		TagManagedBy: TagManagedByValue,
+	}
+	if req.OwnerUID != "" {
+		tags[TagOwnerUID] = req.OwnerUID
+	}
+	if req.Provider != "" {
+		tags[TagProvider] = req.Provider
+	}
+	return tags
+}
+
+// ListInstances returns relay VMs managed by this driver in the given
+// region. The OwnerUID and Provider fields are populated from the
+// instance's FreeformTags; PublicIP is fetched per-instance from the
+// VNIC attachments so adopted instances have a working endpoint.
+//
+// Pre-fix VMs that lack the tags will have empty OwnerUID/Provider —
+// the orphan detector then preserves them (manual-audit policy).
+//
+// Worklog 0474.
 func (d *OCIDriver) ListInstances(ctx context.Context, region string) ([]VMInstance, error) {
 	cfg, err := d.getConfig(ctx, d.credentialSecret)
 	if err != nil {
 		return nil, err
 	}
 
-	url := fmt.Sprintf("https://iaas.%s.oraclecloud.com/20160918/instances/?compartmentId=%s", cfg.Region, cfg.Tenancy)
+	// Use the passed-in region, NOT cfg.Region — the credentials secret
+	// may carry a default region but the caller (orphan detector,
+	// reconciler adopt pre-pass) is asking about a specific spec
+	// region. Honoring cfg.Region would silently sweep the wrong
+	// region and miss orphans.
+	listRegion := region
+	if listRegion == "" {
+		listRegion = cfg.Region
+	}
+
+	url := fmt.Sprintf("https://iaas.%s.oraclecloud.com/20160918/instances/?compartmentId=%s", listRegion, cfg.Tenancy)
 	resp, err := d.signedRequest(ctx, cfg, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -285,8 +319,9 @@ func (d *OCIDriver) ListInstances(ctx context.Context, region string) ([]VMInsta
 
 	var list struct {
 		Data []struct {
-			ID             string `json:"id"`
-			LifecycleState string `json:"lifecycleState"`
+			ID             string            `json:"id"`
+			LifecycleState string            `json:"lifecycleState"`
+			FreeformTags   map[string]string `json:"freeformTags"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
@@ -295,10 +330,33 @@ func (d *OCIDriver) ListInstances(ctx context.Context, region string) ([]VMInsta
 
 	result := make([]VMInstance, 0, len(list.Data))
 	for _, inst := range list.Data {
-		result = append(result, VMInstance{
+		// Skip instances not managed by this controller. The compartment
+		// list is unfiltered, so we enforce the managed-by check here.
+		if inst.FreeformTags[TagManagedBy] != TagManagedByValue {
+			continue
+		}
+		vm := VMInstance{
 			InstanceID: inst.ID,
 			State:      ociStateToVMState(inst.LifecycleState),
-		})
+			OwnerUID:   inst.FreeformTags[TagOwnerUID],
+			Provider:   inst.FreeformTags[TagProvider],
+		}
+		// Fetch PublicIP for adoption purposes — without it, the
+		// reconciler would adopt the instance with an empty endpoint
+		// and the router could never reach it. Failure here is
+		// non-fatal: leave PublicIP empty and let the next reconcile
+		// retry. Skip the lookup for non-running instances (no IP yet
+		// or already gone).
+		if vm.State == VMStateRunning || vm.State == VMStatePending {
+			ip, ipErr := d.getPublicIP(ctx, cfg, inst.ID, listRegion)
+			if ipErr == nil {
+				vm.PublicIP = ip
+			} else {
+				log.FromContext(ctx).V(1).Info("OCI getPublicIP failed during list (non-fatal, will retry next sweep)",
+					"instanceID", inst.ID, "region", listRegion, "error", ipErr.Error())
+			}
+		}
+		result = append(result, vm)
 	}
 	return result, nil
 }

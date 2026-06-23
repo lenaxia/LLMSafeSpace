@@ -60,6 +60,11 @@ type OrgStore interface {
 	// GetUserEmail resolves a user ID to their email (inverse of GetUserIDByEmail).
 	// Used by invitation acceptance to verify email binding.
 	GetUserEmail(ctx context.Context, userID string) (string, error)
+	// MarkUserEmailVerified sets users.email_verified=true for the given user,
+	// bypassing the email-verification token flow. Used by the org-admin
+	// "Verify" action when an admin has confirmed the member's identity
+	// out-of-band. Idempotent.
+	MarkUserEmailVerified(ctx context.Context, userID string) error
 	// GetUserOrgID returns the user's single org ID (or "" if not in any org).
 	// With single-org enforcement (D8), a user belongs to at most one org. Used
 	// by invitation acceptance (S3 cross-org check) and workspace auto-attribution
@@ -332,12 +337,12 @@ func (s *PgOrgStore) AddOrgMember(ctx context.Context, orgID, userID string, rol
 func (s *PgOrgStore) GetOrgMember(ctx context.Context, orgID, userID string) (*types.OrgMember, error) {
 	var m types.OrgMember
 	err := s.db.QueryRowContext(ctx,
-		`SELECT m.org_id, m.user_id, u.username, u.email, m.role, m.created_at
+		`SELECT m.org_id, m.user_id, u.username, u.email, m.role, u.email_verified, m.created_at
 		 FROM org_memberships m
 		 JOIN users u ON u.id = m.user_id
 		 WHERE m.org_id = $1 AND m.user_id = $2`,
 		orgID, userID,
-	).Scan(&m.OrgID, &m.UserID, &m.Username, &m.Email, &m.Role, &m.CreatedAt)
+	).Scan(&m.OrgID, &m.UserID, &m.Username, &m.Email, &m.Role, &m.EmailVerified, &m.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -349,7 +354,7 @@ func (s *PgOrgStore) GetOrgMember(ctx context.Context, orgID, userID string) (*t
 
 func (s *PgOrgStore) ListOrgMembers(ctx context.Context, orgID string) ([]*types.OrgMember, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT m.org_id, m.user_id, u.username, u.email, m.role, m.created_at
+		`SELECT m.org_id, m.user_id, u.username, u.email, m.role, u.email_verified, m.created_at
 		 FROM org_memberships m
 		 JOIN users u ON u.id = m.user_id
 		 WHERE m.org_id = $1
@@ -364,7 +369,7 @@ func (s *PgOrgStore) ListOrgMembers(ctx context.Context, orgID string) ([]*types
 	var members []*types.OrgMember
 	for rows.Next() {
 		var m types.OrgMember
-		if err := rows.Scan(&m.OrgID, &m.UserID, &m.Username, &m.Email, &m.Role, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.OrgID, &m.UserID, &m.Username, &m.Email, &m.Role, &m.EmailVerified, &m.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan org member: %w", err)
 		}
 		members = append(members, &m)
@@ -798,6 +803,23 @@ func (s *PgOrgStore) GetUserEmail(ctx context.Context, userID string) (string, e
 	return email, nil
 }
 
+// MarkUserEmailVerified sets users.email_verified=true for the given user,
+// bypassing the email-verification token flow. Used by the org-admin "Verify"
+// action (POST /orgs/:id/members/:userID/verify) when an admin has confirmed
+// the member's identity out-of-band. The membership is verified by the caller
+// (OrgAdminGuard + GetOrgMember) before this is invoked, so a bare userID is
+// safe here. Idempotent: re-verifying an already-verified user is a no-op.
+func (s *PgOrgStore) MarkUserEmailVerified(ctx context.Context, userID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET email_verified = TRUE, updated_at = NOW() WHERE id = $1`,
+		userID,
+	)
+	if err != nil {
+		return fmt.Errorf("mark user email verified: %w", err)
+	}
+	return nil
+}
+
 func (s *PgOrgStore) GetUserOrgID(ctx context.Context, userID string) (string, error) {
 	var orgID string
 	err := s.db.QueryRowContext(ctx,
@@ -1002,11 +1024,35 @@ func (s *PgOrgStore) CreateInvitation(ctx context.Context, inv *types.OrgInvitat
 }
 
 func (s *PgOrgStore) ListPendingInvitations(ctx context.Context, orgID string) ([]*types.OrgInvitation, error) {
+	// LEFT JOIN with users so the response carries the invitee's
+	// email-verification state. The org admin UI uses this to render the
+	// per-row Verify button only when force-verify is actionable
+	// (existing user account whose email is unverified). Without this,
+	// the UI shows a Verify button even after the override has been
+	// applied because the invitation row stays pending until the user
+	// clicks the invitation link.
+	//
+	// users.email is stored pre-lowercased and trimmed (auth.go's
+	// strings.ToLower + strings.TrimSpace on signup); org_invitations.email
+	// is stored as-supplied. The JOIN must apply the SAME case-folding
+	// AND trimming to the invitations side as the handler does (see
+	// invitations.go's VerifyUserForInvitation:
+	// strings.ToLower(strings.TrimSpace(inv.Email))). Otherwise an
+	// invitation stored with leading/trailing whitespace would JOIN-miss
+	// even though the handler would resolve the user — resulting in the
+	// UI hiding the Verify button on a row where the action would
+	// actually succeed.
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, org_id, email, role, invited_by, expires_at, bounce_type, bounced_at, created_at
-		 FROM org_invitations
-		 WHERE org_id = $1 AND accepted_at IS NULL AND declined_at IS NULL
-		 ORDER BY created_at DESC`,
+		`SELECT i.id, i.org_id, i.email, i.role, i.invited_by, i.expires_at,
+		        i.bounce_type, i.bounced_at, i.created_at,
+		        u.id IS NOT NULL AS invitee_user_exists,
+		        u.email_verified
+		   FROM org_invitations i
+		   LEFT JOIN users u ON u.email = LOWER(BTRIM(i.email))
+		  WHERE i.org_id = $1
+		    AND i.accepted_at IS NULL
+		    AND i.declined_at IS NULL
+		  ORDER BY i.created_at DESC`,
 		orgID,
 	)
 	if err != nil {
@@ -1019,13 +1065,26 @@ func (s *PgOrgStore) ListPendingInvitations(ctx context.Context, orgID string) (
 		var inv types.OrgInvitation
 		var bounceType sql.NullString
 		var bouncedAt sql.NullTime
+		var inviteeUserExists sql.NullBool
+		var inviteeEmailVerified sql.NullBool
 		if err := rows.Scan(&inv.ID, &inv.OrgID, &inv.Email, &inv.Role, &inv.InvitedBy,
-			&inv.ExpiresAt, &bounceType, &bouncedAt, &inv.CreatedAt); err != nil {
+			&inv.ExpiresAt, &bounceType, &bouncedAt, &inv.CreatedAt,
+			&inviteeUserExists, &inviteeEmailVerified); err != nil {
 			return nil, fmt.Errorf("scan invitation: %w", err)
 		}
 		inv.BounceType = bounceType.String
 		if bouncedAt.Valid {
 			inv.BouncedAt = &bouncedAt.Time
+		}
+		// inviteeUserExists comes back from `IS NOT NULL` so it's never
+		// SQL NULL; the NullBool wrapper just guards against a hypothetical
+		// driver edge case. Materialize it as a pointer so the JSON
+		// surface stays consistent.
+		exists := inviteeUserExists.Valid && inviteeUserExists.Bool
+		inv.InviteeUserExists = &exists
+		if exists && inviteeEmailVerified.Valid {
+			verified := inviteeEmailVerified.Bool
+			inv.InviteeEmailVerified = &verified
 		}
 		out = append(out, &inv)
 	}

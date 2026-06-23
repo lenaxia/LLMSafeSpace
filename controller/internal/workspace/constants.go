@@ -11,6 +11,11 @@ import (
 
 const WorkspaceFinalizer = "workspace.llmsafespaces.dev/finalizer"
 
+// bootstrapAudience is the TokenReview audience for the projected SA token
+// (Epic 35). Must match the API handler's TokenReview spec and the agentd
+// bootstrap subcommand.
+const bootstrapAudience = "llmsafespace-api"
+
 // Pod naming: {workspaceName}-{uid[:8]}
 const podNameSuffix = 8
 
@@ -39,6 +44,16 @@ const (
 // Password secret naming.
 func passwordSecretName(workspaceName string) string {
 	return "workspace-pw-" + workspaceName
+}
+
+// bootstrapSAName returns the per-workspace ServiceAccount name used for
+// secretless credential injection (Epic 35). The SA holds a projected token
+// that the init container presents to the API's /internal/v1/pod-bootstrap
+// endpoint. Named "workspace-<workspaceName>" so the API can extract the
+// workspaceID via strings.TrimPrefix (workspaceIDs are UUIDs — the embedded
+// hyphens are safe under TrimPrefix but must never be split on "-").
+func bootstrapSAName(workspaceName string) string {
+	return "workspace-" + workspaceName
 }
 
 // Pod name from workspace name and UID.

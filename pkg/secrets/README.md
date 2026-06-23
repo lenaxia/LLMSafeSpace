@@ -13,7 +13,7 @@ provider (Vault / OpenBao Transit) is planned.
 
 | Provider | `rootKeyProvider` value | Where the key material lives | Use when |
 |----------|-------------------------|------------------------------|----------|
-| `StaticKeyProvider` | `""` (Helm default) or `"static"` | In a Kubernetes Secret, delivered as an env var, held in API-process memory for the pod's lifetime | **Development only.** Single key, no rotation, exposed via `/proc/1/environ`. Emits a startup warning. |
+| `StaticKeyProvider` | `""` (Helm default) or `"static"` | In a Kubernetes Secret, delivered as a **read-only file mount** (Epic 50 US-50.1 default) or legacy env var, held in API-process memory for the pod's lifetime | **Development only.** Single key, no rotation. The file mount removes `/proc/1/environ` exposure; the legacy env path remains as a deprecated opt-in (`masterSecret.deliveryMethod=env`). Emits a startup warning. |
 | `SealedKeyProvider` | `"sealed"` | In a sealed file on disk; the root key is wrapped by an Argon2id KEK derived from an operator-supplied passphrase | **Production (today).** The root key is not present in env vars; an attacker who reads the sealed file but not the passphrase cannot recover it. |
 
 Selection is read in `api/internal/app/secrets_adapters.go` (`newRootKeyProvider`)
@@ -36,9 +36,9 @@ in depth requires assuming they are not.
 
 | Attacker capability | Static | Sealed | External (planned) |
 |---|---|---|---|
-| Read-only filesystem access (no process memory) | **No** — key is in an env var / kubelet Secret | **Yes** — sealed file is useless without the passphrase | Yes |
+| Read-only filesystem access (no process memory) | **No** — key is in a kubelet Secret (file-mounted or env) | **Yes** — sealed file is useless without the passphrase | Yes |
 | Node-level disk read (stolen disk, snapshot) | **No** | **Yes** | Yes |
-| Read `/proc/<api-pid>/environ` from the node | **No** | **Yes** — the *root key* is never in env vars; the passphrase is, but the sealed file alone is useless without it | Yes |
+| Read `/proc/<api-pid>/environ` from the node | **Partial** — file-mount default (US-50.1) keeps the key out of env; legacy `deliveryMethod=env` still leaks it | **Yes** — the *root key* is never in env vars; the passphrase is, but the sealed file alone is useless without it | Yes |
 | Process-level access to the API pod (RCE) | No | **No** — the unsealed root key lives in process memory; an attacker calls `Decrypt()` exactly as legitimate code does | **Partial** — the key never leaves the HSM, but decrypt is still callable; the value is *exfiltration-limitation + audit*, not prevention |
 | Full memory dump of the API pod | No | No | Partial (same as above) |
 | Ciphertext exfiltration (DB backup leak) | No — without rotation the leak is permanent | No (same — until rotation exists) | Best — rotation + audit; the HSM prevents offline decrypt of the backup |

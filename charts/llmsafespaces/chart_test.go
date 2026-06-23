@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -2140,9 +2141,263 @@ func TestMonitoring_DashboardConfigMap_NotEmpty(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// InferenceRelay — WireGuard removal regression guards (worklog 0442)
-// =============================================================================
+// TestMonitoring_DashboardJobVariablesPortable verifies that the operational
+// and billing dashboards' PromQL job-label matchers are rendered from the
+// release name at chart-render time, not hard-coded to a specific release.
+//
+// Helm release names vary (e.g. `llmsafespace` singular vs `llmsafespaces`
+// plural); the resulting scrape-job labels are tied to Service names, which
+// are tied to release names. A dashboard with `job="llmsafespaces-api"`
+// hard-coded would render empty in any deployment whose Service labels emit
+// `llmsafespace-api` (or any other release-derived name).
+//
+// The chart eliminates this risk by:
+//
+//  1. Storing dashboard JSON files with PLACEHOLDER strings
+//     (__LLMSAFESPACES_API_JOB__, __LLMSAFESPACES_CTRL_JOB__) instead of
+//     hard-coded job names.
+//  2. Substituting them at render time in dashboards-configmap.yaml using
+//     the Helm `replace` pipeline against a release-derived `<fullname>-api.*`
+//     / `<fullname>-controller.*` regex pattern (matches the convention in
+//     prometheus-rules.yaml).
+//
+// This test enforces three contracts on the rendered ConfigMap:
+//
+//   - **No leftover placeholders.** Every __LLMSAFESPACES_*_JOB__ string
+//     must have been substituted; an unrendered placeholder would produce
+//     PromQL that matches no series.
+//   - **Job matchers contain the test release name.** `job=~"...llmsafespaces-api.*"`
+//     etc. — proves the substitution is wired and uses the release-derived
+//     pattern rather than a fixed string.
+//   - **No hard-coded release-specific job names remain.** No literal
+//     `llmsafespace-api` (singular, the failure mode of worklog 0508) or
+//     other plausible-looking release-prefix that would be a regression.
+//
+// Worklog 0508 documents the original failure mode where dashboards shipped
+// with hard-coded `current.value=["llmsafespaces-api"]` but the cluster's
+// ServiceMonitor emitted `job=llmsafespace-api`, leaving every panel empty
+// on first load. Worklog NNNN_2026-06-23_grafana-dashboard-job-vars
+// documents the redesign that eliminates the template-variable indirection
+// (and thus the entire stale-URL-var failure mode) while still being
+// release-portable via Helm-time substitution.
+func TestMonitoring_DashboardJobVariablesPortable(t *testing.T) {
+	docs := helmTemplate(t, "monitoring:\n  enabled: true\n")
+	var cm map[string]any
+	for _, d := range docs {
+		if d["kind"] == "ConfigMap" && strings.Contains(metaName(d), "grafana-dashboards") {
+			cm = d
+			break
+		}
+	}
+	require.NotNil(t, cm)
+	data, _ := cm["data"].(map[string]any)
+
+	// helmTemplate uses a fixed release name; pull it from the rendered
+	// ConfigMap's name rather than hard-coding it here so that any future
+	// change to the test harness's release name keeps this test correct.
+	cmName := metaName(cm)
+	releasePrefix := strings.TrimSuffix(cmName, "-grafana-dashboards")
+
+	for _, key := range []string{"operational.json", "billing.json"} {
+		content, ok := data[key].(string)
+		require.True(t, ok, "dashboard %q must be present in the ConfigMap", key)
+
+		// Contract 1: every placeholder must have been rendered.
+		require.NotContains(t, content, "__LLMSAFESPACES_API_JOB__",
+			"%s: every __LLMSAFESPACES_API_JOB__ placeholder must be substituted at chart-render time; "+
+				"an unrendered placeholder would produce PromQL that matches no series",
+			key)
+		require.NotContains(t, content, "__LLMSAFESPACES_CTRL_JOB__",
+			"%s: every __LLMSAFESPACES_CTRL_JOB__ placeholder must be substituted at chart-render time",
+			key)
+
+		// Contract 2: job matchers must contain the release-derived prefix.
+		// Operational has both api and controller jobs; billing only has api.
+		require.Contains(t, content, releasePrefix+"-api.*",
+			"%s: must contain `%s-api.*` after rendering, proving the api-job substitution is wired "+
+				"to the release name (not a static string)",
+			key, releasePrefix)
+		if key == "operational.json" {
+			require.Contains(t, content, releasePrefix+"-controller.*",
+				"%s: must contain `%s-controller.*` after rendering, proving the controller-job "+
+					"substitution is wired to the release name",
+				key, releasePrefix)
+		}
+
+		// Contract 3: the rendered output must NOT contain the singular
+		// `llmsafespace-api` (without the trailing s) — that was the
+		// failure mode of worklog 0508 where a stale dashboard JSON had
+		// `current.value=["llmsafespace-api"]` hard-coded. The rendered
+		// output should only contain `<release>-llmsafespaces-api.*`
+		// (release name + chart name plural + suffix).
+		//
+		// Phrased as a regex: any `job=~"X"` matcher where X starts with
+		// `llmsafespace-` (singular, no trailing s before the dash) is a
+		// regression. Allow the plural form `llmsafespaces-` because the
+		// chart name is plural; reject the singular form.
+		bad := regexp.MustCompile(`job=~?"llmsafespace-(api|controller)`)
+		require.False(t, bad.MatchString(content),
+			"%s: contains a hard-coded singular release-name reference (`llmsafespace-api` or "+
+				"`llmsafespace-controller`). This is the regression mode of worklog 0508. "+
+				"All job matchers must use the release-derived pattern from "+
+				"dashboards-configmap.yaml's replace pipeline.",
+			key)
+	}
+}
+
+// TestMonitoring_DashboardUIDsAreStable pins the exact UIDs declared by
+// the operational and billing dashboard JSON files. UIDs are the only
+// stable contract between operators' bookmarks/links and the dashboards
+// themselves: changing them silently breaks every existing URL.
+//
+// Failure mode discovered during worklog 0522 incident response: the
+// chart was previously named `llmsafespace` (singular) and shipped
+// dashboards with UIDs `llmsafespace-operational` /
+// `llmsafespace-billing`. When the chart was renamed to `llmsafespaces`
+// (plural), the dashboard UIDs followed and became
+// `llmsafespaces-operational` / `llmsafespaces-billing`. The Grafana
+// sidecar provisioner saw both variants in its database (the old singular
+// rows from the prior deploy were never garbage-collected) and refused to
+// write either due to optimistic-concurrency conflicts ("unexpected number
+// of dashboards for id ...: found 2, desired 1"). Operators' bookmarked
+// singular URLs returned the stale singular dashboards (with stale,
+// release-mismatched job-label matchers), which appeared as "No data" on
+// every panel. Worklog 0522 documented the URL-template-variable angle of
+// the same incident; this test pins the UID-stability angle. See worklog
+// NNNN for the full redesign.
+//
+// This test enforces three contracts:
+//
+//  1. Each dashboard's top-level `uid` field is exactly the value below.
+//     ANY change is a regression that breaks operator bookmarks; if a
+//     genuine UID change is required, that's a deliberate decision that
+//     ALSO requires updating the manual-cleanup runbook in CHART-UPGRADE.md.
+//  2. The UID prefix is consistent (`llmsafespaces-`) so any future
+//     dashboard added to `charts/llmsafespaces/dashboards/` is forced to
+//     follow the same convention.
+//  3. The UIDs survive the Helm `replace` pipeline (no placeholder leaks
+//     into the UID field — placeholders are only meant to substitute job
+//     labels in PromQL `expr` strings, never the dashboard identity).
+func TestMonitoring_DashboardUIDsAreStable(t *testing.T) {
+	docs := helmTemplate(t, "monitoring:\n  enabled: true\n")
+	var cm map[string]any
+	for _, d := range docs {
+		if d["kind"] == "ConfigMap" && strings.Contains(metaName(d), "grafana-dashboards") {
+			cm = d
+			break
+		}
+	}
+	require.NotNil(t, cm)
+	data, _ := cm["data"].(map[string]any)
+
+	// Pinned UIDs for the dashboards we know about. To intentionally
+	// change either, you must:
+	//   1. Update the value here.
+	//   2. Update the dashboard JSON's top-level "uid" field.
+	//   3. Update CHART-UPGRADE.md with the migration steps.
+	//   4. Update the EXPECTED_UIDS list in
+	//      charts/llmsafespaces/scripts/grafana-purge-stale-dashboards.sh.
+	//   5. Notify operators that bookmarked URLs will break.
+	expectedUIDs := map[string]string{
+		"operational.json": "llmsafespaces-operational",
+		"billing.json":     "llmsafespaces-billing",
+	}
+
+	// Contract 0: every JSON file in the rendered ConfigMap is exercised
+	// by this test, even ones we don't have a pinned expectation for.
+	// Iterating over `data` (rather than `expectedUIDs`) ensures that any
+	// future dashboard added to charts/llmsafespaces/dashboards/ without
+	// being added to `expectedUIDs` will fail this test — catching the
+	// "added a third dashboard with a different prefix and forgot to
+	// update the test" regression vector flagged in PR #375 review.
+	for filename, raw := range data {
+		// Helm renders the ConfigMap "data" entries as strings; a non-string
+		// value here would indicate a Helm-template structural change worth
+		// failing on.
+		content, ok := raw.(string)
+		require.True(t, ok, "ConfigMap data[%q] must be a string", filename)
+
+		// Contract 3: no placeholder leaked into the rendered output.
+		// Run this on every file, regardless of whether we have a pin.
+		require.NotContains(t, content, "__LLMSAFESPACES_API_JOB__",
+			"%s: rendered ConfigMap must not contain placeholder strings — see TestMonitoring_DashboardJobVariablesPortable",
+			filename)
+
+		// Use a regex that pins the top-level "uid" field specifically.
+		// Nested datasource UIDs in panels are a different field shape
+		// (`"uid": "${datasource}"`) and must not match this pin.
+		uidRe := regexp.MustCompile(`(?m)^\s{0,2}"uid":\s*"([^"]+)",?$`)
+		matches := uidRe.FindAllStringSubmatch(content, -1)
+
+		// Contract 1: at least one top-level uid must exist.
+		var topLevelUIDs []string
+		for _, m := range matches {
+			topLevelUIDs = append(topLevelUIDs, m[1])
+		}
+		require.NotEmpty(t, topLevelUIDs,
+			"%s: must declare a top-level `uid` field (line of the form `  \"uid\": \"<value>\",`)",
+			filename)
+
+		// Find the dashboard's top-level UID (heuristic: the one that
+		// matches our `llmsafespaces-` prefix, NOT the ${datasource}
+		// nested ones). This survives JSON reordering by the Helm
+		// rendering and tolerates whitespace variations.
+		var foundTopLevel string
+		for _, u := range topLevelUIDs {
+			if strings.HasPrefix(u, "llmsafespaces-") {
+				foundTopLevel = u
+				break
+			}
+		}
+
+		// Contract 2: prefix consistency. Forces any dashboard in the
+		// ConfigMap (including future additions) to follow the
+		// `llmsafespaces-*` UID convention. Mixed prefixes complicate
+		// the manual cleanup procedure in CHART-UPGRADE.md.
+		//
+		// The selection logic above only assigns foundTopLevel from
+		// UIDs matching the llmsafespaces- prefix, so this NotEmpty
+		// check IS the prefix-consistency assertion: a missing
+		// foundTopLevel means no top-level UID had the required prefix.
+		require.NotEmpty(t, foundTopLevel,
+			"%s: no top-level UID with the `llmsafespaces-` prefix found. "+
+				"Every dashboard in this chart must use the consistent UID prefix; "+
+				"saw top-level UIDs %v.",
+			filename, topLevelUIDs)
+
+		// Contract 1 (specific): if we have a pinned expectation for
+		// this file, verify the UID matches exactly. New dashboards
+		// must be added to expectedUIDs (forcing the developer to also
+		// update CHART-UPGRADE.md and the cleanup script).
+		want, pinned := expectedUIDs[filename]
+		require.True(t, pinned,
+			"%s: dashboard added to charts/llmsafespaces/dashboards/ without being added "+
+				"to TestMonitoring_DashboardUIDsAreStable's `expectedUIDs` map. Add it (along "+
+				"with the matching entry in scripts/grafana-purge-stale-dashboards.sh's "+
+				"EXPECTED_UIDS list) so the UID stability contract covers all dashboards.",
+			filename)
+		require.Equal(t, want, foundTopLevel,
+			"%s: top-level dashboard UID has changed — this breaks operator bookmarks AND triggers "+
+				"the multi-version-coexistence failure mode in Grafana's sidecar provisioner "+
+				"discovered during worklog 0522 incident response. "+
+				"If this change is intentional, see CHART-UPGRADE.md for the required cleanup procedure.",
+			filename)
+	}
+
+	// Belt-and-suspenders sanity check: every entry in expectedUIDs must
+	// correspond to a real file in the rendered ConfigMap. Catches the
+	// case where a dashboard is removed from the chart but its pin is
+	// left dangling.
+	for filename := range expectedUIDs {
+		_, ok := data[filename]
+		require.True(t, ok,
+			"%s: pinned in expectedUIDs but not present in the rendered ConfigMap. "+
+				"Either restore the dashboard JSON file or remove the pin (and the "+
+				"matching EXPECTED_UIDS entry in the cleanup script).",
+			filename)
+	}
+}
+
 //
 // These tests guard the post-WG-removal chart contract: the relay-router
 // Deployment must have NO privileged sidecar / NET_ADMIN / WG volumes; the
@@ -2649,4 +2904,404 @@ func TestControllerArgs_RelayArtifactFlags_AbsentWhenDisabled(t *testing.T) {
 			t.Fatalf("artifact flags must NOT render when fleet disabled; got %q", a)
 		}
 	}
+}
+
+// findControllerEnv locates the controller container's env list in the
+// rendered Deployment.
+func findControllerEnv(t *testing.T, docs []map[string]any) []map[string]any {
+	t.Helper()
+	for _, d := range docs {
+		if d["kind"] != "Deployment" {
+			continue
+		}
+		meta, _ := d["metadata"].(map[string]any)
+		name, _ := meta["name"].(string)
+		if !strings.Contains(name, "controller") {
+			continue
+		}
+		spec, _ := d["spec"].(map[string]any)
+		tmpl, _ := spec["template"].(map[string]any)
+		podSpec, _ := tmpl["spec"].(map[string]any)
+		containers, _ := podSpec["containers"].([]any)
+		if len(containers) == 0 {
+			continue
+		}
+		c, _ := containers[0].(map[string]any)
+		rawEnv, _ := c["env"].([]any)
+		out := make([]map[string]any, 0, len(rawEnv))
+		for _, e := range rawEnv {
+			if m, ok := e.(map[string]any); ok {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// TestControllerEnv_PodNamespaceFromFieldRef pins that the controller
+// deployment exports POD_NAMESPACE via the downward API. The InferenceRelay
+// reconciler reads this env var to locate the relay-router peer ConfigMap
+// and per-VM token Secret in the release namespace; without it, the
+// reconciler falls back to a hardcoded "llmsafespaces" namespace literal
+// that only happens to work when the chart is installed under that exact
+// name. See worklog 0464 for the production failure mode this prevents.
+//
+// This test is unconditional (relay-disabled default) because POD_NAMESPACE
+// is unconditionally rendered: it is cheap to add and other controller
+// components may grow to read it.
+func TestControllerEnv_PodNamespaceFromFieldRef(t *testing.T) {
+	docs := helmTemplate(t, "")
+	env := findControllerEnv(t, docs)
+
+	var sawPodNamespace bool
+	for _, e := range env {
+		if e["name"] != "POD_NAMESPACE" {
+			continue
+		}
+		sawPodNamespace = true
+		valueFrom, ok := e["valueFrom"].(map[string]any)
+		require.True(t, ok, "POD_NAMESPACE must use valueFrom (not literal value)")
+		fieldRef, ok := valueFrom["fieldRef"].(map[string]any)
+		require.True(t, ok, "POD_NAMESPACE valueFrom must use fieldRef (downward API)")
+		require.Equal(t, "metadata.namespace", fieldRef["fieldPath"],
+			"POD_NAMESPACE must source from metadata.namespace via downward API")
+		break
+	}
+	require.True(t, sawPodNamespace,
+		"controller deployment must export POD_NAMESPACE env var; without it the relay reconciler falls back to a hardcoded namespace and fails on non-default chart installs")
+}
+
+// TestWorkspaceEgress_AllowsRelayRouter verifies the workspace-egress
+// NetworkPolicy includes an explicit allow rule for the in-cluster
+// relay-router on port 8080. Without this, the workspace agentd cannot
+// reach INFERENCE_RELAY_BASEURL=http://relay-router.<ns>.svc.cluster.local:8080
+// because the router's ClusterIP falls under the RFC1918 block in the
+// general-egress rule. Discovered live during worklog 0467 testing.
+func TestWorkspaceEgress_AllowsRelayRouter(t *testing.T) {
+	docs := helmTemplate(t, relayEnabledValues)
+	policies := findByKind(docs, "NetworkPolicy")
+
+	var checked bool
+	for _, p := range policies {
+		name := metaName(p)
+		if !strings.Contains(name, "workspace-egress") {
+			continue
+		}
+		checked = true
+		spec, _ := p["spec"].(map[string]any)
+		egress, _ := spec["egress"].([]any)
+
+		var sawRouterAllow bool
+		for _, rawRule := range egress {
+			rule, _ := rawRule.(map[string]any)
+			ports, _ := rule["ports"].([]any)
+			to, _ := rule["to"].([]any)
+
+			// Look for a rule with port 8080 that targets the relay-router
+			// pod selector (component=relay-router).
+			port8080 := false
+			for _, rawPort := range ports {
+				port, _ := rawPort.(map[string]any)
+				if port["port"] == float64(8080) || port["port"] == int64(8080) || port["port"] == 8080 {
+					port8080 = true
+					break
+				}
+			}
+			if !port8080 {
+				continue
+			}
+			for _, rawTo := range to {
+				toEntry, _ := rawTo.(map[string]any)
+				podSelector, _ := toEntry["podSelector"].(map[string]any)
+				if podSelector == nil {
+					continue
+				}
+				matchLabels, _ := podSelector["matchLabels"].(map[string]any)
+				if matchLabels["app.kubernetes.io/component"] == "relay-router" {
+					sawRouterAllow = true
+				}
+			}
+		}
+		require.True(t, sawRouterAllow,
+			"workspace-egress policy must include an explicit allow rule "+
+				"for component=relay-router on port 8080. Without this, "+
+				"workspace pods cannot reach INFERENCE_RELAY_BASEURL because "+
+				"the router's ClusterIP falls under the RFC1918 exclude. "+
+				"Bug discovered during worklog 0467 in-cluster testing.")
+	}
+	require.True(t, checked, "workspace-egress NetworkPolicy must exist when fleet enabled")
+}
+
+// TestWorkspaceEgress_NoRelayRouterRuleWhenFleetDisabled verifies the
+// rule does not render when the fleet is disabled — there is no
+// in-cluster router to permit egress to.
+func TestWorkspaceEgress_NoRelayRouterRuleWhenFleetDisabled(t *testing.T) {
+	docs := helmTemplate(t, "")
+	policies := findByKind(docs, "NetworkPolicy")
+
+	for _, p := range policies {
+		name := metaName(p)
+		if !strings.Contains(name, "workspace-egress") {
+			continue
+		}
+		spec, _ := p["spec"].(map[string]any)
+		egress, _ := spec["egress"].([]any)
+		for _, rawRule := range egress {
+			rule, _ := rawRule.(map[string]any)
+			to, _ := rule["to"].([]any)
+			for _, rawTo := range to {
+				toEntry, _ := rawTo.(map[string]any)
+				podSelector, _ := toEntry["podSelector"].(map[string]any)
+				if podSelector == nil {
+					continue
+				}
+				matchLabels, _ := podSelector["matchLabels"].(map[string]any)
+				if matchLabels["app.kubernetes.io/component"] == "relay-router" {
+					t.Fatal("workspace-egress must NOT include relay-router rule when fleet disabled")
+				}
+			}
+		}
+	}
+}
+
+// ============================================================================
+// Epic 54, US-54.3: Org-scoped wildcard subdomain routing chart tests.
+//
+// These tests verify the chart's opt-in wildcard Ingress + Certificate
+// templates render correctly when orgSubdomainRouting.enabled=true and
+// are absent by default (backward compatibility).
+// ============================================================================
+
+// TestEpic54_DefaultRender_NoWildcardResources verifies that a default
+// `helm template` with no overrides renders ZERO wildcard Ingress or
+// Certificate resources — single-host deploys are unaffected.
+func TestEpic54_DefaultRender_NoWildcardResources(t *testing.T) {
+	docs := helmTemplate(t, "")
+	for _, d := range docs {
+		name := metaName(d)
+		if strings.Contains(name, "wildcard") {
+			t.Fatalf("default render must NOT include wildcard resources; found %s/%s",
+				d["kind"], name)
+		}
+	}
+}
+
+// TestEpic54_WildcardEnabled_RendersIngressAndCert verifies that enabling
+// orgSubdomainRouting renders both the wildcard Ingress and a cert-manager
+// Certificate with the correct host and DNS names.
+func TestEpic54_WildcardEnabled_RendersIngressAndCert(t *testing.T) {
+	values := `
+frontend:
+  enabled: true
+  ingress:
+    enabled: true
+    host: "app.example.com"
+    tls: true
+orgSubdomainRouting:
+  enabled: true
+  baseDomain: "app.example.com"
+  cookieDomain: ".app.example.com"
+  wildcardCert:
+    issuerRef:
+      name: "letsencrypt-prod"
+      kind: "ClusterIssuer"
+`
+	docs := helmTemplate(t, values)
+
+	// Find the wildcard Ingress
+	ingresses := findByKind(docs, "Ingress")
+	var wildcardIngress map[string]any
+	for _, ing := range ingresses {
+		if strings.Contains(metaName(ing), "wildcard") {
+			wildcardIngress = ing
+			break
+		}
+	}
+	require.NotNil(t, wildcardIngress, "wildcard Ingress must render when orgSubdomainRouting.enabled=true")
+
+	// Verify the host rule
+	spec, _ := wildcardIngress["spec"].(map[string]any)
+	rules, _ := spec["rules"].([]any)
+	require.NotEmpty(t, rules, "wildcard Ingress must have at least one rule")
+	rule, _ := rules[0].(map[string]any)
+	assert.Equal(t, "*.app.example.com", rule["host"],
+		"wildcard Ingress host must be *.<baseDomain>")
+
+	// Verify TLS block references the wildcard secret
+	tls, _ := spec["tls"].([]any)
+	require.NotEmpty(t, tls, "wildcard Ingress must have TLS when frontend.ingress.tls=true")
+	tlsEntry, _ := tls[0].(map[string]any)
+	hosts, _ := tlsEntry["hosts"].([]any)
+	require.Contains(t, hosts, "*.app.example.com")
+	assert.Contains(t, tlsEntry["secretName"], "wildcard-tls",
+		"TLS secret name must contain 'wildcard-tls'")
+
+	// Find the wildcard Certificate
+	certs := findByKind(docs, "Certificate")
+	var wildcardCert map[string]any
+	for _, cert := range certs {
+		if strings.Contains(metaName(cert), "wildcard") {
+			wildcardCert = cert
+			break
+		}
+	}
+	require.NotNil(t, wildcardCert, "wildcard Certificate must render when issuerRef is configured")
+
+	certSpec, _ := wildcardCert["spec"].(map[string]any)
+	dnsNames, _ := certSpec["dnsNames"].([]any)
+	require.Contains(t, dnsNames, "*.app.example.com",
+		"Certificate dnsNames must include the wildcard")
+	require.Contains(t, dnsNames, "app.example.com",
+		"Certificate dnsNames must include the base domain (for non-wildcard requests)")
+
+	issuerRef, _ := certSpec["issuerRef"].(map[string]any)
+	assert.Equal(t, "letsencrypt-prod", issuerRef["name"],
+		"Certificate issuerRef.name must match values")
+	assert.Equal(t, "ClusterIssuer", issuerRef["kind"],
+		"Certificate issuerRef.kind must match values")
+}
+
+// TestEpic54_WildcardEnabled_NoCertWhenTlsDisabled verifies that when TLS
+// is disabled (frontend.ingress.tls=false), no Certificate is rendered
+// even if orgSubdomainRouting is enabled.
+func TestEpic54_WildcardEnabled_NoCertWhenTlsDisabled(t *testing.T) {
+	values := `
+frontend:
+  enabled: true
+  ingress:
+    enabled: true
+    host: "app.example.com"
+    tls: false
+orgSubdomainRouting:
+  enabled: true
+  baseDomain: "app.example.com"
+  cookieDomain: ".app.example.com"
+  wildcardCert:
+    issuerRef:
+      name: "letsencrypt-prod"
+      kind: "ClusterIssuer"
+`
+	docs := helmTemplate(t, values)
+
+	// Wildcard Ingress should still render (just without TLS)
+	ingresses := findByKind(docs, "Ingress")
+	var sawWildcardIngress bool
+	for _, ing := range ingresses {
+		if strings.Contains(metaName(ing), "wildcard") {
+			sawWildcardIngress = true
+			spec, _ := ing["spec"].(map[string]any)
+			_, hasTLS := spec["tls"]
+			assert.False(t, hasTLS, "wildcard Ingress must NOT have TLS when tls=false")
+			break
+		}
+	}
+	assert.True(t, sawWildcardIngress, "wildcard Ingress should render even without TLS")
+
+	// No Certificate should render
+	for _, cert := range findByKind(docs, "Certificate") {
+		assert.NotContains(t, metaName(cert), "wildcard",
+			"wildcard Certificate must NOT render when tls=false")
+	}
+}
+
+// TestEpic54_ExistingTLSSecret_NoCertificateRendered verifies that when
+// wildcardCert.tlsSecret is set (operator has an external wildcard cert),
+// no Certificate resource is rendered — the Ingress references the
+// operator's existing Secret.
+func TestEpic54_ExistingTLSSecret_NoCertificateRendered(t *testing.T) {
+	values := `
+frontend:
+  enabled: true
+  ingress:
+    enabled: true
+    host: "app.example.com"
+    tls: true
+orgSubdomainRouting:
+  enabled: true
+  baseDomain: "app.example.com"
+  cookieDomain: ".app.example.com"
+  wildcardCert:
+    tlsSecret: "my-existing-wildcard-cert"
+    issuerRef:
+      name: "letsencrypt-prod"
+      kind: "ClusterIssuer"
+`
+	docs := helmTemplate(t, values)
+
+	// No Certificate should render (tlsSecret takes precedence)
+	for _, cert := range findByKind(docs, "Certificate") {
+		assert.NotContains(t, metaName(cert), "wildcard",
+			"wildcard Certificate must NOT render when tlsSecret is set")
+	}
+
+	// The Ingress should reference the operator's Secret
+	ingresses := findByKind(docs, "Ingress")
+	for _, ing := range ingresses {
+		if !strings.Contains(metaName(ing), "wildcard") {
+			continue
+		}
+		spec, _ := ing["spec"].(map[string]any)
+		tls, _ := spec["tls"].([]any)
+		require.NotEmpty(t, tls)
+		tlsEntry, _ := tls[0].(map[string]any)
+		assert.Equal(t, "my-existing-wildcard-cert", tlsEntry["secretName"],
+			"wildcard Ingress must reference the operator-supplied tlsSecret")
+	}
+}
+
+// TestEpic54_ConfigMapEmitsOrgSubdomainRouting verifies that the API
+// ConfigMap includes the orgSubdomainRouting block when configured.
+func TestEpic54_ConfigMapEmitsOrgSubdomainRouting(t *testing.T) {
+	values := `
+orgSubdomainRouting:
+  enabled: true
+  baseDomain: "app.example.com"
+  cookieDomain: ".app.example.com"
+`
+	docs := helmTemplate(t, values)
+	cms := findByKind(docs, "ConfigMap")
+	var apiCM map[string]any
+	for _, cm := range cms {
+		if strings.Contains(metaName(cm), "api-config") {
+			apiCM = cm
+			break
+		}
+	}
+	require.NotNil(t, apiCM, "API ConfigMap must render")
+	data, _ := apiCM["data"].(map[string]any)
+	configYAML, _ := data["config.yaml"].(string)
+	assert.Contains(t, configYAML, "orgSubdomainRouting:")
+	assert.Contains(t, configYAML, "baseDomain: \"app.example.com\"")
+	assert.Contains(t, configYAML, "cookieDomain: \".app.example.com\"")
+}
+
+// TestEpic54_WildcardEnabled_EmptyBaseDomain_FailsAtTemplate verifies that
+// enabling orgSubdomainRouting without a baseDomain fails at helm template
+// time (via the `required` function) rather than rendering a broken host rule.
+func TestEpic54_WildcardEnabled_EmptyBaseDomain_FailsAtTemplate(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("helm not on PATH; skipping chart render test")
+	}
+	values := `
+frontend:
+  enabled: true
+  ingress:
+    enabled: true
+orgSubdomainRouting:
+  enabled: true
+  baseDomain: ""
+`
+	dir := t.TempDir()
+	valuesPath := filepath.Join(dir, "values.yaml")
+	require.NoError(t, writeFile(valuesPath, values))
+
+	cmd := exec.Command("helm", "template", "test-release", chartDir(t), "-n", "test-ns", "-f", valuesPath)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+
+	require.Error(t, err, "helm template must fail when orgSubdomainRouting.enabled=true but baseDomain is empty")
+	assert.Contains(t, stderr.String(), "baseDomain is required",
+		"error message must explain that baseDomain is required")
 }

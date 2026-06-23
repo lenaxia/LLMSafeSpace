@@ -38,13 +38,30 @@ func (s *PgKeyStore) GetUserKey(ctx context.Context, userID string) (*UserKeyRec
 	return &r, nil
 }
 
+// CreateUserKey stores a user's key material. On conflict (the user
+// already has a row — e.g. password reset reinitializing a fresh DEK
+// for a user who already has key material), the row is overwritten.
+// This is required because user_keys.user_id is the PRIMARY KEY and a
+// plain INSERT would fail with unique_violation for any user who has
+// ever created a secret, which is the only case where reinit matters.
+// Overwriting with a freshly-generated DEK (see InitializeUserKeys)
+// is exactly the desired reset behavior: the prior wraps and anything
+// encrypted under the prior DEK become permanently undecryptable.
 func (s *PgKeyStore) CreateUserKey(ctx context.Context, record *UserKeyRecord) error {
 	_, err := s.pool.Exec(ctx,
 		`INSERT INTO user_keys (user_id, key_version, wrapped_dek, wrapped_dek_recovery, salt, recovery_salt, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 ON CONFLICT (user_id) DO UPDATE SET
+		   key_version = EXCLUDED.key_version,
+		   wrapped_dek = EXCLUDED.wrapped_dek,
+		   wrapped_dek_recovery = EXCLUDED.wrapped_dek_recovery,
+		   salt = EXCLUDED.salt,
+		   recovery_salt = EXCLUDED.recovery_salt,
+		   created_at = EXCLUDED.created_at,
+		   rotated_at = NULL`,
 		record.UserID, record.KeyVersion, record.WrappedDEK, record.WrappedDEKRecovery, record.Salt, record.RecoverySalt, record.CreatedAt)
 	if err != nil {
-		return fmt.Errorf("insert user_keys: %w", err)
+		return fmt.Errorf("upsert user_keys: %w", err)
 	}
 	return nil
 }

@@ -1,7 +1,9 @@
 import type { ReactNode } from "react";
+import { Suspense } from "react";
 import { Link, NavLink, Outlet } from "react-router-dom";
 import { SidebarDrawer } from "./SidebarDrawer";
 import { SidebarToggleButton } from "./SidebarToggleButton";
+import { Spinner } from "../ui/Spinner";
 import { useCollapsibleSidebar } from "../../hooks/useCollapsibleSidebar";
 
 export interface NavItem {
@@ -79,7 +81,15 @@ export function PortalLayout({
         </SidebarDrawer>
 
         <main className="flex-1 overflow-y-auto p-6">
-          <Outlet context={context} />
+          <Suspense
+            fallback={
+              <div className="flex h-full items-center justify-center">
+                <Spinner size="lg" />
+              </div>
+            }
+          >
+            <Outlet context={context} />
+          </Suspense>
         </main>
       </div>
     </div>

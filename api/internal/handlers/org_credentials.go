@@ -29,15 +29,15 @@ type orgBindingAndAutoApplyStore interface {
 
 // OrgCredentialsHandler handles org credential endpoints.
 type OrgCredentialsHandler struct {
-	credStore     CredentialStore
-	orgOps        orgBindingAndAutoApplyStore
-	orgKeyDeriver secrets.AdminKeyDeriver
-	authSvc       orgAuthService
+	credStore CredentialStore
+	orgOps    orgBindingAndAutoApplyStore
+	provider  secrets.RootKeyProvider
+	authSvc   orgAuthService
 }
 
 // NewOrgCredentialsHandler creates a new OrgCredentialsHandler.
-func NewOrgCredentialsHandler(store CredentialStore, orgOps orgBindingAndAutoApplyStore, orgKeyDeriver secrets.AdminKeyDeriver, authSvc orgAuthService) *OrgCredentialsHandler {
-	return &OrgCredentialsHandler{credStore: store, orgOps: orgOps, orgKeyDeriver: orgKeyDeriver, authSvc: authSvc}
+func NewOrgCredentialsHandler(store CredentialStore, orgOps orgBindingAndAutoApplyStore, provider secrets.RootKeyProvider, authSvc orgAuthService) *OrgCredentialsHandler {
+	return &OrgCredentialsHandler{credStore: store, orgOps: orgOps, provider: provider, authSvc: authSvc}
 }
 
 type createOrgCredentialRequest struct {
@@ -57,15 +57,6 @@ type updateOrgCredentialRequest struct {
 	ModelContextLimits map[string]int `json:"modelContextLimits"`
 }
 
-// orgKEK returns the server KEK used to encrypt org credentials, or nil if the
-// key deriver is not configured.
-func (h *OrgCredentialsHandler) orgKEK() []byte {
-	if h.orgKeyDeriver == nil {
-		return nil
-	}
-	return h.orgKeyDeriver("org-credentials")
-}
-
 // Create handles POST /api/v1/orgs/:id/credentials.
 func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 	orgID := c.Param("id")
@@ -77,13 +68,12 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 		return
 	}
 
-	orgKEK := h.orgKEK()
-	if orgKEK == nil {
+	if h.provider == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "server key not configured"})
 		return
 	}
 
-	ciphertext, err := encryptCredentialData(orgKEK, req.Provider, req.APIKey, req.BaseURL)
+	ciphertext, err := encryptCredentialData(ctx, h.provider.Encrypt, req.Provider, req.APIKey, req.BaseURL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode credential"})
 		return
@@ -103,7 +93,7 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 		Name:               req.Name,
 		Provider:           req.Provider,
 		Ciphertext:         ciphertext,
-		KeyVersion:         1,
+		KeyVersion:         secrets.ActiveVersionOf(h.provider),
 		ModelAllowlist:     allowlist,
 		ModelContextLimits: req.ModelContextLimits,
 		CreatedAt:          now,
@@ -134,7 +124,7 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 		return
 	}
 
-	resp := buildCredentialResponse(created, orgKEK)
+	resp := buildCredentialResponse(ctx, created, h.provider)
 
 	if err := h.orgOps.BindCredentialToAllOrgWorkspaces(ctx, credID, orgID); err != nil {
 		resp.BindWarning = "credential created but auto-bind to existing org workspaces failed"
@@ -156,10 +146,9 @@ func (h *OrgCredentialsHandler) List(c *gin.Context) {
 	sort.Slice(rows, func(i, j int) bool {
 		return rows[i].CreatedAt.After(rows[j].CreatedAt)
 	})
-	kek := h.orgKEK()
 	resp := make([]CredentialResponse, 0, len(rows))
 	for _, row := range rows {
-		resp = append(resp, buildCredentialResponse(row, kek))
+		resp = append(resp, buildCredentialResponse(c.Request.Context(), row, h.provider))
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -193,13 +182,12 @@ func (h *OrgCredentialsHandler) Update(c *gin.Context) {
 	// lives inside the encrypted LLMProviderData blob — matching the admin
 	// handler (admin_provider_credentials.go:267).
 	if req.APIKey != nil || req.BaseURL != nil {
-		orgKEK := h.orgKEK()
-		if orgKEK == nil {
+		if h.provider == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "server key not configured"})
 			return
 		}
 
-		oldPlaintext, err := secrets.DecryptSecret(orgKEK, existing.Ciphertext)
+		oldPlaintext, err := h.provider.Decrypt(ctx, existing.Ciphertext)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to decrypt existing credential"})
 			return
@@ -221,7 +209,7 @@ func (h *OrgCredentialsHandler) Update(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode credential"})
 			return
 		}
-		newCiphertext, err = secrets.EncryptSecret(orgKEK, newPlaintext)
+		newCiphertext, err = h.provider.Encrypt(ctx, newPlaintext)
 		zeroBytes(newPlaintext)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "re-encryption failed"})
@@ -268,7 +256,7 @@ func (h *OrgCredentialsHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusOK, CredentialResponse{ID: credID, OrgID: orgID})
 		return
 	}
-	c.JSON(http.StatusOK, buildCredentialResponse(updated, h.orgKEK()))
+	c.JSON(http.StatusOK, buildCredentialResponse(ctx, updated, h.provider))
 }
 
 // Delete handles DELETE /api/v1/orgs/:id/credentials/:credID.
@@ -298,13 +286,13 @@ func (h *OrgCredentialsHandler) ProbeModels(c *gin.Context) {
 	credID := c.Param("credID")
 	ctx := c.Request.Context()
 
-	resolveKey := func(_ context.Context) ([]byte, string, int) {
-		if k := h.orgKEK(); k != nil {
-			return k, "", 0
+	resolveDecrypt := func(_ context.Context) (func(context.Context, []byte) ([]byte, error), string, int) {
+		if h.provider != nil {
+			return h.provider.Decrypt, "", 0
 		}
 		return nil, "server key not configured", http.StatusServiceUnavailable
 	}
-	plaintext, limits, perr := getCredentialForProbe(ctx, h.credStore, "org", orgID, credID, resolveKey)
+	plaintext, limits, perr := getCredentialForProbe(ctx, h.credStore, "org", orgID, credID, resolveDecrypt)
 	if perr != nil {
 		c.JSON(perr.status, gin.H{"error": perr.msg})
 		return

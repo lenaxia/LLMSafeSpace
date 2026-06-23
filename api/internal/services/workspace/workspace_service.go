@@ -6,13 +6,13 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
@@ -44,7 +44,6 @@ type Service struct {
 	cacheService     apiinterfaces.CacheService
 	metricsService   apiinterfaces.MetricsService
 	sessionIndex     apiinterfaces.SessionIndexService
-	secretInjector   SecretInjector
 	credProvisioner  CredentialProvisioner
 	instanceSettings *settings.InstanceService
 	orgStore         OrgMembershipChecker
@@ -156,16 +155,6 @@ func New(
 // SetSessionIndex injects the session index service. Optional — nil disables session tracking.
 func (s *Service) SetSessionIndex(si apiinterfaces.SessionIndexService) {
 	s.sessionIndex = si
-}
-
-// SecretInjector prepares decrypted secrets for pod injection.
-type SecretInjector interface {
-	PrepareSecretsForInjection(ctx context.Context, userID, sessionID, workspaceID string) ([]byte, error)
-}
-
-// SetSecretInjector injects the secret service for pod secret materialization.
-func (s *Service) SetSecretInjector(si SecretInjector) {
-	s.secretInjector = si
 }
 
 func (s *Service) Start() error {
@@ -340,14 +329,9 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 		}
 	}
 
-	// Write the workspace-secrets K8s Secret so the pod's init container
-	// finds credentials on first boot. The user's DEK is always available
-	// at workspace creation time — the user must be authenticated (JWT in
-	// context) to reach this code path, and the DEK is unlocked at login
-	// and at registration. Using refreshEphemeralSecrets (not seed) injects
-	// the full user credential set (thekao API keys etc.) rather than
-	// admin-only platform credentials.
-	s.refreshEphemeralSecrets(ctx, userID, meta.ID)
+	// Epic 35: secrets are no longer pre-written to a K8s Secret — the init
+	// container fetches them from the API via the bootstrap endpoint at pod
+	// boot. No action needed here.
 
 	ws := &types.Workspace{
 		ID:          meta.ID,
@@ -588,6 +572,52 @@ func (s *Service) SuspendWorkspace(ctx context.Context, userID, workspaceID stri
 	return nil
 }
 
+// NeutralizeUserWorkspaces suspends every Active workspace owned by
+// userID and best-effort deletes any legacy workspace-secrets-<id> K8s
+// Secret for each. Post-Epic-35, workspaces no longer create this Secret
+// (secretless injection), so this is an upgrade-path cleanup no-op for
+// post-Epic-35 workspaces. For pre-Epic-35 workspaces with a leftover
+// Secret, it ensures the plaintext is scrubbed.
+//
+// Suspend is best-effort: workspaces not in the Active phase (Creating,
+// Resuming, already Suspended, ...) are skipped without aborting the
+// loop, and individual failures are logged. The Secret scrub runs for
+// every workspace regardless of phase and ignores NotFound.
+// A nil k8sClient (dev/test) makes the scrub a no-op.
+func (s *Service) NeutralizeUserWorkspaces(ctx context.Context, userID string) error {
+	phases := s.fetchUserWorkspacePhases(ctx, userID)
+	for wsID := range phases {
+		if err := s.SuspendWorkspace(ctx, userID, wsID); err != nil {
+			// A conflict means the workspace is not Active (Creating,
+			// Resuming, Suspended, Terminating, ...). That is expected
+			// during a bulk sweep and must not be noisy. Anything else
+			// is logged so an operator sees real degradation.
+			var apiErr *apierrors.APIError
+			if !errors.As(err, &apiErr) || apiErr.Type != apierrors.ErrorTypeConflict {
+				s.logger.Warn("neutralize: suspend workspace failed",
+					"workspaceID", wsID, "error", err.Error())
+			}
+		}
+		if err := s.deleteWorkspaceSecretsManifest(ctx, wsID); err != nil && !k8serrors.IsNotFound(err) {
+			s.logger.Warn("neutralize: scrub secrets manifest failed",
+				"workspaceID", wsID, "error", err.Error())
+		}
+	}
+	return nil
+}
+
+// deleteWorkspaceSecretsManifest deletes a legacy workspace-secrets-<id>
+// K8s Secret if one exists (upgrade-path cleanup; post-Epic-35
+// workspaces never create it).
+func (s *Service) deleteWorkspaceSecretsManifest(ctx context.Context, workspaceID string) error {
+	if s.k8sClient == nil {
+		return nil
+	}
+	secretName := fmt.Sprintf("workspace-secrets-%s", workspaceID)
+	clientset := s.k8sClient.Clientset()
+	return clientset.CoreV1().Secrets(s.config.Namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
+}
+
 // RestartWorkspace bumps spec.restartGeneration so the controller's
 // handleFailed (Epic 21 Change A) or handleActive recovery paths walk
 // the workspace back through Pending and rebuild the pod from scratch.
@@ -604,12 +634,8 @@ func (s *Service) SuspendWorkspace(ctx context.Context, userID, workspaceID stri
 // bumps the field by 1; the controller responds to each bump exactly
 // once via the strict-greater-than check on observedRestartGeneration).
 //
-// Before the spec bump, refreshEphemeralSecrets is invoked so the
-// freshly-built pod will mount up-to-date user-provided secrets. This
-// fixes the bug where restarting an Active workspace would lose its
-// `workspace-secrets-<id>` K8s Secret (e.g. SSH keys), because the
-// controller-side pod rebuild path does not call back into the API
-// service to re-emit it. See worklog 0120.
+// Epic 35: the pod's init container fetches credentials via the bootstrap
+// endpoint at boot — no pre-writing of a K8s Secret is needed.
 func (s *Service) RestartWorkspace(ctx context.Context, userID, workspaceID string) error {
 	start := time.Now()
 	defer func() {
@@ -640,8 +666,6 @@ func (s *Service) RestartWorkspace(ctx context.Context, userID, workspaceID stri
 			fmt.Errorf("cannot restart workspace in phase %q", crd.Status.Phase),
 		)
 	}
-
-	s.refreshEphemeralSecrets(ctx, userID, workspaceID)
 
 	crd.Spec.RestartGeneration++
 	if _, err := func() (*v1.Workspace, error) {
@@ -1120,9 +1144,8 @@ func (s *Service) ActivateWorkspace(ctx context.Context, userID, workspaceID str
 	}
 
 	// Inject credentials into ephemeral K8s Secret before transitioning to
-	// Resuming so the pod's credential-setup init container finds secrets.json
-	// on boot. This is the critical step missing from the removed resume path.
-	s.refreshEphemeralSecrets(ctx, userID, workspaceID)
+	// Epic 35: the pod's init container fetches credentials via the bootstrap
+	// endpoint at boot — no pre-writing of a K8s Secret is needed.
 
 	// Enforce max active workspaces — may suspend the stalest workspace
 	suspended, err := s.enforceMaxActiveWorkspaces(ctx, userID, workspaceID)
@@ -1356,431 +1379,4 @@ var sessionIDContextKey = sessionIDCtxKey{}
 // ContextWithSessionID adds the session ID to context for secret injection during activation.
 func ContextWithSessionID(ctx context.Context, sessionID string) context.Context {
 	return context.WithValue(ctx, sessionIDContextKey, sessionID)
-}
-
-func (s *Service) createEphemeralSecretsSecret(ctx context.Context, workspaceID string, secretsJSON []byte) {
-	if err := s.EnsureSecretsManifest(ctx, workspaceID, secretsJSON); err != nil {
-		s.logger.Error("Failed to write ephemeral secrets secret", err, "workspaceID", workspaceID)
-	}
-}
-
-// refreshEphemeralSecrets re-materializes the workspace-secrets-<id>
-// K8s Secret from the user's currently-bound secrets in PostgreSQL.
-//
-// This is the single source of truth for the lifecycle paths that
-// build (or rebuild) a workspace pod and need its user-provided
-// secrets to be present at mount time. Two callers today:
-//
-//   - ActivateWorkspace: resume from Suspended; pod is created fresh.
-//   - RestartWorkspace:  bump restartGeneration; controller deletes
-//     the existing pod and recreates it.
-//
-// Both paths previously had their own (or missing) secret-refresh
-// logic. RestartWorkspace had none, which meant SSH keys and other
-// bound secrets were dropped on restart (worklog 0120, the bug that
-// motivated this helper). Folding the logic into one function
-// guarantees the lifecycle invariant "if a pod is about to be
-// (re)built, its secrets are refreshed first" is enforced uniformly.
-//
-// SESSION HANDLING
-//
-//   - When sessionID is present in ctx (set by ContextWithSessionID),
-//     both user credentials (per-session DEK) and admin platform
-//     credentials (server-side KEK) are injected.
-//   - When sessionID is absent (API-key auth, background reconcile,
-//     controller-initiated restart), the function falls back to
-//     seedEphemeralSecrets, which injects only admin platform
-//     credentials (server-side KEK, no session required). User
-//     credentials are not available without a session and are skipped.
-//     The resulting K8s Secret will contain only admin credentials;
-//     if the same workspace is later activated with a full JWT session,
-//     refreshEphemeralSecrets will overwrite it with the full set.
-//
-// # FAILURE MODES
-//
-// Every failure path logs Warn and returns. The caller's lifecycle
-// action proceeds regardless. Rationale: losing one secret refresh
-// is recoverable (user can re-bind or re-activate); failing the
-// lifecycle action would leave the workspace stuck. A pre-existing
-// K8s Secret from the previous successful refresh is preserved
-// untouched on failure, so the pod can still come up with whatever
-// was last seen.
-//
-// NOTE: This is the API-side guarantee. The controller-side path
-// that rebuilds pods (Active phase + restartGeneration bump) does
-// NOT call back into the API service — a kubectl-driven or
-// operator-driven `restartGeneration` bump bypasses this helper
-// entirely. That's the follow-up work tracked in worklog 0120: the
-// controller should refuse to start a pod when the bindings table
-// says secrets should be present but the K8s Secret is empty/absent.
-func (s *Service) refreshEphemeralSecrets(ctx context.Context, userID, workspaceID string) {
-	if s.secretInjector == nil {
-		return
-	}
-	sessionID, _ := ctx.Value(sessionIDContextKey).(string)
-	if sessionID == "" {
-		// No user session (e.g. API-key auth, background reconcile). We cannot
-		// decrypt user-owned credentials but we CAN inject admin platform
-		// credentials (server-side KEK, no session required). Fall through to
-		// seedEphemeralSecrets which uses sessionID="" — correct for admin creds.
-		s.logger.Warn("refreshEphemeralSecrets: no sessionID — falling back to admin-only credential injection",
-			"workspaceID", workspaceID)
-		s.seedEphemeralSecrets(ctx, userID, workspaceID)
-		return
-	}
-	secretsJSON, err := s.secretInjector.PrepareSecretsForInjection(ctx, userID, sessionID, workspaceID)
-	if err != nil {
-		s.logger.Warn("Failed to prepare secrets for injection",
-			"workspaceID", workspaceID, "error", err.Error())
-		return
-	}
-	// PrepareSecretsForInjection returns "[]" (2 bytes) when the user
-	// has no bindings on this workspace. Skip the manifest write in
-	// that case — calling EnsureSecretsManifest with "[]" would
-	// clobber any existing workspace-secrets-<id> Secret with an
-	// empty payload. On a restart path that's specifically the wrong
-	// default: we want to *refresh* secrets, not *remove* them. The
-	// user's explicit "unbind" path (SetBindings with []) goes
-	// through pushSecretsToAgent which is the correct place to clear
-	// the manifest.
-	if len(secretsJSON) <= 2 {
-		return
-	}
-	s.createEphemeralSecretsSecret(ctx, workspaceID, secretsJSON)
-}
-
-// seedEphemeralSecrets injects admin platform credentials (server-side KEK,
-// no user session required) into the workspace-secrets-<id> K8s Secret.
-//
-// Called from one path:
-//   - refreshEphemeralSecrets fallback: when no sessionID is in context
-//     (API-key auth, controller reconcile, expired DEK), this is called instead
-//     of skipping entirely, ensuring platform credentials are always current.
-//
-// Uses MergeSecretsManifest rather than a full overwrite so that user-owned
-// credentials (which require the DEK and could not be decrypted here) are
-// preserved from the prior full refresh. Without this, every DEK-absent activate
-// silently drops user credentials and the pod boots with only admin providers.
-//
-// User credentials are injected by refreshEphemeralSecrets when the user opens
-// the workspace with a live session DEK.
-func (s *Service) seedEphemeralSecrets(ctx context.Context, userID, workspaceID string) {
-	if s.secretInjector == nil {
-		return
-	}
-	secretsJSON, err := s.secretInjector.PrepareSecretsForInjection(ctx, userID, "", workspaceID)
-	if err != nil {
-		s.logger.Warn("seedEphemeralSecrets: failed to prepare admin credentials for new workspace",
-			"workspaceID", workspaceID, "error", err.Error())
-		return
-	}
-	// Merge rather than overwrite. An empty result (no admin bindings, or all
-	// decrypts failed) still runs the merge path — which is a no-op against
-	// existing credentials, preserving them intact.
-	if err := s.MergeSecretsManifest(ctx, workspaceID, secretsJSON); err != nil {
-		s.logger.Error("seedEphemeralSecrets: failed to merge secrets manifest", err,
-			"workspaceID", workspaceID, "userID", userID)
-	}
-}
-
-// EnsureSecretsManifest writes (create-or-update) the K8s Secret named
-// `workspace-secrets-<id>` consumed by the in-pod init container. This is
-// the durable channel for binding delivery: a pod restart re-reads the
-// Secret on its next start. The HTTP `/v1/reload-secrets` push to agentd
-// is the live channel; the two together guarantee bound secrets reach
-// the pod regardless of its lifecycle state.
-//
-// The Get-then-Update path uses retry.RetryOnConflict so two concurrent
-// SetBindings calls (e.g. from two API replicas) cannot lose updates:
-// the second writer's Update will receive a 409 Conflict from the
-// apiserver and the helper re-Gets and retries with the latest
-// resourceVersion. Without this, the later writer would silently
-// overwrite the earlier writer's payload.
-//
-// Returns nil on apiserver success regardless of create-vs-update.
-// Errors are returned to the caller (rather than only logged) so the
-// bind handler can surface them at Warn (Bug 2).
-func (s *Service) EnsureSecretsManifest(ctx context.Context, workspaceID string, secretsJSON []byte) error {
-	if workspaceID == "" {
-		return fmt.Errorf("workspaceID is required")
-	}
-	secretName := fmt.Sprintf("workspace-secrets-%s", workspaceID)
-	clientset := s.k8sClient.Clientset()
-	secretClient := clientset.CoreV1().Secrets(s.config.Namespace)
-
-	labels := map[string]string{
-		"app":                         "llmsafespaces",
-		"llmsafespaces.dev/workspace": workspaceID,
-		"llmsafespaces.dev/ephemeral": "true",
-	}
-
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		existing, err := secretClient.Get(ctx, secretName, metav1.GetOptions{})
-		if err == nil {
-			// Merge secrets.json into existing data. Replace the key only, so
-			// workspace-config.json (written by EnsureWorkspaceConfig) and any
-			// other keys added in the future are preserved unmodified.
-			if existing.Data == nil {
-				existing.Data = map[string][]byte{}
-			}
-			existing.Data["secrets.json"] = secretsJSON
-			// Merge labels: preserve any additions made by an
-			// operator while ensuring our markers are present.
-			if existing.Labels == nil {
-				existing.Labels = map[string]string{}
-			}
-			for k, v := range labels {
-				existing.Labels[k] = v
-			}
-			if _, err := secretClient.Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
-				return err // retry.RetryOnConflict examines the error
-			}
-			return nil
-		}
-		if !k8serrors.IsNotFound(err) {
-			return fmt.Errorf("get secrets manifest: %w", err)
-		}
-		desired := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      secretName,
-				Namespace: s.config.Namespace,
-				Labels:    labels,
-			},
-			Data: map[string][]byte{"secrets.json": secretsJSON},
-		}
-		if _, err := secretClient.Create(ctx, desired, metav1.CreateOptions{}); err != nil {
-			// AlreadyExists means another writer created it between
-			// our Get and Create — surface as conflict so retry
-			// re-runs the Get path.
-			if k8serrors.IsAlreadyExists(err) {
-				return k8serrors.NewConflict(corev1.Resource("secrets"), secretName, err)
-			}
-			return fmt.Errorf("create secrets manifest: %w", err)
-		}
-		return nil
-	})
-}
-
-// MergeSecretsManifest writes the incoming secrets.json payload into the
-// workspace-secrets-<id> K8s Secret using a merge strategy: incoming entries
-// win for names they contain, and existing entries fill in names the incoming
-// payload lacks.
-//
-// This is the correct write path for seedEphemeralSecrets (DEK-absent activate).
-// When only admin credentials can be decrypted, user-owned credentials that were
-// written by a prior full-DEK refresh must not be overwritten. Without this,
-// every workspace activate with an expired or absent DEK silently drops user
-// credentials (e.g. thekao cloud) and the pod boots with only the relay provider.
-//
-// Merge semantics:
-//   - incoming entry (by name) always wins — ensures rotated admin keys propagate
-//   - existing entry whose name is absent from incoming is preserved — ensures
-//     user credentials survive a DEK-absent refresh
-//   - if no existing secret: behaves identically to EnsureSecretsManifest
-//   - empty incoming ([]): preserves all existing entries unchanged
-func (s *Service) MergeSecretsManifest(ctx context.Context, workspaceID string, incomingJSON []byte) error {
-	if workspaceID == "" {
-		return fmt.Errorf("workspaceID is required")
-	}
-
-	secretName := fmt.Sprintf("workspace-secrets-%s", workspaceID)
-	clientset := s.k8sClient.Clientset()
-	secretClient := clientset.CoreV1().Secrets(s.config.Namespace)
-
-	labels := map[string]string{
-		"app":                         "llmsafespaces",
-		"llmsafespaces.dev/workspace": workspaceID,
-		"llmsafespaces.dev/ephemeral": "true",
-	}
-
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		existing, err := secretClient.Get(ctx, secretName, metav1.GetOptions{})
-		if err != nil {
-			if !k8serrors.IsNotFound(err) {
-				return fmt.Errorf("get secrets manifest for merge: %w", err)
-			}
-			// No existing secret. Only create if incoming is non-empty: writing
-			// an empty secrets.json to a brand-new Secret would mount as `[]`
-			// in the init container, which is indistinguishable from "no
-			// credentials" and silently suppresses the first real bind. The
-			// correct behavior for empty+no-secret is to skip — the next
-			// successful credential bind will create the Secret with real data.
-			if len(incomingJSON) <= 2 {
-				return nil
-			}
-			desired := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      secretName,
-					Namespace: s.config.Namespace,
-					Labels:    labels,
-				},
-				Data: map[string][]byte{"secrets.json": incomingJSON},
-			}
-			if _, createErr := secretClient.Create(ctx, desired, metav1.CreateOptions{}); createErr != nil {
-				if k8serrors.IsAlreadyExists(createErr) {
-					return k8serrors.NewConflict(corev1.Resource("secrets"), secretName, createErr)
-				}
-				return fmt.Errorf("create secrets manifest (merge): %w", createErr)
-			}
-			return nil
-		}
-
-		// Secret exists — merge incoming over existing, keyed by name.
-		merged, mergeErr := mergeSecretsByName(existing.Data["secrets.json"], incomingJSON)
-		if mergeErr != nil {
-			// Merge failed (malformed JSON in stored secret). Fall back to
-			// writing incoming as-is rather than leaving a corrupt state.
-			s.logger.Warn("MergeSecretsManifest: failed to merge existing secrets; overwriting with incoming",
-				"workspaceID", workspaceID, "error", mergeErr.Error())
-			merged = incomingJSON
-		}
-
-		if existing.Data == nil {
-			existing.Data = map[string][]byte{}
-		}
-		existing.Data["secrets.json"] = merged
-		if existing.Labels == nil {
-			existing.Labels = map[string]string{}
-		}
-		for k, v := range labels {
-			existing.Labels[k] = v
-		}
-		if _, updateErr := secretClient.Update(ctx, existing, metav1.UpdateOptions{}); updateErr != nil {
-			return updateErr
-		}
-		return nil
-	})
-}
-
-// mergeSecretsByName merges two secrets.json payloads. Both are JSON arrays of
-// objects with a "name" field. The incoming payload wins for any name it contains;
-// existing entries whose names are absent from incoming are preserved.
-// An empty or nil incoming payload leaves existing unchanged.
-func mergeSecretsByName(existingJSON, incomingJSON []byte) ([]byte, error) {
-	// Parse incoming.
-	var incoming []json.RawMessage
-	if len(incomingJSON) > 2 {
-		if err := json.Unmarshal(incomingJSON, &incoming); err != nil {
-			return nil, fmt.Errorf("unmarshal incoming secrets: %w", err)
-		}
-	}
-
-	// Build name→entry map for incoming.
-	incomingByName := make(map[string]json.RawMessage, len(incoming))
-	for _, raw := range incoming {
-		var hdr struct {
-			Name string `json:"name"`
-		}
-		if err := json.Unmarshal(raw, &hdr); err != nil || hdr.Name == "" {
-			continue
-		}
-		incomingByName[hdr.Name] = raw
-	}
-
-	// Parse existing.
-	var existing []json.RawMessage
-	if len(existingJSON) > 2 {
-		if err := json.Unmarshal(existingJSON, &existing); err != nil {
-			return nil, fmt.Errorf("unmarshal existing secrets: %w", err)
-		}
-	}
-
-	// Start with incoming entries (preserve their order).
-	result := make([]json.RawMessage, 0, len(incoming)+len(existing))
-	result = append(result, incoming...)
-
-	// Append existing entries not covered by incoming.
-	for _, raw := range existing {
-		var hdr struct {
-			Name string `json:"name"`
-		}
-		if err := json.Unmarshal(raw, &hdr); err != nil || hdr.Name == "" {
-			continue
-		}
-		if _, covered := incomingByName[hdr.Name]; !covered {
-			result = append(result, raw)
-		}
-	}
-
-	out, err := json.Marshal(result)
-	if err != nil {
-		return nil, fmt.Errorf("marshal merged secrets: %w", err)
-	}
-	return out, nil
-}
-
-// EnsureWorkspaceConfig writes workspace-level configuration (non-sensitive
-// metadata like default model) into the workspace-secrets-<id> K8s Secret.
-// This is read by the agentd init container at pod boot to configure the agent.
-//
-// The Secret is created if it does not exist. This is necessary because users
-// with zero LLM credentials never have the secret created by seedEphemeralSecrets
-// (which guards on an empty secrets payload and skips writing). workspace-config.json
-// is independent of secrets.json — it must be writable regardless of whether the
-// workspace has any credentials.
-//
-// The create path sets the same labels as EnsureSecretsManifest so the secret
-// is discoverable by operators and the controller lifecycle. secrets.json is not
-// written on the create path — the init container handles a missing secrets.json
-// gracefully (optional mount). On the update path, secrets.json is preserved
-// unmodified; only workspace-config.json is touched.
-func (s *Service) EnsureWorkspaceConfig(ctx context.Context, workspaceID string, config WorkspaceConfig) error {
-	if workspaceID == "" {
-		return fmt.Errorf("workspaceID is required")
-	}
-	configJSON, err := json.Marshal(config)
-	if err != nil {
-		return fmt.Errorf("marshal workspace config: %w", err)
-	}
-
-	secretName := fmt.Sprintf("workspace-secrets-%s", workspaceID)
-	clientset := s.k8sClient.Clientset()
-	secretClient := clientset.CoreV1().Secrets(s.config.Namespace)
-
-	labels := map[string]string{
-		"app":                         "llmsafespaces",
-		"llmsafespaces.dev/workspace": workspaceID,
-		"llmsafespaces.dev/ephemeral": "true",
-	}
-
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		existing, err := secretClient.Get(ctx, secretName, metav1.GetOptions{})
-		if err == nil {
-			// Secret exists — merge workspace-config.json, preserve all other keys.
-			if existing.Data == nil {
-				existing.Data = map[string][]byte{}
-			}
-			existing.Data["workspace-config.json"] = configJSON
-			if existing.Labels == nil {
-				existing.Labels = map[string]string{}
-			}
-			for k, v := range labels {
-				existing.Labels[k] = v
-			}
-			_, updateErr := secretClient.Update(ctx, existing, metav1.UpdateOptions{})
-			return updateErr
-		}
-		if !k8serrors.IsNotFound(err) {
-			return fmt.Errorf("get workspace config secret: %w", err)
-		}
-		// Secret does not exist — create it with workspace-config.json only.
-		// secrets.json is intentionally absent: the init container mounts the
-		// secret as optional:true and guards with `if [ -f ... ]`, so a missing
-		// secrets.json is safe. It will be written by the next credential bind.
-		desired := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      secretName,
-				Namespace: s.config.Namespace,
-				Labels:    labels,
-			},
-			Data: map[string][]byte{"workspace-config.json": configJSON},
-		}
-		if _, createErr := secretClient.Create(ctx, desired, metav1.CreateOptions{}); createErr != nil {
-			if k8serrors.IsAlreadyExists(createErr) {
-				return k8serrors.NewConflict(corev1.Resource("secrets"), secretName, createErr)
-			}
-			return fmt.Errorf("create workspace config secret: %w", createErr)
-		}
-		return nil
-	})
 }

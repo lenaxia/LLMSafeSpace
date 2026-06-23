@@ -31,7 +31,7 @@ NEXT STEPS
 
 4. The CRDs registered:
 
-     kubectl get crd workspaces.llmsafespaces.dev sandboxes.llmsafespaces.dev sandboxprofiles.llmsafespaces.dev runtimeenvironments.llmsafespaces.dev
+     kubectl get crd workspaces.llmsafespaces.dev runtimeenvironments.llmsafespaces.dev inferencerelays.llmsafespaces.dev
 
 5. CRD UPGRADE — IMPORTANT FOR EVERY `helm upgrade`
 
@@ -67,7 +67,7 @@ The chart deploys a ValidatingWebhookConfiguration that requires cert-manager
 to be installed in the cluster (the cert-manager.io/inject-ca-from annotation
 populates the webhook's caBundle).
 
-If kubectl create on a Sandbox / SandboxProfile / RuntimeEnvironment fails
+If kubectl create on a Workspace / RuntimeEnvironment fails
 with a TLS or "no endpoints available" error, check:
 
      kubectl -n {{ .Release.Namespace }} get certificate {{ include "llmsafespaces.fullname" . }}-webhook
@@ -79,8 +79,8 @@ The Certificate must be Ready=True before the webhook will function.
 WARNING: WEBHOOKS DISABLED
 ==========================
 
-You installed with webhooks.enabled=false. Admission validation for Sandbox,
-SandboxProfile, and RuntimeEnvironment resources is NOT enforced server-side.
+You installed with webhooks.enabled=false. Admission validation for Workspace,
+RuntimeEnvironment, and per-tenant quota resources is NOT enforced server-side.
 Users with kubectl access can create invalid CRDs that will fail later in the
 controller. The API service still validates client-side requests, but kubectl
 bypasses that path.

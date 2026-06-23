@@ -152,11 +152,8 @@ func TestOrgCredentials_Create_Success(t *testing.T) {
 	for i := range kek {
 		kek[i] = byte(i + 1)
 	}
-	deriver := func(label string) []byte {
-		assert.Equal(t, "org-credentials", label, "Create must derive the org-credentials label")
-		return kek
-	}
-	h := NewOrgCredentialsHandler(store, store, deriver, &mockOrgAuthService{userID: "admin-1"})
+	provider := mustStaticProv(kek)
+	h := NewOrgCredentialsHandler(store, store, provider, &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	body := `{"name":"team-anthropic","provider":"anthropic","apiKey":"sk-ant-123"}`
@@ -192,8 +189,8 @@ func TestOrgCredentials_Create_Success(t *testing.T) {
 // a nil key.
 func TestOrgCredentials_Create_NilKEK_503(t *testing.T) {
 	store := newFakeOrgCredStore()
-	deriver := func(string) []byte { return nil }
-	h := NewOrgCredentialsHandler(store, store, deriver, &mockOrgAuthService{userID: "admin-1"})
+	provider := secrets.RootKeyProvider(nil)
+	h := NewOrgCredentialsHandler(store, store, provider, &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	body := `{"name":"x","provider":"openai","apiKey":"sk-1"}`
@@ -209,7 +206,7 @@ func TestOrgCredentials_Create_NilKEK_503(t *testing.T) {
 func TestOrgCredentials_Create_MissingAPIKey_400(t *testing.T) {
 	store := newFakeOrgCredStore()
 	kek := make([]byte, 32)
-	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	h := NewOrgCredentialsHandler(store, store, mustStaticProv(kek), &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	body := `{"name":"x","provider":"openai"}`
@@ -230,7 +227,7 @@ func TestOrgCredentials_Create_BindFails_Returns201WithWarning(t *testing.T) {
 	store := newFakeOrgCredStore()
 	store.bindErr = context.DeadlineExceeded
 	kek := make([]byte, 32)
-	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	h := NewOrgCredentialsHandler(store, store, mustStaticProv(kek), &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	body := `{"name":"x","provider":"openai","apiKey":"sk-1"}`
@@ -265,11 +262,8 @@ func TestOrgCredentials_Update_APIKeyRotation_Success(t *testing.T) {
 		KeyVersion: 1,
 	}
 
-	deriver := func(label string) []byte {
-		assert.Equal(t, "org-credentials", label, "Update must derive the org-credentials label")
-		return kek
-	}
-	h := NewOrgCredentialsHandler(store, store, deriver, &mockOrgAuthService{userID: "admin-1"})
+	provider := mustStaticProv(kek)
+	h := NewOrgCredentialsHandler(store, store, provider, &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	body := `{"apiKey":"rotated-key"}`
@@ -309,8 +303,8 @@ func TestOrgCredentials_Update_NilKEK_503(t *testing.T) {
 		KeyVersion: 1,
 	}
 
-	deriver := func(string) []byte { return nil }
-	h := NewOrgCredentialsHandler(store, store, deriver, &mockOrgAuthService{userID: "admin-1"})
+	provider := secrets.RootKeyProvider(nil)
+	h := NewOrgCredentialsHandler(store, store, provider, &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	body := `{"apiKey":"new"}`
@@ -328,7 +322,7 @@ func TestOrgCredentials_Update_NilKEK_503(t *testing.T) {
 func TestOrgCredentials_Update_NotFound_404(t *testing.T) {
 	store := newFakeOrgCredStore()
 	kek := make([]byte, 32)
-	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	h := NewOrgCredentialsHandler(store, store, mustStaticProv(kek), &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	body := `{"name":"new"}`
@@ -358,8 +352,8 @@ func TestOrgCredentials_Update_NameOnly_NoReEncrypt(t *testing.T) {
 		KeyVersion: 3,
 	}
 
-	deriver := func(string) []byte { return kek }
-	h := NewOrgCredentialsHandler(store, store, deriver, &mockOrgAuthService{userID: "admin-1"})
+	provider := mustStaticProv(kek)
+	h := NewOrgCredentialsHandler(store, store, provider, &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	body := `{"name":"renamed"}`
@@ -397,7 +391,7 @@ func TestOrgCredentials_Update_NameOnly_PreservesLimits(t *testing.T) {
 		ModelContextLimits: map[string]int{"glm-5.1": 200000},
 	}
 
-	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	h := NewOrgCredentialsHandler(store, store, mustStaticProv(kek), &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	body := `{"name":"renamed"}`
@@ -433,7 +427,7 @@ func TestOrgCredentials_Update_CorruptCiphertext_500(t *testing.T) {
 		KeyVersion: 1,
 	}
 
-	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	h := NewOrgCredentialsHandler(store, store, mustStaticProv(kek), &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	body := `{"apiKey":"rotated"}`
@@ -452,7 +446,7 @@ func TestOrgCredentials_Update_CorruptCiphertext_500(t *testing.T) {
 func TestOrgCredentials_ProbeModels_NotFound(t *testing.T) {
 	store := newFakeOrgCredStore()
 	kek := make([]byte, 32)
-	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	h := NewOrgCredentialsHandler(store, store, mustStaticProv(kek), &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	req, _ := http.NewRequest("GET", "/api/v1/orgs/org-1/credentials/missing/models", nil)
@@ -479,7 +473,7 @@ func TestOrgCredentials_ProbeModels_NilKEK_503(t *testing.T) {
 		KeyVersion: 1,
 	}
 
-	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return nil }, &mockOrgAuthService{userID: "admin-1"})
+	h := NewOrgCredentialsHandler(store, store, nil, &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	req, _ := http.NewRequest("GET", "/api/v1/orgs/org-1/credentials/cred-1/models", nil)
@@ -497,10 +491,7 @@ func TestOrgCredentials_ProbeModels_NoBaseURL(t *testing.T) {
 	for i := range kek {
 		kek[i] = byte(i + 2)
 	}
-	h := NewOrgCredentialsHandler(store, store, func(label string) []byte {
-		assert.Equal(t, "org-credentials", label)
-		return kek
-	}, &mockOrgAuthService{userID: "admin-1"})
+	h := NewOrgCredentialsHandler(store, store, mustStaticProv(kek), &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	createBody := `{"name":"native","provider":"anthropic","apiKey":"sk-ant-123"}`
@@ -538,7 +529,7 @@ func TestOrgCredentials_ProbeModels_Success(t *testing.T) {
 	for i := range kek {
 		kek[i] = byte(i + 4)
 	}
-	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	h := NewOrgCredentialsHandler(store, store, mustStaticProv(kek), &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	createBody, _ := json.Marshal(map[string]interface{}{
@@ -606,10 +597,7 @@ func TestOrgCredentials_List_CamelCaseAndBaseURL(t *testing.T) {
 		}
 	}
 
-	h := NewOrgCredentialsHandler(store, store, func(label string) []byte {
-		assert.Equal(t, "org-credentials", label)
-		return kek
-	}, &mockOrgAuthService{userID: "admin-1"})
+	h := NewOrgCredentialsHandler(store, store, mustStaticProv(kek), &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	req, _ := http.NewRequest("GET", "/api/v1/orgs/org-1/credentials", nil)
@@ -653,7 +641,7 @@ func TestOrgCredentials_List_CamelCaseAndBaseURL(t *testing.T) {
 func TestOrgCredentials_List_Empty(t *testing.T) {
 	store := newFakeOrgCredStore()
 	kek := make([]byte, 32)
-	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	h := NewOrgCredentialsHandler(store, store, mustStaticProv(kek), &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	req, _ := http.NewRequest("GET", "/api/v1/orgs/org-1/credentials", nil)
@@ -674,7 +662,7 @@ func TestOrgCredentials_Create_FullResponse(t *testing.T) {
 	for i := range kek {
 		kek[i] = byte(i + 6)
 	}
-	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	h := NewOrgCredentialsHandler(store, store, mustStaticProv(kek), &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	createBody, _ := json.Marshal(map[string]interface{}{
@@ -722,7 +710,7 @@ func TestOrgCredentials_Update_FullResponse(t *testing.T) {
 		KeyVersion: 1,
 	}
 
-	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	h := NewOrgCredentialsHandler(store, store, mustStaticProv(kek), &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	body := `{"name":"renamed","modelAllowlist":["gpt-4o"],"modelContextLimits":{"gpt-4o":128000}}`
@@ -760,7 +748,7 @@ func TestOrgCredentials_Update_BaseURLOnly_Persists(t *testing.T) {
 		KeyVersion: 1,
 	}
 
-	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	h := NewOrgCredentialsHandler(store, store, mustStaticProv(kek), &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	body := `{"baseURL":"https://new.example.com/v1"}`
@@ -795,7 +783,7 @@ func TestOrgCredentials_Create_GetFails_GracefulFallback(t *testing.T) {
 	store := newFakeOrgCredStore()
 	store.getFailOnAttempt = 1 // first GetCredential call (post-create) fails
 	kek := make([]byte, 32)
-	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	h := NewOrgCredentialsHandler(store, store, mustStaticProv(kek), &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	body := `{"name":"x","provider":"openai","apiKey":"sk-1"}`
@@ -828,7 +816,7 @@ func TestOrgCredentials_Update_GetFails_GracefulFallback(t *testing.T) {
 	}
 	store.getFailOnAttempt = 2 // 1st Get (existing) succeeds; 2nd Get (post-update) fails
 
-	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	h := NewOrgCredentialsHandler(store, store, mustStaticProv(kek), &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	body := `{"name":"renamed"}`
@@ -862,7 +850,7 @@ func TestOrgCredentials_Update_APIKeyAndBaseURL_Combined(t *testing.T) {
 		KeyVersion: 1,
 	}
 
-	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	h := NewOrgCredentialsHandler(store, store, mustStaticProv(kek), &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	body := `{"apiKey":"new-key","baseURL":"https://new.example.com/v1"}`
@@ -912,7 +900,7 @@ func TestOrgCredentials_List_PartialDecryptFailure_NonFatal(t *testing.T) {
 		KeyVersion: 1,
 	}
 
-	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	h := NewOrgCredentialsHandler(store, store, mustStaticProv(kek), &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	req, _ := http.NewRequest("GET", "/api/v1/orgs/org-1/credentials", nil)
@@ -962,7 +950,7 @@ func TestOrgCredentials_List_OrderIsNewestFirst(t *testing.T) {
 		_ = i
 	}
 
-	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	h := NewOrgCredentialsHandler(store, store, mustStaticProv(kek), &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	req, _ := http.NewRequest("GET", "/api/v1/orgs/org-1/credentials", nil)
@@ -983,7 +971,7 @@ func TestOrgCredentials_List_OrderIsNewestFirst(t *testing.T) {
 func TestOrgCredentials_Delete_NotFound_Returns204(t *testing.T) {
 	store := newFakeOrgCredStore()
 	kek := make([]byte, 32)
-	h := NewOrgCredentialsHandler(store, store, func(string) []byte { return kek }, &mockOrgAuthService{userID: "admin-1"})
+	h := NewOrgCredentialsHandler(store, store, mustStaticProv(kek), &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
 	req, _ := http.NewRequest("DELETE", "/api/v1/orgs/org-1/credentials/does-not-exist", nil)

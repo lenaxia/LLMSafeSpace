@@ -1,10 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { render } from "../../test/utils";
 import { ChatView } from "./ChatView";
-import type { Message } from "../../api/types";
+import { PermissionPrompt } from "./PermissionPrompt";
+import { QuestionPrompt } from "./QuestionPrompt";
+import type { Message, PermissionRequest, QuestionRequest } from "../../api/types";
 import type { ModelInfo } from "../../api/workspaces";
+
+vi.mock("../../api/input", () => ({
+  inputApi: {
+    permissionReply: vi.fn().mockResolvedValue(true),
+    questionReply: vi.fn().mockResolvedValue(true),
+    questionReject: vi.fn().mockResolvedValue(true),
+  },
+}));
 
 describe("ChatView", () => {
   const defaultProps = {
@@ -68,6 +78,63 @@ describe("ChatView", () => {
     expect(screen.getByPlaceholderText("Type a message...")).toBeDisabled();
   });
 
+  // ── viewOnly (subtask read-only) ─────────────────────────────────────────
+
+  it("hides the composer when viewOnly is true", () => {
+    render(<ChatView {...defaultProps} viewOnly={true} />);
+    expect(screen.queryByPlaceholderText("Type a message...")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /send/i })).not.toBeInTheDocument();
+  });
+
+  it("shows the default view-only message when viewOnly is true", () => {
+    render(<ChatView {...defaultProps} viewOnly={true} />);
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    expect(screen.getByText(/Subtasks are view-only/i)).toBeInTheDocument();
+  });
+
+  it("shows a custom view-only message when provided", () => {
+    render(<ChatView {...defaultProps} viewOnly={true} viewOnlyMessage="Custom read-only reason" />);
+    expect(screen.getByText("Custom read-only reason")).toBeInTheDocument();
+  });
+
+  it("does not render the queue section when viewOnly is true", () => {
+    render(
+      <ChatView
+        {...defaultProps}
+        viewOnly={true}
+        queuedMessages={[{ id: "q1", text: "queued", status: "pending", sessionId: "sess-1" }]}
+        onQueueRetry={vi.fn()}
+        onQueueDismiss={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText("queued")).not.toBeInTheDocument();
+  });
+
+  it("still renders messages when viewOnly is true (read-only view)", () => {
+    const messages: Message[] = [
+      { id: "1", role: "assistant", parts: [{ type: "text", text: "Subtask output" }] },
+    ];
+    render(<ChatView {...defaultProps} viewOnly={true} messages={messages} />);
+    expect(screen.getByText("Subtask output")).toBeInTheDocument();
+  });
+
+  it("renders the composer when viewOnly is false (default)", () => {
+    render(<ChatView {...defaultProps} viewOnly={false} />);
+    expect(screen.getByPlaceholderText("Type a message...")).toBeInTheDocument();
+  });
+
+  it("still renders prompts when viewOnly is true (agent-driven, not user chatting)", () => {
+    render(
+      <ChatView
+        {...defaultProps}
+        viewOnly={true}
+        prompts={<div>Agent has a question</div>}
+      />,
+    );
+    expect(screen.getByText("Agent has a question")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
+  });
+
   it("shows streamed text parts", () => {
     render(<ChatView {...defaultProps} streaming={true} streamParts={[{ type: "text", text: "Partial response..." }]} />);
     expect(screen.getByText("Partial response...")).toBeInTheDocument();
@@ -92,5 +159,77 @@ describe("ChatView", () => {
     ];
     render(<ChatView {...defaultProps} messages={messages} models={models} />);
     expect(screen.getByText(/gpt-4o/i)).toBeInTheDocument();
+  });
+
+  it("renders prompts inside the scroll container (inline with messages)", () => {
+    const messages: Message[] = [{ id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] }];
+    render(
+      <ChatView
+        {...defaultProps}
+        messages={messages}
+        prompts={<div data-testid="test-prompt">Permission needed</div>}
+      />,
+    );
+    const scrollContainer = screen.getByRole("log");
+    const prompt = screen.getByTestId("test-prompt");
+    expect(scrollContainer.contains(prompt)).toBe(true);
+  });
+
+  it("renders prompts even when there are no messages", () => {
+    render(
+      <ChatView
+        {...defaultProps}
+        messages={[]}
+        prompts={<div data-testid="test-prompt">Question</div>}
+      />,
+    );
+    expect(screen.getByTestId("test-prompt")).toBeInTheDocument();
+  });
+
+  it("renders real PermissionPrompt inside the scroll container and allows interaction", async () => {
+    const onResolved = vi.fn();
+    const request: PermissionRequest = {
+      id: "per_int",
+      session_id: "ses_1",
+      permission: "shell",
+      patterns: ["rm -rf /tmp/cache"],
+    };
+    render(
+      <ChatView
+        {...defaultProps}
+        messages={[{ id: "1", role: "user", parts: [{ type: "text", text: "do something" }] }]}
+        prompts={<PermissionPrompt workspaceId="ws-1" request={request} onResolved={onResolved} />}
+      />,
+    );
+    const scrollContainer = screen.getByRole("log");
+    expect(scrollContainer.contains(screen.getByText("Run shell command"))).toBe(true);
+    expect(scrollContainer.contains(screen.getByText("rm -rf /tmp/cache"))).toBe(true);
+    fireEvent.click(screen.getByText("Allow once"));
+    await waitFor(() => expect(onResolved).toHaveBeenCalled());
+  });
+
+  it("renders real QuestionPrompt inside the scroll container and allows interaction", async () => {
+    const onResolved = vi.fn();
+    const request: QuestionRequest = {
+      id: "que_int",
+      session_id: "ses_1",
+      questions: [{
+        header: "Pick one",
+        question: "Which language?",
+        options: [{ label: "Go", description: "fast" }],
+      }],
+    };
+    render(
+      <ChatView
+        {...defaultProps}
+        messages={[{ id: "1", role: "user", parts: [{ type: "text", text: "help" }] }]}
+        prompts={<QuestionPrompt workspaceId="ws-1" request={request} onResolved={onResolved} />}
+      />,
+    );
+    const scrollContainer = screen.getByRole("log");
+    expect(scrollContainer.contains(screen.getByText("Which language?"))).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Go" }));
+    fireEvent.click(screen.getByText("Submit answers"));
+    await waitFor(() => expect(onResolved).toHaveBeenCalled());
   });
 });

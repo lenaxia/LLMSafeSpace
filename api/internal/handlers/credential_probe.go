@@ -243,13 +243,13 @@ func probeCredentialModels(ctx context.Context, plaintext []byte, savedLimits ma
 // Admin variant — uses the platform KEK to decrypt.
 func (h *AdminProviderCredentialsHandler) ProbeModels(c *gin.Context) {
 	id := c.Param("id")
-	resolveKey := func(_ context.Context) ([]byte, string, int) {
-		if k := h.kek(); k != nil {
-			return k, "", 0
+	resolveDecrypt := func(_ context.Context) (func(context.Context, []byte) ([]byte, error), string, int) {
+		if h.provider != nil {
+			return h.provider.Decrypt, "", 0
 		}
 		return nil, "master secret not configured", http.StatusServiceUnavailable
 	}
-	plaintext, limits, perr := getCredentialForProbe(c.Request.Context(), h.store, "admin", "_platform", id, resolveKey)
+	plaintext, limits, perr := getCredentialForProbe(c.Request.Context(), h.store, "admin", "_platform", id, resolveDecrypt)
 	if perr != nil {
 		c.JSON(perr.status, gin.H{"error": perr.msg})
 		return
@@ -267,14 +267,14 @@ func (h *UserProviderCredentialsHandler) ProbeModels(c *gin.Context) {
 		return
 	}
 
-	resolveKey := func(ctx context.Context) ([]byte, string, int) {
+	resolveDecrypt := func(ctx context.Context) (func(context.Context, []byte) ([]byte, error), string, int) {
 		dek, err := h.keys.GetDEK(ctx, sessionID)
 		if err != nil {
 			return nil, "", http.StatusServiceUnavailable
 		}
-		return dek, "", 0
+		return func(_ context.Context, ct []byte) ([]byte, error) { return secrets.DecryptSecret(dek, ct) }, "", 0
 	}
-	plaintext, limits, perr := getCredentialForProbe(c.Request.Context(), h.store, "user", userID, c.Param("id"), resolveKey)
+	plaintext, limits, perr := getCredentialForProbe(c.Request.Context(), h.store, "user", userID, c.Param("id"), resolveDecrypt)
 	if perr != nil {
 		c.JSON(perr.status, gin.H{"error": perr.msg})
 		return

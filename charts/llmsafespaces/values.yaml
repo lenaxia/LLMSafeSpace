@@ -230,13 +230,20 @@ controller:
       # Base mirror URLs (cloud-init appends "/relay-proxy-<arch>" and tries
       # each in order). At least one is required; multiple give cross-cloud
       # resilience (e.g. GitHub + S3 + GCS).
+      #
+      # The default points at the explicit v0.1.0-relay tag rather than
+      # /releases/latest/download because that release is currently flagged
+      # `prerelease: true` on GitHub, so /latest/ would 404. When a non-prerelease
+      # is published, this can be moved back to /releases/latest/download.
+      # See worklog 0464 for the full rationale.
       urls:
-        - "https://github.com/lenaxia/llmsafespace/releases/latest/download"
+        - "https://github.com/lenaxia/LLMSafeSpaces/releases/download/v0.1.0-relay"
       # Hex SHA-256 of the arm64 binary. REQUIRED when enabled. Verified by
       # cloud-init before exec (supply-chain integrity, Security §7).
-      sha256Arm64: ""
+      # The defaults below match the v0.1.0-relay GitHub release artifacts.
+      sha256Arm64: "671c46c6c3c1b0afabe9fcdf4c815f4c0e08fe2c28d5d6eff988ba20900b2fc8"
       # Hex SHA-256 of the amd64 binary. REQUIRED when enabled.
-      sha256Amd64: ""
+      sha256Amd64: "ac12e27bf3a565781749b3bde5d0ff7062e362da259f9702e7852f351b731155"
 
     # Upstream the relay fleet proxies to. Defaults to opencode.ai/zen/v1 so a
     # default deploy produces working free-model inference via the anonymous
@@ -962,6 +969,49 @@ oidc:
   redirectBaseUrl: ""
   frontendRedirectUrl: ""
   stateCookieName: ""
+
+# Epic 54, US-54.3: Org-scoped login via wildcard subdomain routing.
+# When enabled, POST /auth/lookup (US-54.1) redirects found users to
+# https://<orgSlug>.<baseDomain>, where this chart's wildcard Ingress
+# routes them to the frontend. The session cookie carries Domain=<cookieDomain>
+# so it survives the root→subdomain redirect.
+#
+# PREREQUISITES (operator tasks — see S54-0 spike in the epic README):
+#   1. Wildcard DNS:  *.app.example.com  →  ingress controller LB IP.
+#   2. cert-manager installed (the chart already depends on it for webhooks;
+#      see templates/webhook-cert.yaml). Provide an Issuer/ClusterIssuer that
+#      can issue for the wildcard — Let's Encrypt works.
+#   3. Ingress controller that supports wildcard host rules (ingress-nginx,
+#      Traefik, HAProxy all do).
+#
+# Default: disabled. Single-host deploys are unaffected.
+orgSubdomainRouting:
+  enabled: false
+  # baseDomain: the parent domain that org slugs prepend.
+  #   Example: "app.example.com" → org "acme" → "acme.app.example.com".
+  #   Must be set when enabled=true.
+  baseDomain: ""
+  # cookieDomain: the value set on the lsp_session cookie's Domain attribute.
+  #   Must start with a leading dot so the cookie is visible to all subdomains.
+  #   Example: ".app.example.com" → cookie sent to app.example.com + *.app.example.com.
+  #   When empty (default), the cookie is host-only (current behavior).
+  #   Must be set when enabled=true.
+  cookieDomain: ""
+  # wildcardCert: cert-manager Certificate configuration for *.<baseDomain>.
+  # Only rendered when enabled=true AND frontend.ingress.tls=true.
+  # If you already have a wildcard TLS Secret (e.g. from an external issuer),
+  # set tlsSecret to its name and leave issuerRef empty.
+  wildcardCert:
+    # tlsSecret: name of an existing TLS Secret to use instead of issuing one.
+    # When set, no Certificate resource is rendered. The wildcard Ingress
+    # references this Secret in its tls[] block.
+    tlsSecret: ""
+    # issuerRef: the cert-manager Issuer/ClusterIssuer that will issue the
+    # wildcard certificate. Required when tlsSecret is empty.
+    #   Example: { name: "letsencrypt-prod", kind: "ClusterIssuer" }
+    issuerRef:
+      name: ""
+      kind: "ClusterIssuer"   # "ClusterIssuer" or "Issuer"
 
 # Cloudflare credentials for automated relay secret management.
 # When set, a post-install/post-upgrade Job pushes inferenceRelaySecret to

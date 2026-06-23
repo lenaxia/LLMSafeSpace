@@ -155,6 +155,26 @@ func TestPVCUsesWaitForFirstConsumer_FalseForImmediateBinding(t *testing.T) {
 		"Immediate-binding class must not be treated as WFC")
 }
 
+// TestPVCUsesWaitForFirstConsumer_FalseWhenBindingModeNil — a StorageClass
+// exists but its VolumeBindingMode is nil (malformed or older CRD). The guard
+// at pvc.go:47-49 must fail closed to false rather than nil-dereferencing.
+// Value: prevents a controller panic on a misconfigured StorageClass. Failure
+// mode: nil-pointer dereference crashing the reconcile loop. Expected: false.
+func TestPVCUsesWaitForFirstConsumer_FalseWhenBindingModeNil(t *testing.T) {
+	sc := &storagev1.StorageClass{
+		ObjectMeta:        metav1.ObjectMeta{Name: "nil-mode-sc"},
+		VolumeBindingMode: nil, // explicitly nil — the guard under test
+	}
+	r := reconcilerFor(t, sc)
+	scName := "nil-mode-sc"
+	pvc := &corev1.PersistentVolumeClaim{
+		Spec: corev1.PersistentVolumeClaimSpec{StorageClassName: &scName},
+	}
+
+	assert.False(t, r.pvcUsesWaitForFirstConsumer(context.Background(), pvc),
+		"nil VolumeBindingMode must fail closed to false, not panic")
+}
+
 // TestPVCUsesWaitForFirstConsumer_FalseWhenNoStorageClass — a PVC with no
 // storage class (cluster default) cannot be WFC-known; report false so the
 // controller uses the normal bind expectation. Value: avoid a false WFC flag

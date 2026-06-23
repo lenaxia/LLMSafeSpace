@@ -25,6 +25,41 @@ import (
 	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
+// transitionInstanceState computes the new state for an instance after the
+// router reports its health. The transition rules (worklog 0467 fix):
+//
+//   - Terminal/explicit states (draining, terminated, quota-exhausted,
+//     provisioning-failed) are preserved unchanged. Only the routine
+//     provisioning ↔ healthy ↔ unhealthy axis transitions automatically.
+//   - During initial boot, a not-yet-healthy provisioning instance stays
+//     provisioning rather than flipping to unhealthy. This avoids alerting
+//     on a relay that hasn't had a chance to come up yet.
+//   - A previously-healthy instance that goes unhealthy flips to unhealthy.
+//   - Any unhealthy or provisioning instance that becomes healthy flips
+//     to healthy (recovery path).
+func transitionInstanceState(currentState string, healthy bool) string {
+	switch currentState {
+	case "", string(v1.RelayStateProvisioning):
+		if healthy {
+			return string(v1.RelayStateHealthy)
+		}
+		return currentState // stay provisioning during boot grace
+	case string(v1.RelayStateHealthy):
+		if healthy {
+			return currentState
+		}
+		return string(v1.RelayStateUnhealthy)
+	case string(v1.RelayStateUnhealthy):
+		if healthy {
+			return string(v1.RelayStateHealthy)
+		}
+		return currentState
+	}
+	// All other states (draining, terminated, quota-exhausted,
+	// provisioning-failed) are controller-driven and preserved as-is.
+	return currentState
+}
+
 // generateRelayToken returns a fresh per-VM shared-secret token (32 random
 // bytes, hex-encoded → 64 chars). Used by provisionRelay when no existing token
 // is persisted for the provider slot.
@@ -169,6 +204,23 @@ func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1
 		}
 	}
 
+	// Adopt pre-pass: for any spec provider that doesn't have a status
+	// entry, look for an existing cloud VM tagged with this CR's UID +
+	// provider. If found, adopt it instead of provisioning a new one.
+	//
+	// This closes the worklog 0473/0474 leak: if a previous reconcile
+	// successfully provisioned a VM but failed to persist Status (e.g.
+	// optimistic-concurrency conflict on r.Status().Update), the VM is
+	// alive in the cloud but unrecorded in the CR. Without adoption, the
+	// next reconcile would call Provision again, creating a duplicate
+	// and orphaning the original. With adoption, the original is found
+	// by tag and re-attached.
+	//
+	// Also collect duplicates (tagged instances whose ID doesn't match
+	// the adopted/existing one) for cleanup. These are previous orphans
+	// that now-stranded.
+	extraInstancesToDestroy := r.adoptOrphanedInstances(ctx, relay, existingByProvider)
+
 	// Read relay per-VM tokens from persistent Secret
 	relayTokens := r.readRelayTokens(ctx)
 
@@ -185,6 +237,7 @@ func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1
 					existing.Requests429 = int(h.Requests429)
 					existing.TotalRequests = int(h.Requests)
 					existing.EgressBytes = h.EgressBytes
+					existing.State = transitionInstanceState(existing.State, h.Healthy)
 				}
 			}
 			if existing.LastCheck == nil {
@@ -247,6 +300,20 @@ func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1
 		needsRequeue = true
 	}
 
+	// Destroy any extra tagged-but-unaccounted instances surfaced by
+	// the adopt pre-pass (worklog 0474). These are duplicates from
+	// prior conflict-induced re-provisions.
+	for _, dup := range extraInstancesToDestroy {
+		logger.Info("destroying duplicate relay VM (tag-based orphan cleanup)",
+			"provider", dup.Provider, "instanceID", dup.InstanceID, "region", dup.Region)
+		if driver, ok := r.Drivers[dup.Provider]; ok {
+			if err := driver.Destroy(ctx, dup.InstanceID, dup.Region); err != nil {
+				logger.Error(err, "failed to destroy duplicate relay",
+					"instanceID", dup.InstanceID, "provider", dup.Provider)
+			}
+		}
+	}
+
 	// Count healthy replicas
 	healthyReplicas := 0
 	for _, inst := range instances {
@@ -282,7 +349,7 @@ func (r *InferenceRelayReconciler) reconcileFleet(ctx context.Context, relay *v1
 	}
 
 	// Sync the router peers ConfigMap
-	if err := syncPeerConfigMap(ctx, r.Client, r.Namespace, relay, peers); err != nil {
+	if err := syncPeerConfigMap(ctx, r.Client, r.Namespace, peers); err != nil {
 		logger.Error(err, "failed to sync peers ConfigMap")
 	}
 
@@ -340,8 +407,138 @@ func (r *InferenceRelayReconciler) updateConditions(relay *v1.InferenceRelay, he
 	}
 }
 
-// provisionRelay creates a new relay VM for the given provider.
-// Returns the provision result, WG public key, and error.
+// orphanInstance describes a tagged cloud VM that does not belong to the
+// current Status.Instances slot. The reconciler destroys these after the
+// main provisioning loop. See worklog 0474.
+type orphanInstance struct {
+	Provider   string
+	Region     string
+	InstanceID string
+}
+
+// adoptOrphanedInstances lists cloud VMs tagged with this CR's UID and
+// reconciles them against existingByProvider. For each spec provider that
+// is missing from Status, if a tagged running/pending VM exists, adopt it
+// (insert a synthesized RelayInstanceStatus into existingByProvider so
+// the main loop sees it as already-provisioned). Any tagged VMs that
+// don't match an active status entry are returned for destruction.
+//
+// This closes the worklog 0473/0474 leak: a Status update conflict during
+// provisioning leaves an EC2 alive but unrecorded; without adoption, the
+// next reconcile creates a duplicate and the original is forever orphaned.
+//
+// Failures here are logged but do not abort reconcile — adoption is
+// best-effort. The next reconcile cycle will retry.
+func (r *InferenceRelayReconciler) adoptOrphanedInstances(
+	ctx context.Context,
+	relay *v1.InferenceRelay,
+	existingByProvider map[string]*v1.RelayInstanceStatus,
+) []orphanInstance {
+	logger := log.FromContext(ctx)
+	uid := string(relay.UID)
+	if uid == "" {
+		// No UID means we can't safely identify ownership. Skip adoption.
+		return nil
+	}
+
+	// Build set of instance IDs we already know about (and shouldn't try
+	// to destroy as duplicates).
+	knownIDs := make(map[string]bool)
+	for _, inst := range relay.Status.Instances {
+		if inst.ID != "" {
+			knownIDs[inst.ID] = true
+		}
+	}
+
+	var extras []orphanInstance
+
+	// For each provider in the spec, list driver instances and look for
+	// a matching tagged VM. Drivers list per region; we use the spec
+	// region for adoption queries (same region we'd provision into).
+	for _, providerSpec := range relay.Spec.Providers {
+		driver, ok := r.Drivers[providerSpec.Provider]
+		if !ok {
+			continue
+		}
+		listed, err := driver.ListInstances(ctx, providerSpec.Region)
+		if err != nil {
+			logger.V(1).Info("adoption: ListInstances failed (continuing)",
+				"provider", providerSpec.Provider, "region", providerSpec.Region, "error", err.Error())
+			continue
+		}
+
+		// Find candidates: tagged with this UID + provider, in
+		// running or pending state.
+		var candidates []VMInstance
+		for _, vm := range listed {
+			if vm.OwnerUID != uid {
+				continue
+			}
+			if vm.Provider != "" && vm.Provider != providerSpec.Provider {
+				continue
+			}
+			if vm.State != VMStateRunning && vm.State != VMStatePending {
+				continue
+			}
+			candidates = append(candidates, vm)
+		}
+
+		if existing, alreadyKnown := existingByProvider[providerSpec.Provider]; alreadyKnown {
+			// We already have a Status entry for this provider. Don't
+			// adopt new candidates — but DO refresh PublicIP from the
+			// cloud listing if the Status entry is missing it. This
+			// handles the case where an earlier adoption (or a fresh
+			// Provision whose post-Provision Status update was lost)
+			// captured an empty IP because the instance was still
+			// pending. Without this refresh, the IP would stay empty
+			// forever and the router could never reach the relay.
+			if existing.PublicIP == "" {
+				for _, vm := range candidates {
+					if vm.InstanceID == existing.ID && vm.PublicIP != "" {
+						existing.PublicIP = vm.PublicIP
+						logger.Info("refreshed PublicIP for adopted relay (was empty in Status)",
+							"provider", providerSpec.Provider, "instanceID", existing.ID, "publicIP", vm.PublicIP)
+						break
+					}
+				}
+			}
+		} else if len(candidates) > 0 {
+			// Adopt the first candidate — synthesize a RelayInstanceStatus
+			// so the main loop treats it as already-provisioned. Health
+			// state will catch up on the next router scrape.
+			adopted := candidates[0]
+			now := metav1.Now()
+			synthetic := &v1.RelayInstanceStatus{
+				ID:        adopted.InstanceID,
+				Provider:  providerSpec.Provider,
+				Region:    providerSpec.Region,
+				PublicIP:  adopted.PublicIP,
+				State:     string(v1.RelayStateProvisioning),
+				Healthy:   false,
+				LastCheck: &now,
+			}
+			existingByProvider[providerSpec.Provider] = synthetic
+			knownIDs[adopted.InstanceID] = true
+			logger.Info("adopted orphaned relay VM (Status update was lost previously)",
+				"provider", providerSpec.Provider, "region", providerSpec.Region, "instanceID", adopted.InstanceID)
+			candidates = candidates[1:]
+		}
+
+		// Any remaining candidates are duplicates — mark for destroy.
+		for _, dup := range candidates {
+			if knownIDs[dup.InstanceID] {
+				continue
+			}
+			extras = append(extras, orphanInstance{
+				Provider:   providerSpec.Provider,
+				Region:     providerSpec.Region,
+				InstanceID: dup.InstanceID,
+			})
+		}
+	}
+	return extras
+}
+
 // provisionRelay creates a new relay VM for the given provider.
 // Returns the provision result, the per-VM token (read from existingToken or
 // freshly generated), and error.
@@ -399,13 +596,18 @@ func (r *InferenceRelayReconciler) provisionRelay(ctx context.Context, relay *v1
 		return nil, "", fmt.Errorf("render cloud-init: %w", err)
 	}
 
-	// Call the provider driver
+	// Call the provider driver. Pass OwnerUID + Provider so the driver
+	// tags the VM. If the post-Provision Status update is lost, the next
+	// reconcile pre-pass adopts the VM by tag instead of creating a
+	// duplicate (worklog 0473/0474 leak fix).
 	start := time.Now()
 	result, err := driver.Provision(ctx, ProvisionRequest{
 		Name:      fmt.Sprintf("relay-%s", providerSpec.Provider),
 		Region:    providerSpec.Region,
 		Shape:     shape,
 		CloudInit: cloudInit,
+		OwnerUID:  string(relay.UID),
+		Provider:  providerSpec.Provider,
 	})
 	if err != nil {
 		return nil, "", fmtError("provision", providerSpec.Provider, err)
@@ -549,8 +751,81 @@ func (r *InferenceRelayReconciler) handleDeletion(ctx context.Context, relay *v1
 		}
 	}
 
+	// Tag-based sweep: list any cloud VMs tagged with this CR's UID
+	// across the spec providers/regions and destroy them. Catches
+	// orphans from prior reconciles whose Status update was lost
+	// (worklog 0473/0474). Failures here mark allDestroyed=false and
+	// block finalizer removal — the safer behavior since proceeding
+	// would leak the EC2 instance permanently. The reconciler retries
+	// via requeue.
+	if uid := string(relay.UID); uid != "" {
+		// Skip instance IDs that the Status.Instances loop above already
+		// processed (regardless of destroy success/failure) — the cloud
+		// may briefly still report them as running due to eventual
+		// consistency, and we don't want to double-Destroy them.
+		alreadyProcessed := make(map[string]bool, len(relay.Status.Instances))
+		for _, inst := range relay.Status.Instances {
+			if inst.ID != "" {
+				alreadyProcessed[inst.ID] = true
+			}
+		}
+
+		seenRegions := make(map[string]map[string]bool)
+		for _, ps := range relay.Spec.Providers {
+			driver, ok := r.Drivers[ps.Provider]
+			if !ok {
+				continue
+			}
+			if seenRegions[ps.Provider] == nil {
+				seenRegions[ps.Provider] = make(map[string]bool)
+			}
+			if seenRegions[ps.Provider][ps.Region] {
+				continue
+			}
+			seenRegions[ps.Provider][ps.Region] = true
+
+			listed, err := driver.ListInstances(ctx, ps.Region)
+			if err != nil {
+				logger.V(1).Info("deletion sweep: ListInstances failed (continuing)",
+					"provider", ps.Provider, "region", ps.Region, "error", err.Error())
+				continue
+			}
+			for _, vm := range listed {
+				if vm.OwnerUID != uid {
+					continue
+				}
+				if alreadyProcessed[vm.InstanceID] {
+					continue
+				}
+				if vm.State != VMStateRunning && vm.State != VMStatePending {
+					continue
+				}
+				logger.Info("deletion sweep: destroying tagged VM not in Status",
+					"provider", ps.Provider, "region", ps.Region, "instanceID", vm.InstanceID)
+				if err := driver.Destroy(ctx, vm.InstanceID, ps.Region); err != nil {
+					logger.Error(err, "deletion sweep: destroy failed",
+						"instanceID", vm.InstanceID, "provider", ps.Provider)
+					allDestroyed = false
+				}
+			}
+		}
+	}
+
 	if !allDestroyed {
 		return ctrl.Result{RequeueAfter: requeueError}, fmt.Errorf("some relay VMs could not be destroyed")
+	}
+
+	// Clear the peer ConfigMap so the relay-router observes the empty
+	// fleet. The CM has no ownerReference (see syncPeerConfigMap doc
+	// comment for why) so it persists across CR deletions; the empty-list
+	// write here propagates cleanly through kubelet's volume-mount sync to
+	// the router pod. See worklog 0468 for the discovery that motivated
+	// removing the ownerRef.
+	if err := syncPeerConfigMap(ctx, r.Client, r.Namespace, []PeerEntry{}); err != nil {
+		logger.Error(err, "failed to clear peer ConfigMap during deletion — relay-router may retain orphans until restart")
+		// Do not block deletion on this — terminating EC2 instances and
+		// removing the finalizer is more important than the cosmetic
+		// router-cache cleanup.
 	}
 
 	common.RemoveFinalizer(relay, InferenceRelayFinalizer)
@@ -563,10 +838,15 @@ func (r *InferenceRelayReconciler) handleDeletion(ctx context.Context, relay *v1
 }
 
 // SetupWithManager registers the reconciler with the controller-runtime manager.
+//
+// Note: the relay-router-peers ConfigMap is intentionally NOT registered via
+// Owns() because it has no ownerReference (see syncPeerConfigMap doc comment
+// for why). The CM is managed by the controller's reconcile loop alone;
+// external edits would not trigger a reconcile, which is acceptable since
+// the controller is the only legitimate writer.
 func (r *InferenceRelayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1.InferenceRelay{}).
-		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.Secret{}).
 		Complete(r)
 }

@@ -42,9 +42,13 @@ type stubDriver struct {
 	statusResult    *VMStatus
 	statusErr       error
 	destroyCalls    []struct{ ID, Region string }
+	provisionCalls  []ProvisionRequest
+	listInstances   []VMInstance
+	listErr         error
 }
 
-func (d *stubDriver) Provision(_ context.Context, _ ProvisionRequest) (*ProvisionResult, error) {
+func (d *stubDriver) Provision(_ context.Context, req ProvisionRequest) (*ProvisionResult, error) {
+	d.provisionCalls = append(d.provisionCalls, req)
 	if d.provisionErr != nil {
 		return nil, d.provisionErr
 	}
@@ -70,7 +74,10 @@ func (d *stubDriver) GetStatus(_ context.Context, _, _ string) (*VMStatus, error
 }
 
 func (d *stubDriver) ListInstances(_ context.Context, _ string) ([]VMInstance, error) {
-	return nil, nil
+	if d.listErr != nil {
+		return nil, d.listErr
+	}
+	return d.listInstances, nil
 }
 
 func makeRelayCR() *v1.InferenceRelay {
@@ -511,7 +518,7 @@ func TestSyncPeerConfigMap_CreatesConfigMap(t *testing.T) {
 		{ID: "oci-1", Endpoint: "203.0.113.2:8080", Provider: "oci", State: "healthy", Token: "tok123"},
 	}
 
-	err := syncPeerConfigMap(context.Background(), fakeClient, "test-ns", nil, peers)
+	err := syncPeerConfigMap(context.Background(), fakeClient, "test-ns", peers)
 	require.NoError(t, err)
 
 	cm := &corev1.ConfigMap{}
@@ -536,7 +543,7 @@ func TestSyncPeerConfigMap_NoOpWhenSame(t *testing.T) {
 		Build()
 
 	// Same data — should not error
-	err := syncPeerConfigMap(context.Background(), fakeClient, "test-ns", nil, peers)
+	err := syncPeerConfigMap(context.Background(), fakeClient, "test-ns", peers)
 	require.NoError(t, err)
 }
 
@@ -641,11 +648,11 @@ func TestReconcileFleet_HealthReportApplied(t *testing.T) {
 	// Create a health checker pointing at a mock server
 	metricsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte(`relay_router_relay_healthy{id="existing-vm",provider="oci"} 1
-relay_router_active_streams{id="existing-vm",provider="oci"} 5
-relay_router_requests_total{id="existing-vm",provider="oci"} 9999
-relay_router_requests_429_total{id="existing-vm",provider="oci"} 7
-relay_router_relay_egress_bytes{id="existing-vm",provider="oci"} 123456789
+		w.Write([]byte(`relay_router_relay_healthy{relay="existing-vm"} 1
+relay_router_active_streams{relay="existing-vm"} 5
+relay_router_requests_total{relay="existing-vm",status="200"} 9992
+relay_router_requests_total{relay="existing-vm",status="429"} 7
+relay_router_relay_egress_bytes{relay="existing-vm"} 123456789
 relay_router_fallback_active 0
 `))
 	}))
@@ -672,4 +679,155 @@ relay_router_fallback_active 0
 	assert.Equal(t, 7, inst.Requests429, "429 count should come from health report")
 	assert.Equal(t, 9999, inst.TotalRequests, "request count should come from health report")
 	assert.Equal(t, int64(123456789), inst.EgressBytes, "egress bytes should come from health report")
+}
+
+// TestReconcileFleet_StateTransitionsToHealthy verifies that an instance
+// in "provisioning" state transitions to "healthy" once the router reports
+// it healthy. Without this transition, the CR status stays misleading even
+// after the relay is fully operational. See worklog 0467.
+func TestReconcileFleet_StateTransitionsToHealthy(t *testing.T) {
+	relay := makeRelayCR()
+	relay.Status = v1.InferenceRelayStatus{
+		Instances: []v1.RelayInstanceStatus{
+			{ID: "existing-vm", Provider: "oci", Region: "us-ashburn-1",
+				State: string(v1.RelayStateProvisioning), Healthy: false, PublicIP: "203.0.113.10"},
+		},
+	}
+	common.AddFinalizer(relay, InferenceRelayFinalizer)
+
+	scheme := testScheme(t)
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithRuntimeObjects(relay).
+		WithStatusSubresource(&v1.InferenceRelay{}).
+		Build()
+
+	metricsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte(`relay_router_relay_healthy{relay="existing-vm"} 1
+relay_router_fallback_active 0
+`))
+	}))
+	defer metricsServer.Close()
+
+	r := &InferenceRelayReconciler{
+		Client:        fakeClient,
+		Scheme:        scheme,
+		Namespace:     "test-ns",
+		HealthChecker: NewHealthChecker(metricsServer.URL),
+		Drivers:       map[string]ProviderDriver{"oci": &stubDriver{}},
+	}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "relay-fleet"},
+	})
+	require.NoError(t, err)
+
+	updated := &v1.InferenceRelay{}
+	_ = r.Get(context.Background(), types.NamespacedName{Name: "relay-fleet"}, updated)
+	require.NotEmpty(t, updated.Status.Instances)
+	inst := updated.Status.Instances[0]
+	assert.True(t, inst.Healthy)
+	assert.Equal(t, string(v1.RelayStateHealthy), inst.State,
+		"once router reports healthy, controller must transition state out of provisioning")
+}
+
+// TestReconcileFleet_StateStaysProvisioningWhenUnhealthy verifies the
+// transition is one-directional during initial boot: a provisioning instance
+// that is not yet healthy stays provisioning rather than flipping to unhealthy
+// (which would alert prematurely while the relay-proxy is still booting).
+func TestReconcileFleet_StateStaysProvisioningWhenUnhealthy(t *testing.T) {
+	relay := makeRelayCR()
+	relay.Status = v1.InferenceRelayStatus{
+		Instances: []v1.RelayInstanceStatus{
+			{ID: "existing-vm", Provider: "oci", Region: "us-ashburn-1",
+				State: string(v1.RelayStateProvisioning), Healthy: false, PublicIP: "203.0.113.10"},
+		},
+	}
+	common.AddFinalizer(relay, InferenceRelayFinalizer)
+
+	scheme := testScheme(t)
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithRuntimeObjects(relay).
+		WithStatusSubresource(&v1.InferenceRelay{}).
+		Build()
+
+	metricsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte(`relay_router_relay_healthy{relay="existing-vm"} 0
+relay_router_fallback_active 0
+`))
+	}))
+	defer metricsServer.Close()
+
+	r := &InferenceRelayReconciler{
+		Client:        fakeClient,
+		Scheme:        scheme,
+		Namespace:     "test-ns",
+		HealthChecker: NewHealthChecker(metricsServer.URL),
+		Drivers:       map[string]ProviderDriver{"oci": &stubDriver{}},
+	}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "relay-fleet"},
+	})
+	require.NoError(t, err)
+
+	updated := &v1.InferenceRelay{}
+	_ = r.Get(context.Background(), types.NamespacedName{Name: "relay-fleet"}, updated)
+	require.NotEmpty(t, updated.Status.Instances)
+	inst := updated.Status.Instances[0]
+	assert.False(t, inst.Healthy)
+	assert.Equal(t, string(v1.RelayStateProvisioning), inst.State,
+		"during boot, an unhealthy provisioning instance must stay provisioning, not flip to unhealthy")
+}
+
+// TestReconcileFleet_StateTransitionsHealthyToUnhealthy verifies a relay
+// that was previously healthy flips to unhealthy when the router reports
+// it unhealthy (e.g. after sustained probe failures).
+func TestReconcileFleet_StateTransitionsHealthyToUnhealthy(t *testing.T) {
+	relay := makeRelayCR()
+	relay.Status = v1.InferenceRelayStatus{
+		Instances: []v1.RelayInstanceStatus{
+			{ID: "existing-vm", Provider: "oci", Region: "us-ashburn-1",
+				State: string(v1.RelayStateHealthy), Healthy: true, PublicIP: "203.0.113.10"},
+		},
+	}
+	common.AddFinalizer(relay, InferenceRelayFinalizer)
+
+	scheme := testScheme(t)
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithRuntimeObjects(relay).
+		WithStatusSubresource(&v1.InferenceRelay{}).
+		Build()
+
+	metricsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte(`relay_router_relay_healthy{relay="existing-vm"} 0
+relay_router_fallback_active 0
+`))
+	}))
+	defer metricsServer.Close()
+
+	r := &InferenceRelayReconciler{
+		Client:        fakeClient,
+		Scheme:        scheme,
+		Namespace:     "test-ns",
+		HealthChecker: NewHealthChecker(metricsServer.URL),
+		Drivers:       map[string]ProviderDriver{"oci": &stubDriver{}},
+	}
+
+	_, err := r.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "relay-fleet"},
+	})
+	require.NoError(t, err)
+
+	updated := &v1.InferenceRelay{}
+	_ = r.Get(context.Background(), types.NamespacedName{Name: "relay-fleet"}, updated)
+	inst := updated.Status.Instances[0]
+	assert.False(t, inst.Healthy)
+	assert.Equal(t, string(v1.RelayStateUnhealthy), inst.State,
+		"a previously-healthy instance must flip to unhealthy when router reports unhealthy")
 }

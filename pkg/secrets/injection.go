@@ -57,21 +57,12 @@ func (s *SecretService) PrepareSecretsForInjection(ctx context.Context, userID, 
 		return nil, fmt.Errorf("get workspace credentials: %w", err)
 	}
 
-	// Derive server KEKs once if any admin or org credentials are present.
-	// Admin and org credentials use separate HKDF labels for domain separation.
-	var adminKEK, orgKEK []byte
-	for _, b := range bindings {
-		switch b.OwnerType {
-		case "admin":
-			if adminKEK == nil {
-				adminKEK = s.deriveAdminKey("provider-credentials")
-			}
-		case "org":
-			if orgKEK == nil {
-				orgKEK = s.deriveAdminKey("org-credentials")
-			}
-		}
-	}
+	// Admin and org credentials decrypt through their per-purpose RootKeyProvider
+	// (US-50.2). User credentials use the session DEK. Providers may be nil when
+	// the corresponding credential class is not configured; nil-provider bindings
+	// are skipped with an audit event rather than panicking (failure mode 3).
+	adminDecrypt := decryptFnFor(s.adminProvider)
+	orgDecrypt := decryptFnFor(s.orgProvider)
 
 	// Decrypt and deduplicate by provider (first wins per priority order).
 	seen := make(map[string]bool)
@@ -80,7 +71,7 @@ func (s *SecretService) PrepareSecretsForInjection(ctx context.Context, userID, 
 		if seen[b.Provider] {
 			continue
 		}
-		pd, err := s.decryptBinding(ctx, b, sessionID, adminKEK, orgKEK)
+		pd, err := s.decryptBinding(ctx, b, sessionID, adminDecrypt, orgDecrypt)
 		if err != nil {
 			// Log the failure for operator visibility. Without this, a corrupted
 			// ciphertext or expired DEK silently falls through to a lower-priority
@@ -146,31 +137,52 @@ func (s *SecretService) PrepareSecretsForInjection(ctx context.Context, userID, 
 	return buildSecretsJSON(providerData, nonLLM)
 }
 
-func (s *SecretService) decryptBinding(ctx context.Context, b CredentialBinding, sessionID string, adminKEK, orgKEK []byte) (LLMProviderData, error) {
-	var key []byte
+// decryptFn is a provider-bound decryption closure (US-50.2). It is nil when
+// the corresponding provider was not wired, so decryptBinding can skip that
+// credential class cleanly instead of panicking.
+type decryptFn func(ctx context.Context, ciphertext []byte) ([]byte, error)
+
+// decryptFnFor adapts a RootKeyProvider to a decryptFn. Returns nil when the
+// provider is nil so callers can treat "not configured" uniformly.
+func decryptFnFor(p RootKeyProvider) decryptFn {
+	if p == nil {
+		return nil
+	}
+	return p.Decrypt
+}
+
+func (s *SecretService) decryptBinding(ctx context.Context, b CredentialBinding, sessionID string, adminDecrypt, orgDecrypt decryptFn) (LLMProviderData, error) {
+	var plaintext []byte
 	switch b.OwnerType {
 	case "user":
 		dek, err := s.keys.GetDEK(ctx, sessionID)
 		if err != nil {
 			return LLMProviderData{}, fmt.Errorf("get user DEK: %w", err)
 		}
-		key = dek
+		plaintext, err = DecryptSecret(dek, b.Ciphertext)
+		if err != nil {
+			return LLMProviderData{}, err
+		}
 	case "admin":
-		if adminKEK == nil {
-			return LLMProviderData{}, fmt.Errorf("server KEK unavailable for admin credentials")
+		if adminDecrypt == nil {
+			return LLMProviderData{}, fmt.Errorf("admin RootKeyProvider not configured")
 		}
-		key = adminKEK
+		pt, err := adminDecrypt(ctx, b.Ciphertext)
+		if err != nil {
+			return LLMProviderData{}, err
+		}
+		plaintext = pt
 	case "org":
-		if orgKEK == nil {
-			return LLMProviderData{}, fmt.Errorf("server KEK unavailable for org credentials")
+		if orgDecrypt == nil {
+			return LLMProviderData{}, fmt.Errorf("org RootKeyProvider not configured")
 		}
-		key = orgKEK
+		pt, err := orgDecrypt(ctx, b.Ciphertext)
+		if err != nil {
+			return LLMProviderData{}, err
+		}
+		plaintext = pt
 	default:
 		return LLMProviderData{}, fmt.Errorf("unsupported owner_type %q", b.OwnerType)
-	}
-	plaintext, err := DecryptSecret(key, b.Ciphertext)
-	if err != nil {
-		return LLMProviderData{}, err
 	}
 	var pd LLMProviderData
 	if err := json.Unmarshal(plaintext, &pd); err != nil {

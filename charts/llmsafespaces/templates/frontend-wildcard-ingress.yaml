@@ -1,0 +1,58 @@
+{{- if and .Values.orgSubdomainRouting.enabled .Values.frontend.enabled .Values.frontend.ingress.enabled }}
+{{- $fullname := include "llmsafespaces.fullname" . }}
+{{- $base := required "orgSubdomainRouting.baseDomain is required when orgSubdomainRouting.enabled=true" .Values.orgSubdomainRouting.baseDomain }}
+# Epic 54, US-54.3: Wildcard Ingress for org-scoped subdomain routing.
+#
+# Routes *.<baseDomain> to the frontend + API services so that
+# POST /auth/lookup (US-54.1) can redirect users to their org's
+# subdomain (e.g. acme.app.example.com). The wildcard host rule
+# catches every org slug without per-org Ingress objects.
+#
+# Prerequisites (operator): wildcard DNS + cert-manager issuer capable
+# of issuing for *.<baseDomain>. See values.yaml orgSubdomainRouting block.
+#
+# This template is ADDITIVE to frontend-ingress.yaml — the primary host
+# (frontend.ingress.host) and additionalHosts continue to render unchanged.
+# Operators who don't enable orgSubdomainRouting see zero new resources.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullname }}-frontend-wildcard
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmsafespaces.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+    llmsafespaces.dev/wildcard-ingress: "true"
+  {{- with .Values.frontend.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.frontend.ingress.className }}
+  ingressClassName: {{ .Values.frontend.ingress.className }}
+  {{- end }}
+  rules:
+    - host: {{ printf "*.%s" $base | quote }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullname }}-api
+                port:
+                  number: 8080
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullname }}-frontend
+                port:
+                  name: http
+  {{- if .Values.frontend.ingress.tls }}
+  tls:
+    - hosts:
+        - {{ printf "*.%s" $base | quote }}
+      secretName: {{ .Values.orgSubdomainRouting.wildcardCert.tlsSecret | default (printf "%s-frontend-wildcard-tls" $fullname) }}
+  {{- end }}
+{{- end }}

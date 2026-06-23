@@ -137,31 +137,46 @@ func pollPeerConfig(ctx context.Context, path string, interval time.Duration, fl
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	load := func() {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return
-		}
-		if strings.TrimSpace(string(data)) == "" {
-			return
-		}
-		peerCfg, err := ParsePeerConfig(data)
-		if err != nil {
-			log.Printf("relay-router: parse peer config: %v", err)
-			return
-		}
-		fleet.UpdatePeers(peerCfg.Relays)
-	}
-
-	load()
+	loadPeerConfig(path, fleet)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			load()
+			loadPeerConfig(path, fleet)
 		}
 	}
+}
+
+// loadPeerConfig reads the peer config file once and applies it to the fleet.
+// Extracted from pollPeerConfig so tests can drive the load synchronously
+// without relying on goroutine scheduling and time.Sleep windows. See
+// worklog 0470.
+func loadPeerConfig(path string, fleet *relayFleet) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		// File missing → ConfigMap was deleted (e.g. InferenceRelay CR
+		// removed). Treat as "no peers" to drop orphaned relays from
+		// the in-memory fleet. Without this, relays linger in metrics
+		// and selection until pod restart (worklog 0467).
+		if os.IsNotExist(err) {
+			fleet.UpdatePeers(nil)
+		}
+		return
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		// Empty file — same as missing: drop all peers.
+		fleet.UpdatePeers(nil)
+		return
+	}
+	peerCfg, err := ParsePeerConfig(data)
+	if err != nil {
+		// Parse errors are transient — keep last-known-good rather
+		// than draining the fleet on a temporary corruption.
+		log.Printf("relay-router: parse peer config: %v", err)
+		return
+	}
+	fleet.UpdatePeers(peerCfg.Relays)
 }
 
 func getEnv(key, fallback string) string {

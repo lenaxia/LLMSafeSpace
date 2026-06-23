@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
+import * as React from "react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useOutletContext } from "react-router-dom";
 import { PortalLayout, type NavItem } from "./PortalLayout";
@@ -125,6 +126,68 @@ describe("PortalLayout", () => {
     const ctxEl = screen.getByTestId("ctx");
     expect(ctxEl.textContent).toContain("org-1");
     expect(ctxEl.textContent).toContain('"isAdmin":true');
+  });
+
+  it("renders a loading fallback in the content area while a lazy child suspends, keeping the portal nav visible", () => {
+    // A child that suspends indefinitely — mirrors what React.lazy does
+    // before its dynamic import resolves.
+    function SuspendingChild(): React.ReactNode {
+      throw new Promise(() => {});
+    }
+
+    render(
+      <MemoryRouter initialEntries={["/portal/overview"]}>
+        <Routes>
+          <Route path="/portal" element={<PortalLayout title="T" backLink="/chat" navItems={NAV_ITEMS} context={null} />}>
+            <Route path="overview" element={<SuspendingChild />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    // The Suspense fallback (spinner, labelled "Loading") must be present
+    // in the content area...
+    expect(screen.getByLabelText("Loading")).toBeInTheDocument();
+    // ...and the lazy child's never-rendered content must NOT be present.
+    expect(screen.queryByText("overview content")).not.toBeInTheDocument();
+    // The portal chrome (title + nav) must remain visible while the child
+    // is suspended — the Suspense boundary is local to the <Outlet>, so a
+    // suspending section never replaces the whole portal.
+    expect(screen.getByText("T")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Overview" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Settings" })).toBeInTheDocument();
+  });
+
+  it("renders a suspending child's content once the promise resolves", async () => {
+    let resolveImport!: (mod: { default: React.ComponentType }) => void;
+    const lazy = () => new Promise<{ default: React.ComponentType }>((resolve) => {
+      resolveImport = resolve;
+    });
+
+    const LazyChild = React.lazy(lazy);
+
+    render(
+      <MemoryRouter initialEntries={["/portal/overview"]}>
+        <Routes>
+          <Route path="/portal" element={<PortalLayout title="T" backLink="/chat" navItems={[]} context={null} />}>
+            <Route path="overview" element={<LazyChild />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    // Spinner shown while suspended.
+    expect(screen.getByLabelText("Loading")).toBeInTheDocument();
+
+    // Resolve the lazy import — the child content should appear.
+    await act(async () => {
+      resolveImport({ default: () => <span>lazy content</span> });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("lazy content")).toBeInTheDocument();
+    });
+    expect(screen.queryByLabelText("Loading")).not.toBeInTheDocument();
   });
 });
 

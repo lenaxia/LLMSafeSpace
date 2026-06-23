@@ -25,8 +25,10 @@ src/
     auth/         # LoginForm, RegisterForm, AuthCard
     chat/         # ChatView, MessageList, MessageBubble, MessagePart, Composer, StreamingIndicator, HealthBanner
     layout/       # AppShell, Sidebar, ErrorBoundary, UpdateAvailableToast
+    org-admin/    # OrgAdminLayout, members, invitations, SSO, billing, relay-admin dashboard
     session/      # SessionItem, SessionList, RenameSessionDialog
     settings/     # SettingsForm, AdminCredentialsTab, SecretsTab, UserSettingsTab, AppearanceTab, ApiKeysTab
+    shared/       # Cross-cutting helpers, shared types, common UI atoms
     ui/           # Button, Input, Card, Badge, Spinner, KebabMenu, Toggle, Select, NumberInput, TagInput
     workspace/    # WorkspaceItem, WorkspaceList, WorkspaceSessionList, WorkspaceSettingsDrawer, RenameWorkspaceDialog, NewWorkspaceDialog
   hooks/          # useChatStream, useEventStream, useSessions, useWorkspaces, useActivateWorkspace, useSessionTitle, useUserSettings, useMediaQuery, usePWA

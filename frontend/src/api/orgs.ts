@@ -37,6 +37,12 @@ export interface OrgMember {
   username: string;
   email: string;
   role: "admin" | "member";
+  /**
+   * Mirrors users.email_verified from the backend. Surfaced so org admins can
+   * see which members have not completed the email-verification flow and use
+   * the "Verify" action to bypass it (see verifyMember).
+   */
+  emailVerified: boolean;
   createdAt: string;
 }
 
@@ -60,6 +66,22 @@ export interface OrgInvitation {
   bounceType?: string;
   bouncedAt?: string;
   createdAt: string;
+
+  /**
+   * True when a `users` row exists with this invitation's email
+   * (case-folded match). Surfaced so the org admin UI can render the
+   * per-row Verify button only when force-verify is actionable.
+   * Optional for backward compat with cached responses from older
+   * API versions.
+   */
+  inviteeUserExists?: boolean;
+
+  /**
+   * Mirrors `users.email_verified` for the row matched by
+   * inviteeUserExists. Undefined when no users row exists. The org
+   * admin UI hides the Verify button when this is true.
+   */
+  inviteeEmailVerified?: boolean;
 }
 
 export interface AuditEntry {
@@ -110,6 +132,14 @@ export const orgsApi = {
     api.delete<void>(`/orgs/${id}/members/${userId}`),
   changeMemberRole: (id: string, userId: string, role: "admin" | "member") =>
     api.put<{ message: string }>(`/orgs/${id}/members/${userId}`, { role }),
+  /**
+   * Force-verify a member's email, bypassing the email-validation flow.
+   * Org-admin only. Idempotent. Used by the "Verify" button in the org admin
+   * members table when an admin has confirmed the member's identity
+   * out-of-band.
+   */
+  verifyMember: (id: string, userId: string) =>
+    api.post<{ message: string }>(`/orgs/${id}/members/${userId}/verify`),
 
   listInvitations: (id: string) =>
     api.get<OrgInvitation[]>(`/orgs/${id}/invitations`),
@@ -119,6 +149,22 @@ export const orgsApi = {
     api.delete<void>(`/orgs/${id}/invitations/${invId}`),
   resendInvitation: (id: string, invId: string) =>
     api.post<OrgInvitation>(`/orgs/${id}/invitations/${invId}/resend`),
+  /**
+   * Force-verify the user account associated with a pending invitation.
+   * Org-admin only. Idempotent. Used when the invitee already has an
+   * existing platform account but never completed email verification —
+   * the admin override sets users.email_verified=true so the invitee
+   * can log in. The invitation itself stays pending; the user must
+   * still click the invitation link to accept and join the org.
+   *
+   * On 422 with body `{"error":"no_account_for_email"}`, the invitee
+   * has no users row yet and must sign up before this action can be
+   * used. The frontend renders a clear message in that case.
+   */
+  verifyInvitee: (id: string, invId: string) =>
+    api.post<{ message: string }>(
+      `/orgs/${id}/invitations/${invId}/verify-user`,
+    ),
 
   getInvitationByToken: (token: string) =>
     api.get<InvitationDetail>(`/invitations/${token}`),

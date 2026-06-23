@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { Navigate, Outlet, createBrowserRouter } from "react-router-dom";
 import { useAuth } from "./providers/AuthProvider";
 import { LoginPage } from "./pages/LoginPage";
@@ -15,6 +16,38 @@ import { OrgWorkspacesTab } from "./components/org-admin/OrgWorkspacesTab";
 import { OrgAuditTab } from "./components/org-admin/OrgAuditTab";
 import { OrgBillingTab } from "./components/org-admin/OrgBillingTab";
 import { OrgSSOTab } from "./components/org-admin/OrgSSOTab";
+
+// The /admin portal is code-split: its layout and section components are
+// lazy-loaded so non-admin users (and users who never open the portal)
+// never download the admin bundles. Each section is its own chunk, so an
+// admin visiting /admin/users doesn't pull the relay dashboard or audit
+// table. PortalLayout wraps its <Outlet> in <Suspense> for the sections;
+// the route-level Suspense below covers the layout chunk itself.
+const PlatformAdminLayout = lazy(() =>
+  import("./components/platform-admin/PlatformAdminLayout").then((m) => ({ default: m.PlatformAdminLayout })),
+);
+const PlatformUsersTab = lazy(() =>
+  import("./components/settings/PlatformUsersTab").then((m) => ({ default: m.PlatformUsersTab })),
+);
+const OrgSettingsTab = lazy(() =>
+  import("./components/settings/OrgSettingsTab").then((m) => ({ default: m.OrgSettingsTab })),
+);
+const AdminProviderCredentialsTab = lazy(() =>
+  import("./components/settings/AdminProviderCredentialsTab").then((m) => ({ default: m.AdminProviderCredentialsTab })),
+);
+const RelayTab = lazy(() => import("./components/settings/RelayTab").then((m) => ({ default: m.RelayTab })));
+const AdminSettingsPage = lazy(() =>
+  import("./pages/AdminSettingsPage").then((m) => ({ default: m.AdminSettingsPage })),
+);
+const PlatformAuditTab = lazy(() =>
+  import("./components/settings/PlatformAuditTab").then((m) => ({ default: m.PlatformAuditTab })),
+);
+
+const portalFallback = (
+  <div className="flex h-screen items-center justify-center">
+    <Spinner size="lg" />
+  </div>
+);
 
 function RequireAuth() {
   const { user, loading } = useAuth();
@@ -62,6 +95,23 @@ export const router = createBrowserRouter([
           { path: "audit", element: <OrgAuditTab /> },
           { path: "billing", element: <OrgBillingTab /> },
           { path: "sso", element: <OrgSSOTab /> },
+        ],
+      },
+      {
+        path: "/admin",
+        element: (
+          <Suspense fallback={portalFallback}>
+            <PlatformAdminLayout />
+          </Suspense>
+        ),
+        children: [
+          { index: true, element: <Navigate to="users" replace /> },
+          { path: "users", element: <PlatformUsersTab /> },
+          { path: "organisations", element: <OrgSettingsTab /> },
+          { path: "credentials", element: <AdminProviderCredentialsTab /> },
+          { path: "relay", element: <RelayTab /> },
+          { path: "settings", element: <AdminSettingsPage /> },
+          { path: "audit", element: <PlatformAuditTab /> },
         ],
       },
     ],

@@ -2,6 +2,7 @@ import type { Message, MessagePart } from "../../api/types";
 import type { ModelInfo } from "../../api/workspaces";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
+import { ReadOnlyBanner } from "./ReadOnlyBanner";
 import { StreamingIndicator } from "./StreamingIndicator";
 import { MessageBubble } from "./MessageBubble";
 import { QueueSection } from "./QueueSection";
@@ -33,9 +34,17 @@ interface Props {
   onQueueDismiss?: (id: string) => void;
   models?: ModelInfo[];
   lastSeenAt?: string;
+  /**
+   * When true, the chat is read-only: the composer and message queue are
+   * hidden and a view-only banner is rendered in their place. Used for
+   * subagent/subtask sessions, which are driven by their parent session and
+   * must not be chatted with directly (helps enforce max session limits).
+   */
+  viewOnly?: boolean;
+  viewOnlyMessage?: string;
 }
 
-export function ChatView({ messages, streaming, streamParts, disabled, onSend, onAbort, prompts, onLoadEarlier, hasOlderMessages, loadingOlder, queuedMessages = [], onQueueRetry, onQueueDismiss, models, lastSeenAt }: Props) {
+export function ChatView({ messages, streaming, streamParts, disabled, onSend, onAbort, prompts, onLoadEarlier, hasOlderMessages, loadingOlder, queuedMessages = [], onQueueRetry, onQueueDismiss, models, lastSeenAt, viewOnly = false, viewOnlyMessage }: Props) {
   const isMobile = useIsMobile();
   const hasStreamedContent = streamParts.length > 0;
 
@@ -62,6 +71,7 @@ export function ChatView({ messages, streaming, streamParts, disabled, onSend, o
               />
             ) : undefined
           }
+          trailingPrompts={prompts}
           onLoadEarlier={onLoadEarlier}
           hasOlderMessages={hasOlderMessages}
           loadingOlder={loadingOlder}
@@ -70,18 +80,22 @@ export function ChatView({ messages, streaming, streamParts, disabled, onSend, o
         {streaming && <StreamingIndicator />}
       </div>
 
-      {prompts && <div className="px-4">{prompts}</div>}
+      {viewOnly ? (
+        <ReadOnlyBanner message={viewOnlyMessage} />
+      ) : (
+        <>
+          {onQueueRetry && onQueueDismiss && (
+            <QueueSection
+              messages={queuedMessages}
+              onRetry={onQueueRetry}
+              onDismiss={onQueueDismiss}
+              isMobile={isMobile}
+            />
+          )}
 
-      {onQueueRetry && onQueueDismiss && (
-        <QueueSection
-          messages={queuedMessages}
-          onRetry={onQueueRetry}
-          onDismiss={onQueueDismiss}
-          isMobile={isMobile}
-        />
+          <Composer onSend={onSend} onAbort={onAbort} disabled={disabled} streaming={streaming} />
+        </>
       )}
-
-      <Composer onSend={onSend} onAbort={onAbort} disabled={disabled} streaming={streaming} />
     </div>
   );
 }

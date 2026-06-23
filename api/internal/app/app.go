@@ -28,6 +28,7 @@ import (
 	"github.com/lenaxia/llmsafespaces/api/internal/services/cache"
 	"github.com/lenaxia/llmsafespaces/api/internal/services/database"
 	emailsvc "github.com/lenaxia/llmsafespaces/api/internal/services/email"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/health"
 	"github.com/lenaxia/llmsafespaces/api/internal/services/metering"
 	"github.com/lenaxia/llmsafespaces/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespaces/api/internal/services/msgqueue"
@@ -68,6 +69,7 @@ type App struct {
 	asyncAudit         *secrets.AsyncAuditLogger // nil if pgxpool path not used
 	secretsPool        *pgxpool.Pool             // pgx pool for secrets store; closed on shutdown
 	dekCacheClient     *redis.Client             // redis client for DEK cache; closed on shutdown
+	healthChecker      *health.Checker           // periodic dependency probe; nil only in degraded test setups
 	pendingOrgCleaner  *handlers.PendingOrgCleaner
 	invitationsHandler *handlers.InvitationsHandler
 	emailService       *emailsvc.Service
@@ -232,11 +234,20 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var auditHandler *handlers.AuditHandler
 	var platformAdminHandler *handlers.PlatformAdminHandler
 	var internalOrgStatusHandler *handlers.InternalOrgStatusHandler
+	var podBootstrapHandler *handlers.PodBootstrapHandler
 	var ssoHandler *handlers.SSOHandler
+	var loginDiscoveryHandler *handlers.LoginDiscoveryHandler
 	var asyncAudit *secrets.AsyncAuditLogger // populated when secrets are enabled; drained on Shutdown
 	var secretsPool *pgxpool.Pool            // closed on Shutdown
 	var dekCacheClient *redis.Client         // closed on Shutdown
 	{
+		// US-50.2: construct per-purpose RootKeyProviders before the earliest
+		// consumer (the Redis DEK cache below). Each purpose yields an
+		// independent HKDF-derived key; the provider wraps it for the
+		// Encrypt/Decrypt interface.
+		providerCredsProv := newPurposeProvider("provider-credentials")
+		orgCredsProv := newPurposeProvider("org-credentials")
+
 		mk := dekMasterKey()
 		if mk == nil {
 			// Unreachable after validateMasterSecret passed — env var is
@@ -250,6 +261,12 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			Password: cfg.Redis.Password,
 			DB:       cfg.Redis.DB,
 		})
+		// Attach the same metrics hook the primary cache service uses
+		// so DEK-cache traffic also feeds the redis duration and error
+		// metrics. Without this, traffic that goes exclusively through
+		// the DEK cache (key unlock paths) is invisible on the
+		// dashboard.
+		dekCacheClient.AddHook(cache.NewMetricsHook())
 		dekCache := secrets.NewRedisDEKCache(dekCacheClient, mk)
 
 		// Create pgxpool for secret stores (same DB, separate pool for pgx native queries).
@@ -257,7 +274,17 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			cfg.Database.Host, cfg.Database.Port, cfg.Database.User,
 			cfg.Database.Password, cfg.Database.Database, cfg.Database.SSLMode)
 		var pgxErr error
-		secretsPool, pgxErr = pgxpool.New(context.Background(), pgxDSN)
+		// Attach the same QueryTracer used by the *sql.DB pool so every
+		// query issued by the secrets/keys/credentials pgx-native code
+		// also feeds llmsafespaces_db_query_duration_seconds and
+		// llmsafespaces_db_errors_total. Without this the secret-store
+		// queries are invisible to the operational dashboard.
+		var pgxCfg *pgxpool.Config
+		pgxCfg, pgxErr = pgxpool.ParseConfig(pgxDSN)
+		if pgxErr == nil {
+			pgxCfg.ConnConfig.Tracer = database.NewQueryTracer()
+			secretsPool, pgxErr = pgxpool.NewWithConfig(context.Background(), pgxCfg)
+		}
 
 		var secretService *secrets.SecretService
 		var auditStore secrets.SecretStore
@@ -310,19 +337,16 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		}
 		modelsHandler.SetLogger(log)
 		modelsHandler.SetModelStore(dbSvc)
-		if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
-			modelsHandler.SetManifestWriter(wsSvc)
-		}
 		// US-29.4: WorkspaceEnvHandler owns the env-var endpoints.
 		workspaceEnvHandler = handlers.NewWorkspaceEnvHandler(secretService)
 		workspaceEnvHandler.SetLogger(log)
-		adminProvCredHandler = handlers.NewAdminProviderCredentialsHandler(pgStore, deriveServerKey)
+		adminProvCredHandler = handlers.NewAdminProviderCredentialsHandler(pgStore, providerCredsProv)
 		adminProvCredHandler.SetAutoApplyStore(pgStore)
 		userProvCredHandler = handlers.NewUserProviderCredentialsHandler(pgStore, pgStore, keyService, secrets.NewPgKeyStore(secretsPool))
 		userProvCredHandler.SetCredentialStateWriter(dbSvc)
 
 		// Seed the free-tier opencode credential (Epic 30 US-30.4).
-		if err := ensureFreeTierCredential(context.Background(), pgStore, log); err != nil {
+		if err := ensureFreeTierCredential(context.Background(), pgStore, providerCredsProv, log); err != nil {
 			log.Warn("free-tier credential seeding skipped", "error", err.Error())
 		}
 		// Wire pod-IP resolver so reload-secrets can reach in-pod agentd.
@@ -339,13 +363,9 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		// Wire password getter so ListModels/SetModel can authenticate
 		// to opencode. Uses the same K8s-secret-backed getter as ProxyHandler.
 		// Wired after proxyHandler construction (see below).
-		// Wire the manifest writer so SetBindings persists a K8s Secret
-		// (`workspace-secrets-<id>`) read by the pod init container on
-		// every start. The live HTTP push alone is not durable; see
-		// Bug 3 in worklog 0085.
-		if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
-			secretsHandler.SetSecretsManifestWriter(wsSvc)
-		}
+		// Epic 35: the manifest writer (K8s Secret) has been removed —
+		// secretless injection delivers credentials at boot via the
+		// bootstrap endpoint. Bind-time delivery is live HTTP push only.
 		// Wire the password verifier so RevealSecret enforces a real
 		// re-authentication gate. Without this the field is theater
 		// (validator finding on RevealSecret in worklog 0094 audit).
@@ -356,7 +376,8 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		// routes lives in WorkspaceAccessMiddleware (design 0041 D1+D5). The
 		// SecretService trusts that decision and no longer carries its own
 		// verifier — see pkg/secrets/secret_service.go.
-		secretService.SetAdminKeyDeriver(deriveServerKey)
+		secretService.SetAdminProvider(providerCredsProv)
+		secretService.SetOrgProvider(orgCredsProv)
 		rotateKeyHandler = handlers.NewRotateKeyHandler(keyService)
 		rotateKeyHandler.SetPasswordUpdater(&bcryptPasswordUpdater{db: svc.Database})
 		rotateKeyHandler.SetAuditFunc(func(userID, action string) {
@@ -372,21 +393,49 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		})
 
 		rkp := newRootKeyProvider(cfg, log)
+		// US-50.7: apiKeyProv uses the "master-kek" purpose string (not
+		// "dek-cache") so a Redis compromise cannot help unwrap Postgres
+		// API-key ciphertexts. The multi-key provider (US-50.4) also holds the
+		// old "dek-cache" key so existing rows still decrypt. New encrypts use
+		// "master-kek" (version 2, active); the rotation CLI (US-50.5) re-wraps
+		// legacy rows. When rkp is a sealed provider (production) it wraps the
+		// raw root key — no purpose string applies, so rkp is used as-is.
+		apiKeyProv := rkp
+		if apiKeyProv == nil {
+			masterKEK := deriveServerKey("master-kek")
+			dekCacheKey := deriveServerKey("dek-cache")
+			if masterKEK != nil && dekCacheKey != nil {
+				apiKeyProv, _ = secrets.NewStaticKeyProviderMultiVersion(2, map[int][]byte{
+					1: dekCacheKey, // legacy: decrypts existing rows
+					2: masterKEK,   // active: encrypts new rows
+				})
+			}
+		} else if sp, ok := apiKeyProv.(*secrets.StaticKeyProvider); ok && sp != nil {
+			// rkp is a static provider built from dekMasterKey() (the Helm
+			// default path). Upgrade it to a domain-separated multi-key provider
+			// so new encrypts use "master-kek" while old rows still decrypt.
+			masterKEK := deriveServerKey("master-kek")
+			dekCacheKey := deriveServerKey("dek-cache")
+			if masterKEK != nil && dekCacheKey != nil {
+				apiKeyProv, _ = secrets.NewStaticKeyProviderMultiVersion(2, map[int][]byte{
+					1: dekCacheKey,
+					2: masterKEK,
+				})
+			}
+		}
 
 		if authSvc, ok := svc.Auth.(*auth.Service); ok {
 			authSvc.SetKeyService(keyService)
 			authSvc.SetInstanceSettings(instanceSettings)
 
-			if rkp != nil {
-				authSvc.SetRootKeyProvider(rkp)
-			} else {
-				authSvc.SetMasterKey(dekMasterKey())
+			if apiKeyProv != nil {
+				authSvc.SetRootKeyProvider(apiKeyProv)
 			}
 		}
 
 		pgOrgStore = database.NewPgOrgStore(dbSvc.DB)
 		orgsHandler = handlers.NewOrgsHandler(pgOrgStore, svc.GetAuth())
-		orgCredsHandler = handlers.NewOrgCredentialsHandler(pgStore, pgStore, deriveServerKey, svc.GetAuth())
+		orgCredsHandler = handlers.NewOrgCredentialsHandler(pgStore, pgStore, orgCredsProv, svc.GetAuth())
 
 		// US-43.10: OIDC SSO. The service reuses the auth service as the JWT
 		// issuer (GenerateToken) and the server KEK (RootKeyProvider) to encrypt
@@ -397,7 +446,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			if stateKey != nil {
 				ssoSvc, ssoErr := sso.New(pgOrgStore, dbSvc, sso.ServiceConfig{
 					TokenIssuer:         authSvc,
-					KeyProvider:         rkp,
+					KeyProvider:         apiKeyProv,
 					StateKey:            stateKey,
 					TokenTTL:            cfg.Auth.TokenDuration,
 					RedirectBaseURL:     cfg.OIDC.RedirectBaseURL,
@@ -408,7 +457,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 				if ssoErr != nil {
 					log.Error("failed to construct sso service", ssoErr)
 				} else {
-					ssoHandler = handlers.NewSSOHandler(ssoSvc, pgOrgStore, svc.GetAuth(), cfg.Auth.CookieName, cfg.OIDC.FrontendRedirectURL, log)
+					ssoHandler = handlers.NewSSOHandler(ssoSvc, pgOrgStore, svc.GetAuth(), cfg.Auth.CookieName, cfg.OrgSubdomainRouting.CookieDomain, cfg.OIDC.FrontendRedirectURL, log)
 				}
 			}
 		}
@@ -421,21 +470,28 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		platformAdminHandler = handlers.NewPlatformAdminHandler(pgOrgStore, dbSvc, svc.GetAuth(), svc.GetAuth(), log)
 		internalOrgStatusHandler = handlers.NewInternalOrgStatusHandler(pgOrgStore)
 
-		if rkp != nil {
-			keyService.SetAPIKeyStore(&apiKeyStoreAdapter{db: dbSvc}, rkp)
-		} else {
-			mk := dekMasterKey()
-			if mk != nil {
-				sp, _ := secrets.NewStaticKeyProvider(mk)
-				keyService.SetAPIKeyStore(&apiKeyStoreAdapter{db: dbSvc}, sp)
-			}
+		// US-54.1: login discovery handler for POST /api/v1/auth/lookup. Harmless
+		// when subdomain routing is disabled (falls back to direct SSO URL).
+		loginDiscoveryHandler = handlers.NewLoginDiscoveryHandler(
+			svc.Database, pgOrgStore,
+			cfg.OrgSubdomainRouting.BaseDomain, log,
+		)
+
+		if apiKeyProv != nil {
+			keyService.SetAPIKeyStore(&apiKeyStoreAdapter{db: dbSvc}, apiKeyProv)
 		}
 		wsSvc, wsSvcOk := svc.Workspace.(*workspace.Service)
 		if wsSvcOk {
-			wsSvc.SetSecretInjector(secretService)
 			wsSvc.SetCredentialProvisioner(pgStore)
 			wsSvc.SetOrgStore(pgOrgStore)
 		}
+		// Epic 35 US-35.3: pod bootstrap handler. Uses the API's K8s
+		// clientset for TokenReview + the SecretService for credential
+		// decryption + the DB for workspace lookup + default model.
+		// expectedNamespace validates the SA namespace (S1 defense-in-depth).
+		podBootstrapHandler = handlers.NewPodBootstrapHandlerFromClientset(
+			k8sClient.Clientset(), secretService, dbSvc, cfg.Kubernetes.Namespace,
+		)
 		// User provider-credential bind/unbind routes are NOT under
 		// /api/v1/workspaces/:id (they live under /api/v1/provider-credentials/:id/bind/:workspaceId),
 		// so WorkspaceAccessMiddleware does not cover them. Wire the
@@ -717,8 +773,11 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		AdminSessionHandler:             adminSessionHandler,
 		PlatformAdminHandler:            platformAdminHandler,
 		InternalOrgStatusHandler:        internalOrgStatusHandler,
+		PodBootstrapHandler:             podBootstrapHandler,
 		SSOHandler:                      ssoHandler,
+		LoginDiscoveryHandler:           loginDiscoveryHandler,
 		CookieName:                      cfg.Auth.CookieName,
+		CookieDomain:                    cfg.OrgSubdomainRouting.CookieDomain,
 	})
 
 	httpServer := &http.Server{
@@ -761,6 +820,24 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 func (a *App) Run() error {
 	if err := a.services.Start(); err != nil {
 		return fmt.Errorf("failed to start services: %w", err)
+	}
+
+	// Start the dependency health probe so llmsafespaces_dependency_up
+	// and the db-pool gauges have a continuous signal independent of
+	// request traffic. Constructed here (not in New) so we have access
+	// to the already-initialized services.
+	if dbSvc, ok := a.services.Database.(*database.Service); ok {
+		deps := map[string]health.Pingable{
+			"postgres": dbSvc,
+		}
+		if cacheSvc, ok := a.services.Cache.(*cache.Service); ok {
+			deps["redis"] = cacheSvc
+		}
+		a.healthChecker = health.NewChecker(a.logger, health.Config{
+			Dependencies: deps,
+			PoolSource:   dbSvc.DB,
+		})
+		a.healthChecker.Start(a.ctx)
 	}
 
 	// Disabled: self-service org creation removed. Re-enable when billing portal ships.
@@ -892,6 +969,14 @@ func (a *App) Shutdown() error {
 	a.logger.Info("Shutting down application")
 
 	a.cancel()
+
+	// Stop the dependency probe before the rest of the shutdown so the
+	// loop is not still pinging dependencies as their connections are
+	// closing. Stop is idempotent and safe even if Run never made it
+	// past health-checker construction.
+	if a.healthChecker != nil {
+		a.healthChecker.Stop()
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), a.config.Server.ShutdownTimeout)
 	defer cancel()
@@ -1112,5 +1197,13 @@ func initEmailStack(
 		emailService,
 		log,
 	)
+	// Purge the user's encrypted secret rows on reset (makes the
+	// "your saved keys will be deleted" guarantee literal).
+	passwordResetHandler.SetSecretPurger(dbSvc)
+	// Suspend the user's active workspaces + scrub their ephemeral
+	// workspace-secrets-* K8s Secrets so relaunch yields no secrets.
+	if wsSvc, ok := svc.GetWorkspace().(*workspace.Service); ok {
+		passwordResetHandler.SetWorkspaceNeutralizer(wsSvc)
+	}
 	return emailService, emailHandler, passwordResetHandler, nil
 }

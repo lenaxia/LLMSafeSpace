@@ -76,6 +76,16 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 			logger.Error(err, "Failed to ensure password secret in Creating phase")
 			return ctrl.Result{}, err
 		}
+		// Epic 35 US-35.1 (F4): ensure per-workspace ServiceAccount here too.
+		// handlePending calls this on first creation, but a workspace can
+		// land in Creating via the resume path (Suspended → Resuming →
+		// Creating) without going through handlePending. If the SA was
+		// deleted out-of-band during suspend, the projected token volume
+		// would fail to mount → CreateContainerConfigError. Idempotent.
+		if err := r.ensureWorkspaceServiceAccount(ctx, workspace); err != nil {
+			logger.Error(err, "Failed to ensure workspace ServiceAccount in Creating phase")
+			return ctrl.Result{}, err
+		}
 
 		// F1/F16: enforce backoff — if NextRetryAt is set and not yet
 		// elapsed, requeue without creating a pod.
@@ -114,11 +124,6 @@ func (r *WorkspaceReconciler) handleCreating(ctx context.Context, workspace *v1.
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: requeueCreating}, nil
-	}
-
-	// Delete ephemeral secrets as soon as init containers complete (minimize etcd exposure).
-	if allInitContainersComplete(existingPod) {
-		r.deleteEphemeralSecretsSecret(ctx, workspace)
 	}
 
 	// Pod exists — check if running.

@@ -32,6 +32,20 @@ type ProvisionRequest struct {
 	Region    string
 	Shape     string
 	CloudInit string
+
+	// OwnerUID is the InferenceRelay CR's UID. Drivers MUST tag the
+	// provisioned VM with this value so it can be adopted by the
+	// reconciler if a Status update is lost mid-provisioning (the
+	// classic K8s controller leak — provisioning side-effect committed
+	// but Status persistence failed). Empty OwnerUID disables tagging
+	// and the leak-protection guarantee. See worklog 0473/0474.
+	OwnerUID string
+
+	// Provider identifies which provider slot this VM serves
+	// (e.g. "aws"). Drivers MUST tag the VM with this value so the
+	// reconciler can adopt the right slot when multiple providers
+	// share the same OwnerUID.
+	Provider string
 }
 
 // ProvisionResult is returned by Provision on success.
@@ -60,11 +74,35 @@ const (
 )
 
 // VMInstance is a lightweight summary used by ListInstances.
+//
+// OwnerUID and Provider are populated from the instance's tags when the
+// driver provisioned with those tags set. Older VMs without tags will
+// have empty values; the reconciler treats those as un-adoptable and
+// the orphan detector destroys them after a grace period.
 type VMInstance struct {
 	InstanceID string
 	PublicIP   string
 	State      VMState
+	OwnerUID   string
+	Provider   string
 }
+
+// Tag keys used by all drivers when provisioning. Centralized here so
+// any driver implementation uses the same wire contract.
+const (
+	// TagManagedBy identifies relay VMs (vs other VMs in the account).
+	// Always set. Value is "llmsafespaces-relay".
+	TagManagedBy = "managed-by"
+	// TagOwnerUID is the InferenceRelay CR's UID; empty if Provision
+	// was called without OwnerUID set (legacy / pre-fix VMs).
+	TagOwnerUID = "inferencerelay-uid"
+	// TagProvider identifies which provider slot the VM serves
+	// (e.g. "aws", "oci", "gcp"). Empty for legacy VMs.
+	TagProvider = "inferencerelay-provider"
+
+	// TagManagedByValue is the canonical value of TagManagedBy.
+	TagManagedByValue = "llmsafespaces-relay"
+)
 
 // Error classification for circuit breaker logic.
 var (

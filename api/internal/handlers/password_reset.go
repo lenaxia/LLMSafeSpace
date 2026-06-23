@@ -58,15 +58,33 @@ type passwordResetSessionRevoker interface {
 	RevokeAllUserSessions(userID string) error
 }
 
+// passwordResetSecretPurger deletes every user-owned secret row for a
+// user (provider credentials + user secrets). Wired optionally; when
+// absent, reset relies on the DEK reinit alone (which already
+// cryptographically erases the old ciphertext without deleting rows).
+type passwordResetSecretPurger interface {
+	PurgeUserSecrets(ctx context.Context, userID string) error
+}
+
+// passwordResetWorkspaceNeutralizer suspends the user's active
+// workspaces and scrubs their ephemeral workspace-secrets-* K8s
+// Secrets. Wired optionally; when absent, reset does not touch
+// running workspaces.
+type passwordResetWorkspaceNeutralizer interface {
+	NeutralizeUserWorkspaces(ctx context.Context, userID string) error
+}
+
 // PasswordResetHandler handles the password-reset-via-email flow.
 type PasswordResetHandler struct {
-	store    passwordResetStore
-	users    passwordResetUserLookup
-	keyInit  passwordResetKeyInitializer
-	pwUpdate passwordResetPwUpdater
-	revoker  passwordResetSessionRevoker
-	email    *emailsvc.Service
-	log      passwordResetLogger
+	store       passwordResetStore
+	users       passwordResetUserLookup
+	keyInit     passwordResetKeyInitializer
+	pwUpdate    passwordResetPwUpdater
+	revoker     passwordResetSessionRevoker
+	purger      passwordResetSecretPurger
+	neutralizer passwordResetWorkspaceNeutralizer
+	email       *emailsvc.Service
+	log         passwordResetLogger
 }
 
 type passwordResetLogger interface {
@@ -91,6 +109,17 @@ func NewPasswordResetHandler(
 		store: store, users: users, keyInit: keyInit,
 		pwUpdate: pwUpdate, revoker: revoker, email: email, log: log,
 	}
+}
+
+// SetSecretPurger wires the secret-row purger. Optional: when not set,
+// reset does not delete the (already-cryptographically-erased) rows.
+// Mirrors the setter-injection pattern of secrets.KeyService.SetSecretStore.
+func (h *PasswordResetHandler) SetSecretPurger(p passwordResetSecretPurger) { h.purger = p }
+
+// SetWorkspaceNeutralizer wires the workspace suspend/scrub step.
+// Optional: when not set, reset does not touch running workspaces.
+func (h *PasswordResetHandler) SetWorkspaceNeutralizer(n passwordResetWorkspaceNeutralizer) {
+	h.neutralizer = n
 }
 
 // maxPasswordResetBodySize limits request body size on the public
@@ -253,6 +282,29 @@ func (h *PasswordResetHandler) Confirm(c *gin.Context) {
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "password reset failed"})
 		return
+	}
+
+	// Step 2b: Purge the user's encrypted secret rows. The DEK reinit above
+	// already made the old ciphertext cryptographically undecryptable;
+	// deleting the rows makes the "your saved keys will be deleted" promise
+	// literal and guarantees no future materialization can resurrect them.
+	// Best-effort: a failure does not undo the reset because the erasure
+	// has already happened cryptographically.
+	if h.purger != nil {
+		if err := h.purger.PurgeUserSecrets(ctx, tok.UserID); err != nil && h.log != nil {
+			h.log.Warn("password-reset: secret purge failed (non-fatal; DEK reinit already erased them)",
+				"user_id", tok.UserID)
+		}
+	}
+
+	// Step 2c: Neutralize the user's workspaces — suspend Active pods
+	// (destroying live in-memory/tmpfs copies of the keys) and scrub the
+	// ephemeral workspace-secrets-* K8s Secrets so a resume cannot
+	// re-materialize the previous plaintext. Best-effort.
+	if h.neutralizer != nil {
+		if err := h.neutralizer.NeutralizeUserWorkspaces(ctx, tok.UserID); err != nil && h.log != nil {
+			h.log.Warn("password-reset: workspace neutralization failed (non-fatal)", "user_id", tok.UserID)
+		}
 	}
 
 	// Step 3: Revoke all outstanding sessions (OWASP-mandated). Best-effort.

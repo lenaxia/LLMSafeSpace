@@ -17,6 +17,16 @@ import (
 // TestCredentialPrecedence_AdminFreeTierOverrideByUser verifies that a user
 // credential for the same provider overrides an admin credential when both
 // are bound to the same workspace.
+
+// mustStaticProvider wraps a raw 32-byte key as a RootKeyProvider for tests.
+// US-50.2: replaces the old AdminKeyDeriver callback with a per-purpose provider.
+func mustStaticProvider(t *testing.T, key []byte) RootKeyProvider {
+	t.Helper()
+	p, err := NewStaticKeyProvider(key)
+	require.NoError(t, err)
+	return p
+}
+
 func TestCredentialPrecedence_AdminFreeTierOverrideByUser(t *testing.T) {
 	keyStore := newMockKeyStore()
 	dekCache := newTestDEKCache()
@@ -58,7 +68,8 @@ func TestCredentialPrecedence_AdminFreeTierOverrideByUser(t *testing.T) {
 
 	combinedStore := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCredStore}
 	svc := NewSecretService(keyService, combinedStore)
-	svc.SetAdminKeyDeriver(func(label string) []byte { return adminKEK })
+	svc.SetAdminProvider(mustStaticProvider(t, adminKEK))
+	svc.SetOrgProvider(mustStaticProvider(t, adminKEK))
 
 	ctx := context.Background()
 	result, err := svc.PrepareSecretsForInjection(ctx, userID, sessionID, workspaceID)
@@ -110,7 +121,8 @@ func TestCredentialPrecedence_ModelAllowlistFiltering(t *testing.T) {
 
 	combinedStore := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCredStore}
 	svc := NewSecretService(keyService, combinedStore)
-	svc.SetAdminKeyDeriver(func(label string) []byte { return adminKEK })
+	svc.SetAdminProvider(mustStaticProvider(t, adminKEK))
+	svc.SetOrgProvider(mustStaticProvider(t, adminKEK))
 
 	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
 	require.NoError(t, err)
@@ -154,7 +166,8 @@ func TestCredentialPrecedence_ModelAllowlistFallback(t *testing.T) {
 
 	combinedStore := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCredStore}
 	svc := NewSecretService(keyService, combinedStore)
-	svc.SetAdminKeyDeriver(func(label string) []byte { return adminKEK })
+	svc.SetAdminProvider(mustStaticProvider(t, adminKEK))
+	svc.SetOrgProvider(mustStaticProvider(t, adminKEK))
 
 	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
 	require.NoError(t, err)
@@ -200,7 +213,8 @@ func TestCredentialPrecedence_DecryptionFailureFallback(t *testing.T) {
 
 	combinedStore := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCredStore}
 	svc := NewSecretService(keyService, combinedStore)
-	svc.SetAdminKeyDeriver(func(label string) []byte { return adminKEK })
+	svc.SetAdminProvider(mustStaticProvider(t, adminKEK))
+	svc.SetOrgProvider(mustStaticProvider(t, adminKEK))
 
 	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
 	require.NoError(t, err)
@@ -240,7 +254,8 @@ func TestCredentialPrecedence_AdminOnlyNoSession(t *testing.T) {
 
 	combinedStore := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCredStore}
 	svc := NewSecretService(keyService, combinedStore)
-	svc.SetAdminKeyDeriver(func(label string) []byte { return adminKEK })
+	svc.SetAdminProvider(mustStaticProvider(t, adminKEK))
+	svc.SetOrgProvider(mustStaticProvider(t, adminKEK))
 
 	ctx := context.Background()
 	result, err := svc.PrepareSecretsForInjection(ctx, "user-1", "no-session", "ws-1")
@@ -365,7 +380,8 @@ func TestPrepareSecretsForInjection_ViaAsyncAuditLogger(t *testing.T) {
 	keyService := NewKeyService(newMockKeyStore(), dekCache)
 
 	svc := NewSecretService(keyService, audit)
-	svc.SetAdminKeyDeriver(func(label string) []byte { return adminKEK })
+	svc.SetAdminProvider(mustStaticProvider(t, adminKEK))
+	svc.SetOrgProvider(mustStaticProvider(t, adminKEK))
 
 	ctx := context.Background()
 	result, err := svc.PrepareSecretsForInjection(ctx, "user-1", "sess-1", "ws-1")
@@ -411,7 +427,8 @@ func TestCredentialPrecedence_AllowlistOnlyDefaultID(t *testing.T) {
 
 	combinedStore := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCredStore}
 	svc := NewSecretService(keyService, combinedStore)
-	svc.SetAdminKeyDeriver(func(label string) []byte { return adminKEK })
+	svc.SetAdminProvider(mustStaticProvider(t, adminKEK))
+	svc.SetOrgProvider(mustStaticProvider(t, adminKEK))
 
 	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
 	require.NoError(t, err)
@@ -457,7 +474,8 @@ func TestCredentialPrecedence_AllowlistMixedValidAndInvalid(t *testing.T) {
 
 	combinedStore := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCredStore}
 	svc := NewSecretService(keyService, combinedStore)
-	svc.SetAdminKeyDeriver(func(label string) []byte { return adminKEK })
+	svc.SetAdminProvider(mustStaticProvider(t, adminKEK))
+	svc.SetOrgProvider(mustStaticProvider(t, adminKEK))
 
 	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
 	require.NoError(t, err)
@@ -527,7 +545,8 @@ func TestCredentialPrecedence_ModelContextLimits_InjectedIntoLLMModelConfig(t *t
 
 	combinedStore := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCredStore}
 	svc := NewSecretService(keyService, combinedStore)
-	svc.SetAdminKeyDeriver(func(label string) []byte { return adminKEK })
+	svc.SetAdminProvider(mustStaticProvider(t, adminKEK))
+	svc.SetOrgProvider(mustStaticProvider(t, adminKEK))
 
 	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
 	require.NoError(t, err)
@@ -590,7 +609,8 @@ func TestCredentialPrecedence_ModelContextLimits_DoesNotOverrideExisting(t *test
 
 	combinedStore := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCredStore}
 	svc := NewSecretService(keyService, combinedStore)
-	svc.SetAdminKeyDeriver(func(label string) []byte { return adminKEK })
+	svc.SetAdminProvider(mustStaticProvider(t, adminKEK))
+	svc.SetOrgProvider(mustStaticProvider(t, adminKEK))
 
 	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
 	require.NoError(t, err)
@@ -640,10 +660,7 @@ func TestCredentialPrecedence_OrgCredentialViaServerKEK(t *testing.T) {
 
 	combinedStore := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCredStore}
 	svc := NewSecretService(keyService, combinedStore)
-	svc.SetAdminKeyDeriver(func(label string) []byte {
-		require.Equal(t, "org-credentials", label, "org binding must derive the org-credentials label")
-		return orgKEK
-	})
+	svc.SetOrgProvider(mustStaticProvider(t, orgKEK))
 
 	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
 	require.NoError(t, err)
@@ -704,20 +721,8 @@ func TestCredentialPrecedence_DomainSeparation_AdminAndOrgDistinctKeys(t *testin
 
 	combinedStore := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCredStore}
 	svc := NewSecretService(keyService, combinedStore)
-	svc.SetAdminKeyDeriver(func(label string) []byte {
-		// Return distinct keys per label — proves injection.go passes the right
-		// label for each OwnerType. Returning the wrong key for a label would
-		// cause the corresponding credential to fail decryption below.
-		switch label {
-		case "provider-credentials":
-			return adminKEK
-		case "org-credentials":
-			return orgKEK
-		default:
-			t.Fatalf("unexpected label %q", label)
-			return nil
-		}
-	})
+	svc.SetAdminProvider(mustStaticProvider(t, adminKEK))
+	svc.SetOrgProvider(mustStaticProvider(t, orgKEK))
 
 	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
 	require.NoError(t, err)
@@ -770,7 +775,8 @@ func TestCredentialPrecedence_OrgCredential_WrongKEK_FailsAndFallsBack(t *testin
 
 	combinedStore := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCredStore}
 	svc := NewSecretService(keyService, combinedStore)
-	svc.SetAdminKeyDeriver(func(label string) []byte { return deriveKEK })
+	svc.SetAdminProvider(mustStaticProvider(t, deriveKEK))
+	svc.SetOrgProvider(mustStaticProvider(t, deriveKEK))
 
 	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
 	require.NoError(t, err, "fail-soft: decrypt failure must not error the whole call")

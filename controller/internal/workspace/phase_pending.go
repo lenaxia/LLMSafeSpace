@@ -93,6 +93,14 @@ func (r *WorkspaceReconciler) handlePending(ctx context.Context, workspace *v1.W
 		logger.Error(err, "Failed to ensure password secret")
 		return ctrl.Result{}, err
 	}
+	// Epic 35 US-35.1: ensure per-workspace ServiceAccount for secretless
+	// credential injection. The init container uses its projected token to
+	// fetch credentials from the API at boot. Also ensured defensively in
+	// handleCreating for the resume path.
+	if err := r.ensureWorkspaceServiceAccount(ctx, workspace); err != nil {
+		logger.Error(err, "Failed to ensure workspace ServiceAccount")
+		return ctrl.Result{}, err
+	}
 
 	// Set the PendingAt anchor on first entry so the controller can measure
 	// end-to-end create latency. Prefer the AnnotationRequestedAt written by

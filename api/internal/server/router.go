@@ -119,11 +119,31 @@ type RouterConfig struct {
 	// L3/L4 defense-in-depth; the token is the load-bearing control.
 	InternalOrgStatusHandler *handlers.InternalOrgStatusHandler
 
+	// PodBootstrapHandler, when non-nil, registers POST /internal/v1/pod-bootstrap
+	// — the secretless credential injection endpoint (Epic 35). The workspace
+	// init container presents a projected SA token; the handler validates it via
+	// TokenReview and returns decrypted secrets. NOT behind AuthMiddleware (the
+	// init container has no user identity); auth is the TokenReview itself.
+	PodBootstrapHandler *handlers.PodBootstrapHandler
+
 	CookieName string
+
+	// CookieDomain (Epic 54, US-54.3): when non-empty, set as the Domain
+	// attribute on the lsp_session cookie so the session survives root→subdomain
+	// redirects under wildcard subdomain routing. When empty (default), the
+	// cookie is host-only — current behavior, single-host deploys.
+	CookieDomain string
 
 	// SSOHandler handles org-admin SSO config CRUD + the public OIDC login flow
 	// (start/callback) and claimed-domain discovery (US-43.10, D17).
 	SSOHandler *handlers.SSOHandler
+
+	// LoginDiscoveryHandler handles POST /api/v1/auth/lookup — the email-led
+	// login discovery endpoint (Epic 54, US-54.1). Returns a single redirectUrl
+	// pointing the browser at the user's org subdomain (or direct SSO start URL
+	// when subdomain routing is disabled). Enumeration-safe: uniform 200 +
+	// uniform body shape across all non-validation branches; DB errors masked.
+	LoginDiscoveryHandler *handlers.LoginDiscoveryHandler
 }
 
 // cookieName returns the session cookie name, falling back to "lsp_session" when empty.
@@ -195,7 +215,7 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 
 	// Auth routes (public — no auth middleware)
 	authGroup := router.Group("/api/v1/auth")
-	registerAuthRoutes(authGroup, services, cfg.InstanceSettings, logger, cfg.cookieName(), cfg.SSOHandler)
+	registerAuthRoutes(authGroup, services, cfg.InstanceSettings, logger, cfg.cookieName(), cfg.CookieDomain, cfg.SSOHandler)
 
 	// US-49.5: Password reset via email (public — the token IS the credential
 	// for confirm; request is always 202 with no enumeration).
@@ -208,6 +228,13 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 	if cfg.EmailVerifyHandler != nil {
 		authGroup.POST("/verify-email", cfg.EmailVerifyHandler.Verify)
 		authGroup.POST("/verify-email/resend", cfg.EmailVerifyHandler.Resend)
+	}
+
+	// Epic 54, US-54.1: Email-led login discovery (public — enumeration-safe).
+	// Resolves an email to a single redirectUrl pointing at the user's org.
+	// Always returns 200 with { redirectUrl } on valid input; DB errors masked.
+	if cfg.LoginDiscoveryHandler != nil {
+		authGroup.POST("/lookup", cfg.LoginDiscoveryHandler.Lookup)
 	}
 
 	// Authenticated workspace routes
@@ -411,6 +438,11 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		router.GET("/api/v1/internal/orgs/:orgID/status", cfg.InternalOrgStatusHandler.GetOrgStatus)
 	}
 
+	// Epic 35 US-35.3: pod bootstrap endpoint. Auth is K8s TokenReview (no JWT).
+	if cfg.PodBootstrapHandler != nil {
+		router.POST("/internal/v1/pod-bootstrap", cfg.PodBootstrapHandler.Bootstrap)
+	}
+
 	// Secret management routes (Epic 10)
 	if cfg.SecretsHandler != nil {
 		secretsGroup := router.Group("/api/v1/secrets")
@@ -555,12 +587,14 @@ func sanitizeBindError(err error) string {
 // setSessionCookie sets the HttpOnly session cookie on the response.
 // maxAge is in seconds and must match the JWT's TTL.
 // cookieName is the cookie name from RouterConfig (defaults to "lsp_session").
-func setSessionCookie(c *gin.Context, token string, maxAge int, cookieName string) {
-	c.SetCookie(cookieName, token, maxAge, "/", "", true, true)
+// cookieDomain is the Domain attribute (empty = host-only; set when wildcard
+// subdomain routing is enabled so the cookie is visible across subdomains).
+func setSessionCookie(c *gin.Context, token string, maxAge int, cookieName, cookieDomain string) {
+	c.SetCookie(cookieName, token, maxAge, "/", cookieDomain, true, true)
 }
 
 // API key management routes.
-func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, instanceSettings *settings.InstanceService, logger *apilogger.Logger, cookieName string, ssoHandler *handlers.SSOHandler) {
+func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, instanceSettings *settings.InstanceService, logger *apilogger.Logger, cookieName, cookieDomain string, ssoHandler *handlers.SSOHandler) {
 	authSvc := services.GetAuth()
 
 	// Public: feature flag discovery
@@ -617,7 +651,7 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, insta
 		if maxAge <= 0 {
 			maxAge = 86400 // safe fallback: matches default tokenDuration
 		}
-		setSessionCookie(c, resp.Token, maxAge, cookieName)
+		setSessionCookie(c, resp.Token, maxAge, cookieName, cookieDomain)
 		c.JSON(http.StatusCreated, resp)
 	})
 
@@ -641,7 +675,7 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, insta
 		if maxAge <= 0 {
 			maxAge = 86400 // safe fallback: matches default tokenDuration
 		}
-		setSessionCookie(c, resp.Token, maxAge, cookieName)
+		setSessionCookie(c, resp.Token, maxAge, cookieName, cookieDomain)
 		c.JSON(http.StatusOK, resp)
 	})
 
@@ -680,7 +714,7 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, insta
 					"error", err.Error())
 			}
 		}
-		c.SetCookie(cookieName, "", -1, "/", "", true, true)
+		c.SetCookie(cookieName, "", -1, "/", cookieDomain, true, true)
 		c.Status(http.StatusNoContent)
 	})
 
@@ -1153,12 +1187,20 @@ func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *hand
 	orgAdminGroup.POST("/members", h.AddMember)
 	orgAdminGroup.DELETE("/members/:userID", h.RemoveMember)
 	orgAdminGroup.PUT("/members/:userID", h.ChangeMemberRole)
+	orgAdminGroup.POST("/members/:userID/verify", h.VerifyMember)
 	orgAdminGroup.POST("/billing/checkout", h.Checkout)
 	orgAdminGroup.POST("/billing/portal", h.Portal)
 	if invH != nil {
 		orgAdminGroup.POST("/invitations", invH.Create)
 		orgAdminGroup.DELETE("/invitations/:invID", invH.Delete)
 		orgAdminGroup.POST("/invitations/:invID/resend", invH.Resend)
+		// Force-verify the user account associated with a pending
+		// invitation (epic-43 follow-up — the invitee already has an
+		// unverified users row; this admin override sets
+		// users.email_verified=true so they can log in. The invitation
+		// itself stays pending — the user must still click the link
+		// to accept and join the org).
+		orgAdminGroup.POST("/invitations/:invID/verify-user", invH.VerifyUserForInvitation)
 	}
 
 	if credH != nil {

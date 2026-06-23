@@ -472,6 +472,27 @@ flag.StringVar(&wsReconciler.APIServiceURL, "api-service-url",
 
 ---
 
+## Known Gap: Materialized Plaintext on PVC (Not Closed by This Epic)
+
+Epic 35 eliminates the `workspace-secrets-<id>` K8s Secret (the etcd/node-memory vector) but **does not close the PVC-file vector**. `materialize` is preserved unchanged (it still runs at boot — see US-35.4 / `entrypoint-common.sh`), and `Materializer.reset()` writes plaintext to PVC-backed paths:
+
+| Path | Mount | Persists on PVC at rest? |
+|---|---|---|
+| `/tmp/agent-config.json` (`AgentConfigPath`) | PVC subPath `tmp` | Yes — plaintext provider API keys |
+| `/tmp/secrets-env` (`SecretsEnvPath`) | PVC subPath `tmp` | Yes — plaintext env/api-key secrets |
+| `/home/sandbox/.secrets/*` (`SecretsBaseDir`) | PVC subPath `home` | Yes — plaintext secret-files |
+| `/home/sandbox/.ssh/*` (`SSHDir`) | PVC subPath `home` | Yes — plaintext SSH private keys |
+| `/home/sandbox/.git-credentials` (`GitCredsPath`) | PVC subPath `home` | Yes — plaintext git tokens |
+
+`reset()` wipes these at the start of each `Materialize` cycle, so they are cleared on the next *activate*. But while a workspace is **Suspended** (pod deleted, PVC retained), the stale plaintext from the previous boot remains on the PVC and is recoverable by any principal that can attach a debug pod to the PVC — including a cluster-admin. This window reopens on every suspend and only closes on the next activate's `reset()`.
+
+**Impact on the zero-knowledge claim:** the user-facing copy "All secrets are encrypted at rest and only decrypted for use in active workspaces" remains accurate. The stronger claim "secrets are not persisted to the PVC while at rest" is **not** delivered by this epic and must be addressed separately. Two options, to be chosen at Epic 35 implementation time:
+
+1. **Redirect `materialize` output to tmpfs (RAM)** — move `AgentConfigPath`/`SecretsEnvPath` off the `tmp`/`home` PVC subPaths onto an `emptyDir: Medium: Memory` volume (like `sandbox-cfg`). Cleanest; closes the gap for both Active and Suspended states. Requires re-verifying opencode's `OPENCODE_CONFIG=/tmp/agent-config.json` read path still resolves.
+2. **Suspend-time PVC wipe** — run a `reset()`-equivalent on SIGTERM in agentd (or in the controller's `handleSuspending`). Cheaper; closes the Suspended state but plaintext still briefly exists on the PVC during Active.
+
+Either belongs in a US-35.x story added when this epic is implemented. Flagged here so the gap is tracked, not silently assumed closed.
+
 ## Non-Requirements (Explicitly Out of Scope)
 
 | Item | Rationale |

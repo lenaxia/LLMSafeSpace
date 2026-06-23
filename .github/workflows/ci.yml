@@ -6,6 +6,14 @@ on:
     tags: ['v*.*.*']
   pull_request:
     branches: [main]
+  # Manual trigger so a branch can produce a registry-pushed image set
+  # (sha-<short>, ts-<timestamp>) for live cluster verification before
+  # merge. The build steps gate on `event_name != 'pull_request'`, so
+  # workflow_dispatch invocations do push images. Without this, a PR
+  # branch only produces dockerbuild artifacts (not registry images),
+  # which means an out-of-cluster operator cannot pull the PR's image
+  # for a helm-upgrade dry run.
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
@@ -1326,25 +1334,28 @@ jobs:
           docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf '${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}@sha256:%s ' *)
 
-  # repolint-autofix: post-merge safety net. If two PRs with the same worklog
-  # number merge back-to-back (race between repolint pass and merge commit),
-  # this job heals main within ~1 minute by running repolint -fix-worklogs-only
-  # and pushing the renumbered files back.
+  # repolint-autofix: post-merge worklog numbering. Assigns real numbers
+  # to NNNN_ sentinel files (the placeholder form authors write) and
+  # resolves any residual duplicate-version collisions from concurrent
+  # merges. Pushes the renumbered files back to main and comments the
+  # assigned numbers on the merged PR so the author can reference them
+  # ("resume from worklog 0544").
   #
-  # This is the only merge-time defense. The repo uses Repository Rulesets for
-  # branch protection, which do not support GitHub Merge Queue; the residual
-  # race (two PRs passing within the same minute) is accepted as the cost of
-  # that setup. See worklog 0343 for the decision.
+  # Race safety: GitHub serializes merge commits, so each run sees the
+  # previous run's renumbered state. Two PRs merging in the same second
+  # is impossible — each merge creates a distinct commit on main's tree.
+  # The [skip ci] in the auto-commit message prevents an infinite loop.
   #
-  # [skip ci] in the auto-commit message prevents an infinite loop: this job
-  # pushes, the push would re-trigger this job, but [skip ci] suppresses it.
-  # The next PR's repolint run will see the corrected state.
+  # The repolint sentinel check on main is non-gating (warns only); a
+  # persistent NNNN_ on main means this job is broken, which is real
+  # signal worth investigating, but should not block builds.
   repolint-autofix:
-    name: Auto-fix worklog collisions
+    name: Assign worklog numbers
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       contents: write
+      pull-requests: write
 
     steps:
       - uses: actions/checkout@v6
@@ -1360,19 +1371,63 @@ jobs:
       - name: Build repolint
         run: make repolint-build
 
-      - name: Run worklog collision auto-fix
-        run: ./bin/repolint -fix-worklogs-only
+      - name: Assign numbers to NNNN_ worklogs and fix collisions
+        id: autofix
+        run: |
+          # Capture the PR number from the CURRENT HEAD (the merge commit)
+          # before we commit any renames below. After the commit+push, HEAD
+          # becomes the bot's own commit ("chore(repolint): ..."), which has
+          # no PR number.
+          PR_NUM=$(git log -1 --pretty=%B | grep -oE '#[0-9]+' | tail -1 | tr -d '#')
+          echo "pr_num=$PR_NUM" >> "$GITHUB_OUTPUT"
+
+          OUTPUT=$(./bin/repolint -fix-worklogs-only 2>&1) || true
+          echo "$OUTPUT"
+          # Capture rename lines for the PR comment. Format:
+          #   fix-worklogs: renamed NNNN_2026-06-22_foo.md → 0544_2026-06-22_foo.md
+          RENAMES=$(echo "$OUTPUT" | grep '^fix-worklogs: renamed ' || true)
+          if [ -z "$RENAMES" ]; then
+            echo "No NNNN_ sentinels or collisions — nothing to rename"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            # Save renames to a file for the comment step (multiline safe).
+            echo "$RENAMES" > /tmp/renames.txt
+          fi
 
       - name: Commit and push if changed
+        if: steps.autofix.outputs.changed == 'true'
         run: |
-          if git diff --quiet -- worklogs/; then
-            echo "No worklog collisions — nothing to fix"
-            exit 0
-          fi
-          echo "Worklog collisions detected — pushing auto-fix:"
+          echo "Worklog numbering applied:"
           git --no-pager diff --stat -- worklogs/
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add worklogs/
-          git commit -m "chore(repolint): auto-fix worklog numbering collisions [skip ci]"
+          git commit -m "chore(repolint): assign worklog numbers [skip ci]"
           git push
+
+      - name: Comment assigned numbers on merged PR
+        if: steps.autofix.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUM="${{ steps.autofix.outputs.pr_num }}"
+          if [ -z "$PR_NUM" ]; then
+            echo "No PR number found in merge commit — skipping comment"
+            exit 0
+          fi
+
+          # Build the comment body using a heredoc to avoid quote-nesting issues.
+          {
+            echo "## Worklog numbers assigned"
+            echo ""
+            echo "The post-merge bot assigned the following worklog number(s):"
+            echo ""
+            while IFS= read -r line; do
+              # Extract the target filename from "fix-worklogs: renamed SRC → TARGET"
+              TARGET=$(echo "$line" | sed 's/.*→ //')
+              echo "- \`$TARGET\`"
+            done < /tmp/renames.txt
+          } > /tmp/full-comment.md
+
+          gh pr comment "$PR_NUM" --body-file /tmp/full-comment.md

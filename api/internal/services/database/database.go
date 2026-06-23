@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/lenaxia/llmsafespaces/api/internal/config"
 	apierrors "github.com/lenaxia/llmsafespaces/api/internal/errors"
 	"github.com/lenaxia/llmsafespaces/api/internal/interfaces"
 	"github.com/lenaxia/llmsafespaces/api/internal/logger"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespaces/pkg/types"
 	"github.com/lib/pq"
 )
@@ -36,10 +38,19 @@ func New(cfg *config.Config, log *logger.Logger) (*Service, error) {
 		cfg.Database.SSLMode,
 	)
 
-	db, err := sql.Open("pgx", connString)
+	// Open via stdlib.OpenDB so we can attach a pgx QueryTracer at the
+	// driver layer. Every query — including those issued by the secrets
+	// pgxpool — flows through the same tracer and emits
+	// llmsafespaces_db_query_duration_seconds and
+	// llmsafespaces_db_errors_total. Switching from sql.Open("pgx", …)
+	// to OpenDB is required: the registered driver path has no hook for
+	// per-connection configuration.
+	connConfig, err := pgx.ParseConfig(connString)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to database: %w", err)
+		return nil, fmt.Errorf("failed to parse database connection string: %w", err)
 	}
+	connConfig.Tracer = newQueryTracer()
+	db := stdlib.OpenDB(*connConfig)
 
 	db.SetMaxOpenConns(cfg.Database.MaxOpenConns)
 	db.SetMaxIdleConns(cfg.Database.MaxIdleConns)
@@ -48,14 +59,20 @@ func New(cfg *config.Config, log *logger.Logger) (*Service, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	return &Service{
+	svc := &Service{
 		Logger: log,
 		Config: cfg,
 		DB:     db,
-	}, nil
+	}
+	// Seed the connection-pool gauges so they appear in /metrics from
+	// startup, not only after the first periodic poll.
+	stats := db.Stats()
+	metrics.RecordDBPoolStats(stats.InUse, stats.Idle, stats.MaxOpenConnections)
+	return svc, nil
 }
 
 // Start starts the database service
@@ -337,7 +354,7 @@ func (s *Service) ListAllUsers(ctx context.Context, limit, offset int, statusFil
 	listArgs = append(listArgs, limit, offset)
 	query := fmt.Sprintf( //nolint:gosec // G201: $N placeholder indexes only, no string interpolation of user input
 		`SELECT u.id, u.email, u.role, u.status, u.created_at,
-		        COALESCE(m.org_id, ''), COALESCE(o.name, '')
+		        COALESCE(m.org_id::text, ''), COALESCE(o.name, '')
 		 FROM users u
 		 LEFT JOIN org_memberships m ON m.user_id = u.id
 		 LEFT JOIN organizations o ON o.id = m.org_id AND o.deleted_at IS NULL%s
@@ -763,6 +780,37 @@ func (s *Service) CountWorkspacesByUserAndOrg(ctx context.Context, userID, orgID
 	return count, nil
 }
 
+// PurgeUserSecrets deletes every user-owned secret row for a user:
+// provider_credentials (LLM provider keys) and user_secrets. It is
+// called from the email password-reset flow to make the "your saved
+// keys will be deleted" guarantee literal.
+//
+// The DEK reinitialisation that precedes this call already makes the
+// old ciphertext cryptographically undecryptable; deleting the rows
+// removes them outright and guarantees no future materialization can
+// resurrect them. Both tables' dependents (workspace_credential_bindings,
+// user_secret_bindings) reference the parent with ON DELETE CASCADE, so
+// no orphaned binding rows remain. Rows deleted before this call by the
+// DEK reinit's UPSERT (user_keys) are unaffected.
+//
+// Best-effort at the caller: a failure here does not undo the reset
+// because the cryptographic erasure has already happened.
+func (s *Service) PurgeUserSecrets(ctx context.Context, userID string) error {
+	if _, err := s.DB.ExecContext(ctx,
+		`DELETE FROM provider_credentials WHERE owner_type = 'user' AND owner_id = $1`,
+		userID,
+	); err != nil {
+		return fmt.Errorf("delete user provider credentials: %w", err)
+	}
+	if _, err := s.DB.ExecContext(ctx,
+		`DELETE FROM user_secrets WHERE user_id = $1`,
+		userID,
+	); err != nil {
+		return fmt.Errorf("delete user secrets: %w", err)
+	}
+	return nil
+}
+
 func (s *Service) CountActiveWorkspacesByUserAndOrg(ctx context.Context, userID, orgID string) (int, error) {
 	var count int
 	if err := s.DB.QueryRowContext(ctx,
@@ -784,8 +832,8 @@ func (s *Service) CountActiveWorkspacesByUserAndOrg(ctx context.Context, userID,
 func (s *Service) CreateAPIKey(ctx context.Context, apiKey *types.APIKey) error {
 	query := `
         INSERT INTO api_keys (id, user_id, key, name, active, created_at, expires_at, key_prefix, key_legacy,
-                              decrypt_access, kek_salt, wrapped_dek, dek_synced, key_ciphertext, allowed_cidrs)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                              decrypt_access, kek_salt, wrapped_dek, dek_synced, key_ciphertext, key_version, allowed_cidrs)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
     `
 	var expiresAt interface{}
 	if apiKey.ExpiresAt != nil {
@@ -810,6 +858,7 @@ func (s *Service) CreateAPIKey(ctx context.Context, apiKey *types.APIKey) error 
 		apiKey.WrappedDEK,
 		apiKey.DekSynced,
 		apiKey.KeyCiphertext,
+		apiKey.KeyVersion,
 		toNullableStringArray(apiKey.AllowedCIDRs),
 	)
 	if err != nil {
@@ -935,7 +984,7 @@ func (s *Service) UpdateAPIKeyDEK(ctx context.Context, keyID string, wrappedDEK,
 func (s *Service) ListAPIKeysWithDecrypt(ctx context.Context, userID string) ([]*types.APIKey, error) {
 	query := `
 		SELECT id, user_id, key, name, active, created_at, expires_at,
-		       decrypt_access, kek_salt, wrapped_dek, dek_synced, key_ciphertext
+		       decrypt_access, kek_salt, wrapped_dek, dek_synced, key_ciphertext, key_version
 		FROM api_keys
 		WHERE user_id = $1 AND decrypt_access = true AND active = true
 		ORDER BY created_at DESC
@@ -956,7 +1005,7 @@ func (s *Service) ListAPIKeysWithDecrypt(ctx context.Context, userID string) ([]
 
 		if err := rows.Scan(
 			&k.ID, new(string), &keyStr, &k.Name, &k.Active, &k.CreatedAt, &expiresAt,
-			&k.DecryptAccess, &kekSalt, &wrappedDEK, &dekSynced, &keyCiphertext,
+			&k.DecryptAccess, &kekSalt, &wrappedDEK, &dekSynced, &keyCiphertext, &k.KeyVersion,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan api key: %w", err)
 		}

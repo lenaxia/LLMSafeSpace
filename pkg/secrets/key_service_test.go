@@ -4,6 +4,7 @@
 package secrets
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -38,9 +39,10 @@ func (m *mockKeyStore) GetUserKey(_ context.Context, userID string) (*UserKeyRec
 func (m *mockKeyStore) CreateUserKey(_ context.Context, record *UserKeyRecord) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, exists := m.records[record.UserID]; exists {
-		return errors.New("user key already exists")
-	}
+	// UPSERT semantics — mirrors PgKeyStore.CreateUserKey's
+	// INSERT ... ON CONFLICT (user_id) DO UPDATE, so that password
+	// reset can reinitialize a fresh DEK for a user who already has
+	// key material (the prior wraps are overwritten).
 	cp := *record
 	m.records[record.UserID] = &cp
 	return nil
@@ -153,20 +155,45 @@ func TestKeyService_InitializeUserKeys(t *testing.T) {
 	}
 }
 
-func TestKeyService_InitializeUserKeys_DuplicateUser(t *testing.T) {
+func TestKeyService_InitializeUserKeys_Reinit_Upserts(t *testing.T) {
 	store := newMockKeyStore()
 	cache := newMockDEKCache()
 	svc := NewKeyService(store, cache)
 	ctx := context.Background()
 
-	_, err := svc.InitializeUserKeys(ctx, "user-1", []byte("password"))
+	recovery1, err := svc.InitializeUserKeys(ctx, "user-1", []byte("password"))
 	if err != nil {
 		t.Fatalf("First init failed: %v", err)
 	}
+	first, _ := store.GetUserKey(ctx, "user-1")
+	if first == nil {
+		t.Fatal("expected first key record")
+	}
 
-	_, err = svc.InitializeUserKeys(ctx, "user-1", []byte("password"))
-	if err == nil {
-		t.Error("Second init for same user should fail")
+	// Reinit (e.g. password reset) for a user who already has keys must
+	// UPSERT rather than fail on the user_keys PRIMARY KEY constraint.
+	// A fresh DEK is generated, so the wrap, salt, and recovery key all
+	// change; the previous DEK (and anything encrypted with it) is gone.
+	recovery2, err := svc.InitializeUserKeys(ctx, "user-1", []byte("new-password"))
+	if err != nil {
+		t.Fatalf("Second init should upsert, got error: %v", err)
+	}
+	if recovery1 == "" || recovery2 == "" || recovery1 == recovery2 {
+		t.Errorf("expected two distinct non-empty recovery keys, got %q and %q", recovery1, recovery2)
+	}
+
+	second, _ := store.GetUserKey(ctx, "user-1")
+	if second == nil {
+		t.Fatal("expected second key record")
+	}
+	if bytes.Equal(second.WrappedDEK, first.WrappedDEK) {
+		t.Error("reinit should produce a fresh wrapped DEK")
+	}
+	if bytes.Equal(second.Salt, first.Salt) {
+		t.Error("reinit should produce a fresh salt")
+	}
+	if second.KeyVersion != 1 {
+		t.Errorf("InitializeUserKeys resets key_version to 1, got %d", second.KeyVersion)
 	}
 }
 

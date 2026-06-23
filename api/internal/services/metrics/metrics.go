@@ -10,6 +10,7 @@ import (
 	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	dto "github.com/prometheus/client_model/go"
 )
 
 type Service struct {
@@ -436,6 +437,13 @@ func RecordServiceStartupDuration(service string, d time.Duration) {
 
 func RecordSuspendedWorkspaceCount(count int) {
 	suspendedWorkspaces.Set(float64(count))
+}
+
+// GatherDefault returns all metric families currently registered on the
+// prometheus default registry. It exists so test code in sibling packages
+// can assert on metrics without taking a direct prometheus dependency.
+func GatherDefault() ([]*dto.MetricFamily, error) {
+	return prometheus.DefaultGatherer.Gather()
 }
 
 var (

@@ -32,6 +32,16 @@ type mockOrgStore struct {
 	updateStatusErr       error
 	userOrgID             map[string]string
 	userOrgIDErr          error
+	markVerifiedCalls     []string
+	markVerifiedErr       error
+	auditEvents           []mockAuditEvent
+	auditErr              error
+	getMemberErr          error
+}
+
+type mockAuditEvent struct {
+	OrgID, ActorID, Action, TargetID string
+	Metadata                         map[string]any
 }
 
 func newMockOrgStore() *mockOrgStore {
@@ -135,6 +145,9 @@ func (m *mockOrgStore) IsOrgAdmin(_ context.Context, orgID, userID string) (bool
 }
 
 func (m *mockOrgStore) GetOrgMember(_ context.Context, orgID, userID string) (*types.OrgMember, error) {
+	if m.getMemberErr != nil {
+		return nil, m.getMemberErr
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, mem := range m.members[orgID] {
@@ -273,6 +286,35 @@ func (m *mockOrgStore) UpdateOrgStatus(_ context.Context, orgID string, status *
 	return nil
 }
 
+func (m *mockOrgStore) MarkUserEmailVerified(_ context.Context, userID string) error {
+	if m.markVerifiedErr != nil {
+		return m.markVerifiedErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.markVerifiedCalls = append(m.markVerifiedCalls, userID)
+	for _, members := range m.members {
+		for _, mem := range members {
+			if mem.UserID == userID {
+				mem.EmailVerified = true
+			}
+		}
+	}
+	return nil
+}
+
+func (m *mockOrgStore) LogOrgEvent(_ context.Context, orgID, actorID, action, targetID string, metadata map[string]any) error {
+	if m.auditErr != nil {
+		return m.auditErr
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.auditEvents = append(m.auditEvents, mockAuditEvent{
+		OrgID: orgID, ActorID: actorID, Action: action, TargetID: targetID, Metadata: metadata,
+	})
+	return nil
+}
+
 type mockOrgAuthService struct{ userID string }
 
 func (m *mockOrgAuthService) GetUserID(_ *gin.Context) string { return m.userID }
@@ -300,6 +342,7 @@ func setupOrgTestRouter(t *testing.T, store *mockOrgStore) (*gin.Engine, *OrgsHa
 	orgGroup.POST("/:id/members", handler.AddMember)
 	orgGroup.DELETE("/:id/members/:userID", handler.RemoveMember)
 	orgGroup.PUT("/:id/members/:userID", handler.ChangeMemberRole)
+	orgGroup.POST("/:id/members/:userID/verify", handler.VerifyMember)
 
 	return router, handler
 }
@@ -548,3 +591,145 @@ func TestOrgsHandler_ListWorkspaces_LimitCapped(t *testing.T) {
 		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+// --- VerifyMember (admin force-verify, bypassing email validation) ---
+
+func TestOrgsHandler_VerifyMember_Success(t *testing.T) {
+	store := newMockOrgStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.members["org-1"] = []*types.OrgMember{
+		{OrgID: "org-1", UserID: "admin-1", Role: types.OrgRoleAdmin, Email: "admin@example.com"},
+		{OrgID: "org-1", UserID: "member-1", Role: types.OrgRoleMember, Email: "member@example.com", EmailVerified: false},
+	}
+	router, _ := setupOrgTestRouter(t, store)
+
+	w := doRequest(router, "POST", "/api/v1/orgs/org-1/members/member-1/verify", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// MarkUserEmailVerified must have been called with the target user ID.
+	if len(store.markVerifiedCalls) != 1 || store.markVerifiedCalls[0] != "member-1" {
+		t.Errorf("expected one MarkUserEmailVerified('member-1') call, got %v", store.markVerifiedCalls)
+	}
+
+	// The audit log must contain a member.verify event scoped to the org,
+	// actor=admin-1, target=member-1.
+	if len(store.auditEvents) != 1 {
+		t.Fatalf("expected one audit event, got %d", len(store.auditEvents))
+	}
+	ev := store.auditEvents[0]
+	if ev.OrgID != "org-1" || ev.ActorID != "admin-1" || ev.Action != "member.verify" || ev.TargetID != "member-1" {
+		t.Errorf("audit event mismatch: %+v", ev)
+	}
+	if ev.Metadata["email"] != "member@example.com" {
+		t.Errorf("audit metadata.email = %v, want member@example.com", ev.Metadata["email"])
+	}
+
+	// The mock mirrors verification onto the membership row; an admin
+	// re-listing members should now see emailVerified=true.
+	member, _ := store.GetOrgMember(context.Background(), "org-1", "member-1")
+	if member == nil || !member.EmailVerified {
+		t.Error("member row must reflect emailVerified=true after verify")
+	}
+}
+
+func TestOrgsHandler_VerifyMember_AlreadyVerified_Idempotent(t *testing.T) {
+	store := newMockOrgStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.members["org-1"] = []*types.OrgMember{
+		{OrgID: "org-1", UserID: "admin-1", Role: types.OrgRoleAdmin},
+		{OrgID: "org-1", UserID: "member-1", Role: types.OrgRoleMember, EmailVerified: true},
+	}
+	router, _ := setupOrgTestRouter(t, store)
+
+	w := doRequest(router, "POST", "/api/v1/orgs/org-1/members/member-1/verify", "")
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for idempotent verify, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestOrgsHandler_VerifyMember_NotFound(t *testing.T) {
+	store := newMockOrgStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.members["org-1"] = []*types.OrgMember{
+		{OrgID: "org-1", UserID: "admin-1", Role: types.OrgRoleAdmin},
+	}
+	router, _ := setupOrgTestRouter(t, store)
+
+	w := doRequest(router, "POST", "/api/v1/orgs/org-1/members/ghost/verify", "")
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for non-member, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(store.markVerifiedCalls) != 0 {
+		t.Errorf("MarkUserEmailVerified must not be called for non-member, got %v", store.markVerifiedCalls)
+	}
+}
+
+func TestOrgsHandler_VerifyMember_GetMemberError_500(t *testing.T) {
+	store := newMockOrgStore()
+	store.getMemberErr = errors.New("db connectivity lost")
+	router, _ := setupOrgTestRouter(t, store)
+
+	w := doRequest(router, "POST", "/api/v1/orgs/org-1/members/member-1/verify", "")
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on GetOrgMember error, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(store.markVerifiedCalls) != 0 {
+		t.Errorf("MarkUserEmailVerified must not be called when membership check fails, got %v", store.markVerifiedCalls)
+	}
+}
+
+func TestOrgsHandler_VerifyMember_MarkVerifiedError_500(t *testing.T) {
+	store := newMockOrgStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.members["org-1"] = []*types.OrgMember{
+		{OrgID: "org-1", UserID: "admin-1", Role: types.OrgRoleAdmin},
+		{OrgID: "org-1", UserID: "member-1", Role: types.OrgRoleMember},
+	}
+	store.markVerifiedErr = errors.New("db down")
+	router, _ := setupOrgTestRouter(t, store)
+
+	w := doRequest(router, "POST", "/api/v1/orgs/org-1/members/member-1/verify", "")
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on MarkUserEmailVerified error, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(store.auditEvents) != 0 {
+		t.Errorf("no audit event should be emitted when verification fails, got %d", len(store.auditEvents))
+	}
+}
+
+// TestOrgsHandler_VerifyMember_AuditFailureNonFatal proves the audit-log
+// write does not undo a successful verification. A real-world audit-log table
+// outage must not block the admin's intent.
+func TestOrgsHandler_VerifyMember_AuditFailureNonFatal(t *testing.T) {
+	store := newMockOrgStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.members["org-1"] = []*types.OrgMember{
+		{OrgID: "org-1", UserID: "admin-1", Role: types.OrgRoleAdmin},
+		{OrgID: "org-1", UserID: "member-1", Role: types.OrgRoleMember},
+	}
+	store.auditErr = errors.New("audit table full")
+	router, handler := setupOrgTestRouter(t, store)
+
+	// Wire a capture logger to assert the warning surfaces.
+	captured := &warnCaptureLogger{}
+	handler.SetLogger(captured)
+
+	w := doRequest(router, "POST", "/api/v1/orgs/org-1/members/member-1/verify", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 even when audit fails, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(store.markVerifiedCalls) != 1 {
+		t.Errorf("verification must have been persisted, got %v", store.markVerifiedCalls)
+	}
+	if !captured.warned {
+		t.Error("logger.Warn must be called when audit emission fails")
+	}
+}
+
+type warnCaptureLogger struct {
+	warned bool
+}
+
+func (c *warnCaptureLogger) Warn(_ string, _ ...any) { c.warned = true }

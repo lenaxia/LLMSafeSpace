@@ -16,9 +16,10 @@ import (
 
 // SecretService provides encrypted secret CRUD operations.
 type SecretService struct {
-	keys           *KeyService
-	store          SecretStore
-	deriveAdminKey AdminKeyDeriver
+	keys          *KeyService
+	store         SecretStore
+	adminProvider RootKeyProvider // US-50.2: wraps deriveServerKey("provider-credentials")
+	orgProvider   RootKeyProvider // US-50.2: wraps deriveServerKey("org-credentials")
 }
 
 // NewSecretService creates a new SecretService.
@@ -34,10 +35,18 @@ func NewSecretService(keys *KeyService, store SecretStore) *SecretService {
 	return &SecretService{keys: keys, store: store}
 }
 
-// SetAdminKeyDeriver installs the admin credential decryption key deriver.
-// When non-nil, PrepareSecretsForInjection uses the new multi-source path.
-func (s *SecretService) SetAdminKeyDeriver(d AdminKeyDeriver) {
-	s.deriveAdminKey = d
+// SetAdminProvider installs the RootKeyProvider for admin (owner_type='admin')
+// provider credentials. When non-nil, PrepareSecretsForInjection decrypts admin
+// bindings through it; when nil, admin bindings are skipped with an audit event.
+func (s *SecretService) SetAdminProvider(p RootKeyProvider) {
+	s.adminProvider = p
+}
+
+// SetOrgProvider installs the RootKeyProvider for org (owner_type='org') provider
+// credentials. When non-nil, PrepareSecretsForInjection decrypts org bindings
+// through it; when nil, org bindings are skipped with an audit event.
+func (s *SecretService) SetOrgProvider(p RootKeyProvider) {
+	s.orgProvider = p
 }
 
 // CreateSecret encrypts and stores a new secret.

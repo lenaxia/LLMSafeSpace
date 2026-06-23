@@ -119,6 +119,87 @@ func TestPgOrgStore_GetUserOrgID_DBError(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestPgOrgStore_ListOrgMembers_IncludesEmailVerified is the regression guard
+// for the admin "Verify" feature: the SELECT must include u.email_verified so
+// the org-admin members table can show verified vs. pending members. Drops of
+// this column would silently render every member as verified (bool zero value).
+func TestPgOrgStore_ListOrgMembers_IncludesEmailVerified(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	store := NewPgOrgStore(db)
+
+	mock.ExpectQuery(`SELECT m.org_id, m.user_id, u.username, u.email, m.role, u.email_verified, m.created_at`).
+		WithArgs("org-1").
+		WillReturnRows(sqlmock.NewRows([]string{"org_id", "user_id", "username", "email", "role", "email_verified", "created_at"}).
+			AddRow("org-1", "user-1", "alice", "alice@example.com", "admin", true, time.Now()).
+			AddRow("org-1", "user-2", "bob", "bob@example.com", "member", false, time.Now()))
+
+	members, err := store.ListOrgMembers(context.Background(), "org-1")
+	require.NoError(t, err)
+	require.Len(t, members, 2)
+	assert.True(t, members[0].EmailVerified, "alice must be email_verified=true")
+	assert.False(t, members[1].EmailVerified, "bob must be email_verified=false")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestPgOrgStore_GetOrgMember_IncludesEmailVerified mirrors the ListOrgMembers
+// guard for the single-row path used by the VerifyMember handler.
+func TestPgOrgStore_GetOrgMember_IncludesEmailVerified(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	store := NewPgOrgStore(db)
+
+	mock.ExpectQuery(`SELECT m.org_id, m.user_id, u.username, u.email, m.role, u.email_verified, m.created_at`).
+		WithArgs("org-1", "user-2").
+		WillReturnRows(sqlmock.NewRows([]string{"org_id", "user_id", "username", "email", "role", "email_verified", "created_at"}).
+			AddRow("org-1", "user-2", "bob", "bob@example.com", "member", false, time.Now()))
+
+	m, err := store.GetOrgMember(context.Background(), "org-1", "user-2")
+	require.NoError(t, err)
+	require.NotNil(t, m)
+	assert.False(t, m.EmailVerified, "GetOrgMember must surface email_verified=false")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestPgOrgStore_MarkUserEmailVerified_IssuesCorrectUpdate verifies the
+// admin force-verify UPDATE: it sets email_verified=TRUE and bumps updated_at,
+// scoped to the user row. The regex anchors the WHERE id = $1 so a regression
+// that drops the scoping (e.g. updating ALL users) is caught.
+func TestPgOrgStore_MarkUserEmailVerified_IssuesCorrectUpdate(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	store := NewPgOrgStore(db)
+
+	mock.ExpectExec(`UPDATE users SET email_verified = TRUE, updated_at = NOW\(\) WHERE id = \$1`).
+		WithArgs("user-2").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	require.NoError(t, store.MarkUserEmailVerified(context.Background(), "user-2"))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPgOrgStore_MarkUserEmailVerified_DBError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	store := NewPgOrgStore(db)
+
+	mock.ExpectExec(`UPDATE users SET email_verified = TRUE`).
+		WithArgs("user-boom").
+		WillReturnError(errors.New("connection refused"))
+
+	err = store.MarkUserEmailVerified(context.Background(), "user-boom")
+	require.Error(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 // TestSoftDeleteOrg_F6_DoesNotNullWorkspaceOrgID verifies F6: SoftDeleteOrg
 // must NOT null workspaces.org_id. It only sets organizations.deleted_at. The
 // workspaces keep their org_id and become frozen via IsOrgMember's deleted_at
@@ -875,4 +956,100 @@ func TestPgOrgStore_SetUserStatus_MirrorsActive_F6(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	require.NoError(t, svc.SetUserStatus(context.Background(), "user-1", types.UserStatusActive))
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestPgOrgStore_ListPendingInvitations_PopulatesInviteeFlags pins the
+// LEFT JOIN that surfaces InviteeUserExists + InviteeEmailVerified to
+// the org admin UI. Without these, the Pending Invitations table cannot
+// hide the Verify button after the override has been applied — the
+// invitation row itself stays pending until the user clicks the link
+// to accept.
+func TestPgOrgStore_ListPendingInvitations_PopulatesInviteeFlags(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	store := NewPgOrgStore(db)
+
+	// Three rows that exercise all four combinations of (user exists,
+	// email_verified):
+	//
+	//   inv-existing-verified — user exists, verified
+	//   inv-existing-pending  — user exists, NOT verified (Verify actionable)
+	//   inv-no-user           — no user row yet (Verify would 422)
+	rows := sqlmock.NewRows([]string{
+		"id", "org_id", "email", "role", "invited_by", "expires_at",
+		"bounce_type", "bounced_at", "created_at",
+		"invitee_user_exists", "email_verified",
+	}).
+		AddRow("inv-existing-verified", "org-1", "alice@example.com", "member", "admin-1",
+			time.Now().Add(7*24*time.Hour), nil, nil, time.Now(),
+			true, true).
+		AddRow("inv-existing-pending", "org-1", "bob@example.com", "member", "admin-1",
+			time.Now().Add(7*24*time.Hour), nil, nil, time.Now(),
+			true, false).
+		AddRow("inv-no-user", "org-1", "ghost@example.com", "member", "admin-1",
+			time.Now().Add(7*24*time.Hour), nil, nil, time.Now(),
+			false, nil)
+
+	// The new query MUST: (a) LEFT JOIN users on LOWER(BTRIM(invitations.email)),
+	// (b) project u.id IS NOT NULL as invitee_user_exists, (c) project
+	// u.email_verified. The BTRIM mirrors the handler's strings.TrimSpace
+	// in VerifyUserForInvitation so the JOIN match contract matches the
+	// runtime resolution exactly. Match the structural shape with a
+	// non-anchored regex so cosmetic whitespace tweaks don't break the
+	// test.
+	mock.ExpectQuery(`LEFT JOIN users u ON u\.email = LOWER\(BTRIM\(i\.email\)\)`).
+		WithArgs("org-1").
+		WillReturnRows(rows)
+
+	out, err := store.ListPendingInvitations(context.Background(), "org-1")
+	require.NoError(t, err)
+	require.Len(t, out, 3)
+
+	// Verified user: both flags populated.
+	require.NotNil(t, out[0].InviteeUserExists)
+	assert.True(t, *out[0].InviteeUserExists, "alice has a users row → InviteeUserExists=true")
+	require.NotNil(t, out[0].InviteeEmailVerified)
+	assert.True(t, *out[0].InviteeEmailVerified, "alice's email is verified → InviteeEmailVerified=true (UI hides Verify)")
+
+	// Pending user: exists but unverified.
+	require.NotNil(t, out[1].InviteeUserExists)
+	assert.True(t, *out[1].InviteeUserExists, "bob has a users row → InviteeUserExists=true")
+	require.NotNil(t, out[1].InviteeEmailVerified)
+	assert.False(t, *out[1].InviteeEmailVerified, "bob's email is NOT verified → InviteeEmailVerified=false (UI shows Verify)")
+
+	// No user yet: InviteeEmailVerified MUST be nil so the UI can
+	// distinguish 'no account yet' from 'account exists, not verified'.
+	require.NotNil(t, out[2].InviteeUserExists)
+	assert.False(t, *out[2].InviteeUserExists, "ghost has no users row → InviteeUserExists=false")
+	assert.Nil(t, out[2].InviteeEmailVerified,
+		"InviteeEmailVerified must be nil when no users row exists; "+
+			"otherwise the UI cannot tell 'no account yet' from 'unverified'")
+
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestPgOrgStore_ListPendingInvitations_NoInvitations verifies the
+// empty-org case still returns []*types.OrgInvitation{} (not nil) for
+// a stable JSON shape.
+func TestPgOrgStore_ListPendingInvitations_NoInvitations(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	store := NewPgOrgStore(db)
+
+	mock.ExpectQuery(`LEFT JOIN users u ON u\.email = LOWER\(BTRIM\(i\.email\)\)`).
+		WithArgs("org-1").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "org_id", "email", "role", "invited_by", "expires_at",
+			"bounce_type", "bounced_at", "created_at",
+			"invitee_user_exists", "email_verified",
+		}))
+
+	out, err := store.ListPendingInvitations(context.Background(), "org-1")
+	require.NoError(t, err)
+	assert.NotNil(t, out, "must return [] not nil so JSON serialization is stable")
+	assert.Empty(t, out)
 }
