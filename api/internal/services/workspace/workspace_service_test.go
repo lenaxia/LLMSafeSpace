@@ -108,14 +108,6 @@ func dbWorkspace(id, userID, name, storageSize string) *types.WorkspaceMetadata 
 	}
 }
 
-// workspaceCtxWithSession is a thin alias for ContextWithSessionID
-// for readability in test code. Kept as a function (not a constant)
-// so future test-only setup (e.g. tracing IDs) can be added in one
-// place without touching every call site.
-func workspaceCtxWithSession(ctx context.Context, sessionID string) context.Context {
-	return ContextWithSessionID(ctx, sessionID)
-}
-
 // ===== New() =====
 
 func TestNew_NilLogger_ReturnsError(t *testing.T) {
