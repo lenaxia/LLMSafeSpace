@@ -212,7 +212,7 @@ func TestValidateAPIKey_WithDecryptAccess_UnlocksDEK(t *testing.T) {
 		return len(key) > 4 && key[:4] == "dek:"
 	}), mock.Anything, mock.Anything).Return(nil).Once()
 
-	userID, err := svc.ValidateToken(rawKey)
+	userID, err := svc.ValidateToken(context.Background(), rawKey)
 	require.NoError(t, err)
 	assert.Equal(t, "user-1", userID)
 
@@ -241,7 +241,7 @@ func TestValidateAPIKey_WithoutDecryptAccess_NoDEK(t *testing.T) {
 	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, keyHash).Return(keyRec, nil).Once()
 	mockCache.On("Set", mock.Anything, "apikey:"+pkgutil.HashString(rawKey), "user-1", mock.Anything).Return(nil).Once()
 
-	userID, err := svc.ValidateToken(rawKey)
+	userID, err := svc.ValidateToken(context.Background(), rawKey)
 	require.NoError(t, err)
 	assert.Equal(t, "user-1", userID)
 
@@ -269,7 +269,7 @@ func TestValidateAPIKey_WrappedDEKCorrupt_Fails(t *testing.T) {
 	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, keyHash).Return(corruptKey, nil).Once()
 	mockCache.On("Set", mock.Anything, "apikey:"+pkgutil.HashString(rawKey), "user-1", mock.Anything).Return(nil).Once()
 
-	_, err := svc.ValidateToken(rawKey)
+	_, err := svc.ValidateToken(context.Background(), rawKey)
 	assert.NoError(t, err)
 }
 
@@ -389,7 +389,7 @@ func TestValidateAPIKey_ConstantTimeCompare_RejectsMismatch(t *testing.T) {
 	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, keyHash).Return(keyRecord, nil)
 	mockCache.On("Set", mock.Anything, mock.Anything, "u1", mock.Anything).Return(nil)
 
-	userID, err := svc.validateAPIKey(rawKey, "")
+	userID, err := svc.validateAPIKey(context.Background(), rawKey, "")
 	assert.NoError(t, err)
 	assert.Equal(t, "u1", userID)
 
@@ -401,7 +401,7 @@ func TestValidateAPIKey_ConstantTimeCompare_RejectsMismatch(t *testing.T) {
 	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, wrongHashStr).Return(keyRecord, nil)
 	mockCache.On("Get", mock.Anything, "apikey:"+pkgutil.HashString(wrongKey)).Return("", errors.New("miss"))
 
-	userID2, err2 := svc.validateAPIKey(wrongKey, "")
+	userID2, err2 := svc.validateAPIKey(context.Background(), wrongKey, "")
 	assert.Error(t, err2, "wrong key should fail constant-time comparison")
 	assert.Equal(t, "", userID2)
 }
@@ -480,7 +480,7 @@ func TestValidateAPIKey_DEKNotSynced_SkipsUnwrap(t *testing.T) {
 	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, keyHash).Return(keyRecord, nil)
 	mockCache.On("Set", mock.Anything, mock.Anything, "u1", mock.Anything).Return(nil)
 
-	userID, err := svc.validateAPIKey(rawKey, "")
+	userID, err := svc.validateAPIKey(context.Background(), rawKey, "")
 	assert.NoError(t, err, "auth should still succeed with dek_synced=false")
 	assert.Equal(t, "u1", userID)
 
@@ -546,12 +546,12 @@ func TestValidateAPIKey_CIDREnforcement(t *testing.T) {
 	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, keyHash).Return(keyRecord, nil)
 	mockCache.On("Set", mock.Anything, mock.Anything, "u1", mock.Anything).Return(nil)
 
-	userID, err := svc.validateAPIKey(rawKey, "10.0.1.5")
+	userID, err := svc.validateAPIKey(context.Background(), rawKey, "10.0.1.5")
 	assert.NoError(t, err)
 	assert.Equal(t, "u1", userID)
 
 	mockCache.On("Get", mock.Anything, mock.Anything).Return("", errors.New("miss")).Once()
-	userID, err = svc.validateAPIKey(rawKey, "192.168.1.5")
+	userID, err = svc.validateAPIKey(context.Background(), rawKey, "192.168.1.5")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not in allowed ranges")
 	assert.Equal(t, "", userID)
@@ -583,7 +583,7 @@ func TestValidateAPIKey_CIDRCacheBypass_Blocked(t *testing.T) {
 	mockCache.On("Get", mock.Anything, "apikey:"+pkgutil.HashString(rawKey)).Return("u1", nil)
 	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, keyHash).Return(keyRecord, nil)
 
-	userID, err := svc.validateAPIKey(rawKey, "192.168.1.5")
+	userID, err := svc.validateAPIKey(context.Background(), rawKey, "192.168.1.5")
 	assert.Error(t, err, "CIDR must be enforced even on cache hit")
 	assert.Contains(t, err.Error(), "not in allowed ranges")
 	assert.Equal(t, "", userID)
@@ -615,7 +615,7 @@ func TestValidateAPIKey_CIDRCacheHit_AllowedIP(t *testing.T) {
 	mockCache.On("Get", mock.Anything, "apikey:"+pkgutil.HashString(rawKey)).Return("u1", nil)
 	mockDb.On("GetAPIKeyRecordByHash", mock.Anything, keyHash).Return(keyRecord, nil)
 
-	userID, err := svc.validateAPIKey(rawKey, "10.0.1.5")
+	userID, err := svc.validateAPIKey(context.Background(), rawKey, "10.0.1.5")
 	assert.NoError(t, err, "CIDR check should pass for allowed IP on cache hit")
 	assert.Equal(t, "u1", userID)
 }

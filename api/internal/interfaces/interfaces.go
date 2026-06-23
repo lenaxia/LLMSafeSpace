@@ -27,7 +27,7 @@ type AuthService interface {
 	GetUserID(c *gin.Context) string
 	CheckResourceAccess(userID, resourceType, resourceID, action string) bool
 	GenerateToken(userID string) (string, error)
-	ValidateToken(token string) (string, error)
+	ValidateToken(ctx context.Context, token string) (string, error)
 	// RevokeToken adds the JWT token to the revocation cache so subsequent
 	// ValidateToken calls reject it. Used by /auth/logout to invalidate
 	// the active session (G18, Epic 17). Implementations must be safe to
