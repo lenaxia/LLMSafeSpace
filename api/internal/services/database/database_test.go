@@ -1056,6 +1056,7 @@ func TestCreateAPIKey_WithDEKWrappingColumns(t *testing.T) {
 			wrappedDEK,
 			true,
 			keyCiphertext,
+			apiKey.KeyVersion,
 			nil,
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -1096,6 +1097,7 @@ func TestCreateAPIKey_WithoutDEKWrappingColumns(t *testing.T) {
 			sqlmock.AnyArg(),
 			false,
 			sqlmock.AnyArg(),
+			apiKey.KeyVersion,
 			nil,
 		).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -1234,13 +1236,13 @@ func TestListAPIKeysWithDecrypt(t *testing.T) {
 
 	rows := sqlmock.NewRows([]string{
 		"id", "user_id", "key", "name", "active", "created_at", "expires_at",
-		"decrypt_access", "kek_salt", "wrapped_dek", "dek_synced", "key_ciphertext",
+		"decrypt_access", "kek_salt", "wrapped_dek", "dek_synced", "key_ciphertext", "key_version",
 	}).AddRow(
 		"key-1", "user-1", "hash1", "dek-key", true, createdAt, nil,
-		true, salt, wrapped, true, ciphertext,
+		true, salt, wrapped, true, ciphertext, 1,
 	).AddRow(
 		"key-2", "user-1", "hash2", "another-dek", true, createdAt, nil,
-		true, salt, wrapped, false, ciphertext,
+		true, salt, wrapped, false, ciphertext, 1,
 	)
 
 	mock.ExpectQuery("SELECT id, user_id, key, name, active, created_at, expires_at").
