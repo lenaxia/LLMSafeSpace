@@ -298,15 +298,19 @@ func (c materializeConfig) toPaths() secrets.Paths {
 // loadMaterializeConfig resolves filesystem paths. It honors the same
 // LLMSAFESPACES_* env-var overrides used by the test suite; in production
 // no overrides are set and defaults match the runtime pod layout.
+//
+// US-35.7: credential paths point to /sandbox-runtime (tmpfs) so reset()
+// operates on tmpfs targets, not PVC-side symlinks. The symlinks are created
+// by the credential-setup init container and point into the same tmpfs paths.
 func loadMaterializeConfig() materializeConfig {
 	home := envOrDefault("HOME", "/home/sandbox")
 	return materializeConfig{
 		home:             home,
 		secretsBaseDir:   envOrDefault("LLMSAFESPACES_SECRETS_BASE_DIR", agentd.SecretsBasePath),
-		sshDir:           envOrDefault("LLMSAFESPACES_SSH_DIR", home+"/.ssh"),
+		sshDir:           envOrDefault("LLMSAFESPACES_SSH_DIR", "/sandbox-runtime/rt/ssh"),
 		agentConfigPath:  envOrDefault("LLMSAFESPACES_AGENT_CONFIG_PATH", agentd.AgentConfigPath),
 		secretsEnvPath:   envOrDefault("LLMSAFESPACES_SECRETS_ENV_PATH", agentd.SecretsEnvPath),
-		gitCredsPath:     envOrDefault("LLMSAFESPACES_GIT_CREDS_PATH", home+"/.git-credentials"),
+		gitCredsPath:     envOrDefault("LLMSAFESPACES_GIT_CREDS_PATH", "/sandbox-runtime/rt/git-credentials"),
 		enricherCacheDir: envOrDefault("LLMSAFESPACES_ENRICHER_CACHE_DIR", home+"/.local/state/llmsafespaces"),
 	}
 }

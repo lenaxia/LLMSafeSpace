@@ -176,6 +176,10 @@ type Paths struct {
 
 // DefaultPaths returns production paths derived from the agentd package
 // constants and the given home dir.
+//
+// US-35.7: SSH/git/secrets paths point to /sandbox-runtime/rt/* (tmpfs) to
+// match loadMaterializeConfig() in cmd/workspace-agentd. The $HOME-relative
+// PVC paths are symlinks (created by init container) pointing here.
 func DefaultPaths(home string) Paths {
 	if home == "" {
 		home = "/home/sandbox"
@@ -183,10 +187,10 @@ func DefaultPaths(home string) Paths {
 	return Paths{
 		Home:            home,
 		SecretsBaseDir:  agentd.SecretsBasePath,
-		SSHDir:          home + "/.ssh",
+		SSHDir:          "/sandbox-runtime/rt/ssh",
 		AgentConfigPath: agentd.AgentConfigPath,
 		SecretsEnvPath:  agentd.SecretsEnvPath,
-		GitCredsPath:    home + "/.git-credentials",
+		GitCredsPath:    "/sandbox-runtime/rt/git-credentials",
 	}
 }
 

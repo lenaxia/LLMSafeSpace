@@ -121,15 +121,15 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		},
 		VolumeMounts: []corev1.VolumeMount{
 			// The workspace PVC contains three named subtrees via explicit subPaths:
-			//   workspace/ — user workspace data, opencode.db, auth.json
-			//   home/      — SSH keys, secrets base dir, enricher cache, tool caches
-			//   tmp/       — agent-config.json, secrets-env; agentd rewrites these
-			//                on each credential cycle. Other files persist across
-			//                pod restarts (PVC-backed, not ephemeral).
-			// workspace-dirs init container unconditionally creates all three
-			// subdirectories at the PVC root before any subPath mount is attempted.
+			//   workspace/ — user workspace data, opencode.db
+			//   home/      — symlinks to credential paths (plaintext lives in tmpfs)
+			//   tmp/       — init scripts, package caches; NOT credentials (US-35.7)
 			{Name: "workspace", MountPath: "/workspace", SubPath: "workspace"},
 			{Name: "sandbox-cfg", MountPath: "/sandbox-cfg", ReadOnly: true},
+			// US-35.7: sandbox-runtime is RW tmpfs for credential output files
+			// (agent-config.json, secrets-env) and symlink targets for $HOME-relative
+			// credential paths. Wiped on pod death — no plaintext on PVC at rest.
+			{Name: "sandbox-runtime", MountPath: "/sandbox-runtime"},
 			{Name: "workspace", MountPath: "/tmp", SubPath: "tmp"},
 			{Name: "workspace", MountPath: "/home/sandbox", SubPath: "home"},
 		},
@@ -142,16 +142,19 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		}},
 		// G15 (Epic 17): sandbox-cfg is tmpfs-backed (Memory medium) to
 		// prevent plaintext secrets / session keys from touching node disk.
-		// /tmp is now a subPath on the workspace PVC (see SubPath: "tmp" mount
-		// above) so agent-config.json and secrets-env survive pod restarts and
-		// are subject to the same Longhorn redundancy as other workspace data.
-		// The agentd Materializer.reset() deletes agent-config.json and
-		// secrets-env at the start of each credential materialize cycle, so
-		// these specific files are always freshly written. Other files written
-		// to /tmp by packages or agent processes persist across pod restarts.
+		// US-35.7: bumped from 4Mi to 32Mi for headroom on bootstrap secrets.json
+		// with many providers.
 		{Name: "sandbox-cfg", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
 			Medium:    corev1.StorageMediumMemory,
-			SizeLimit: ptrQuantity("4Mi"),
+			SizeLimit: ptrQuantity("32Mi"),
+		}}},
+		// US-35.7: sandbox-runtime is RW tmpfs for credential OUTPUT files.
+		// agent-config.json, secrets-env, and symlink targets for SSH/git/secrets/auth.json
+		// live here. Wiped on pod death regardless of how it dies (SIGTERM, SIGKILL,
+		// eviction) — no plaintext credential bytes persist on the PVC at rest.
+		{Name: "sandbox-runtime", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
+			Medium:    corev1.StorageMediumMemory,
+			SizeLimit: ptrQuantity("96Mi"),
 		}}},
 	}
 
@@ -379,6 +382,28 @@ func buildNodeSelector(workspace *v1.Workspace) map[string]string {
 
 func (r *WorkspaceReconciler) buildCredentialSetupInit(workspace *v1.Workspace, runtimeImage string) (corev1.Container, corev1.Volume, corev1.Volume, error) {
 	credScript := `
+set -e
+
+# US-35.7: create symlink farm so credential files resolve to tmpfs, not PVC.
+# The PVC paths ($HOME/.ssh, $HOME/.secrets, $HOME/.git-credentials,
+# $WORKSPACE/.local/opencode/auth.json) become symlinks pointing into
+# /sandbox-runtime/rt/*. On pod death, tmpfs is wiped — the PVC retains
+# only dangling symlink inodes, no plaintext bytes.
+mkdir -p /sandbox-runtime/rt/ssh /sandbox-runtime/rt/secrets
+chmod 700 /sandbox-runtime/rt/ssh /sandbox-runtime/rt/secrets
+
+# rm -rf is required: ln -s into an existing directory creates the symlink
+# inside it. These are credential paths that reset() wipes on every reload
+# — no user data is lost.
+rm -rf /home/sandbox/.ssh /home/sandbox/.secrets /home/sandbox/.git-credentials
+ln -s /sandbox-runtime/rt/ssh             /home/sandbox/.ssh
+ln -s /sandbox-runtime/rt/secrets         /home/sandbox/.secrets
+ln -s /sandbox-runtime/rt/git-credentials /home/sandbox/.git-credentials
+
+mkdir -p /workspace/.local/opencode
+rm -f /workspace/.local/opencode/auth.json
+ln -s /sandbox-runtime/rt/auth.json /workspace/.local/opencode/auth.json
+
 workspace-agentd bootstrap --workspace-id "$WORKSPACE_ID" --api-url "$LLMSAFESPACE_API_URL"
 workspace-agentd materialize
 cp /mnt/secrets/password/password /sandbox-cfg/password
@@ -392,8 +417,13 @@ cp /mnt/secrets/password/password /sandbox-cfg/password
 
 	credMounts := []corev1.VolumeMount{
 		{Name: "sandbox-cfg", MountPath: "/sandbox-cfg"},
+		{Name: "sandbox-runtime", MountPath: "/sandbox-runtime"},
 		{Name: "pw-secret", MountPath: "/mnt/secrets/password", ReadOnly: true},
 		{Name: "bootstrap-token", MountPath: "/var/run/bootstrap", ReadOnly: true},
+		// US-35.7: RW PVC mounts needed for symlink creation on the PVC paths.
+		// Without these, ReadOnlyRootFilesystem causes ln -s to silently fail.
+		{Name: "workspace", MountPath: "/home/sandbox", SubPath: "home"},
+		{Name: "workspace", MountPath: "/workspace", SubPath: "workspace"},
 	}
 
 	// Epic 35 US-35.4: projected SA token volume. The kubelet creates a token
