@@ -72,6 +72,14 @@ rules:
     resources: ["secrets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
+  # Epic 35 US-35.1: per-workspace ServiceAccount for secretless credential
+  # injection. The controller creates the SA (with an OwnerReference) so the
+  # init container's projected token volume resolves. The SA itself holds no
+  # secrets — it is purely an identity for TokenReview validation.
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
@@ -262,9 +270,29 @@ rules:
       - workspaces/status
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 
+  # Epic 35: secrets create/update/patch scoped down — the API no longer
+  # creates workspace-secrets-<id> (removed by secretless injection). Only
+  # get/list/watch/delete remain broadly; the three relay-credential Secrets
+  # below retain write verbs via resourceNames-scoped rules.
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "watch", "delete"]
+
+  # Relay fleet credentials (Epic 42) — each provider's cloud creds are
+  # written by the API's relay admin handler. Scoped to resourceNames so
+  # the broad secrets grant above does not re-open create/update/patch.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["oci-credentials"]
+    verbs: ["get", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["gcp-credentials"]
+    verbs: ["get", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["aws-relay-irwa"]
+    verbs: ["get", "create", "update", "patch"]
 
   - apiGroups: [""]
     resources: ["pods"]
@@ -296,6 +324,37 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: {{ include "llmsafespaces.fullname" . }}-api
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "llmsafespaces.api.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# Epic 35 US-35.3: ClusterRole for TokenReview. The API validates projected
+# SA tokens presented by workspace init containers via TokenReview, which is
+# a cluster-scoped subresource (cannot be namespace-restricted). TokenReview
+# is read-only validation — it grants no ability to mint tokens, impersonate,
+# or read secrets. Bound to the API SA only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "llmsafespaces.fullname" . }}-api-tokenreview
+  labels:
+    {{- include "llmsafespaces.api.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "llmsafespaces.fullname" . }}-api-tokenreview
+  labels:
+    {{- include "llmsafespaces.api.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "llmsafespaces.fullname" . }}-api-tokenreview
 subjects:
   - kind: ServiceAccount
     name: {{ include "llmsafespaces.api.serviceAccountName" . }}

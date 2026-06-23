@@ -44,7 +44,6 @@ type ModelsHandler struct {
 	wsUpdater       ModelStore
 	policyChecker   OrgPolicyChecker
 	metricsRecorder ModelSelectionRecorder
-	manifestWriter  SecretsManifestWriter
 	modelCache      ModelCache
 	relayActive     bool
 	relayChecker    RelayStateChecker
@@ -69,7 +68,6 @@ func (h *ModelsHandler) SetPolicyChecker(p OrgPolicyChecker)   { h.policyChecker
 func (h *ModelsHandler) SetMetricsRecorder(r ModelSelectionRecorder) {
 	h.metricsRecorder = r
 }
-func (h *ModelsHandler) SetManifestWriter(w SecretsManifestWriter) { h.manifestWriter = w }
 func (h *ModelsHandler) SetModelCache(c ModelCache)                { h.modelCache = c }
 func (h *ModelsHandler) SetRelayActive(active bool)                { h.relayActive = active }
 func (h *ModelsHandler) SetRelayChecker(rc RelayStateChecker)      { h.relayChecker = rc }
@@ -217,15 +215,9 @@ func (h *ModelsHandler) SetModel(c *gin.Context) {
 
 	h.modelCache.Evict(workspaceID)
 
-	// Persist to K8s Secret for pod-boot durability.
-	if h.manifestWriter != nil {
-		if cfgErr := h.manifestWriter.EnsureWorkspaceConfig(c.Request.Context(), workspaceID, types.WorkspaceConfig{
-			DefaultModel: req.Model,
-		}); cfgErr != nil {
-			h.warn("SetModel: EnsureWorkspaceConfig failed — model will not persist across pod restart until next successful write",
-				"workspaceID", workspaceID, "error", cfgErr.Error())
-		}
-	}
+	// Epic 35: default model is persisted to PostgreSQL (UpdateWorkspace above).
+	// The bootstrap endpoint reads it from Postgres at pod boot — no K8s Secret
+	// is needed for pod-boot durability.
 
 	// Push model selection to running agent. Only attempt when the catalog
 	// fetch succeeded (M8-a: a down pod can't receive the patch anyway, and

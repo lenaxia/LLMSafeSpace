@@ -67,6 +67,13 @@ func main() {
 		os.Exit(runMaterializeCommand(os.Args[2:], os.Stdout, os.Stderr))
 	}
 
+	// Epic 35 US-35.2: bootstrap subcommand fetches decrypted secrets from
+	// the API using a projected SA token. Runs before materialize in the
+	// init container. Never blocks pod boot — degrades to empty on failure.
+	if len(os.Args) > 1 && os.Args[1] == "bootstrap" {
+		os.Exit(runBootstrapCommand(os.Args[2:], os.Stdout, os.Stderr))
+	}
+
 	supervise := len(os.Args) > 1 && os.Args[1] == "--supervise"
 
 	rootCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)

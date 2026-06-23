@@ -119,6 +119,13 @@ type RouterConfig struct {
 	// L3/L4 defense-in-depth; the token is the load-bearing control.
 	InternalOrgStatusHandler *handlers.InternalOrgStatusHandler
 
+	// PodBootstrapHandler, when non-nil, registers POST /internal/v1/pod-bootstrap
+	// — the secretless credential injection endpoint (Epic 35). The workspace
+	// init container presents a projected SA token; the handler validates it via
+	// TokenReview and returns decrypted secrets. NOT behind AuthMiddleware (the
+	// init container has no user identity); auth is the TokenReview itself.
+	PodBootstrapHandler *handlers.PodBootstrapHandler
+
 	CookieName string
 
 	// CookieDomain (Epic 54, US-54.3): when non-empty, set as the Domain
@@ -429,6 +436,11 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 	// L3/L4 defense-in-depth.
 	if cfg.InternalOrgStatusHandler != nil {
 		router.GET("/api/v1/internal/orgs/:orgID/status", cfg.InternalOrgStatusHandler.GetOrgStatus)
+	}
+
+	// Epic 35 US-35.3: pod bootstrap endpoint. Auth is K8s TokenReview (no JWT).
+	if cfg.PodBootstrapHandler != nil {
+		router.POST("/internal/v1/pod-bootstrap", cfg.PodBootstrapHandler.Bootstrap)
 	}
 
 	// Secret management routes (Epic 10)

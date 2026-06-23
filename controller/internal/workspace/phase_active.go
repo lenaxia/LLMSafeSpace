@@ -199,9 +199,6 @@ func (r *WorkspaceReconciler) handleActive(ctx context.Context, workspace *v1.Wo
 		}
 	}
 
-	// Clean up ephemeral secrets Secret (safety net — should already be deleted in handleCreating).
-	r.deleteEphemeralSecretsSecret(ctx, workspace)
-
 	// Pod running — check timeout.
 	if workspace.Spec.Timeout > 0 && workspace.Status.StartTime != nil {
 		elapsed := time.Since(workspace.Status.StartTime.Time)

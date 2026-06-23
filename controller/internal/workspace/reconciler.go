@@ -59,6 +59,14 @@ type WorkspaceReconciler struct {
 	// compatibility opt-out (admin-gated).
 	DefaultRuntimeClass string
 
+	// APIServiceURL is the in-cluster URL of the API service, used by the
+	// workspace init container's bootstrap subcommand (Epic 35 US-35.4) to
+	// fetch decrypted credentials via POST /internal/v1/pod-bootstrap. Same
+	// value as --api-service-url (also used for OrgStatusClient). When empty,
+	// the bootstrap subcommand degrades gracefully (empty secrets, pod boots
+	// without credentials; live /v1/reload-secrets push handles delivery).
+	APIServiceURL string
+
 	// lastDeepStatus tracks the last time enrichAgentStatus was called per
 	// workspace. In-memory only — lost on controller restart (acceptable;
 	// the next reconcile will just call it immediately).

@@ -47,6 +47,7 @@ func SetupControllers(mgr ctrl.Manager, inferenceRelayURL, inferenceRelaySecret,
 		InferenceRelaySecret: inferenceRelaySecret,
 		OrgStatusClient:      orgStatusClient,
 		DefaultRuntimeClass:  defaultRuntimeClass,
+		APIServiceURL:        apiServiceURL,
 	}).SetupWithManager(mgr); err != nil {
 		logger.Error(err, "unable to create Workspace controller")
 		return err

@@ -18,7 +18,6 @@ import (
 	"github.com/gin-gonic/gin"
 	pkginterfaces "github.com/lenaxia/llmsafespaces/pkg/interfaces"
 	"github.com/lenaxia/llmsafespaces/pkg/secrets"
-	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 // TestHandler_E2E_CreateListGetDeleteRoundTrip tests the full CRUD cycle via HTTP
@@ -457,29 +456,6 @@ func (r *staticPodIPResolver) GetWorkspacePodIP(_ context.Context, _, _ string) 
 	return r.addr, nil
 }
 
-// fakeManifestWriter records calls so tests can assert on durability writes.
-type fakeManifestWriter struct {
-	mu    sync.Mutex
-	calls []fakeManifestWriterCall
-	err   error
-}
-
-type fakeManifestWriterCall struct {
-	WorkspaceID  string
-	SecretsBytes []byte
-}
-
-func (f *fakeManifestWriter) EnsureSecretsManifest(_ context.Context, workspaceID string, secretsJSON []byte) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.calls = append(f.calls, fakeManifestWriterCall{WorkspaceID: workspaceID, SecretsBytes: append([]byte(nil), secretsJSON...)})
-	return f.err
-}
-
-func (f *fakeManifestWriter) EnsureWorkspaceConfig(_ context.Context, _ string, _ types.WorkspaceConfig) error {
-	return f.err
-}
-
 // recordingLogger captures Warn calls so tests can verify Bug 2 — that
 // failures of the auto-push are no longer silently swallowed.
 type recordingLogger struct {
@@ -514,87 +490,6 @@ func (r *recordingLogger) warnCount() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.warns)
-}
-
-// TestHandler_BindWritesManifestForDurability is the regression test for
-// Bug 3 in worklog 0085: SetBindings must persist a K8s Secret manifest
-// so a future pod restart sees the bound secrets, not just push to the
-// live agent. Without this, secrets vanish on every pod recycle.
-func TestHandler_BindWritesManifestForDurability(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	ctx := context.Background()
-	userID := "test-user"
-	password := []byte("test-password")
-	sessionID := "test-session"
-
-	keyStore := newTestKeyStore()
-	dekCache := newTestDEKCache()
-	keySvc := secrets.NewKeyService(keyStore, dekCache)
-	secretStore := newTestSecretStore()
-	svc := secrets.NewSecretService(keySvc, secretStore)
-
-	_, err := keySvc.InitializeUserKeys(ctx, userID, password)
-	if err != nil {
-		t.Fatalf("InitializeUserKeys: %v", err)
-	}
-	if err := keySvc.UnlockDEK(ctx, userID, password, sessionID, time.Hour); err != nil {
-		t.Fatalf("UnlockDEK: %v", err)
-	}
-
-	writer := &fakeManifestWriter{}
-
-	handler := NewSecretsHandler(svc)
-	handler.SetPodIPResolver(&staticPodIPResolver{addr: ""}) // simulate no live pod
-	handler.SetSecretsManifestWriter(writer)
-
-	router := gin.New()
-	router.Use(func(c *gin.Context) {
-		c.Set("userID", userID)
-		c.Set("sessionID", sessionID)
-		c.Next()
-	})
-	router.POST("/api/v1/secrets", handler.CreateSecret)
-	wsGroup := router.Group("/api/v1/workspaces")
-	wsGroup.PUT("/:id/bindings", handler.SetBindings)
-
-	createBody := `{"name":"durable","type":"env-secret","value":"v1","metadata":{"var_name":"DURABLE"}}`
-	cReq := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(createBody))
-	cReq.Header.Set("Content-Type", "application/json")
-	cw := httptest.NewRecorder()
-	router.ServeHTTP(cw, cReq)
-	if cw.Code != http.StatusCreated {
-		t.Fatalf("Create: expected 201, got %d", cw.Code)
-	}
-	var created secrets.SecretResponse
-	json.Unmarshal(cw.Body.Bytes(), &created)
-
-	bindBody, _ := json.Marshal(map[string][]string{"secretIds": {created.ID}})
-	bReq := httptest.NewRequest(http.MethodPut, "/api/v1/workspaces/ws-durable/bindings", bytes.NewBuffer(bindBody))
-	bReq.Header.Set("Content-Type", "application/json")
-	bw := httptest.NewRecorder()
-	router.ServeHTTP(bw, bReq)
-	if bw.Code != http.StatusNoContent {
-		t.Fatalf("Bind: expected 204, got %d: %s", bw.Code, bw.Body.String())
-	}
-
-	writer.mu.Lock()
-	defer writer.mu.Unlock()
-	if len(writer.calls) != 1 {
-		t.Fatalf("expected exactly 1 manifest write, got %d", len(writer.calls))
-	}
-	if writer.calls[0].WorkspaceID != "ws-durable" {
-		t.Errorf("manifest written for wrong workspace: %s", writer.calls[0].WorkspaceID)
-	}
-	// Manifest payload must be the same shape as the agentd push payload —
-	// a top-level JSON array of secrets.
-	var arr []map[string]interface{}
-	if err := json.Unmarshal(writer.calls[0].SecretsBytes, &arr); err != nil {
-		t.Fatalf("manifest payload not valid JSON array: %v: %s", err, writer.calls[0].SecretsBytes)
-	}
-	if len(arr) != 1 {
-		t.Fatalf("manifest must contain the bound secret, got %d entries", len(arr))
-	}
 }
 
 // TestHandler_BindLogsReloadFailure is the regression test for Bug 2 in
