@@ -23,7 +23,6 @@ import (
 type SecretsHandler struct {
 	svc              *secrets.SecretService
 	podIPResolver    PodIPResolver
-	manifestWriter   SecretsManifestWriter
 	logger           pkginterfaces.LoggerInterface
 	passwordVerifier PasswordVerifier
 	credStateWriter  CredentialStateWriter
@@ -56,17 +55,6 @@ func (h *SecretsHandler) SetCredentialStateWriter(w CredentialStateWriter) {
 // PodIPResolver looks up the pod IP for a workspace.
 type PodIPResolver interface {
 	GetWorkspacePodIP(ctx context.Context, userID, workspaceID string) (string, error)
-}
-
-// SecretsManifestWriter persists the per-workspace ephemeral K8s Secret
-// (`workspace-secrets-<id>`) used by the in-pod init container to seed
-// `/sandbox-cfg/secrets.json` on every pod start. Without this, secrets
-// pushed via the live HTTP reload path vanish on pod recycle (Bug 3 in
-// worklog 0085). The writer is responsible for create-or-update semantics
-// and for choosing the appropriate K8s namespace.
-type SecretsManifestWriter interface {
-	EnsureSecretsManifest(ctx context.Context, workspaceID string, secretsJSON []byte) error
-	EnsureWorkspaceConfig(ctx context.Context, workspaceID string, config types.WorkspaceConfig) error
 }
 
 // PasswordVerifier confirms a user's password against the stored bcrypt
@@ -106,13 +94,6 @@ func (h *SecretsHandler) SetPodIPResolver(r PodIPResolver) {
 // silently no-op (Bug 1 + Bug 2 in worklog 0085).
 func (h *SecretsHandler) HasPodIPResolver() bool {
 	return h.podIPResolver != nil
-}
-
-// SetSecretsManifestWriter installs the writer used to persist the
-// per-workspace K8s Secret on bind. Optional; if nil, only the live HTTP
-// push runs and bound secrets do not survive pod restarts.
-func (h *SecretsHandler) SetSecretsManifestWriter(w SecretsManifestWriter) {
-	h.manifestWriter = w
 }
 
 // SetLogger installs the logger used to surface non-fatal failures from
@@ -416,26 +397,23 @@ type reloadResult struct {
 	Restarted bool `json:"restarted"`
 }
 
-// pushSecretsToAgent runs the bind-time delivery of the latest secret
-// snapshot for a workspace. Two side-effects are intentional and ordered:
+// pushSecretsToAgent runs the bind-time live delivery of the latest secret
+// snapshot for a workspace.
 //
-//  1. EnsureSecretsManifest writes/updates the per-workspace K8s Secret
-//     `workspace-secrets-<id>` that the pod's init container reads at
-//     start time. This MUST run unconditionally, including when there
-//     is no live pod yet, because the pod has not yet been created
-//     when a freshly-spawned workspace receives its first bind. Without
-//     this write the next pod-create would mount nothing.
-//  2. doReload pushes the same payload to the live agentd over HTTP so
-//     pods that are already running see the change without a restart.
-//     This step is skipped when there are no bindings to push (the
-//     empty-array short-circuit) or when the resolver reports no
-//     running pod.
+// Epic 35: the durable K8s Secret path (EnsureSecretsManifest) has been
+// removed — secretless injection means the init container fetches credentials
+// directly from the API at boot. This function now handles ONLY the live HTTP
+// push to running pods. Credentials bound during suspend are picked up at the
+// next pod boot via the bootstrap endpoint.
 //
-// Both steps are best-effort: the bind itself has already committed to
-// Postgres before this function is called, the user gets 204, and any
-// transient failure here is recoverable on the next bind or pod start.
-// Failures are surfaced to operators via Warn-level logs (Bug 2 in
-// worklog 0085) rather than silently swallowed.
+// The live push sends the payload even when it is the empty array '[]' — the
+// agent uses this to CLEAR its in-memory secret materialisations (validator
+// finding N8 in worklog 0094 pass-2 audit). Without this an unbind leaves the
+// live pod with stale plaintext until restart.
+//
+// Best-effort: the bind itself has already committed to Postgres before this
+// function is called, the user gets 204, and any transient failure here is
+// recoverable on the next bind or pod start.
 func (h *SecretsHandler) pushSecretsToAgent(c *gin.Context, userID, workspaceID string) {
 	_, sessionID := extractAuth(c)
 	ctx := c.Request.Context()
@@ -447,30 +425,7 @@ func (h *SecretsHandler) pushSecretsToAgent(c *gin.Context, userID, workspaceID 
 		return
 	}
 
-	// Step 1: durable manifest. secretsJSON is `[]` when no bindings
-	// exist; the writer accepts that and effectively clears the
-	// workspace's secret state on the next pod start. Run regardless
-	// of whether a pod is currently running — this is the only path
-	// that seeds the K8s Secret a future pod will mount.
-	if h.manifestWriter != nil {
-		if werr := h.manifestWriter.EnsureSecretsManifest(ctx, workspaceID, secretsJSON); werr != nil {
-			h.warn("EnsureSecretsManifest failed",
-				"workspaceID", workspaceID, "error", werr.Error())
-		}
-	}
-
-	// Step 2: live HTTP push. We send the payload even when it is
-	// the empty array '[]' — the agent uses this to CLEAR its
-	// in-memory secret materialisations. Without this an unbind
-	// leaves the live pod with stale plaintext until restart, even
-	// though the manifest is already empty and the next pod start
-	// would seed nothing (validator finding N8 in worklog 0094
-	// pass-2 audit).
 	if _, derr := h.doReload(ctx, userID, workspaceID, secretsJSON); derr != nil {
-		// errNoRunningPod is the expected case when the workspace has
-		// not been activated yet; downgrade to Info so it does not
-		// pollute Warn-level dashboards. Everything else is a real
-		// failure operators need to see.
 		if derr == errNoRunningPod {
 			h.info("reload-secrets skipped: no running pod",
 				"workspaceID", workspaceID)

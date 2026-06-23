@@ -545,41 +545,42 @@ func TestInitContainerScript_NoElseBranch(t *testing.T) {
 	assert.Equal(t, "/bin/sh", credInit.Command[0])
 	assert.Equal(t, "-c", credInit.Command[1])
 	script := credInit.Command[2]
-	assert.NotContains(t, script, "echo '{}'", "init script should NOT write empty JSON when no creds exist")
-	assert.Contains(t, script, "cp /mnt/secrets/password/password /sandbox-cfg/password", "password should always be copied")
-	assert.Contains(t, script, "cp /mnt/secrets/user-secrets/workspace-config.json /sandbox-cfg/workspace-config.json",
-		"workspace-config.json must be copied so applyWorkspaceConfig in agentd finds the default model at boot")
-	assert.NotContains(t, script, "workspace-creds-", "legacy credential secret should not be referenced")
 
-	// Verify the credential-setup init container mounts user-secrets.
-	// This ensures credentials are available to the init script once kubelet
-	// syncs the optional secret into the pod.
-	var userSecretsMount *corev1.VolumeMount
+	// Epic 35: the init script calls bootstrap (fetches secrets + workspace-config
+	// from the API) then materialize (applies them). Password is still copied
+	// from the K8s Secret.
+	assert.Contains(t, script, "workspace-agentd bootstrap",
+		"init script must call workspace-agentd bootstrap (Epic 35 secretless injection)")
+	assert.Contains(t, script, "workspace-agentd materialize",
+		"init script must call workspace-agentd materialize")
+	assert.Contains(t, script, "cp /mnt/secrets/password/password /sandbox-cfg/password",
+		"password should always be copied")
+
+	// Verify the credential-setup init container mounts bootstrap-token.
+	var bootstrapMount *corev1.VolumeMount
 	for i := range credInit.VolumeMounts {
-		if credInit.VolumeMounts[i].Name == "user-secrets" {
-			userSecretsMount = &credInit.VolumeMounts[i]
+		if credInit.VolumeMounts[i].Name == "bootstrap-token" {
+			bootstrapMount = &credInit.VolumeMounts[i]
 			break
 		}
 	}
-	require.NotNil(t, userSecretsMount, "credential-setup init container must mount user-secrets")
-	assert.Equal(t, "/mnt/secrets/user-secrets", userSecretsMount.MountPath, "user-secrets must be mounted at /mnt/secrets/user-secrets")
-	assert.True(t, userSecretsMount.ReadOnly, "user-secrets mount must be read-only")
+	require.NotNil(t, bootstrapMount, "credential-setup init container must mount bootstrap-token")
+	assert.Equal(t, "/var/run/bootstrap", bootstrapMount.MountPath)
+	assert.True(t, bootstrapMount.ReadOnly)
 }
 
-// TestInitContainerScript_CopiesWorkspaceConfig is the regression test for the
-// bug where workspace-config.json was never copied to /sandbox-cfg/, causing
-// applyWorkspaceConfig in agentd to return early (ENOENT) and never write the
-// model key to agent-config.json. This test ensures the fix at pod_builder.go
-// and EnsureWorkspaceConfig (workspace_service.go) are both necessary: the
-// Secret must be written *and* the init container must copy it.
-func TestInitContainerScript_CopiesWorkspaceConfig(t *testing.T) {
+// TestInitContainerScript_BootstrapEnvVars verifies the init container
+// carries WORKSPACE_ID and LLMSAFESPACE_API_URL env vars needed by the
+// bootstrap subcommand.
+func TestInitContainerScript_BootstrapEnvVars(t *testing.T) {
 	opencode.Register()
-	ws := makeWorkspace("ws-wscfg", "default", v1.WorkspacePhaseCreating)
-	ws.Status.PVCName = "workspace-ws-wscfg"
-	pvc := makeBoundPVC("workspace-ws-wscfg", "default", ws.UID)
-	pwSecret := makePasswordSecret("ws-wscfg", "default")
+	ws := makeWorkspace("ws-env", "default", v1.WorkspacePhaseCreating)
+	ws.Status.PVCName = "workspace-ws-env"
+	pvc := makeBoundPVC("workspace-ws-env", "default", ws.UID)
+	pwSecret := makePasswordSecret("ws-env", "default")
 	rte := makeRuntimeEnv("python-3.11")
 	r := reconcilerFor(t, ws, pvc, pwSecret, rte)
+	r.APIServiceURL = "http://test-api:8080"
 
 	pod, err := r.buildPod(context.Background(), ws)
 	require.NoError(t, err)
@@ -591,18 +592,16 @@ func TestInitContainerScript_CopiesWorkspaceConfig(t *testing.T) {
 			break
 		}
 	}
-	require.NotNil(t, credInit, "credential-setup init container must exist")
-	script := credInit.Command[2]
+	require.NotNil(t, credInit)
 
-	// workspace-config.json must be copied conditionally (same pattern as
-	// secrets.json) so the init container does not fail when no model has
-	// been selected yet.
-	assert.Contains(t, script,
-		"if [ -f /mnt/secrets/user-secrets/workspace-config.json ]",
-		"workspace-config.json copy must be conditional — file may not exist on first boot")
-	assert.Contains(t, script,
-		"cp /mnt/secrets/user-secrets/workspace-config.json /sandbox-cfg/workspace-config.json",
-		"workspace-config.json must be copied to /sandbox-cfg/ so applyWorkspaceConfig can read it")
+	envVars := make(map[string]string)
+	for _, e := range credInit.Env {
+		envVars[e.Name] = e.Value
+	}
+	assert.Equal(t, "ws-env", envVars["WORKSPACE_ID"],
+		"WORKSPACE_ID env var must be set on init container")
+	assert.Equal(t, "http://test-api:8080", envVars["LLMSAFESPACE_API_URL"],
+		"LLMSAFESPACE_API_URL env var must be set on init container")
 }
 
 func makeRuntimeEnv(name string) *v1.RuntimeEnvironment {

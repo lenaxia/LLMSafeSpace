@@ -21,28 +21,18 @@ func (r *WorkspaceReconciler) deletePodByName(ctx context.Context, name, namespa
 	_ = r.Delete(ctx, pod)
 }
 
-func (r *WorkspaceReconciler) deleteEphemeralSecretsSecret(ctx context.Context, workspace *v1.Workspace) {
-	secretName := fmt.Sprintf("workspace-secrets-%s", workspace.Name)
-	secret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: workspace.Namespace}, secret); err != nil {
-		return // doesn't exist, nothing to do
-	}
-	if err := r.Delete(ctx, secret); err != nil {
-		log.FromContext(ctx).V(1).Info("Failed to delete ephemeral secrets secret", "name", secretName, "error", err.Error())
-	}
-}
-
 // cleanupFailedWorkspaceSecrets deletes the per-workspace K8s Secrets
-// (`workspace-creds-*`, `workspace-pw-*`, `workspace-secrets-*`) when a
-// workspace has entered the Failed phase. The Secrets are useless once
-// the workspace is non-recoverable; leaving them behind is the symptom
-// of Bug 12 in worklog 0085 (Secrets persisting 45+ hours after pod
-// disappeared). Each Get is best-effort: missing-Secret is the desired
-// end state.
+// (`workspace-creds-*`, `workspace-pw-*`) when a workspace has entered the
+// Failed phase. The Secrets are useless once the workspace is non-recoverable;
+// leaving them behind is the symptom of Bug 12 in worklog 0085 (Secrets
+// persisting 45+ hours after pod disappeared). Each Get is best-effort:
+// missing-Secret is the desired end state.
+//
+// Epic 35: workspace-secrets-* is no longer created (secretless injection),
+// so it is no longer in the cleanup list.
 func (r *WorkspaceReconciler) cleanupFailedWorkspaceSecrets(ctx context.Context, workspace *v1.Workspace) {
 	logger := log.FromContext(ctx)
 	for _, secretName := range []string{
-		fmt.Sprintf("workspace-secrets-%s", workspace.Name),
 		fmt.Sprintf("workspace-creds-%s", workspace.Name),
 		fmt.Sprintf("workspace-pw-%s", workspace.Name),
 	} {
@@ -55,18 +45,6 @@ func (r *WorkspaceReconciler) cleanupFailedWorkspaceSecrets(ctx context.Context,
 				"name", secretName, "error", err.Error())
 		}
 	}
-}
-
-func allInitContainersComplete(pod *corev1.Pod) bool {
-	if len(pod.Status.InitContainerStatuses) == 0 {
-		return false
-	}
-	for _, s := range pod.Status.InitContainerStatuses {
-		if s.State.Terminated == nil || s.State.Terminated.ExitCode != 0 {
-			return false
-		}
-	}
-	return true
 }
 
 func (r *WorkspaceReconciler) ensurePasswordSecret(ctx context.Context, workspace *v1.Workspace) error {
@@ -87,6 +65,45 @@ func (r *WorkspaceReconciler) ensurePasswordSecret(ctx context.Context, workspac
 		return err
 	}
 	return r.Create(ctx, newSecret)
+}
+
+// ensureWorkspaceServiceAccount creates the per-workspace ServiceAccount used
+// for secretless credential injection (Epic 35 US-35.1). The SA holds no
+// secrets itself — its only purpose is to be the identity behind the
+// projected token volume mounted into the init container. The init container
+// presents that token to the API's /internal/v1/pod-bootstrap endpoint, which
+// validates it via TokenReview and verifies the SA name matches the claimed
+// workspaceID.
+//
+// AutomountServiceAccountToken is explicitly false: only the explicit projected
+// token volume (added in US-35.4) is used, never the default automounted token.
+// This preserves G17 — the main container never sees any SA token.
+//
+// OwnerReference ensures the SA is garbage-collected when the Workspace CRD is
+// deleted. The SA survives suspend (which only deletes the pod) and is GC'd
+// only on terminate (CRD deletion).
+//
+// Idempotent: if the SA already exists, returns nil immediately — same pattern
+// as ensurePasswordSecret. Called from handlePending (first creation) and
+// handleCreating (resume coverage, per adversarial finding F4).
+func (r *WorkspaceReconciler) ensureWorkspaceServiceAccount(ctx context.Context, workspace *v1.Workspace) error {
+	name := bootstrapSAName(workspace.Name)
+	sa := &corev1.ServiceAccount{}
+	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: workspace.Namespace}, sa); err == nil {
+		return nil
+	}
+	falseVal := false
+	newSA := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: workspace.Namespace,
+		},
+		AutomountServiceAccountToken: &falseVal,
+	}
+	if err := controllerutil.SetControllerReference(workspace, newSA, r.Scheme); err != nil {
+		return err
+	}
+	return r.Create(ctx, newSA)
 }
 
 // --- PVC helpers ---

@@ -60,6 +60,12 @@ func TestG17_SandboxPodDoesNotAutomountSAToken(t *testing.T) {
 		"AutomountServiceAccountToken must be explicitly set, not relying on default (which is true)")
 	require.False(t, *pod.Spec.AutomountServiceAccountToken,
 		"AutomountServiceAccountToken must be false on sandbox pods (G17)")
+
+	// Epic 35: the pod runs under the per-workspace SA so the projected token
+	// is for the correct identity. The SA has no RBAC (no secrets read, no API
+	// access) — automount=false ensures the main container never gets a token.
+	require.Equal(t, "workspace-ws-sec-regression", pod.Spec.ServiceAccountName,
+		"ServiceAccountName must be the per-workspace bootstrap SA (Epic 35)")
 }
 
 // TestSandboxPod_SecurityContextHardening locks in the existing security
@@ -107,10 +113,10 @@ func TestSandboxPod_VolumeFootprint(t *testing.T) {
 	require.NoError(t, err)
 
 	expectedVolumes := map[string]bool{
-		"workspace":    false,
-		"sandbox-cfg":  false,
-		"pw-secret":    false,
-		"user-secrets": false,
+		"workspace":       false,
+		"sandbox-cfg":     false,
+		"pw-secret":       false,
+		"bootstrap-token": false,
 	}
 	for _, v := range pod.Spec.Volumes {
 		if _, ok := expectedVolumes[v.Name]; ok {
@@ -126,22 +132,40 @@ func TestSandboxPod_VolumeFootprint(t *testing.T) {
 		require.NotEqual(t, "tmp", v.Name, "tmp emptyDir volume must not exist; /tmp is now a PVC subPath")
 	}
 
-	// user-secrets must be optional so pods start cleanly before credentials
-	// are configured and kubelet auto-syncs the secret once it is created.
-	var userSecretsVol *corev1.Volume
+	// Epic 35: no workspace-secrets-* volume must exist — secretless injection
+	// replaced it with the bootstrap-token projected volume.
+	for _, v := range pod.Spec.Volumes {
+		require.NotEqual(t, "user-secrets", v.Name,
+			"user-secrets Secret volume must not exist (Epic 35: replaced by bootstrap-token)")
+	}
+
+	// bootstrap-token must be a projected ServiceAccountToken volume with the
+	// correct audience and a bounded TTL.
+	var bootstrapTokenVol *corev1.Volume
 	for i := range pod.Spec.Volumes {
-		if pod.Spec.Volumes[i].Name == "user-secrets" {
-			userSecretsVol = &pod.Spec.Volumes[i]
+		if pod.Spec.Volumes[i].Name == "bootstrap-token" {
+			bootstrapTokenVol = &pod.Spec.Volumes[i]
 			break
 		}
 	}
-	require.NotNil(t, userSecretsVol, "user-secrets volume must exist")
-	require.NotNil(t, userSecretsVol.Secret, "user-secrets volume must be a Secret source")
-	require.NotNil(t, userSecretsVol.Secret.Optional, "user-secrets volume must have Optional set")
-	require.True(t, *userSecretsVol.Secret.Optional, "user-secrets volume must have Optional: true")
+	require.NotNil(t, bootstrapTokenVol, "bootstrap-token volume must exist")
+	require.NotNil(t, bootstrapTokenVol.Projected, "bootstrap-token must be a projected volume")
+	require.Len(t, bootstrapTokenVol.Projected.Sources, 1, "bootstrap-token must have exactly one source")
+	satProj := bootstrapTokenVol.Projected.Sources[0].ServiceAccountToken
+	require.NotNil(t, satProj, "bootstrap-token source must be ServiceAccountToken")
+	require.Equal(t, "llmsafespace-api", satProj.Audience,
+		"bootstrap-token audience must be llmsafespace-api")
+	require.NotNil(t, satProj.ExpirationSeconds)
+	require.Equal(t, int64(300), *satProj.ExpirationSeconds,
+		"bootstrap-token TTL must be 300s (5 minutes)")
 
+	// bootstrap-token must be mounted on the init container only, NOT on the main container.
 	require.NotEmpty(t, pod.Spec.Containers)
 	main := pod.Spec.Containers[0]
+	for _, m := range main.VolumeMounts {
+		require.NotEqual(t, "bootstrap-token", m.Name,
+			"bootstrap-token must NOT be mounted on the main container (G17)")
+	}
 
 	expectedMounts := map[string]bool{
 		"workspace":   false,

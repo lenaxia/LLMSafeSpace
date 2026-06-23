@@ -234,6 +234,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var auditHandler *handlers.AuditHandler
 	var platformAdminHandler *handlers.PlatformAdminHandler
 	var internalOrgStatusHandler *handlers.InternalOrgStatusHandler
+	var podBootstrapHandler *handlers.PodBootstrapHandler
 	var ssoHandler *handlers.SSOHandler
 	var loginDiscoveryHandler *handlers.LoginDiscoveryHandler
 	var asyncAudit *secrets.AsyncAuditLogger // populated when secrets are enabled; drained on Shutdown
@@ -336,9 +337,6 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		}
 		modelsHandler.SetLogger(log)
 		modelsHandler.SetModelStore(dbSvc)
-		if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
-			modelsHandler.SetManifestWriter(wsSvc)
-		}
 		// US-29.4: WorkspaceEnvHandler owns the env-var endpoints.
 		workspaceEnvHandler = handlers.NewWorkspaceEnvHandler(secretService)
 		workspaceEnvHandler.SetLogger(log)
@@ -365,13 +363,9 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		// Wire password getter so ListModels/SetModel can authenticate
 		// to opencode. Uses the same K8s-secret-backed getter as ProxyHandler.
 		// Wired after proxyHandler construction (see below).
-		// Wire the manifest writer so SetBindings persists a K8s Secret
-		// (`workspace-secrets-<id>`) read by the pod init container on
-		// every start. The live HTTP push alone is not durable; see
-		// Bug 3 in worklog 0085.
-		if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
-			secretsHandler.SetSecretsManifestWriter(wsSvc)
-		}
+		// Epic 35: the manifest writer (K8s Secret) has been removed —
+		// secretless injection delivers credentials at boot via the
+		// bootstrap endpoint. Bind-time delivery is live HTTP push only.
 		// Wire the password verifier so RevealSecret enforces a real
 		// re-authentication gate. Without this the field is theater
 		// (validator finding on RevealSecret in worklog 0094 audit).
@@ -488,10 +482,16 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		}
 		wsSvc, wsSvcOk := svc.Workspace.(*workspace.Service)
 		if wsSvcOk {
-			wsSvc.SetSecretInjector(secretService)
 			wsSvc.SetCredentialProvisioner(pgStore)
 			wsSvc.SetOrgStore(pgOrgStore)
 		}
+		// Epic 35 US-35.3: pod bootstrap handler. Uses the API's K8s
+		// clientset for TokenReview + the SecretService for credential
+		// decryption + the DB for workspace lookup + default model.
+		// expectedNamespace validates the SA namespace (S1 defense-in-depth).
+		podBootstrapHandler = handlers.NewPodBootstrapHandlerFromClientset(
+			k8sClient.Clientset(), secretService, dbSvc, cfg.Kubernetes.Namespace,
+		)
 		// User provider-credential bind/unbind routes are NOT under
 		// /api/v1/workspaces/:id (they live under /api/v1/provider-credentials/:id/bind/:workspaceId),
 		// so WorkspaceAccessMiddleware does not cover them. Wire the
@@ -773,6 +773,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		AdminSessionHandler:             adminSessionHandler,
 		PlatformAdminHandler:            platformAdminHandler,
 		InternalOrgStatusHandler:        internalOrgStatusHandler,
+		PodBootstrapHandler:             podBootstrapHandler,
 		SSOHandler:                      ssoHandler,
 		LoginDiscoveryHandler:           loginDiscoveryHandler,
 		CookieName:                      cfg.Auth.CookieName,

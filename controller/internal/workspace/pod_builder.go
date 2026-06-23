@@ -184,13 +184,13 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 	}
 
 	// Credential setup init.
-	credInit, pwVolume, userSecretsVol, err := r.buildCredentialSetupInit(workspace, runtimeImage)
+	credInit, pwVolume, bootstrapTokenVol, err := r.buildCredentialSetupInit(workspace, runtimeImage)
 	if err != nil {
 		return nil, err
 	}
 	initContainers = append(initContainers, credInit)
 	volumes = append(volumes, pwVolume)
-	volumes = append(volumes, userSecretsVol)
+	volumes = append(volumes, bootstrapTokenVol)
 
 	// Epic 51 S51.1: Runtime class resolution. Per-workspace opt-out
 	// (spec.runtimeClass) takes precedence; otherwise use the controller's
@@ -221,6 +221,14 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 			// process inside the pod can read. See
 			// `controller/internal/workspace/security_test.go` for the
 			// regression that locks this in.
+			//
+			// Epic 35: the pod runs under the per-workspace SA
+			// (workspace-<name>) so the projected SA token volume in the
+			// init container is for the correct identity. AutomountServiceAccountToken
+			// stays false — the projected token is an explicit volume mount
+			// (init container only), not the default automount (which would
+			// also appear in the main container).
+			ServiceAccountName:           bootstrapSAName(workspace.Name),
 			AutomountServiceAccountToken: &falseVal,
 			// G22 (Epic 17 worklog 0088 RT-3.3): EnableServiceLinks
 			// defaults to true in K8s, which materializes 30+
@@ -371,12 +379,8 @@ func buildNodeSelector(workspace *v1.Workspace) map[string]string {
 
 func (r *WorkspaceReconciler) buildCredentialSetupInit(workspace *v1.Workspace, runtimeImage string) (corev1.Container, corev1.Volume, corev1.Volume, error) {
 	credScript := `
-if [ -f /mnt/secrets/user-secrets/secrets.json ]; then
-  cp /mnt/secrets/user-secrets/secrets.json /sandbox-cfg/secrets.json
-fi
-if [ -f /mnt/secrets/user-secrets/workspace-config.json ]; then
-  cp /mnt/secrets/user-secrets/workspace-config.json /sandbox-cfg/workspace-config.json
-fi
+workspace-agentd bootstrap --workspace-id "$WORKSPACE_ID" --api-url "$LLMSAFESPACE_API_URL"
+workspace-agentd materialize
 cp /mnt/secrets/password/password /sandbox-cfg/password
 `
 	pwVolume := corev1.Volume{
@@ -389,28 +393,29 @@ cp /mnt/secrets/password/password /sandbox-cfg/password
 	credMounts := []corev1.VolumeMount{
 		{Name: "sandbox-cfg", MountPath: "/sandbox-cfg"},
 		{Name: "pw-secret", MountPath: "/mnt/secrets/password", ReadOnly: true},
+		{Name: "bootstrap-token", MountPath: "/var/run/bootstrap", ReadOnly: true},
 	}
 
-	// Always mount user-secrets with optional: true so the pod starts
-	// cleanly even when no credentials have been configured yet. kubelet
-	// will automatically sync the secret into the running pod within
-	// ~60-90s once it is created, without requiring a pod restart.
-	// The init script already guards with `if [ -f ... ]` so an empty
-	// mount is safe.
-	userSecretsName := fmt.Sprintf("workspace-secrets-%s", workspace.Name)
-	optionalTrue := true
-	userSecretsVolume := corev1.Volume{
-		Name: "user-secrets",
+	// Epic 35 US-35.4: projected SA token volume. The kubelet creates a token
+	// for the pod's ServiceAccount (workspace-<name>) with the specified
+	// audience and expiry. Mounted only on the init container — the main
+	// container never sees this token (AutomountServiceAccountToken: false
+	// suppresses the default mount; this is an explicit projected volume).
+	tokenTTL := int64(300)
+	bootstrapTokenVolume := corev1.Volume{
+		Name: "bootstrap-token",
 		VolumeSource: corev1.VolumeSource{
-			Secret: &corev1.SecretVolumeSource{
-				SecretName: userSecretsName,
-				Optional:   &optionalTrue,
+			Projected: &corev1.ProjectedVolumeSource{
+				Sources: []corev1.VolumeProjection{{
+					ServiceAccountToken: &corev1.ServiceAccountTokenProjection{
+						Path:              "token",
+						ExpirationSeconds: &tokenTTL,
+						Audience:          bootstrapAudience,
+					},
+				}},
 			},
 		},
 	}
-	credMounts = append(credMounts, corev1.VolumeMount{
-		Name: "user-secrets", MountPath: "/mnt/secrets/user-secrets", ReadOnly: true,
-	})
 
 	trueVal := true
 	falseVal := false
@@ -418,6 +423,10 @@ cp /mnt/secrets/password/password /sandbox-cfg/password
 		Name:    "credential-setup",
 		Image:   runtimeImage,
 		Command: []string{"/bin/sh", "-c", credScript},
+		Env: []corev1.EnvVar{
+			{Name: "WORKSPACE_ID", Value: workspace.Name},
+			{Name: "LLMSAFESPACE_API_URL", Value: r.APIServiceURL},
+		},
 		SecurityContext: &corev1.SecurityContext{
 			ReadOnlyRootFilesystem:   &trueVal,
 			RunAsNonRoot:             &trueVal,
@@ -426,7 +435,7 @@ cp /mnt/secrets/password/password /sandbox-cfg/password
 		},
 		VolumeMounts: credMounts,
 	}
-	return credInit, pwVolume, userSecretsVolume, nil
+	return credInit, pwVolume, bootstrapTokenVolume, nil
 }
 
 // buildWorkspaceDirsInit returns an always-running init container that creates

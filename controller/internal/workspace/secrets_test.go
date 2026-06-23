@@ -18,11 +18,11 @@ import (
 	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
-// secretNamesFor returns the three ephemeral Secret names cleanupFailedWorkspaceSecrets
+// secretNamesFor returns the ephemeral Secret names cleanupFailedWorkspaceSecrets
 // targets, so the test and the production code agree on the naming scheme.
+// Epic 35: workspace-secrets-* is no longer created (secretless injection).
 func secretNamesFor(workspaceName string) []string {
 	return []string{
-		fmt.Sprintf("workspace-secrets-%s", workspaceName),
 		fmt.Sprintf("workspace-creds-%s", workspaceName),
 		fmt.Sprintf("workspace-pw-%s", workspaceName),
 	}
@@ -37,23 +37,24 @@ func makeOwnedSecret(name, ns string) *corev1.Secret {
 	}
 }
 
-// TestCleanupFailedWorkspaceSecrets_DeletesAllThree — regression for Bug 12
+// TestCleanupFailedWorkspaceSecrets_DeletesAll — regression for Bug 12
 // (worklog 0085: Secrets persisting 45+ hours after a workspace failed). When a
-// workspace enters Failed, all three per-workspace Secret kinds must be deleted.
+// workspace enters Failed, the per-workspace Secret kinds must be deleted.
+// Epic 35: workspace-secrets-* no longer exists (secretless injection).
 // Value: prevents credential/cost leaks from Secrets outliving a dead workspace.
 // Failure mode: one or more Secrets retained → stale creds linger + quota cost.
-// Expected: after cleanup, none of the three Secrets exist in the namespace.
-func TestCleanupFailedWorkspaceSecrets_DeletesAllThree(t *testing.T) {
+// Expected: after cleanup, none of the Secrets exist in the namespace.
+func TestCleanupFailedWorkspaceSecrets_DeletesAll(t *testing.T) {
 	const wsName = "ws-fail"
 	ws := &v1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: wsName, Namespace: "ns"}}
 
-	// Seed all three Secret kinds for this workspace.
-	objs := make([]runtime.Object, 0, 4)
+	// Seed all Secret kinds for this workspace.
+	objs := make([]runtime.Object, 0, 3)
 	for _, n := range secretNamesFor(wsName) {
 		objs = append(objs, makeOwnedSecret(n, "ns"))
 	}
 	// Seed an unrelated workspace's secret to prove cleanup is scoped.
-	other := makeOwnedSecret(fmt.Sprintf("workspace-secrets-%s", "other-ws"), "ns")
+	other := makeOwnedSecret(fmt.Sprintf("workspace-creds-%s", "other-ws"), "ns")
 	objs = append(objs, other)
 
 	r := reconcilerFor(t, objs...)

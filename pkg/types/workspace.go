@@ -113,8 +113,8 @@ type WorkspaceUpdates struct {
 	DefaultModel *string `json:"defaultModel,omitempty"`
 }
 
-// WorkspaceConfig is non-sensitive workspace metadata persisted to K8s Secret
-// for pod boot. Read by agentd's applyWorkspaceConfig at startup.
+// WorkspaceConfig is non-sensitive workspace metadata (default model)
+// delivered to the pod via the bootstrap HTTP endpoint at boot.
 type WorkspaceConfig struct {
 	DefaultModel string `json:"defaultModel,omitempty"`
 }
