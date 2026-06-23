@@ -559,7 +559,7 @@
             "lastNotNull"
           ],
           "fields": "",
-          "values": true
+          "values": false
         },
         "showUnfilled": true,
         "text": {}
@@ -625,7 +625,7 @@
             "lastNotNull"
           ],
           "fields": "",
-          "values": true
+          "values": false
         },
         "showUnfilled": true,
         "text": {}
@@ -691,7 +691,7 @@
             "lastNotNull"
           ],
           "fields": "",
-          "values": true
+          "values": false
         },
         "showUnfilled": true,
         "text": {}
@@ -760,7 +760,7 @@
             "lastNotNull"
           ],
           "fields": "",
-          "values": true
+          "values": false
         },
         "showUnfilled": true,
         "text": {}
@@ -1277,7 +1277,7 @@
             "lastNotNull"
           ],
           "fields": "",
-          "values": true
+          "values": false
         },
         "showUnfilled": true,
         "text": {}
@@ -1355,5 +1355,5 @@
   "timezone": "utc",
   "title": "LLMSafeSpaces - Billing & Metering",
   "uid": "llmsafespaces-billing",
-  "version": 2
+  "version": 3
 }
