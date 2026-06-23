@@ -146,7 +146,7 @@ the dashboard JSON had been missing.
   panels: `values: true` → `values: false`. Version 3 → 4.
 - `charts/llmsafespaces/dashboards/billing.json` — 5 bargauge panels:
   same fix. Version 2 → 3.
-- `worklogs/NNNN_2026-06-23_dashboard-bargauge-values.md` — this
+- `worklogs/0528_2026-06-23_dashboard-bargauge-values.md` — this
   worklog.
 
 ## Followups
