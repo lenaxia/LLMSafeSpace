@@ -433,18 +433,19 @@ The relay config subsystem manages how `agent-config.json` — the file opencode
 |---|---|---|---|
 | `/workspace` | Longhorn PVC (`subPath: workspace`) | Yes | User workspace data, opencode.db, auth.json |
 | `/home/sandbox` | Longhorn PVC (`subPath: home`) | Yes | SSH keys, secrets base dir, enricher cache, tool caches |
-| `/tmp` | Longhorn PVC (`subPath: tmp`) | Yes — agentd rewrites `agent-config.json` and `secrets-env` on each credential cycle; other files persist | agent-config.json, secrets-env |
-| `/sandbox-cfg` | emptyDir (memory, ro) | No — ephemeral per pod, read-only | Secrets mounted by controller at pod start |
+| `/tmp` | Longhorn PVC (`subPath: tmp`) | Yes — init scripts, package caches; NOT credentials (US-35.7 moved them to tmpfs) | init-script.sh |
+| `/sandbox-cfg` | emptyDir (memory, 32Mi) | No — ephemeral per pod, read-only on main container | secrets.json, workspace-config.json, password (from bootstrap) |
+| `/sandbox-runtime` | emptyDir (memory, 96Mi, RW) | No — ephemeral per pod, wiped on death | agent-config.json, secrets-env, symlink targets for SSH/git/secrets/auth.json |
 
 **Key path constants** (`pkg/agentd/types.go`):
 
 ```
-AgentConfigPath  = "/tmp/agent-config.json"
-SecretsBasePath  = "/home/sandbox/.secrets"   ← deleted by reset() on every reload
-SecretsEnvPath   = "/tmp/secrets-env"
+AgentConfigPath  = "/sandbox-runtime/agent-config.json"
+SecretsBasePath  = "/sandbox-runtime/rt/secrets"   ← deleted by reset() on every reload; tmpfs
+SecretsEnvPath   = "/sandbox-runtime/secrets-env"
 ```
 
-Note: `/tmp` is now a PVC subPath (`subPath: tmp`), not an emptyDir. The `workspace-dirs` init container unconditionally creates this directory on every pod start. The agentd `Materializer.reset()` deletes and rewrites `agent-config.json` and `secrets-env` on each credential cycle, so those specific files are always freshly written. Other files written to `/tmp` by packages or agent processes persist across pod restarts.
+Note: `/tmp` is a PVC subPath (`subPath: tmp`). US-35.7 moved `agent-config.json` and `secrets-env` off `/tmp` to `/sandbox-runtime` (tmpfs/RAM). `$HOME`-relative credential paths (`.ssh`, `.secrets`, `.git-credentials`, `auth.json`) are symlinks created by the init container pointing into `/sandbox-runtime/rt/*`. On pod death, tmpfs is wiped — the PVC retains only dangling symlinks, no plaintext bytes.
 
 **opencode config loading order** (validated from opencode 1.15.12 binary):
 
@@ -453,9 +454,9 @@ opencode merges config files via recursive deep-merge, last writer wins:
 2. Project config: `findUp(["opencode.json","opencode.jsonc"], cwd, {rootFirst:true})`
 3. `OPENCODE_CONFIG` env var path — **always appended last, always wins**
 
-`OPENCODE_CONFIG=/tmp/agent-config.json` is set by `entrypoint-opencode.sh`. Therefore `agent-config.json` overrides all other config for any key it sets. opencode does **not** hot-reload this file — it is only read at process startup.
+`OPENCODE_CONFIG=/sandbox-runtime/agent-config.json` is set by `entrypoint-opencode.sh`. Therefore `agent-config.json` overrides all other config for any key it sets. opencode does **not** hot-reload this file — it is only read at process startup.
 
-**auth.json location** (validated): `XDG_DATA_HOME=/workspace/.local` is set before `exec workspace-agentd`, so agentd inherits it. `authJSONPath = /workspace/.local/opencode/auth.json` — on the PVC, persistent across pod restarts.
+**auth.json location** (validated): `XDG_DATA_HOME=/workspace/.local` is set before `exec workspace-agentd`, so agentd inherits it. `authJSONPath = /workspace/.local/opencode/auth.json` — US-35.7: this path is a symlink to `/sandbox-runtime/rt/auth.json` (tmpfs), created by the init container. Wiped on pod death; no plaintext on PVC at rest.
 
 ---
 

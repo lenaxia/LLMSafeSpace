@@ -167,15 +167,19 @@ func (realFS) OpenForCreate(path string, flag int, perm os.FileMode) (io.WriteCl
 // constants; tests override.
 type Paths struct {
 	Home            string // user home (e.g. /home/sandbox)
-	SecretsBaseDir  string // secret-file root (e.g. /home/sandbox/.secrets)
-	SSHDir          string // SSH config directory (e.g. /home/sandbox/.ssh)
-	AgentConfigPath string // opencode config (e.g. /tmp/agent-config.json)
-	SecretsEnvPath  string // env-file (e.g. /tmp/secrets-env)
-	GitCredsPath    string // git-credentials file (e.g. /home/sandbox/.git-credentials)
+	SecretsBaseDir  string // secret-file root (/sandbox-runtime/rt/secrets)
+	SSHDir          string // SSH config directory (/sandbox-runtime/rt/ssh)
+	AgentConfigPath string // opencode config (/sandbox-runtime/agent-config.json)
+	SecretsEnvPath  string // env-file (/sandbox-runtime/secrets-env)
+	GitCredsPath    string // git-credentials file (/sandbox-runtime/rt/git-credentials)
 }
 
 // DefaultPaths returns production paths derived from the agentd package
 // constants and the given home dir.
+//
+// US-35.7: SSH/git/secrets paths point to /sandbox-runtime/rt/* (tmpfs) to
+// match loadMaterializeConfig() in cmd/workspace-agentd. The $HOME-relative
+// PVC paths are symlinks (created by init container) pointing here.
 func DefaultPaths(home string) Paths {
 	if home == "" {
 		home = "/home/sandbox"
@@ -183,10 +187,10 @@ func DefaultPaths(home string) Paths {
 	return Paths{
 		Home:            home,
 		SecretsBaseDir:  agentd.SecretsBasePath,
-		SSHDir:          home + "/.ssh",
+		SSHDir:          "/sandbox-runtime/rt/ssh",
 		AgentConfigPath: agentd.AgentConfigPath,
 		SecretsEnvPath:  agentd.SecretsEnvPath,
-		GitCredsPath:    home + "/.git-credentials",
+		GitCredsPath:    "/sandbox-runtime/rt/git-credentials",
 	}
 }
 

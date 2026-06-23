@@ -199,11 +199,11 @@ func newFixture(t *testing.T) (*Materializer, *fakeFS) {
 	fs := newFakeFS()
 	paths := Paths{
 		Home:            "/home/sandbox",
-		SecretsBaseDir:  "/home/sandbox/.secrets",
-		SSHDir:          "/home/sandbox/.ssh",
-		AgentConfigPath: "/tmp/agent-config.json",
-		SecretsEnvPath:  "/tmp/secrets-env",
-		GitCredsPath:    "/home/sandbox/.git-credentials",
+		SecretsBaseDir:  "/sandbox-runtime/rt/secrets",
+		SSHDir:          "/sandbox-runtime/rt/ssh",
+		AgentConfigPath: "/sandbox-runtime/agent-config.json",
+		SecretsEnvPath:  "/sandbox-runtime/secrets-env",
+		GitCredsPath:    "/sandbox-runtime/rt/git-credentials",
 	}
 	return &Materializer{FS: fs, Paths: paths}, fs
 }
@@ -239,7 +239,7 @@ func TestG2_EnvSecretShellInjection_PlaintextWithSingleQuote(t *testing.T) {
 	require.Equal(t, OutcomeMaterialized, res.Results[0].Outcome,
 		"materialization must succeed; injection is neutralized, not skipped")
 
-	envFile := string(fs.contents["/tmp/secrets-env"])
+	envFile := string(fs.contents["/sandbox-runtime/secrets-env"])
 	requireBashSourceProducesValue(t, envFile, "MY_TOKEN", payload)
 }
 
@@ -283,7 +283,7 @@ func TestG2_EnvSecretShellInjection_Corpus(t *testing.T) {
 			require.Equal(t, OutcomeMaterialized, res.Results[0].Outcome,
 				"payload %q must materialize cleanly", tc.payload)
 
-			envFile := string(fs.contents["/tmp/secrets-env"])
+			envFile := string(fs.contents["/sandbox-runtime/secrets-env"])
 			requireBashSourceProducesValue(t, envFile, "VAR", tc.payload)
 		})
 	}
@@ -313,7 +313,7 @@ func TestG2_EnvSecret_InvalidVarName_Skipped(t *testing.T) {
 			}})
 			require.NoError(t, err, "invalid var_name must skip, not fail the batch")
 			require.Equal(t, OutcomeSkipped, res.Results[0].Outcome)
-			require.Empty(t, fs.contents["/tmp/secrets-env"],
+			require.Empty(t, fs.contents["/sandbox-runtime/secrets-env"],
 				"no env-file content must be written for skipped secret")
 		})
 	}
@@ -361,7 +361,7 @@ func TestG2_SSHKey_HostInjection(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, OutcomeSkipped, res.Results[0].Outcome,
 				"host %q must be rejected", host)
-			require.Empty(t, fs.contents["/home/sandbox/.ssh/config"],
+			require.Empty(t, fs.contents["/sandbox-runtime/rt/ssh/config"],
 				"no ssh config must be written for rejected host")
 		})
 	}
@@ -465,15 +465,15 @@ func TestG2_SecretFile_PathTraversal(t *testing.T) {
 		mountPath string
 		want      Outcome
 	}{
-		{"foo.txt", OutcomeMaterialized},                            // relative, under base
-		{"sub/foo.txt", OutcomeMaterialized},                        // nested
-		{"/home/sandbox/.secrets/foo.txt", OutcomeMaterialized},     // absolute under base
-		{"../../etc/passwd", OutcomeSkipped},                        // dot-dot
-		{"/etc/passwd", OutcomeSkipped},                             // absolute outside base
-		{"/home/sandbox/.secrets/../../etc/passwd", OutcomeSkipped}, // mixed
-		{"foo/../../../etc/passwd", OutcomeSkipped},                 // relative dot-dot
-		{"./..//etc/passwd", OutcomeSkipped},                        // normalised dot-dot
-		{"", OutcomeSkipped},                                        // empty
+		{"foo.txt", OutcomeMaterialized},                                 // relative, under base
+		{"sub/foo.txt", OutcomeMaterialized},                             // nested
+		{"/sandbox-runtime/rt/secrets/foo.txt", OutcomeMaterialized},     // absolute under base
+		{"../../etc/passwd", OutcomeSkipped},                             // dot-dot
+		{"/etc/passwd", OutcomeSkipped},                                  // absolute outside base
+		{"/sandbox-runtime/rt/secrets/../../etc/passwd", OutcomeSkipped}, // mixed
+		{"foo/../../../etc/passwd", OutcomeSkipped},                      // relative dot-dot
+		{"./..//etc/passwd", OutcomeSkipped},                             // normalised dot-dot
+		{"", OutcomeSkipped},                                             // empty
 	}
 	for _, tc := range cases {
 		t.Run(tc.mountPath, func(t *testing.T) {
@@ -488,8 +488,8 @@ func TestG2_SecretFile_PathTraversal(t *testing.T) {
 			require.Equal(t, tc.want, res.Results[0].Outcome,
 				"mount_path %q outcome", tc.mountPath)
 			for path := range fs.contents {
-				require.True(t, strings.HasPrefix(path, "/home/sandbox/.secrets/") ||
-					path == "/tmp/agent-config.json",
+				require.True(t, strings.HasPrefix(path, "/sandbox-runtime/rt/secrets/") ||
+					path == "/sandbox-runtime/agent-config.json",
 					"no file outside secrets base; got %q", path)
 			}
 		})
@@ -559,7 +559,7 @@ func TestMaterialize_MixedBatch_OneBadDoesNotBlockOthers(t *testing.T) {
 	require.Equal(t, OutcomeSkipped, res.Results[1].Outcome)
 	require.Equal(t, OutcomeMaterialized, res.Results[2].Outcome)
 
-	envFile := string(fs.contents["/tmp/secrets-env"])
+	envFile := string(fs.contents["/sandbox-runtime/secrets-env"])
 	require.Contains(t, envFile, "export GOOD=")
 	require.Contains(t, envFile, "export GOOD2=")
 	require.NotContains(t, envFile, "1BAD",
@@ -586,15 +586,15 @@ func TestMaterialize_UnknownType(t *testing.T) {
 // resolveMountPath direct tests -------------------------------------------
 
 func TestResolveMountPath(t *testing.T) {
-	base := "/home/sandbox/.secrets"
+	base := "/sandbox-runtime/rt/secrets"
 	cases := []struct {
 		input string
 		ok    bool
 		want  string
 	}{
-		{"foo.txt", true, "/home/sandbox/.secrets/foo.txt"},
-		{"sub/dir/file", true, "/home/sandbox/.secrets/sub/dir/file"},
-		{"/home/sandbox/.secrets/abs", true, "/home/sandbox/.secrets/abs"},
+		{"foo.txt", true, "/sandbox-runtime/rt/secrets/foo.txt"},
+		{"sub/dir/file", true, "/sandbox-runtime/rt/secrets/sub/dir/file"},
+		{"/sandbox-runtime/rt/secrets/abs", true, "/sandbox-runtime/rt/secrets/abs"},
 		{"../../etc/passwd", false, ""},
 		{"/etc/passwd", false, ""},
 		{"", false, ""},
@@ -678,7 +678,7 @@ func TestLLMProvider_Valid(t *testing.T) {
 	require.Equal(t, OutcomeMaterialized, res.Results[0].Outcome)
 
 	// Provider should be staged, not yet written to AgentConfigPath
-	require.Empty(t, fs.contents["/tmp/agent-config.json"],
+	require.Empty(t, fs.contents["/sandbox-runtime/agent-config.json"],
 		"provider must not be written until FlushProviders is called")
 	require.Len(t, m.stagedProviders, 1)
 	require.Equal(t, "anthropic", m.stagedProviders[0].Provider)
@@ -695,7 +695,7 @@ func TestLLMProvider_Valid_Minimal(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, OutcomeMaterialized, res.Results[0].Outcome)
 	require.Len(t, m.stagedProviders, 1)
-	require.Empty(t, fs.contents["/tmp/agent-config.json"])
+	require.Empty(t, fs.contents["/sandbox-runtime/agent-config.json"])
 }
 
 // TestLLMProvider_EmptyPlaintext is rejected.
@@ -796,7 +796,7 @@ func TestLLMProvider_MixedWithOtherTypes(t *testing.T) {
 	require.Len(t, m.stagedProviders, 2)
 
 	// Env file should still be written
-	require.Contains(t, string(fs.contents["/tmp/secrets-env"]), "export VAR=")
+	require.Contains(t, string(fs.contents["/sandbox-runtime/secrets-env"]), "export VAR=")
 }
 
 // TestLLMProvider_FlushProviders_CallsFormatter writes staged providers
@@ -822,7 +822,7 @@ func TestLLMProvider_FlushProviders_CallsFormatter(t *testing.T) {
 	})
 
 	require.NoError(t, m.FlushProviders(formatter))
-	require.Equal(t, `{"formatted":true}`, string(fs.contents["/tmp/agent-config.json"]))
+	require.Equal(t, `{"formatted":true}`, string(fs.contents["/sandbox-runtime/agent-config.json"]))
 }
 
 // TestLLMProvider_FlushProviders_NoStagedProviders is a no-op.
@@ -840,7 +840,7 @@ func TestLLMProvider_FlushProviders_NoStagedProviders(t *testing.T) {
 	})
 
 	require.NoError(t, m.FlushProviders(formatter))
-	require.Empty(t, fs.contents["/tmp/agent-config.json"],
+	require.Empty(t, fs.contents["/sandbox-runtime/agent-config.json"],
 		"no agent config should be written when no providers staged")
 }
 
@@ -856,7 +856,7 @@ func TestLLMProvider_FlushProviders_NilFormatter(t *testing.T) {
 	require.Len(t, m.stagedProviders, 1)
 
 	require.NoError(t, m.FlushProviders(nil))
-	require.Empty(t, fs.contents["/tmp/agent-config.json"],
+	require.Empty(t, fs.contents["/sandbox-runtime/agent-config.json"],
 		"no agent config should be written when formatter is nil")
 }
 
@@ -895,7 +895,7 @@ func TestG20_LLMProvider_Mode0600(t *testing.T) {
 	})
 	require.NoError(t, m.FlushProviders(formatter))
 
-	mode, ok := fs.modes["/tmp/agent-config.json"]
+	mode, ok := fs.modes["/sandbox-runtime/agent-config.json"]
 	require.True(t, ok, "mode should be recorded for agent-config.json")
 	require.Equal(t, os.FileMode(0o600), mode,
 		"agent config must be written with mode 0600 (G20)")
@@ -925,11 +925,11 @@ func TestMaterialize_PartialFailure_ReturnsSentinel(t *testing.T) {
 		FS: failing,
 		Paths: Paths{
 			Home:            "/home/sandbox",
-			SecretsBaseDir:  "/home/sandbox/.secrets",
-			SSHDir:          "/home/sandbox/.ssh",
-			AgentConfigPath: "/tmp/agent-config.json",
-			SecretsEnvPath:  "/tmp/secrets-env",
-			GitCredsPath:    "/home/sandbox/.git-credentials",
+			SecretsBaseDir:  "/sandbox-runtime/rt/secrets",
+			SSHDir:          "/sandbox-runtime/rt/ssh",
+			AgentConfigPath: "/sandbox-runtime/agent-config.json",
+			SecretsEnvPath:  "/sandbox-runtime/secrets-env",
+			GitCredsPath:    "/sandbox-runtime/rt/git-credentials",
 		},
 	}
 	_, err := m.Materialize([]Secret{

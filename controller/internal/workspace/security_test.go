@@ -115,6 +115,7 @@ func TestSandboxPod_VolumeFootprint(t *testing.T) {
 	expectedVolumes := map[string]bool{
 		"workspace":       false,
 		"sandbox-cfg":     false,
+		"sandbox-runtime": false,
 		"pw-secret":       false,
 		"bootstrap-token": false,
 	}
@@ -166,6 +167,73 @@ func TestSandboxPod_VolumeFootprint(t *testing.T) {
 		require.NotEqual(t, "bootstrap-token", m.Name,
 			"bootstrap-token must NOT be mounted on the main container (G17)")
 	}
+
+	// US-35.7: sandbox-runtime must be tmpfs (Memory medium) and RW on main container.
+	var sandboxRuntimeVol *corev1.Volume
+	for i := range pod.Spec.Volumes {
+		if pod.Spec.Volumes[i].Name == "sandbox-runtime" {
+			sandboxRuntimeVol = &pod.Spec.Volumes[i]
+			break
+		}
+	}
+	require.NotNil(t, sandboxRuntimeVol, "sandbox-runtime volume must exist")
+	require.NotNil(t, sandboxRuntimeVol.EmptyDir, "sandbox-runtime must be emptyDir")
+	require.Equal(t, corev1.StorageMediumMemory, sandboxRuntimeVol.EmptyDir.Medium,
+		"sandbox-runtime must be Memory medium (tmpfs)")
+	require.NotNil(t, sandboxRuntimeVol.EmptyDir.SizeLimit)
+	require.Equal(t, "96Mi", sandboxRuntimeVol.EmptyDir.SizeLimit.String(),
+		"sandbox-runtime SizeLimit must be 96Mi")
+
+	var sandboxRuntimeMount *corev1.VolumeMount
+	for _, m := range main.VolumeMounts {
+		if m.Name == "sandbox-runtime" {
+			sandboxRuntimeMount = &m
+			break
+		}
+	}
+	require.NotNil(t, sandboxRuntimeMount, "sandbox-runtime must be mounted on main container")
+	require.False(t, sandboxRuntimeMount.ReadOnly,
+		"sandbox-runtime must be RW on main container (agentd writes here)")
+
+	// sandbox-cfg must still be RO on main container (input-only volume).
+	var sandboxCfgMount *corev1.VolumeMount
+	for _, m := range main.VolumeMounts {
+		if m.Name == "sandbox-cfg" {
+			sandboxCfgMount = &m
+			break
+		}
+	}
+	require.NotNil(t, sandboxCfgMount, "sandbox-cfg must be mounted on main container")
+	require.True(t, sandboxCfgMount.ReadOnly,
+		"sandbox-cfg must remain RO on main container (input-only)")
+
+	// US-35.7: credential-setup init container must have RW PVC mounts for symlink creation.
+	var credInit *corev1.Container
+	for i := range pod.Spec.InitContainers {
+		if pod.Spec.InitContainers[i].Name == "credential-setup" {
+			credInit = &pod.Spec.InitContainers[i]
+			break
+		}
+	}
+	require.NotNil(t, credInit, "credential-setup init container must exist")
+	credMountNames := make(map[string]bool)
+	for _, m := range credInit.VolumeMounts {
+		credMountNames[m.Name+"@"+m.MountPath] = !m.ReadOnly
+	}
+	require.True(t, credMountNames["workspace@/home/sandbox"],
+		"credential-setup init must mount /home/sandbox RW (for symlink creation)")
+	require.True(t, credMountNames["workspace@/workspace"],
+		"credential-setup init must mount /workspace RW (for auth.json symlink)")
+	require.True(t, credMountNames["sandbox-runtime@/sandbox-runtime"],
+		"credential-setup init must mount /sandbox-runtime RW")
+
+	// US-35.7: init script must create the symlink farm + use set -e.
+	script := credInit.Command[2]
+	require.Contains(t, script, "set -e", "init script must use set -e (surface symlink failures)")
+	require.Contains(t, script, "ln -s /sandbox-runtime/rt/ssh", "init script must symlink .ssh to tmpfs")
+	require.Contains(t, script, "ln -s /sandbox-runtime/rt/secrets", "init script must symlink .secrets to tmpfs")
+	require.Contains(t, script, "ln -s /sandbox-runtime/rt/git-credentials", "init script must symlink .git-credentials to tmpfs")
+	require.Contains(t, script, "ln -s /sandbox-runtime/rt/auth.json", "init script must symlink auth.json to tmpfs")
 
 	expectedMounts := map[string]bool{
 		"workspace":   false,
