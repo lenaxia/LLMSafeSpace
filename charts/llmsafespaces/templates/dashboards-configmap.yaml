@@ -1,4 +1,25 @@
 {{- if and .Values.monitoring.enabled .Values.monitoring.dashboards.enabled }}
+{{- /*
+  Build release-derived job-label patterns so dashboard PromQL matches the
+  ServiceMonitors actually deployed. The api ServiceMonitor is named
+  `<fullname>-api`; the controller ServiceMonitor is named
+  `<fullname>-controller`. Prometheus Operator's default `job` label
+  derivation uses the ServiceMonitor name unless `jobLabel` is set
+  (it isn't here). The `.*` regex suffix tolerates Service-name
+  suffixes (e.g. the controller's `-metrics` Service suffix, headless
+  variants) and matches the pattern used in prometheus-rules.yaml.
+
+  The dashboard JSON files contain PLACEHOLDER strings (__LLMSAFESPACES_*_JOB__)
+  rather than Helm template directives. This avoids a clash between Grafana's
+  legend-template syntax (`{{model_id}}` and similar) and Helm's `tpl` parser:
+  the dashboards have hundreds of `{{ }}` strings that are NOT Helm directives,
+  and `tpl` would fail to parse them. Simple string substitution via the
+  `replace` pipeline avoids that problem entirely.
+
+  See worklog NNNN_2026-06-23_grafana-dashboard-job-vars for context.
+*/ -}}
+{{- $apiJob := printf "%s-api.*" (include "llmsafespaces.fullname" .) -}}
+{{- $ctrlJob := printf "%s-controller.*" (include "llmsafespaces.fullname" .) -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -17,6 +38,6 @@ metadata:
 data:
   {{- range $path, $_ := .Files.Glob "dashboards/**.json" }}
   {{ base $path }}: |-
-{{ $.Files.Get $path | indent 4 }}
+{{ $.Files.Get $path | replace "__LLMSAFESPACES_API_JOB__" $apiJob | replace "__LLMSAFESPACES_CTRL_JOB__" $ctrlJob | indent 4 }}
   {{- end }}
 {{- end }}
