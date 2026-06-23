@@ -780,6 +780,37 @@ func (s *Service) CountWorkspacesByUserAndOrg(ctx context.Context, userID, orgID
 	return count, nil
 }
 
+// PurgeUserSecrets deletes every user-owned secret row for a user:
+// provider_credentials (LLM provider keys) and user_secrets. It is
+// called from the email password-reset flow to make the "your saved
+// keys will be deleted" guarantee literal.
+//
+// The DEK reinitialisation that precedes this call already makes the
+// old ciphertext cryptographically undecryptable; deleting the rows
+// removes them outright and guarantees no future materialization can
+// resurrect them. Both tables' dependents (workspace_credential_bindings,
+// user_secret_bindings) reference the parent with ON DELETE CASCADE, so
+// no orphaned binding rows remain. Rows deleted before this call by the
+// DEK reinit's UPSERT (user_keys) are unaffected.
+//
+// Best-effort at the caller: a failure here does not undo the reset
+// because the cryptographic erasure has already happened.
+func (s *Service) PurgeUserSecrets(ctx context.Context, userID string) error {
+	if _, err := s.DB.ExecContext(ctx,
+		`DELETE FROM provider_credentials WHERE owner_type = 'user' AND owner_id = $1`,
+		userID,
+	); err != nil {
+		return fmt.Errorf("delete user provider credentials: %w", err)
+	}
+	if _, err := s.DB.ExecContext(ctx,
+		`DELETE FROM user_secrets WHERE user_id = $1`,
+		userID,
+	); err != nil {
+		return fmt.Errorf("delete user secrets: %w", err)
+	}
+	return nil
+}
+
 func (s *Service) CountActiveWorkspacesByUserAndOrg(ctx context.Context, userID, orgID string) (int, error) {
 	var count int
 	if err := s.DB.QueryRowContext(ctx,

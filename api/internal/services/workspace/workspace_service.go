@@ -6,6 +6,7 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -586,6 +587,55 @@ func (s *Service) SuspendWorkspace(ctx context.Context, userID, workspaceID stri
 
 	s.logger.Info("Workspace suspend initiated", "workspaceID", workspaceID, "userID", userID)
 	return nil
+}
+
+// NeutralizeUserWorkspaces suspends every Active workspace owned by
+// userID and scrubs the ephemeral workspace-secrets-<id> Kubernetes
+// Secret for each. It is invoked by the email password-reset flow so
+// that live pods are destroyed (their in-memory and /sandbox-cfg tmpfs
+// copies of decrypted keys die with the pod) and so a later resume
+// cannot re-materialize the previous plaintext from a stale
+// workspace-secrets-<id> Secret.
+//
+// Suspend is best-effort: workspaces not in the Active phase (Creating,
+// Resuming, already Suspended, ...) are skipped without aborting the
+// loop, and individual failures are logged. The K8s Secret scrub runs
+// for every workspace regardless of phase and ignores NotFound (the
+// controller already deletes the Secret for Active workspaces; the
+// scrub is the guarantee for Suspended/Failed ones). A nil k8sClient
+// (dev/test) makes the whole call a no-op.
+func (s *Service) NeutralizeUserWorkspaces(ctx context.Context, userID string) error {
+	phases := s.fetchUserWorkspacePhases(ctx, userID)
+	for wsID := range phases {
+		if err := s.SuspendWorkspace(ctx, userID, wsID); err != nil {
+			// A conflict means the workspace is not Active (Creating,
+			// Resuming, Suspended, Terminating, ...). That is expected
+			// during a bulk sweep and must not be noisy. Anything else
+			// is logged so an operator sees real degradation.
+			var apiErr *apierrors.APIError
+			if !(errors.As(err, &apiErr) && apiErr.Type == apierrors.ErrorTypeConflict) {
+				s.logger.Warn("neutralize: suspend workspace failed",
+					"workspaceID", wsID, "error", err.Error())
+			}
+		}
+		if err := s.deleteWorkspaceSecretsManifest(ctx, wsID); err != nil && !k8serrors.IsNotFound(err) {
+			s.logger.Warn("neutralize: scrub secrets manifest failed",
+				"workspaceID", wsID, "error", err.Error())
+		}
+	}
+	return nil
+}
+
+// deleteWorkspaceSecretsManifest deletes the workspace-secrets-<id>
+// Kubernetes Secret. It is the scrub half of NeutralizeUserWorkspaces
+// and mirrors the client access path of EnsureSecretsManifest.
+func (s *Service) deleteWorkspaceSecretsManifest(ctx context.Context, workspaceID string) error {
+	if s.k8sClient == nil {
+		return nil
+	}
+	secretName := fmt.Sprintf("workspace-secrets-%s", workspaceID)
+	clientset := s.k8sClient.Clientset()
+	return clientset.CoreV1().Secrets(s.config.Namespace).Delete(ctx, secretName, metav1.DeleteOptions{})
 }
 
 // RestartWorkspace bumps spec.restartGeneration so the controller's

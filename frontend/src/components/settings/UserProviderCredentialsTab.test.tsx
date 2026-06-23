@@ -11,25 +11,19 @@ import { UserProviderCredentialsTab } from "./UserProviderCredentialsTab";
 const mockList = vi.fn();
 const mockCreate = vi.fn();
 const mockDelete = vi.fn();
-const mockListBindings = vi.fn();
-const mockBind = vi.fn();
-const mockUnbind = vi.fn();
-const mockListWorkspaces = vi.fn();
 
 vi.mock("../../api/providerCredentials", () => ({
   userProviderCredentialsApi: {
     list: () => mockList(),
     create: (req: unknown) => mockCreate(req),
     delete: (id: string) => mockDelete(id),
-    listBindings: (id: string) => mockListBindings(id),
-    bindToWorkspace: (id: string, wsId: string) => mockBind(id, wsId),
-    unbindFromWorkspace: (id: string, wsId: string) => mockUnbind(id, wsId),
-  },
-}));
-
-vi.mock("../../api/workspaces", () => ({
-  workspacesApi: {
-    list: () => mockListWorkspaces(),
+    // Bind/unbind endpoints still exist server-side, but the UI no longer calls
+    // them (keys are auto-bound to all of a user's workspaces). Provided here as
+    // no-ops so any incidental access does not throw.
+    listBindings: () => Promise.resolve({ workspaceIds: [], bindings: [] }),
+    bindToWorkspace: () => Promise.resolve(),
+    unbindFromWorkspace: () => Promise.resolve(),
+    probeModelsAnon: () => Promise.resolve({ models: [], warning: undefined }),
   },
 }));
 
@@ -43,8 +37,6 @@ const CRED = {
   updatedAt: "2026-01-02T00:00:00Z",
 };
 
-const WS = { id: "ws-1", name: "My Workspace", phase: "Active" };
-
 function renderTab() {
   return render(
     <ToastProvider>
@@ -55,8 +47,6 @@ function renderTab() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockListBindings.mockResolvedValue({ workspaceIds: [], bindings: [] });
-  mockListWorkspaces.mockResolvedValue({ workspaces: [] });
 });
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -86,6 +76,29 @@ describe("UserProviderCredentialsTab", () => {
     });
   });
 
+  it("renders the zero-knowledge security explainer", async () => {
+    mockList.mockResolvedValue([]);
+    renderTab();
+    await waitFor(() => {
+      expect(screen.getByText("How your keys are protected")).toBeInTheDocument();
+      // "Zero Knowledge encryption" appears in both explainer paragraphs
+      expect(screen.getAllByText(/Zero Knowledge encryption/)).toHaveLength(2);
+      // Layperson warning about password-reset consequence
+      expect(screen.getByText(/reset it by email/)).toBeInTheDocument();
+      expect(screen.getByText(/They will be deleted/)).toBeInTheDocument();
+      expect(screen.getByText(/attacker would not be able to steal your secrets/)).toBeInTheDocument();
+    });
+  });
+
+  it("states that keys are automatically available across all workspaces", async () => {
+    mockList.mockResolvedValue([CRED]);
+    renderTab();
+    await waitFor(() => screen.getByText("My OpenAI Key"));
+    expect(
+      screen.getByText(/Your keys are automatically available across all of your workspaces/),
+    ).toBeInTheDocument();
+  });
+
   it("shows error banner on load failure and can dismiss it", async () => {
     mockList.mockRejectedValue(new Error("load failed"));
     renderTab();
@@ -94,81 +107,7 @@ describe("UserProviderCredentialsTab", () => {
     expect(screen.queryByText("load failed")).not.toBeInTheDocument();
   });
 
-  it("expands row and loads workspace list and bindings", async () => {
-    mockList.mockResolvedValue([CRED]);
-    mockListBindings.mockResolvedValue({ workspaceIds: ["ws-1"], bindings: [{ workspaceId: "ws-1", sourceType: "explicit" }] });
-    mockListWorkspaces.mockResolvedValue({ workspaces: [WS] });
-    renderTab();
-    await waitFor(() => screen.getByText("My OpenAI Key"));
-
-    fireEvent.click(screen.getByText("My OpenAI Key"));
-
-    await waitFor(() => {
-      expect(mockListBindings).toHaveBeenCalledWith("cred-1");
-      expect(mockListWorkspaces).toHaveBeenCalled();
-      expect(screen.getByText("My Workspace")).toBeInTheDocument();
-    });
-  });
-
-  it("shows Unbind button for already-bound workspace", async () => {
-    mockList.mockResolvedValue([CRED]);
-    mockListBindings.mockResolvedValue({ workspaceIds: ["ws-1"], bindings: [{ workspaceId: "ws-1", sourceType: "explicit" }] });
-    mockListWorkspaces.mockResolvedValue({ workspaces: [WS] });
-    renderTab();
-    await waitFor(() => screen.getByText("My OpenAI Key"));
-    fireEvent.click(screen.getByText("My OpenAI Key"));
-
-    await waitFor(() => screen.getByText("My Workspace"));
-    expect(screen.getByText("Unbind")).toBeInTheDocument();
-  });
-
-  it("shows Bind button for unbound workspace", async () => {
-    mockList.mockResolvedValue([CRED]);
-    mockListBindings.mockResolvedValue({ workspaceIds: [], bindings: [] });
-    mockListWorkspaces.mockResolvedValue({ workspaces: [WS] });
-    renderTab();
-    await waitFor(() => screen.getByText("My OpenAI Key"));
-    fireEvent.click(screen.getByText("My OpenAI Key"));
-
-    await waitFor(() => screen.getByText("My Workspace"));
-    expect(screen.getByText("Bind")).toBeInTheDocument();
-  });
-
-  it("bind calls API and updates button to Unbind", async () => {
-    mockList.mockResolvedValue([CRED]);
-    mockListBindings.mockResolvedValue({ workspaceIds: [], bindings: [] });
-    mockListWorkspaces.mockResolvedValue({ workspaces: [WS] });
-    mockBind.mockResolvedValue({ bound: true });
-    renderTab();
-    await waitFor(() => screen.getByText("My OpenAI Key"));
-    fireEvent.click(screen.getByText("My OpenAI Key"));
-    await waitFor(() => screen.getByText("Bind"));
-
-    fireEvent.click(screen.getByText("Bind"));
-    await waitFor(() => {
-      expect(mockBind).toHaveBeenCalledWith("cred-1", "ws-1");
-      expect(screen.getByText("Unbind")).toBeInTheDocument();
-    });
-  });
-
-  it("unbind calls API and updates button to Bind", async () => {
-    mockList.mockResolvedValue([CRED]);
-    mockListBindings.mockResolvedValue({ workspaceIds: ["ws-1"], bindings: [{ workspaceId: "ws-1", sourceType: "explicit" }] });
-    mockListWorkspaces.mockResolvedValue({ workspaces: [WS] });
-    mockUnbind.mockResolvedValue(undefined);
-    renderTab();
-    await waitFor(() => screen.getByText("My OpenAI Key"));
-    fireEvent.click(screen.getByText("My OpenAI Key"));
-    await waitFor(() => screen.getByText("Unbind"));
-
-    fireEvent.click(screen.getByText("Unbind"));
-    await waitFor(() => {
-      expect(mockUnbind).toHaveBeenCalledWith("cred-1", "ws-1");
-      expect(screen.getByText("Bind")).toBeInTheDocument();
-    });
-  });
-
-  it("expanded row shows ID, dates, baseURL, model allowlist", async () => {
+  it("expanded row shows read-only details: ID, updated, baseURL, model allowlist", async () => {
     mockList.mockResolvedValue([CRED]);
     renderTab();
     await waitFor(() => screen.getByText("My OpenAI Key"));
@@ -179,6 +118,18 @@ describe("UserProviderCredentialsTab", () => {
       expect(screen.getByText("https://ai.example.com/v1")).toBeInTheDocument();
       expect(screen.getByText("glm-5.1, gpt-4o")).toBeInTheDocument();
     });
+  });
+
+  it("expanded row does not render per-workspace bind/unbind controls", async () => {
+    mockList.mockResolvedValue([CRED]);
+    renderTab();
+    await waitFor(() => screen.getByText("My OpenAI Key"));
+    fireEvent.click(screen.getByText("My OpenAI Key"));
+
+    await waitFor(() => screen.getByText("cred-1"));
+    expect(screen.queryByText("Workspace bindings")).not.toBeInTheDocument();
+    expect(screen.queryByText("Bind")).not.toBeInTheDocument();
+    expect(screen.queryByText("Unbind")).not.toBeInTheDocument();
   });
 
   it("inline delete confirm shows Yes/No, Yes calls delete", async () => {
@@ -247,18 +198,5 @@ describe("UserProviderCredentialsTab", () => {
     fireEvent.click(addBtns[addBtns.length - 1]!);
     expect(screen.getByText(/Name, provider, and API key are required/)).toBeInTheDocument();
     expect(mockCreate).not.toHaveBeenCalled();
-  });
-
-  it("shows 'No workspaces found' when workspace list is empty", async () => {
-    mockList.mockResolvedValue([CRED]);
-    mockListBindings.mockResolvedValue({ workspaceIds: [], bindings: [] });
-    mockListWorkspaces.mockResolvedValue({ workspaces: [] });
-    renderTab();
-    await waitFor(() => screen.getByText("My OpenAI Key"));
-    fireEvent.click(screen.getByText("My OpenAI Key"));
-
-    await waitFor(() => {
-      expect(screen.getByText(/No workspaces found/)).toBeInTheDocument();
-    });
   });
 });
