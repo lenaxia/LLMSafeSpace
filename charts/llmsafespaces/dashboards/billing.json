@@ -109,7 +109,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(increase(llmsafespaces_inference_cost_dollars_total{job=\"llmsafespace-api\"}[$__range]))",
+          "expr": "sum(increase(llmsafespaces_inference_cost_dollars_total{job=~\"__LLMSAFESPACES_API_JOB__\"}[$__range]))",
           "refId": "A"
         }
       ],
@@ -171,7 +171,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(increase(llmsafespaces_inference_requests_total{job=\"llmsafespace-api\"}[$__range]))",
+          "expr": "sum(increase(llmsafespaces_inference_requests_total{job=~\"__LLMSAFESPACES_API_JOB__\"}[$__range]))",
           "refId": "A"
         }
       ],
@@ -233,7 +233,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(increase(llmsafespaces_inference_input_tokens_total{job=\"llmsafespace-api\"}[$__range]))",
+          "expr": "sum(increase(llmsafespaces_inference_input_tokens_total{job=~\"__LLMSAFESPACES_API_JOB__\"}[$__range]))",
           "refId": "A"
         }
       ],
@@ -295,7 +295,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(increase(llmsafespaces_inference_output_tokens_total{job=\"llmsafespace-api\"}[$__range]))",
+          "expr": "sum(increase(llmsafespaces_inference_output_tokens_total{job=~\"__LLMSAFESPACES_API_JOB__\"}[$__range]))",
           "refId": "A"
         }
       ],
@@ -377,7 +377,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(llmsafespaces_inference_cost_dollars_total{job=\"llmsafespace-api\"}[$__rate_interval])) by (model_id) * 3600",
+          "expr": "sum(rate(llmsafespaces_inference_cost_dollars_total{job=~\"__LLMSAFESPACES_API_JOB__\"}[$__rate_interval])) by (model_id) * 3600",
           "legendFormat": "{{model_id}}",
           "refId": "A"
         }
@@ -491,7 +491,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(llmsafespaces_inference_cost_dollars_total{job=\"llmsafespace-api\"}[$__rate_interval])) by (tier) * 3600",
+          "expr": "sum(rate(llmsafespaces_inference_cost_dollars_total{job=~\"__LLMSAFESPACES_API_JOB__\"}[$__rate_interval])) by (tier) * 3600",
           "legendFormat": "{{tier}}",
           "refId": "A"
         }
@@ -869,7 +869,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(llmsafespaces_inference_input_tokens_total{job=\"llmsafespace-api\"}[$__rate_interval])) by (model_id)",
+          "expr": "sum(rate(llmsafespaces_inference_input_tokens_total{job=~\"__LLMSAFESPACES_API_JOB__\"}[$__rate_interval])) by (model_id)",
           "legendFormat": "input {{model_id}}",
           "refId": "A"
         },
@@ -878,7 +878,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(llmsafespaces_inference_output_tokens_total{job=\"llmsafespace-api\"}[$__rate_interval])) by (model_id)",
+          "expr": "sum(rate(llmsafespaces_inference_output_tokens_total{job=~\"__LLMSAFESPACES_API_JOB__\"}[$__rate_interval])) by (model_id)",
           "legendFormat": "output {{model_id}}",
           "refId": "B"
         }
@@ -961,7 +961,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(llmsafespaces_inference_requests_total{job=\"llmsafespace-api\"}[$__rate_interval])) by (model_id, provider_id)",
+          "expr": "sum(rate(llmsafespaces_inference_requests_total{job=~\"__LLMSAFESPACES_API_JOB__\"}[$__rate_interval])) by (model_id, provider_id)",
           "legendFormat": "{{model_id}} ({{provider_id}})",
           "refId": "A"
         }
@@ -1043,7 +1043,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(increase(llmsafespaces_model_selections_total{job=\"llmsafespace-api\"}[$__rate_interval])) by (model_id, tier)",
+          "expr": "sum(increase(llmsafespaces_model_selections_total{job=~\"__LLMSAFESPACES_API_JOB__\"}[$__rate_interval])) by (model_id, tier)",
           "legendFormat": "{{model_id}} ({{tier}})",
           "refId": "A"
         }
@@ -1125,7 +1125,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(increase(llmsafespaces_relay_injector_total{job=\"llmsafespace-api\"}[$__rate_interval])) by (outcome)",
+          "expr": "sum(increase(llmsafespaces_relay_injector_total{job=~\"__LLMSAFESPACES_API_JOB__\"}[$__rate_interval])) by (outcome)",
           "legendFormat": "{{outcome}}",
           "refId": "A"
         }
@@ -1222,7 +1222,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(increase(llmsafespaces_metering_quota_exceeded_total{job=\"llmsafespace-api\"}[$__rate_interval])) by (event_type)",
+          "expr": "sum(increase(llmsafespaces_metering_quota_exceeded_total{job=~\"__LLMSAFESPACES_API_JOB__\"}[$__rate_interval])) by (event_type)",
           "legendFormat": "{{event_type}}",
           "refId": "A"
         }

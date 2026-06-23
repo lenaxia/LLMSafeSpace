@@ -34,10 +34,10 @@ package chart_test
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -2142,25 +2142,44 @@ func TestMonitoring_DashboardConfigMap_NotEmpty(t *testing.T) {
 }
 
 // TestMonitoring_DashboardJobVariablesPortable verifies that the operational
-// and billing dashboards do not hard-code a specific job-label spelling for
-// the $job and $controller_job template variables. Helm release names vary
-// (e.g. `llmsafespace` singular vs `llmsafespaces` plural); the resulting
-// scrape-job labels are tied to Service names, which are tied to release
-// names. A dashboard with `current.value=["llmsafespaces-api"]` saved as
-// the default renders empty in any deployment whose Service labels emit
+// and billing dashboards' PromQL job-label matchers are rendered from the
+// release name at chart-render time, not hard-coded to a specific release.
+//
+// Helm release names vary (e.g. `llmsafespace` singular vs `llmsafespaces`
+// plural); the resulting scrape-job labels are tied to Service names, which
+// are tied to release names. A dashboard with `job="llmsafespaces-api"`
+// hard-coded would render empty in any deployment whose Service labels emit
 // `llmsafespace-api` (or any other release-derived name).
 //
-// Two contracts are enforced:
+// The chart eliminates this risk by:
 //
-//   - includeAll=true so $job/$controller_job has an "All" option that
-//     matches every job emitting the metric.
-//   - allValue=".*" so the regex query expands to "match anything",
-//     working in single-instance and multi-instance deployments alike.
+//  1. Storing dashboard JSON files with PLACEHOLDER strings
+//     (__LLMSAFESPACES_API_JOB__, __LLMSAFESPACES_CTRL_JOB__) instead of
+//     hard-coded job names.
+//  2. Substituting them at render time in dashboards-configmap.yaml using
+//     the Helm `replace` pipeline against a release-derived `<fullname>-api.*`
+//     / `<fullname>-controller.*` regex pattern (matches the convention in
+//     prometheus-rules.yaml).
 //
-// Worklog 0508 documents the cluster state where this regressed: the
-// dashboard JSON shipped with current.value=["llmsafespaces-api"] but
-// the Service emitted job=llmsafespace-api, leaving every panel empty
-// on first load until the operator manually picked a job.
+// This test enforces three contracts on the rendered ConfigMap:
+//
+//   - **No leftover placeholders.** Every __LLMSAFESPACES_*_JOB__ string
+//     must have been substituted; an unrendered placeholder would produce
+//     PromQL that matches no series.
+//   - **Job matchers contain the test release name.** `job=~"...llmsafespaces-api.*"`
+//     etc. — proves the substitution is wired and uses the release-derived
+//     pattern rather than a fixed string.
+//   - **No hard-coded release-specific job names remain.** No literal
+//     `llmsafespace-api` (singular, the failure mode of worklog 0508) or
+//     other plausible-looking release-prefix that would be a regression.
+//
+// Worklog 0508 documents the original failure mode where dashboards shipped
+// with hard-coded `current.value=["llmsafespaces-api"]` but the cluster's
+// ServiceMonitor emitted `job=llmsafespace-api`, leaving every panel empty
+// on first load. Worklog NNNN_2026-06-23_grafana-dashboard-job-vars-portable
+// documents the redesign that eliminates the template-variable indirection
+// (and thus the entire stale-URL-var failure mode) while still being
+// release-portable via Helm-time substitution.
 func TestMonitoring_DashboardJobVariablesPortable(t *testing.T) {
 	docs := helmTemplate(t, "monitoring:\n  enabled: true\n")
 	var cm map[string]any
@@ -2173,50 +2192,57 @@ func TestMonitoring_DashboardJobVariablesPortable(t *testing.T) {
 	require.NotNil(t, cm)
 	data, _ := cm["data"].(map[string]any)
 
+	// helmTemplate uses a fixed release name; pull it from the rendered
+	// ConfigMap's name rather than hard-coding it here so that any future
+	// change to the test harness's release name keeps this test correct.
+	cmName := metaName(cm)
+	releasePrefix := strings.TrimSuffix(cmName, "-grafana-dashboards")
+
 	for _, key := range []string{"operational.json", "billing.json"} {
 		content, ok := data[key].(string)
-		if !ok {
-			continue // billing.json may not define both vars; checked per-var
-		}
-		var dash map[string]any
-		require.NoError(t, json.Unmarshal([]byte(content), &dash),
-			"dashboard %q must be valid JSON", key)
-		tmpl, _ := dash["templating"].(map[string]any)
-		list, _ := tmpl["list"].([]any)
-		for _, item := range list {
-			v, _ := item.(map[string]any)
-			name, _ := v["name"].(string)
-			if name != "job" && name != "controller_job" {
-				continue
-			}
-			includeAll, _ := v["includeAll"].(bool)
-			require.True(t, includeAll,
-				"%s.%s must have includeAll=true so the dashboard is portable across release names",
-				key, name)
-			allValue, _ := v["allValue"].(string)
-			require.Equal(t, ".*", allValue,
-				"%s.%s must have allValue=\".*\" so the All selection matches every emitted job label",
-				key, name)
-			cur, _ := v["current"].(map[string]any)
-			curVal := cur["value"]
-			// Reject any saved default that hard-codes a specific
-			// release-derived job label. Either '$__all' or an empty
-			// list is acceptable; anything containing "llmsafespace"
-			// is a regression.
-			s := strings.ToLower(toString(curVal))
-			require.NotContains(t, s, "llmsafespace",
-				"%s.%s.current.value must not hard-code a release-specific job name (got %v)",
-				key, name, curVal)
-		}
-	}
-}
+		require.True(t, ok, "dashboard %q must be present in the ConfigMap", key)
 
-// toString is a tiny helper for the assertion above: format any JSON value
-// to a string for substring checks. Avoids pulling in fmt.Sprint's verb
-// quirks for slices/maps.
-func toString(v any) string {
-	b, _ := json.Marshal(v)
-	return string(b)
+		// Contract 1: every placeholder must have been rendered.
+		require.NotContains(t, content, "__LLMSAFESPACES_API_JOB__",
+			"%s: every __LLMSAFESPACES_API_JOB__ placeholder must be substituted at chart-render time; "+
+				"an unrendered placeholder would produce PromQL that matches no series",
+			key)
+		require.NotContains(t, content, "__LLMSAFESPACES_CTRL_JOB__",
+			"%s: every __LLMSAFESPACES_CTRL_JOB__ placeholder must be substituted at chart-render time",
+			key)
+
+		// Contract 2: job matchers must contain the release-derived prefix.
+		// Operational has both api and controller jobs; billing only has api.
+		require.Contains(t, content, releasePrefix+"-api.*",
+			"%s: must contain `%s-api.*` after rendering, proving the api-job substitution is wired "+
+				"to the release name (not a static string)",
+			key, releasePrefix)
+		if key == "operational.json" {
+			require.Contains(t, content, releasePrefix+"-controller.*",
+				"%s: must contain `%s-controller.*` after rendering, proving the controller-job "+
+					"substitution is wired to the release name",
+				key, releasePrefix)
+		}
+
+		// Contract 3: the rendered output must NOT contain the singular
+		// `llmsafespace-api` (without the trailing s) — that was the
+		// failure mode of worklog 0508 where a stale dashboard JSON had
+		// `current.value=["llmsafespace-api"]` hard-coded. The rendered
+		// output should only contain `<release>-llmsafespaces-api.*`
+		// (release name + chart name plural + suffix).
+		//
+		// Phrased as a regex: any `job=~"X"` matcher where X starts with
+		// `llmsafespace-` (singular, no trailing s before the dash) is a
+		// regression. Allow the plural form `llmsafespaces-` because the
+		// chart name is plural; reject the singular form.
+		bad := regexp.MustCompile(`job=~?"llmsafespace-(api|controller)`)
+		require.False(t, bad.MatchString(content),
+			"%s: contains a hard-coded singular release-name reference (`llmsafespace-api` or "+
+				"`llmsafespace-controller`). This is the regression mode of worklog 0508. "+
+				"All job matchers must use the release-derived pattern from "+
+				"dashboards-configmap.yaml's replace pipeline.",
+			key)
+	}
 }
 
 //
