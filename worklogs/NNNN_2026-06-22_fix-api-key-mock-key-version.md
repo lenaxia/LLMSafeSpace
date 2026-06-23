@@ -63,6 +63,12 @@ Used `sqlmock.AnyArg()` for the new `key_version` insert arg because neither `Cr
 
 ---
 
+## Blockers
+
+None.
+
+---
+
 ## Tests Run
 
 ```bash
