@@ -1281,6 +1281,95 @@ describe("SessionActivityProvider — pending prompt content", () => {
     expect(screen.getByTestId("pulse-B").textContent).toBe("1");
   });
 
+  it("clearSessionPendingPrompts on a parent does NOT clear or orphan a subtask's prompt", () => {
+    // Regression guard: clearing is scoped to session_id, NOT root_session_id.
+    // A parent going idle/error must leave its subtask's live prompt + indicator
+    // intact (and not delete requestToSessionRef so the subtask can still resolve).
+    function Display() {
+      const addQ = useAddPendingQuestion();
+      const remove = useRemovePendingAction();
+      const clear = useClearSessionPendingPrompts();
+      // The subtask prompt bubbles to the parent view (root match)…
+      const parentView = usePendingQuestionsForSession("parent");
+      // …and is present on the subtask's own session too.
+      const subtaskOwn = usePendingQuestionsForSession("child");
+      const subtaskPulse = useIsSessionPendingAction("child");
+      const parentPulse = useIsSessionPendingAction("parent");
+      return (
+        <>
+          <span data-testid="parent-view">{parentView.length}</span>
+          <span data-testid="subtask-own">{subtaskOwn.length}</span>
+          <span data-testid="subtask-pulse">{subtaskPulse ? "1" : "0"}</span>
+          <span data-testid="parent-pulse">{parentPulse ? "1" : "0"}</span>
+          <button data-testid="add" onClick={() => addQ("ws-1", makeQuestion("q1", "child", "parent"))} />
+          <button data-testid="clear-parent" onClick={() => clear("parent")} />
+          <button data-testid="resolve-subtask" onClick={() => remove("q1")} />
+        </>
+      );
+    }
+
+    renderProvider(<Display />);
+    act(() => screen.getByTestId("add").click());
+    expect(screen.getByTestId("parent-view").textContent).toBe("1");
+    expect(screen.getByTestId("subtask-own").textContent).toBe("1");
+    expect(screen.getByTestId("subtask-pulse").textContent).toBe("1");
+
+    // Parent goes idle/error — the subtask's prompt must survive.
+    act(() => screen.getByTestId("clear-parent").click());
+    expect(screen.getByTestId("subtask-own").textContent).toBe("1");
+    expect(screen.getByTestId("subtask-pulse").textContent).toBe("1");
+    expect(screen.getByTestId("parent-pulse").textContent).toBe("0");
+
+    // And the subtask must still be resolvable (requestToSessionRef intact).
+    act(() => screen.getByTestId("resolve-subtask").click());
+    expect(screen.getByTestId("subtask-own").textContent).toBe("0");
+    expect(screen.getByTestId("subtask-pulse").textContent).toBe("0");
+  });
+
+  it("clearWorkspacePendingActions prunes prompt content in lockstep with the indicator", () => {
+    // clearWorkspacePendingActions is wired to the workspace.phase event path;
+    // a bug that forgets to prune one content map must not pass silently.
+    function Display() {
+      const addQ = useAddPendingQuestion();
+      const addP = useAddPendingPermission();
+      const remove = useRemovePendingAction();
+      // Access clearWorkspacePendingActions via the context (not exported as a
+      // hook, so drive it through a workspace.phase event on the user stream).
+      const questionsA = usePendingQuestionsForSession("sess-A");
+      const permsA = usePendingPermissionsForSession("sess-A");
+      const questionsB = usePendingQuestionsForSession("sess-B");
+      return (
+        <>
+          <span data-testid="q-A">{questionsA.length}</span>
+          <span data-testid="p-A">{permsA.length}</span>
+          <span data-testid="q-B">{questionsB.length}</span>
+          <button data-testid="add-A-q" onClick={() => addQ("ws-1", makeQuestion("qA", "sess-A"))} />
+          <button data-testid="add-A-p" onClick={() => addP("ws-1", makePermission("pA", "sess-A"))} />
+          <button data-testid="add-B-q" onClick={() => addQ("ws-2", makeQuestion("qB", "sess-B"))} />
+          <button data-testid="resolve-A-q" onClick={() => remove("qA")} />
+        </>
+      );
+    }
+
+    renderProvider(<Display />);
+    act(() => screen.getByTestId("add-A-q").click());
+    act(() => screen.getByTestId("add-A-p").click());
+    act(() => screen.getByTestId("add-B-q").click());
+    expect(screen.getByTestId("q-A").textContent).toBe("1");
+    expect(screen.getByTestId("p-A").textContent).toBe("1");
+    expect(screen.getByTestId("q-B").textContent).toBe("1");
+
+    // A non-Active workspace.phase for ws-1 clears all of ws-1's prompt state.
+    act(() => {
+      capturedOnEvent!({ type: "workspace.phase", workspace_id: "ws-1", phase: "Suspended" });
+    });
+
+    expect(screen.getByTestId("q-A").textContent).toBe("0");
+    expect(screen.getByTestId("p-A").textContent).toBe("0");
+    // ws-2 untouched.
+    expect(screen.getByTestId("q-B").textContent).toBe("1");
+  });
+
   it("stores permission content and returns it filtered by session", () => {
     function Display({ sessionId }: { sessionId: string }) {
       const addP = useAddPendingPermission();

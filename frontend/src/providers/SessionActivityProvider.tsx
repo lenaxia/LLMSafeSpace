@@ -407,25 +407,31 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const clearWorkspacePendingActions = useCallback((workspaceId: string) => {
-    // Collect requestIds belonging to this workspace's sessions so the
-    // content maps can be pruned in lockstep with the indicator.
+    // Collect doomed requestIds from the CURRENT pendingActions snapshot. This
+    // must happen outside a setState updater: updaters run asynchronously at
+    // render time, so collecting inside one would race the content prune and
+    // leave prompt content stranded after the indicator was cleared.
     const doomedRequests = new Set<string>();
+    for (const [sid, rids] of pendingActions) {
+      if (pendingActionWsRef.current.get(sid) === workspaceId) {
+        for (const rid of rids) doomedRequests.add(rid);
+      }
+    }
+    if (doomedRequests.size === 0) return;
     setPendingActions((prev) => {
       let next: Map<string, Set<string>> | null = null;
-      for (const [sid] of prev) {
+      for (const sid of prev.keys()) {
         if (pendingActionWsRef.current.get(sid) === workspaceId) {
           if (!next) next = new Map(prev);
-          next!.delete(sid);
-          for (const rid of prev.get(sid) ?? []) doomedRequests.add(rid);
+          next.delete(sid);
         }
       }
       return next ?? prev;
     });
-    if (doomedRequests.size > 0) {
-      setPendingQuestionContent((prev) => pruneMany(prev, doomedRequests));
-      setPendingPermissionContent((prev) => pruneMany(prev, doomedRequests));
-    }
-  }, []);
+    setPendingQuestionContent((prev) => pruneMany(prev, doomedRequests));
+    setPendingPermissionContent((prev) => pruneMany(prev, doomedRequests));
+    for (const rid of doomedRequests) requestToSessionRef.current.delete(rid);
+  }, [pendingActions]);
 
   const addPendingQuestion = useCallback((workspaceId: string, req: QuestionRequest) => {
     addPendingAction(workspaceId, req.session_id, req.id);
@@ -470,15 +476,16 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
   }, [pendingPermissionContent]);
 
   // clearSessionPendingPrompts drops all prompt content + the indicator for one
-  // session (US-16.12: clear stale prompts on session idle/error).
+  // session (US-16.12: clear stale prompts on session idle/error). Scoped to the
+  // session's OWN prompts (session_id match) — NOT root_session_id — so a parent
+  // going idle/error does not clear or orphan its subtasks' live prompts (the
+  // subtask indicator lives under the subtask's session_id and must survive).
   const clearSessionPendingPrompts = useCallback((sessionId: string) => {
     const doomed = new Set<string>();
     for (const rid of pendingActions.get(sessionId) ?? []) doomed.add(rid);
-    // Also include content whose owning or root session matches.
-    const collect = <T extends { id: string; session_id: string; root_session_id?: string }>(m: Map<string, T>) => {
+    const collect = <T extends { id: string; session_id: string }>(m: Map<string, T>) => {
       for (const v of m.values()) {
-        const root = v.root_session_id ?? v.session_id;
-        if (root === sessionId || v.session_id === sessionId) doomed.add(v.id);
+        if (v.session_id === sessionId) doomed.add(v.id);
       }
     };
     collect(pendingQuestionContent);
