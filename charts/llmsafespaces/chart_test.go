@@ -2245,6 +2245,111 @@ func TestMonitoring_DashboardJobVariablesPortable(t *testing.T) {
 	}
 }
 
+// TestMonitoring_DashboardUIDsAreStable pins the exact UIDs declared by
+// the operational and billing dashboard JSON files. UIDs are the only
+// stable contract between operators' bookmarks/links and the dashboards
+// themselves: changing them silently breaks every existing URL.
+//
+// Worklog 0522 incident: the chart was previously named `llmsafespace`
+// (singular) and shipped dashboards with UIDs `llmsafespace-operational`
+// / `llmsafespace-billing`. When the chart was renamed to `llmsafespaces`
+// (plural), the dashboard UIDs followed and became
+// `llmsafespaces-operational` / `llmsafespaces-billing`. The Grafana
+// sidecar provisioner saw both variants in its database (the old singular
+// rows from the prior deploy were never garbage-collected) and refused to
+// write either due to optimistic-concurrency conflicts ("unexpected number
+// of dashboards for id ...: found 2, desired 1"). Operators' bookmarked
+// singular URLs returned the stale singular dashboards (with stale,
+// release-mismatched job-label matchers), which appeared as "No data" on
+// every panel. See worklog NNNN for the redesign.
+//
+// This test enforces three contracts:
+//
+//  1. Each dashboard's top-level `uid` field is exactly the value below.
+//     ANY change is a regression that breaks operator bookmarks; if a
+//     genuine UID change is required, that's a deliberate decision that
+//     ALSO requires updating the manual-cleanup runbook in CHART-UPGRADE.md.
+//  2. The UID prefix is consistent (`llmsafespaces-`) so any future
+//     dashboard added to `charts/llmsafespaces/dashboards/` is forced to
+//     follow the same convention.
+//  3. The UIDs survive the Helm `replace` pipeline (no placeholder leaks
+//     into the UID field — placeholders are only meant to substitute job
+//     labels in PromQL `expr` strings, never the dashboard identity).
+func TestMonitoring_DashboardUIDsAreStable(t *testing.T) {
+	docs := helmTemplate(t, "monitoring:\n  enabled: true\n")
+	var cm map[string]any
+	for _, d := range docs {
+		if d["kind"] == "ConfigMap" && strings.Contains(metaName(d), "grafana-dashboards") {
+			cm = d
+			break
+		}
+	}
+	require.NotNil(t, cm)
+	data, _ := cm["data"].(map[string]any)
+
+	// Pinned UIDs. To intentionally change either, you must:
+	//   1. Update the value here.
+	//   2. Update the dashboard JSON's top-level "uid" field.
+	//   3. Update CHART-UPGRADE.md with the migration steps.
+	//   4. Notify operators that bookmarked URLs will break.
+	expectedUIDs := map[string]string{
+		"operational.json": "llmsafespaces-operational",
+		"billing.json":     "llmsafespaces-billing",
+	}
+
+	for filename, want := range expectedUIDs {
+		content, ok := data[filename].(string)
+		require.True(t, ok, "dashboard %q must be present in the ConfigMap", filename)
+
+		// Contract 3: no placeholder leaked into the rendered output.
+		require.NotContains(t, content, "__LLMSAFESPACES_API_JOB__",
+			"%s: rendered ConfigMap must not contain placeholder strings — see TestMonitoring_DashboardJobVariablesPortable",
+			filename)
+
+		// Use a regex that pins the top-level "uid" field specifically.
+		// Nested datasource UIDs in panels are a different field shape
+		// (`"uid": "${datasource}"`) and must not match this pin.
+		uidRe := regexp.MustCompile(`(?m)^\s{0,2}"uid":\s*"([^"]+)",?$`)
+		matches := uidRe.FindAllStringSubmatch(content, -1)
+
+		// Contract 1: at least one top-level uid must exist, and the
+		// FIRST top-level "uid": "..." encountered (top-level fields are
+		// 2-space indented; nested ones are 8+) must be the pinned value.
+		var topLevelUIDs []string
+		for _, m := range matches {
+			topLevelUIDs = append(topLevelUIDs, m[1])
+		}
+		require.NotEmpty(t, topLevelUIDs,
+			"%s: must declare a top-level `uid` field (line of the form `  \"uid\": \"<value>\",`)",
+			filename)
+
+		// Find the dashboard's top-level UID (heuristic: the one that
+		// matches our `llmsafespaces-` prefix, NOT the ${datasource}
+		// nested ones). This survives JSON reordering by the Helm
+		// rendering and tolerates whitespace variations.
+		var foundTopLevel string
+		for _, u := range topLevelUIDs {
+			if strings.HasPrefix(u, "llmsafespaces-") {
+				foundTopLevel = u
+				break
+			}
+		}
+		require.Equal(t, want, foundTopLevel,
+			"%s: top-level dashboard UID has changed — this breaks operator bookmarks AND triggers "+
+				"the worklog 0522 multi-version-coexisting failure mode in Grafana's sidecar provisioner. "+
+				"If this change is intentional, see CHART-UPGRADE.md for the required cleanup procedure.",
+			filename)
+
+		// Contract 2: prefix consistency. Forces any future dashboard
+		// added to this chart to follow the same convention.
+		require.True(t, strings.HasPrefix(foundTopLevel, "llmsafespaces-"),
+			"%s: top-level UID %q must begin with `llmsafespaces-` so all dashboards in the chart "+
+				"share a consistent namespace; mixed prefixes complicate the manual cleanup procedure "+
+				"in CHART-UPGRADE.md",
+			filename, foundTopLevel)
+	}
+}
+
 //
 // These tests guard the post-WG-removal chart contract: the relay-router
 // Deployment must have NO privileged sidecar / NET_ADMIN / WG volumes; the
