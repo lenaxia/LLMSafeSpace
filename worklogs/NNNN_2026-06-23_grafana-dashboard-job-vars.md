@@ -155,4 +155,4 @@ After PR merge:
 - `charts/llmsafespaces/dashboards/billing.json` — same treatment for `$job`
 - `charts/llmsafespaces/templates/dashboards-configmap.yaml` — added `replace` pipeline for placeholder substitution; defined `$apiJob` / `$ctrlJob` from `include "llmsafespaces.fullname" .` matching the prometheus-rules.yaml pattern
 - `charts/llmsafespaces/chart_test.go` — rewrote `TestMonitoring_DashboardJobVariablesPortable` to enforce three new contracts (no leftover placeholders, release-derived prefix present, no singular `llmsafespace-` regression marker); removed dead `toString` helper
-- `worklogs/NNNN_2026-06-23_grafana-dashboard-job-vars-portable.md` — this file
+- `worklogs/NNNN_2026-06-23_grafana-dashboard-job-vars.md` — this file

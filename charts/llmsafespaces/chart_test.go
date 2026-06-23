@@ -2176,7 +2176,7 @@ func TestMonitoring_DashboardConfigMap_NotEmpty(t *testing.T) {
 // Worklog 0508 documents the original failure mode where dashboards shipped
 // with hard-coded `current.value=["llmsafespaces-api"]` but the cluster's
 // ServiceMonitor emitted `job=llmsafespace-api`, leaving every panel empty
-// on first load. Worklog NNNN_2026-06-23_grafana-dashboard-job-vars-portable
+// on first load. Worklog NNNN_2026-06-23_grafana-dashboard-job-vars
 // documents the redesign that eliminates the template-variable indirection
 // (and thus the entire stale-URL-var failure mode) while still being
 // release-portable via Helm-time substitution.

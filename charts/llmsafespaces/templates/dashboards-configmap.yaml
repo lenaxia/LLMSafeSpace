@@ -1,11 +1,13 @@
 {{- if and .Values.monitoring.enabled .Values.monitoring.dashboards.enabled }}
 {{- /*
   Build release-derived job-label patterns so dashboard PromQL matches the
-  ServiceMonitors actually deployed. The api ServiceMonitor's `job` label is
-  the Service name (`<fullname>-api`); the controller ServiceMonitor's `job`
-  label is `<fullname>-controller-metrics`. Use the `.*` regex suffix to
-  tolerate Service-name suffixes (e.g. headless variants) and to match the
-  pattern used in prometheus-rules.yaml.
+  ServiceMonitors actually deployed. The api ServiceMonitor is named
+  `<fullname>-api`; the controller ServiceMonitor is named
+  `<fullname>-controller`. Prometheus Operator's default `job` label
+  derivation uses the ServiceMonitor name unless `jobLabel` is set
+  (it isn't here). The `.*` regex suffix tolerates Service-name
+  suffixes (e.g. the controller's `-metrics` Service suffix, headless
+  variants) and matches the pattern used in prometheus-rules.yaml.
 
   The dashboard JSON files contain PLACEHOLDER strings (__LLMSAFESPACES_*_JOB__)
   rather than Helm template directives. This avoids a clash between Grafana's
@@ -14,7 +16,7 @@
   and `tpl` would fail to parse them. Simple string substitution via the
   `replace` pipeline avoids that problem entirely.
 
-  See worklog NNNN_2026-06-23_grafana-dashboard-job-vars-portable for context.
+  See worklog NNNN_2026-06-23_grafana-dashboard-job-vars for context.
 */ -}}
 {{- $apiJob := printf "%s-api.*" (include "llmsafespaces.fullname" .) -}}
 {{- $ctrlJob := printf "%s-controller.*" (include "llmsafespaces.fullname" .) -}}
