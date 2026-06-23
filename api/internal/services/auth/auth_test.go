@@ -269,6 +269,36 @@ func TestValidateTokenWithClientIP_PropagatesContext(t *testing.T) {
 	cache.AssertExpectations(t)
 }
 
+// TestValidateAPIKey_PropagatesContext is the API-key-path companion to the
+// JWT test above. validateAPIKey has its OWN independent context.WithTimeout
+// derivation (auth.go), so a regression reverting only that line would not be
+// caught by the JWT test. The sentinel matcher closes that gap.
+func TestValidateAPIKey_PropagatesContext(t *testing.T) {
+	log, _ := logger.New(true, "debug", "console")
+	cfg := &config.Config{}
+	cfg.Auth.JWTSecret = "test-secret"
+	cfg.Auth.TokenDuration = 24 * time.Hour
+	cfg.Auth.APIKeyPrefix = "api_"
+
+	mockDB := new(mocks.MockDatabaseService)
+	cache := new(mocks.MockCacheService)
+	service, err := New(cfg, log, mockDB, cache)
+	require.NoError(t, err)
+
+	apiKey := "api_propagated"
+	userID := "user789"
+	ctx := context.WithValue(context.Background(), ctxPropKey{}, "present")
+	matchesPropagated := func(c context.Context) bool { return c.Value(ctxPropKey{}) == "present" }
+	// Cache hit on the apikey: key — the only cache interaction, so its ctx
+	// matcher is the load-bearing propagation assertion.
+	cache.On("Get", mock.MatchedBy(matchesPropagated), "apikey:"+pkgutil.HashString(apiKey)).Return(userID, nil).Once()
+
+	got, err := service.validateAPIKey(ctx, apiKey, "")
+	require.NoError(t, err)
+	require.Equal(t, userID, got)
+	cache.AssertExpectations(t)
+}
+
 func TestRevokeToken(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
