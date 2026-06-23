@@ -114,7 +114,7 @@ short-circuit) for safety; the rewrite relies on the same contract and on
 - `pkg/secrets/pg_key_store.go` — comment spelling fix (1 char)
 - `api/internal/services/workspace/workspace_service.go` — De Morgan rewrite
   (1 conditional, 5 lines reformatted into idiomatic form)
-- `worklogs/NNNN_2026-06-23_lint-fix-misspell-demorgan.md` — this worklog
+- `worklogs/0525_2026-06-23_lint-fix-misspell-demorgan.md` — this worklog
 
 ## Followups
 
