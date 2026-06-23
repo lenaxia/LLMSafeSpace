@@ -33,7 +33,7 @@ func (m *MockAuthService) Stop() error {
 	return args.Error(0)
 }
 
-func (m *MockAuthService) ValidateToken(token string) (string, error) {
+func (m *MockAuthService) ValidateToken(ctx context.Context, token string) (string, error) {
 	args := m.Called(token)
 	return args.String(0), args.Error(1)
 }

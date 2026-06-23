@@ -431,20 +431,22 @@ func (s *Service) GenerateTokenWithDuration(userID string, duration time.Duratio
 	return tokenString, nil
 }
 
-// ValidateToken validates a JWT token or API key
-func (s *Service) ValidateToken(tokenString string) (string, error) {
-	return s.ValidateTokenWithClientIP(tokenString, "")
+// ValidateToken validates a JWT token or API key.
+func (s *Service) ValidateToken(ctx context.Context, tokenString string) (string, error) {
+	return s.ValidateTokenWithClientIP(ctx, tokenString, "")
 }
 
 // ValidateTokenWithClientIP validates a JWT token or API key, enforcing
-// allowed_cidrs when clientIP is non-empty.
-func (s *Service) ValidateTokenWithClientIP(tokenString, clientIP string) (string, error) {
+// allowed_cidrs when clientIP is non-empty. ctx propagates the caller's
+// deadline/cancellation into the cache + DB calls (US-46.5 / issue #224);
+// the 5s cap is retained as a per-call safety bound derived from ctx.
+func (s *Service) ValidateTokenWithClientIP(ctx context.Context, tokenString, clientIP string) (string, error) {
 	if utilities.IsAPIKey(tokenString, s.config.Auth.APIKeyPrefix) {
-		return s.validateAPIKey(tokenString, clientIP)
+		return s.validateAPIKey(ctx, tokenString, clientIP)
 	}
 
 	// Check if token is cached
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	cacheKey := fmt.Sprintf("token:%s", pkgutil.HashString(tokenString))
 
@@ -520,9 +522,10 @@ func (s *Service) ValidateTokenWithClientIP(tokenString, clientIP string) (strin
 }
 
 // validateAPIKey validates an API key (internal method).
-// clientIP is optional; when provided, allowed_cidrs is enforced.
-func (s *Service) validateAPIKey(apiKey, clientIP string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// clientIP is optional; when provided, allowed_cidrs is enforced. ctx
+// propagates the caller's deadline/cancellation (US-46.5 / issue #224).
+func (s *Service) validateAPIKey(ctx context.Context, apiKey, clientIP string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	cacheKey := fmt.Sprintf("apikey:%s", pkgutil.HashString(apiKey))
 
@@ -1127,7 +1130,7 @@ func (s *Service) AuthMiddleware() gin.HandlerFunc {
 		}
 
 		// Validate token
-		userID, err := s.ValidateTokenWithClientIP(tokenString, c.ClientIP())
+		userID, err := s.ValidateTokenWithClientIP(c.Request.Context(), tokenString, c.ClientIP())
 		if err != nil {
 			c.JSON(401, gin.H{"error": "Invalid or expired token"})
 			c.Abort()
@@ -1212,7 +1215,7 @@ func (s *Service) OptionalAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tokenString := s.extractToken(c)
 		if tokenString != "" {
-			userID, err := s.ValidateTokenWithClientIP(tokenString, c.ClientIP())
+			userID, err := s.ValidateTokenWithClientIP(c.Request.Context(), tokenString, c.ClientIP())
 			if err == nil && userID != "" {
 				suspended := false
 				// OptionalAuthMiddleware never aborts; it excludes a suspended

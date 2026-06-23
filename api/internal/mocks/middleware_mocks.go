@@ -27,7 +27,7 @@ func (m *MockAuthMiddlewareService) Stop() error {
 	return args.Error(0)
 }
 
-func (m *MockAuthMiddlewareService) ValidateToken(token string) (string, error) {
+func (m *MockAuthMiddlewareService) ValidateToken(ctx context.Context, token string) (string, error) {
 	args := m.Called(token)
 	return args.String(0), args.Error(1)
 }
