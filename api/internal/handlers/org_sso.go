@@ -231,7 +231,12 @@ func respondVerifyError(c *gin.Context, err error) {
 // browser to the IdP authorization endpoint and sets the signed PKCE/state cookie.
 func (h *SSOHandler) Start(c *gin.Context) {
 	orgSlug := c.Param("orgSlug")
-	redirectURL := h.resolveCallbackURL(c, orgSlug)
+	redirectURL, err := h.resolveCallbackURL(c, orgSlug)
+	if err != nil {
+		// F11: redirect base URL unset — refuse rather than trust X-Forwarded-*.
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "SSO is not fully configured: set oidc.redirectBaseUrl"})
+		return
+	}
 
 	res, err := h.svc.StartLogin(c.Request.Context(), orgSlug, redirectURL)
 	if err != nil {
@@ -256,7 +261,14 @@ func (h *SSOHandler) Start(c *gin.Context) {
 // the code, sets the session JWT cookie, and redirects to the frontend.
 func (h *SSOHandler) Callback(c *gin.Context) {
 	orgSlug := c.Param("orgSlug")
-	redirectURL := h.resolveCallbackURL(c, orgSlug)
+	redirectURL, err := h.resolveCallbackURL(c, orgSlug)
+	if err != nil {
+		// F11: redirect base URL unset. The browser is mid-flow (IdP has
+		// already redirected back here), so a JSON body is not usable; route
+		// the failure to the frontend with a config_error token.
+		c.Redirect(http.StatusFound, h.frontendRedirectWithError(err))
+		return
+	}
 	code := c.Query("code")
 	state := c.Query("state")
 	cookieValue, _ := c.Cookie(h.svc.CookieName())
@@ -305,34 +317,26 @@ func (h *SSOHandler) OIDCEnabled(ctx context.Context) bool {
 }
 
 // resolveCallbackURL builds the absolute IdP-registered callback URL for the
-// given org slug. OIDC.RedirectBaseURL wins when set; otherwise it is derived
-// from the incoming request (X-Forwarded-Proto aware).
+// given org slug. OIDC.RedirectBaseURL wins when set; when it is unset the
+// function refuses to derive the URL and returns ErrRedirectBaseURLNotSet.
 //
-// Security note (F11): when RedirectBaseURL is unset, the callback URL is built
-// from X-Forwarded-Proto and the Host header — both attacker-influenceable at a
-// misconfigured reverse proxy. The IdP's registered-redirect-URI check is the
-// primary mitigation (an attacker-controlled URL must match a registered URI at
-// the IdP), but production deployments SHOULD set OIDC.RedirectBaseURL to
-// remove the trust entirely. We log a warning on every fallback so operators
-// see the gap; SSO callbacks are infrequent (once per login) so this is not
-// noisy.
-func (h *SSOHandler) resolveCallbackURL(c *gin.Context, orgSlug string) string {
+// Security (F11): the SSO callback URL is where the IdP redirects with the
+// authorization code, so it must be the operator's canonical URL, not a value
+// assembled from X-Forwarded-Proto / Host headers — both attacker-influenceable
+// at a misconfigured reverse proxy. The previous behavior derived the URL from
+// those headers with a warning; that left the trust gap open in every unconfigured
+// deploy. Fail-loud forces the operator to state the base URL explicitly (set
+// oidc.redirectBaseUrl) and makes the unsafe default impossible.
+func (h *SSOHandler) resolveCallbackURL(c *gin.Context, orgSlug string) (string, error) {
 	path := "/api/v1/auth/sso/" + orgSlug + "/callback"
 	if base := h.svc.RedirectBaseURL(); base != "" {
-		return strings.TrimRight(base, "/") + path
+		return strings.TrimRight(base, "/") + path, nil
 	}
 	if h.logger != nil {
-		h.logger.Warn("OIDC redirect URL derived from forwarded headers; set oidc.redirectBaseURL in production to remove header trust",
-			"host", c.Request.Host, "slug", orgSlug)
+		h.logger.Warn("OIDC redirect base URL is not configured; refusing to derive callback URL from X-Forwarded-* headers (set oidc.redirectBaseUrl)",
+			"slug", orgSlug, "host", c.Request.Host)
 	}
-	scheme := "http"
-	if c.Request.TLS != nil {
-		scheme = "https"
-	}
-	if proto := c.GetHeader("X-Forwarded-Proto"); proto != "" {
-		scheme = proto
-	}
-	return scheme + "://" + c.Request.Host + path
+	return "", sso.ErrRedirectBaseURLNotSet
 }
 
 func (h *SSOHandler) setStateCookie(c *gin.Context, cookie *sso.SignedCookie) {
@@ -379,6 +383,8 @@ func errorReason(err error) string {
 		return "email_unverified"
 	case errors.Is(err, sso.ErrStateExpired), errors.Is(err, sso.ErrStateInvalid):
 		return "state_invalid"
+	case errors.Is(err, sso.ErrRedirectBaseURLNotSet):
+		return "config_error"
 	default:
 		return "error"
 	}
