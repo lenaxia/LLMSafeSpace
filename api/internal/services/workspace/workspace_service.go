@@ -613,7 +613,7 @@ func (s *Service) NeutralizeUserWorkspaces(ctx context.Context, userID string) e
 			// during a bulk sweep and must not be noisy. Anything else
 			// is logged so an operator sees real degradation.
 			var apiErr *apierrors.APIError
-			if !(errors.As(err, &apiErr) && apiErr.Type == apierrors.ErrorTypeConflict) {
+			if !errors.As(err, &apiErr) || apiErr.Type != apierrors.ErrorTypeConflict {
 				s.logger.Warn("neutralize: suspend workspace failed",
 					"workspaceID", wsID, "error", err.Error())
 			}

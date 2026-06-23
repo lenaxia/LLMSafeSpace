@@ -45,7 +45,7 @@ func (s *PgKeyStore) GetUserKey(ctx context.Context, userID string) (*UserKeyRec
 // plain INSERT would fail with unique_violation for any user who has
 // ever created a secret, which is the only case where reinit matters.
 // Overwriting with a freshly-generated DEK (see InitializeUserKeys)
-// is exactly the desired reset behaviour: the prior wraps and anything
+// is exactly the desired reset behavior: the prior wraps and anything
 // encrypted under the prior DEK become permanently undecryptable.
 func (s *PgKeyStore) CreateUserKey(ctx context.Context, record *UserKeyRecord) error {
 	_, err := s.pool.Exec(ctx,
