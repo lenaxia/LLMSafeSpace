@@ -44,6 +44,17 @@ Periodic dependency probe goroutine started in `App.Run()` and stopped in `App.S
 
 Already wired correctly at `agent_reload.go:179`. The empty panel was a Category B (no traffic), not missing instrumentation. No code change needed.
 
+### Dashboard rendering fixes (`charts/llmsafespaces/dashboards/*`)
+
+Two root-cause bugs that left top-level panels empty even when the underlying metrics had data:
+
+1. **Job-name regression.** PR #248 renamed the dashboard JSON (`llmsafespace` → `llmsafespaces`, plural) but the Helm release keeps `nameOverride=llmsafespace` (singular) to avoid Service-name churn. The template variables `job`/`controller_job` hard-coded `current.value=["llmsafespaces-api"]` with `includeAll=false`, so they never matched the actual scrape job label `llmsafespace-api` and every `$job`/`$controller_job`-filtered panel rendered "No data" until the operator manually picked a job from the dropdown. This is what left **the entire billing dashboard** empty. Fixed by switching both variables to `includeAll=true` + `allValue=".*"`; the `label_values(...)` query still runs on dashboard load so the dropdown still works for filtering, but the default selection now matches every emitted job regardless of release-name spelling.
+2. **Availability formula returned an empty vector on a healthy service.** `sum(rate(http_requests_total{status=~"5.."}))` has no matching series when nothing has 5xx'd, and the empty-vector propagation through the division left the whole Ops **Availability** panel "No data". Fixed by wrapping both the 5xx and 4xx subexpressions in `(... or vector(0))` so missing series resolve to 0.
+
+Regression test `TestMonitoring_DashboardJobVariablesPortable` (`charts/llmsafespaces/chart_test.go`) asserts the new contract: `includeAll=true`, `allValue=".*"`, and `current.value` contains no release-derived job name.
+
+Supporting changes: `.github/workflows/ci.yml` gained a `workflow_dispatch` trigger for pre-merge image verification; `.gitleaks.toml` allowlists the synthetic low-entropy fixtures in `auth_method_test.go` (16 `a` chars, `{alg:none}` JWT).
+
 ---
 
 ## TDD
@@ -89,4 +100,9 @@ modified: api/internal/services/auth/auth.go
 modified: api/internal/services/cache/cache.go
 modified: api/internal/services/database/database.go
 modified: api/internal/services/metrics/metrics.go
+modified: .github/workflows/ci.yml
+modified: .gitleaks.toml
+modified: charts/llmsafespaces/chart_test.go
+modified: charts/llmsafespaces/dashboards/billing.json
+modified: charts/llmsafespaces/dashboards/operational.json
 ```
