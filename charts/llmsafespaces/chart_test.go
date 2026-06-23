@@ -2354,16 +2354,16 @@ func TestMonitoring_DashboardUIDsAreStable(t *testing.T) {
 		// ConfigMap (including future additions) to follow the
 		// `llmsafespaces-*` UID convention. Mixed prefixes complicate
 		// the manual cleanup procedure in CHART-UPGRADE.md.
+		//
+		// The selection logic above only assigns foundTopLevel from
+		// UIDs matching the llmsafespaces- prefix, so this NotEmpty
+		// check IS the prefix-consistency assertion: a missing
+		// foundTopLevel means no top-level UID had the required prefix.
 		require.NotEmpty(t, foundTopLevel,
 			"%s: no top-level UID with the `llmsafespaces-` prefix found. "+
 				"Every dashboard in this chart must use the consistent UID prefix; "+
 				"saw top-level UIDs %v.",
 			filename, topLevelUIDs)
-		require.True(t, strings.HasPrefix(foundTopLevel, "llmsafespaces-"),
-			"%s: top-level UID %q must begin with `llmsafespaces-` so all dashboards in the chart "+
-				"share a consistent namespace; mixed prefixes complicate the manual cleanup procedure "+
-				"in CHART-UPGRADE.md",
-			filename, foundTopLevel)
 
 		// Contract 1 (specific): if we have a pinned expectation for
 		// this file, verify the UID matches exactly. New dashboards
