@@ -123,4 +123,4 @@ go vet ./api/internal/services/database/... ./pkg/repolint/...
 
 - `api/internal/services/database/database_test.go` — updated 3 test mocks for `key_version` column
 - `pkg/repolint/sequence_test.go` — added push-to-main race-window skip + documentation
-- `worklogs/NNNN_2026-06-22_fix-ci-key-version-test-mocks.md` — this worklog
+- `worklogs/0517_2026-06-22_fix-ci-key-version-test-mocks.md` — this worklog
