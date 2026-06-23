@@ -150,6 +150,12 @@ describe("PortalLayout", () => {
     expect(screen.getByLabelText("Loading")).toBeInTheDocument();
     // ...and the lazy child's never-rendered content must NOT be present.
     expect(screen.queryByText("overview content")).not.toBeInTheDocument();
+    // The portal chrome (title + nav) must remain visible while the child
+    // is suspended — the Suspense boundary is local to the <Outlet>, so a
+    // suspending section never replaces the whole portal.
+    expect(screen.getByText("T")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Overview" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Settings" })).toBeInTheDocument();
   });
 
   it("renders a suspending child's content once the promise resolves", async () => {

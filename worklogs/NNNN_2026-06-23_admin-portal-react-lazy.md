@@ -81,4 +81,3 @@ None required. Optional (separate PR): apply the same `React.lazy` split to the 
 - `frontend/src/router.tsx`
 - `frontend/src/components/layout/PortalLayout.tsx`
 - `frontend/src/components/layout/PortalLayout.test.tsx`
-- `frontend/tsconfig.tsbuildinfo` (regenerated build cache)
