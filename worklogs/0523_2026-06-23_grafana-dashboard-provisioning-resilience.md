@@ -155,4 +155,4 @@ The first review identified five non-blocking findings, all addressed in a follo
 - `charts/llmsafespaces/scripts/grafana-purge-stale-dashboards.sh` — new POSIX shell script (verified live against production Grafana)
 - `charts/llmsafespaces/CHART-UPGRADE.md` — new document covering UID stability + manual cleanup procedure
 - `charts/llmsafespaces/MONITORING-OPERATIONAL.md` — new document covering the multi-replica race, job-label portability, and metric expectations
-- `worklogs/NNNN_2026-06-23_grafana-dashboard-provisioning-resilience.md` — this file
+- `worklogs/0523_2026-06-23_grafana-dashboard-provisioning-resilience.md` — this file
