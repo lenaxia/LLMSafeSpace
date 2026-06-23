@@ -36,9 +36,12 @@ func TestIntegration_ListAllUsers_UserWithoutOrgMembership(t *testing.T) {
 	orgSlug := "intorg-" + marker
 
 	cleanup := func() {
+		// Delete in reverse FK-dependency order: memberships → organizations
+		// (created_by REFERENCES users) → users. Deleting users first is
+		// blocked by organizations.created_by (ON DELETE NO ACTION).
 		_, _ = pool.Exec(ctx, "DELETE FROM org_memberships WHERE user_id IN ($1, $2)", userInOrg, userNoOrg)
-		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id IN ($1, $2)", userInOrg, userNoOrg)
 		_, _ = pool.Exec(ctx, "DELETE FROM organizations WHERE slug = $1", orgSlug)
+		_, _ = pool.Exec(ctx, "DELETE FROM users WHERE id IN ($1, $2)", userInOrg, userNoOrg)
 	}
 	cleanup()
 	t.Cleanup(cleanup)
