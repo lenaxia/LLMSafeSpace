@@ -381,13 +381,34 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		})
 
 		rkp := newRootKeyProvider(cfg, log)
-		// US-50.2: apiKeyProv unifies the two else branches — it is rkp when the
-		// configured provider is healthy, else a StaticKeyProvider from the
-		// dek-cache derived key (the same key the Redis DEK cache uses).
+		// US-50.7: apiKeyProv uses the "master-kek" purpose string (not
+		// "dek-cache") so a Redis compromise cannot help unwrap Postgres
+		// API-key ciphertexts. The multi-key provider (US-50.4) also holds the
+		// old "dek-cache" key so existing rows still decrypt. New encrypts use
+		// "master-kek" (version 2, active); the rotation CLI (US-50.5) re-wraps
+		// legacy rows. When rkp is a sealed provider (production) it wraps the
+		// raw root key — no purpose string applies, so rkp is used as-is.
 		apiKeyProv := rkp
 		if apiKeyProv == nil {
-			if mk := dekMasterKey(); mk != nil {
-				apiKeyProv, _ = secrets.NewStaticKeyProvider(mk)
+			masterKEK := deriveServerKey("master-kek")
+			dekCacheKey := deriveServerKey("dek-cache")
+			if masterKEK != nil && dekCacheKey != nil {
+				apiKeyProv, _ = secrets.NewStaticKeyProviderMultiVersion(2, map[int][]byte{
+					1: dekCacheKey, // legacy: decrypts existing rows
+					2: masterKEK,   // active: encrypts new rows
+				})
+			}
+		} else if sp, ok := apiKeyProv.(*secrets.StaticKeyProvider); ok && sp != nil {
+			// rkp is a static provider built from dekMasterKey() (the Helm
+			// default path). Upgrade it to a domain-separated multi-key provider
+			// so new encrypts use "master-kek" while old rows still decrypt.
+			masterKEK := deriveServerKey("master-kek")
+			dekCacheKey := deriveServerKey("dek-cache")
+			if masterKEK != nil && dekCacheKey != nil {
+				apiKeyProv, _ = secrets.NewStaticKeyProviderMultiVersion(2, map[int][]byte{
+					1: dekCacheKey,
+					2: masterKEK,
+				})
 			}
 		}
 
@@ -413,7 +434,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			if stateKey != nil {
 				ssoSvc, ssoErr := sso.New(pgOrgStore, dbSvc, sso.ServiceConfig{
 					TokenIssuer:         authSvc,
-					KeyProvider:         rkp,
+					KeyProvider:         apiKeyProv,
 					StateKey:            stateKey,
 					TokenTTL:            cfg.Auth.TokenDuration,
 					RedirectBaseURL:     cfg.OIDC.RedirectBaseURL,
