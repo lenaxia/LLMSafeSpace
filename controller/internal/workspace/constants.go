@@ -20,8 +20,22 @@ const bootstrapAudience = "llmsafespace-api"
 const podNameSuffix = 8
 
 // Requeue intervals.
+//
+// requeueCreating is the safety-net poll cadence during the Creating phase.
+// Pod state changes are already delivered via the Owns(Pod) watch
+// (SetupWithManager), and PVC Bound transitions are delivered via
+// Owns(PersistentVolumeClaim), so this value only governs the worst-case
+// gap between watch events. Was 5s historically; lowered to 2s after the
+// 2026-06-23 cold-start audit found it was the dominant source of
+// pre-PodScheduled latency. Lowering further is unlikely to help — at
+// that point we'd be polling faster than kubelet/longhorn report
+// progress.
+//
+// requeueActive is the cadence at which a healthy Active workspace is
+// re-reconciled to refresh egress NetworkPolicies, accumulate billing
+// metrics, and run health checks. Independent of cold-start latency.
 const (
-	requeueCreating = 5 * time.Second
+	requeueCreating = 2 * time.Second
 	requeueActive   = 15 * time.Second
 )
 

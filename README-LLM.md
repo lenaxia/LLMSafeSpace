@@ -445,6 +445,7 @@ SecretsBasePath  = "/sandbox-runtime/rt/secrets"   ← deleted by reset() on eve
 SecretsEnvPath   = "/sandbox-runtime/secrets-env"
 ```
 
+
 Note: `/tmp` is a PVC subPath (`subPath: tmp`). US-35.7 moved `agent-config.json` and `secrets-env` off `/tmp` to `/sandbox-runtime` (tmpfs/RAM). `$HOME`-relative credential paths (`.ssh`, `.secrets`, `.git-credentials`, `auth.json`) are symlinks created by the init container pointing into `/sandbox-runtime/rt/*`. On pod death, tmpfs is wiped — the PVC retains only dangling symlinks, no plaintext bytes.
 
 **opencode config loading order** (validated from opencode 1.15.12 binary):
