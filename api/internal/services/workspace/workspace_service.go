@@ -1197,6 +1197,7 @@ func (s *Service) ActivateWorkspace(ctx context.Context, userID, workspaceID str
 	if wErr != nil {
 		return nil, apierrors.NewInternalError("workspace_resume_failed", wErr)
 	}
+	var persisted *v1.Workspace
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		current, err := wsClient.Get(ctx, crd.Name, metav1.GetOptions{})
 		if err != nil {
@@ -1208,10 +1209,42 @@ func (s *Service) ActivateWorkspace(ctx context.Context, userID, workspaceID str
 			current.Annotations = make(map[string]string)
 		}
 		v1.SetLastActivityAtAnnotation(current.Annotations, metav1.Now())
-		_, err = wsClient.Update(ctx, current)
+		persisted, err = wsClient.Update(ctx, current)
 		return err
 	}); err != nil {
 		s.logger.Error("Failed to set Spec.Suspend=false", err, "workspaceID", workspaceID)
+		return nil, apierrors.NewInternalError("workspace_resume_failed", err)
+	}
+
+	// Post-write read-back assertion. The K8s apiserver silently prunes
+	// fields not declared in the CRD's OpenAPI schema (default behavior
+	// when x-kubernetes-preserve-unknown-fields is unset), so a successful
+	// Update can still leave Spec.Suspend=nil if the deployed CRD is older
+	// than the binary. This produced the worklog 0465 incident: every
+	// resume request returned 200 OK with {"resumed":...} but the controller
+	// never observed a transition because the field was dropped before
+	// persistence, leaving the workspace stuck Suspended.
+	//
+	// The check covers two distinct CRD-misconfiguration shapes:
+	//
+	//   1. Field absent from the schema → apiserver prunes → Spec.Suspend=nil.
+	//   2. Field present but with a wrong default (e.g. `default: true` on
+	//      a clone of the CRD) → apiserver applies the default after our
+	//      &false write → Spec.Suspend=&true.
+	//
+	// Both are operator-fixable by re-applying charts/llmsafespaces/crds/
+	// workspace.yaml. We surface a concrete operator-actionable error
+	// instead of a phantom success and name the field so the operator can
+	// correlate directly to CRD schema drift.
+	if persisted == nil || persisted.Spec.Suspend == nil || *persisted.Spec.Suspend {
+		err := fmt.Errorf(
+			"apiserver did not persist spec.suspend=false (got %s); "+
+				"deployed CRD likely lacks the suspend field or has a wrong default — "+
+				"re-apply charts/llmsafespaces/crds/workspace.yaml",
+			specSuspendValue(persisted),
+		)
+		s.logger.Error("spec.suspend not persisted after Update", err,
+			"workspaceID", workspaceID)
 		return nil, apierrors.NewInternalError("workspace_resume_failed", err)
 	}
 
@@ -1220,6 +1253,21 @@ func (s *Service) ActivateWorkspace(ctx context.Context, userID, workspaceID str
 		Resumed:   workspaceID,
 		Suspended: suspended,
 	}, nil
+}
+
+// specSuspendValue renders Spec.Suspend for log/error output. The pointer-to-bool
+// shape needs three states: nil (pruned/unset), &false, &true.
+func specSuspendValue(ws *v1.Workspace) string {
+	if ws == nil {
+		return "<no object returned>"
+	}
+	if ws.Spec.Suspend == nil {
+		return "<nil — field was pruned or never written>"
+	}
+	if *ws.Spec.Suspend {
+		return "true"
+	}
+	return "false"
 }
 
 // ListWorkspaceSessions returns session index entries for a workspace.

@@ -196,6 +196,17 @@ helm-deploy:
 	@echo "== helm-deploy: waiting for rollout =="
 	@kubectl -n $(RELEASE_NS) rollout status deploy/$(RELEASE_NAME)-api --timeout=120s || true
 	@kubectl -n $(RELEASE_NS) rollout status deploy/$(RELEASE_NAME)-controller --timeout=120s || true
+	@echo "== helm-deploy: verifying cluster CRDs match chart (worklog 0465) =="
+	@$(MAKE) repolint-build >/dev/null
+	@./bin/repolint -cluster-drift || { \
+	  echo "ERROR: deployed CRDs drift from chart YAMLs after kubectl apply."; \
+	  echo "       The kubectl apply step at the start of helm-deploy should have"; \
+	  echo "       resolved this. If you see this message, the apply was rejected"; \
+	  echo "       (often because Helm's hook order or RBAC interfered)."; \
+	  echo "       Investigate before proceeding — workspace activate paths will"; \
+	  echo "       silently lose pruned fields like spec.suspend."; \
+	  exit 1; \
+	}
 	@echo "== helm-deploy: done =="
 
 # ---------------------------------------------------------------------------

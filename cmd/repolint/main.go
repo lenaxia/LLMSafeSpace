@@ -19,14 +19,21 @@
 //	repolint -fix-worklogs         # also: auto-renumber duplicate worklog files, then run all checks
 //	repolint -fix-worklogs-only    # ONLY auto-renumber; skip checks. For .githooks/post-rewrite
 //	                               # where the tree may be mid-rebase and checks would be noisy.
+//	repolint -cluster-drift        # also: compare deployed CRDs on the current kubeconfig
+//	                               # context against the chart YAMLs. Off by default — requires
+//	                               # a reachable cluster, so unsuitable for pre-commit/CI
+//	                               # without one. Run after `make helm-deploy` to verify the
+//	                               # CRD apply step actually landed.
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/lenaxia/llmsafespaces/pkg/repolint"
 )
@@ -42,6 +49,7 @@ func main() {
 	fixDrift := flag.Bool("fix-drift", false, "copy api/migrations/*.sql into charts/llmsafespaces/migrations/ to resolve drift")
 	fixWorklogs := flag.Bool("fix-worklogs", false, "auto-renumber duplicate worklog files to the next available number, then run all checks")
 	fixWorklogsOnly := flag.Bool("fix-worklogs-only", false, "auto-renumber duplicate worklog files and exit (no checks). Used by .githooks/post-rewrite.")
+	clusterDrift := flag.Bool("cluster-drift", false, "additionally compare each chart CRD against the deployed CRD on the current kubeconfig context. OFF by default — requires a reachable cluster, so unsuitable for pre-commit/CI without one.")
 	flag.Parse()
 
 	root, err := resolveRoot(*repoFlag)
@@ -86,6 +94,9 @@ func main() {
 	failures += runWorklogSentinels(root)
 	failures += runChartDrift(root)
 	failures += runCRDDrift(root)
+	if *clusterDrift {
+		failures += runClusterDrift(root)
+	}
 
 	if failures > 0 {
 		fmt.Fprintf(os.Stderr, "\nrepolint: %d check(s) failed\n", failures)
@@ -238,6 +249,56 @@ func runCRDDrift(root string) int {
 		return 1
 	}
 	fmt.Printf("ok    CRD drift (%d bindings checked)\n", len(bindings))
+	return 0
+}
+
+// runClusterDrift compares each chart CRD against the corresponding
+// CRD deployed on the cluster pointed at by the current kubeconfig
+// context. It is opt-in (-cluster-drift) so the default repolint run
+// never depends on cluster reachability — pre-commit/CI without a
+// kubeconfig must remain green.
+//
+// Originating incident: worklog 0465 (2026-06-19) — the deployed
+// Workspace CRD was missing spec.suspend (chart had it, cluster did
+// not, because Helm's crds/ directory is install-only). Every resume
+// request returned 200 OK but the field was silently pruned and the
+// controller never observed a transition. Run this after every
+// `make helm-deploy` to catch the same class of drift before users do.
+//
+// Each binding is reported independently so a multi-CRD failure
+// surfaces every diff at once.
+func runClusterDrift(root string) int {
+	fetcher, err := repolint.NewKubeCRDFetcher()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "FAIL  cluster-drift: cannot reach cluster: %v\n  (set KUBECONFIG or run inside a pod; this check is opt-in via -cluster-drift)\n", err)
+		return 1
+	}
+	bindings := repolint.LiveClusterBindings()
+	failed := 0
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for _, b := range bindings {
+		rep, err := repolint.ClusterDriftCheck(ctx, root, b, fetcher)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "FAIL  cluster-drift (%s @ %s): %v\n",
+				b.CRDName, b.CRDFile, err)
+			failed++
+			continue
+		}
+		if !rep.OK() {
+			fmt.Fprintf(os.Stderr, "FAIL  cluster-drift:\n%s", rep.String())
+			failed++
+		}
+	}
+	if failed > 0 {
+		fmt.Fprintln(os.Stderr,
+			"  Fix: re-apply the chart CRDs to the cluster.\n"+
+				"      kubectl apply -f charts/llmsafespaces/crds/\n"+
+				"  Helm's crds/ directory is install-only; helm upgrade\n"+
+				"  does not reconcile CRDs. See worklog 0465 for context.")
+		return 1
+	}
+	fmt.Printf("ok    cluster-drift (%d bindings checked against current kubeconfig context)\n", len(bindings))
 	return 0
 }
 

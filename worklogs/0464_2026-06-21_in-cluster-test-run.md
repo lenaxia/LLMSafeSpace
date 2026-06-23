@@ -14,7 +14,7 @@ Out of scope this session: gVisor (#1, #2, #3, #6) — `gvisor.enabled=false`, n
 
 ## Pre-Test Cluster State
 
-After the API-group rename migration earlier today (worklog 0463 + design 0042), Helm's release record had drifted: the cluster ran post-rename binary (`ts-1781995749`) but Helm's last `deployed` revision was `266` (June 18, pre-rename chart). Every `helm upgrade` failed with "no matches for kind RuntimeEnvironment in version llmsafespace.dev/v1" because Helm's diff computer reads from the previous manifest.
+After the API-group rename migration earlier today (worklog 0465 + design 0043), Helm's release record had drifted: the cluster ran post-rename binary (`ts-1781995749`) but Helm's last `deployed` revision was `266` (June 18, pre-rename chart). Every `helm upgrade` failed with "no matches for kind RuntimeEnvironment in version llmsafespace.dev/v1" because Helm's diff computer reads from the previous manifest.
 
 Lock-down sequence (before tests):
 1. Backed up all 10 stale Helm release Secrets (`v266`-`v277`) to `/tmp/migration-backup/helm-secrets/`.
@@ -137,7 +137,7 @@ The fix for this bug is small (~5 lines, plus a regression test), but applying i
 - Other regions (us-east-1, us-east-2, us-west-1, ap-southeast-2) had zero orphans — confirmed clean.
 - Security group `llmsafespaces-relay-proxy` in us-west-2 retained (idempotent design, free, reused next time).
 - 16 stale local git branches deleted (5 fully merged, 11 with `gone` upstream tracking).
-- `/tmp/` debris cleaned (kept only `/tmp/migration-backup/` per design 0042 24-hour bake recommendation).
+- `/tmp/` debris cleaned (kept only `/tmp/migration-backup/` per design 0043 24-hour bake recommendation).
 - Working tree clean (deleted local `deploy/` dir of relay-proxy build artifacts).
 
 ## Action Items
