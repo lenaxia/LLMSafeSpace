@@ -110,6 +110,22 @@ ls cmd/rotate-kek/ 2>&1
 
 ---
 
+## Iteration (post-creation)
+
+After the initial commit + PR #367, CI surfaced a pre-existing red on main that blocked the docs PR. The iteration:
+
+1. **Diagnosed the red.** main had been failing the `Secrets Integration` job since `547ff337` (US-50.6): three go-sqlmock tests in `api/internal/services/database/database_test.go` had stale column-count expectations (US-50.6 added a `key_version` column to two queries; the mocks weren't updated). Confirmed pre-existing — the docs PR is two `.md` files and cannot affect Go/Postgres tests.
+
+2. **Opened a separate fix PR (#370)** rather than folding a Go test fix into the docs PR (single-responsibility, Rule 4). Verified locally, AI-reviewed with APPROVE. Added a follow-up commit hardening the touched tests (`require` before indexing; `ExpectationsWereMet()` alignment) per reviewer notes.
+
+3. **#370 was superseded.** While iterating, US-50.7 (PR #365, `09c0d17c`) merged to main and independently fixed the same three mocks (it branched off the same broken main). main went green. Closed #370 as redundant; left the two hardening suggestions as optional follow-ups in the close comment.
+
+4. **Corrected a self-introduced inaccuracy in G50.** The first draft wrote "Wiring depends on US-50.2 ... in progress on `feat/epic-50-us50.7-domain-separation`" — conflating US-50.2 (unify crypto layers / remove `AdminKeyDeriver`, **not merged**) with US-50.7 (domain-separate the api_keys provider, **merged**). Verified against live main: `AdminKeyDeriver` still exists (`pkg/secrets/credential_store.go:81`), and `NewAuditedProvider` still has zero production call sites — so G50 remains genuinely Open. Corrected the G50 text to distinguish the two stories and cite `AdminKeyDeriver`'s presence as the concrete blocker. Also folded US-50.7 into attack-tree node [2.5] (domain separation narrows the KEK blast radius: api_keys no longer reuses the Redis DEK-cache purpose).
+
+This is the failure mode Rule 7 exists to catch: an assumption ("US-50.2 == US-50.7, both on that branch") stated without validation. Caught in the post-merge re-verification, not at authoring time — still a process miss worth noting.
+
+---
+
 ## Next Steps
 
 - PR this change. CI for doc-only paths runs `lint` (repolint) only.
