@@ -141,4 +141,4 @@ After the initial commit + PR #367, CI surfaced a pre-existing red on main that 
 ## Files Modified
 
 - `design/stories/epic-17-security-review/THREAT-MODEL.md` — v2.2: §2 asset, §4.1 nodes [2.3]–[2.5], §5 gaps G48–G50, §6 STRIDE Database row, §8 A8, §10 recounted summary, §11 revision entry.
-- `worklogs/NNNN_2026-06-22_threat-model-epic-50-sync.md` — this worklog (sentinel; post-merge bot assigns the real number).
+- `worklogs/0516_2026-06-22_threat-model-epic-50-sync.md` — this worklog (sentinel; post-merge bot assigns the real number).
