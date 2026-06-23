@@ -3,7 +3,7 @@
 **Date:** 2026-06-19
 **Status:** Proposed
 **Authors:** mikekao
-**Worklog reference:** 0463 (the deploy-blocker incident that surfaced this)
+**Worklog reference:** 0465 (the deploy-blocker incident that surfaced this)
 
 ---
 

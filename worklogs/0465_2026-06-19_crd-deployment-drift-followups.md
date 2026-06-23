@@ -104,7 +104,7 @@ remediation message. Intent: every `make helm-deploy` is a self-checking
 apply.
 
 Tests (`pkg/repolint/cluster_drift_test.go`, 10 cases): no-drift,
-chart-has-suspend-cluster-missing (the worklog-0463 reproduction),
+chart-has-suspend-cluster-missing (the worklog-0465 reproduction),
 cluster-has-stale-removed-fields, both-directions, ignore-list semantics,
 fetch error, missing chart file, invalid path, sessions.items[]
 traversal, and binding-list sanity. All pass without envtest.
