@@ -72,6 +72,7 @@ LLMSafeSpace is a Kubernetes-native platform that runs AI agents (opencode serve
 | JWT signing key | Critical | API server config/env | Full impersonation of any user |
 | PostgreSQL credentials | Critical | K8s Secret (auto-generated) | Full database access |
 | Redis credentials | High | K8s Secret (auto-generated) | Session hijacking, cache poisoning |
+| Server master KEK (root of trust) | Critical | File mount `/etc/llmsafespaces/master-secret` (US-50.1 default, mode 0440); legacy env var is a deprecated opt-in (`masterSecret.deliveryMethod=env`) | All at-rest credentials decryptable — admin/org LLM API keys, org SSO client secrets, API-key DEKs, Redis-cached user DEKs |
 | Workspace PVC data | Medium | Kubernetes PV | User code/data exposure |
 | Agent conversation history | Medium | opencode state in pod (`/workspace`) | Intellectual property leak |
 | Controller ServiceAccount token | High | Pod automount (namespace-scoped by default) | Namespace-scoped CRD/Secret/Pod manipulation |
@@ -126,10 +127,33 @@ Goal: Steal user's LLM API key
 │   │   └── Mitigation: Namespace-scoped Role
 │   │                   (charts/llmsafespace/templates/rbac.yaml:234-285);
 │   │                   etcd encryption at rest (operator responsibility)
-│   └── [2.2] Read DEK from Redis session cache
+│   ├── [2.2] Read DEK from Redis session cache
 │       └── Mitigation: Redis auth required; auto-generated password
 │                       (values.yaml:276-278); datastore NetworkPolicy
 │                       restricts ingress (chart_test.go:419-470)
+│   ├── [2.3] Read master KEK from /proc/1/environ (env-var delivery)
+│   │   └── Mitigation: 🟢 Fixed (US-50.1) — default delivery is now a read-only
+│   │       file mount at /etc/llmsafespaces/master-secret (mode 0440,
+│   │       subPath; api-deployment.yaml:112-130). The env-var path is a
+│   │       deprecated opt-in (masterSecret.deliveryMethod=env). The file
+│   │       loader fails closed on a mis-mounted/short active file
+│   │       (secrets_adapters.go:525-571; app.go:1012-1017 deprecation Warn).
+│   ├── [2.4] Read master KEK from API process memory (process compromise)
+│   │   └── Mitigation: Residual — the unsealed key lives in API memory for the
+│   │       pod's lifetime; a process-level attacker calls Decrypt exactly as
+│   │       the application does (pkg/secrets/root_key.go:136-151). KMS/Vault
+│   │       Transit (H3) is deferred by design — it limits exfil + adds audit,
+│   │       it does not prevent in-process abuse (epic-50 README §Deferred).
+│   └── [2.5] KEK compromise → mass credential decryption (blast radius)
+│       └── Mitigation (partial) — zero-downtime rotation is now supported
+│           end-to-end at the provider layer (US-50.4 multi-key StaticKeyProvider,
+│           US-50.3 key_version columns, US-50.6 rotation-aware write path). The
+│           operational rotate-kek CLI (US-50.5) is pending. Without rotation,
+│           one compromised KEK decrypts every row it wraps. Domain separation
+│           (US-50.7, merged) further narrows blast radius: the api_keys provider
+│           now derives from purpose "master-kek" rather than reusing the Redis
+│           DEK-cache key ("dek-cache"), so a Redis compromise cannot help unwrap
+│           Postgres api_keys DEKs.
 ├── [3] From database (attacker = SQL injection or DB compromise)
 │   ├── [3.1] Read wrapped_dek from user_keys table
 │   │   └── Mitigation: Useless without password (HKDF-derived KEK)
@@ -346,6 +370,9 @@ All gaps below have been verified against the codebase. Each entry cites exact f
 | G45 | Legacy `source /sandbox-cfg/env` in entrypoint | Low | 🔴 Open | `entrypoint-opencode.sh:8-10` sources file that is never created; bypasses secrets validation if ever created | Remove dead code. |
 | G46 | Password file read failure is silent | Low | 🔴 Open | `cmd/workspace-agentd/main.go:753-757` — empty password if file missing; workspace non-functional silently | Log at Error level, consider non-zero exit. |
 | G47 | Inference relay secret exposed as CLI arg | Low | 🔴 Open | `controller-deployment.yaml:84-86` — fallback interpolates secret as command-line argument | Remove fallback path. |
+| **G48** | **Master KEK delivered as env var (exposed via /proc/1/environ)** | High | 🟢 **Fixed** | Pre-fix: `api-deployment.yaml` projected `LLMSAFESPACES_MASTER_SECRET` into the pod env, readable via `/proc/1/environ` by any same-UID process. | US-50.1: default delivery is now a read-only file mount at `/etc/llmsafespaces/master-secret` (mode 0440, subPath). `secrets_adapters.go:525-571` reads `LLMSAFESPACES_MASTER_SECRET_FILE` (colon-separated for the rotation window). Legacy env path is a deprecated opt-in (`masterSecret.deliveryMethod=env`) with a startup Warn (`app.go:1017`). Regression: `chart_master_secret_test.go:121-200`. |
+| G49 | No operational KEK rotation capability (rotating is destructive) | High | 🔴 Open | Pre-fix: rotating the master KEK orphaned every Postgres ciphertext. Foundation shipped: `StaticKeyProvider` multi-key decrypt (`root_key.go:62-118`, US-50.4); `key_version` columns on `api_keys` + `org_sso_configs` (migrations 42/43, US-50.3); rotation-aware write path populates active version on encrypt (US-50.6). | The `rotate-kek` CLI + runbook (US-50.5) is the remaining piece. Provider/columns/write-path are in place; only the batch re-wrap tooling is pending. |
+| G50 | Decrypt operations are not audited (exfiltration via legitimate API undetectable) | Medium | 🔴 Open | `NewAuditedProvider` (`pkg/secrets/audited_provider.go:42-73`, US-50.12) wraps a `RootKeyProvider` and logs every Decrypt to `secret_audit_log` (fire-and-forget, never logs plaintext/ciphertext/key material). **Not yet wired into production decrypt paths** — `NewAuditedProvider` has zero call sites anywhere: `rg "NewAuditedProvider\("` returns a single hit (the constructor definition at `audited_provider.go:50`), and the two test references (`audited_provider_test.go:56,163`) are `&AuditedProvider{}` struct literals that bypass the constructor (so it is itself untested). `AdminKeyDeriver` still exists (`pkg/secrets/credential_store.go:81`), so Layer 2 callers still do `DecryptSecret(deriveServerKey(label), ct)` directly with no single decrypt chokepoint to hook. | Wiring depends on US-50.2 (unify the two crypto layers under `RootKeyProvider` — `AdminKeyDeriver` removal). US-50.2 is **not yet merged** (distinct from US-50.7 domain separation, which has merged). Per README-LLM.md Rule 0, the unwrapped component does not yet provide coverage; `secret_audit_log` currently records only secret CRUD, not decrypts. |
 
 ---
 
@@ -357,7 +384,7 @@ All gaps below have been verified against the codebase. Each entry cites exact f
 | **Proxy** | Workspace ID spoofing — **NO OWNERSHIP CHECK (G33)** | Response tampering (plain HTTP — G4); header injection to sandbox (G34) | No per-request audit trail | All client headers forwarded to sandbox (G34); credential leak in responses | Connection exhaustion (mitigated: limits) | Cross-tenant access via proxy (G33) |
 | **Controller** | SA token theft (mitigated: bound tokens) | CRD manipulation (mitigated: webhooks) | Actions not individually audited | Namespace-scoped by default; secrets persist after deletion (G36) | CRD spam (mitigated: quotas) | Namespace-scoped SA |
 | **Sandbox Pod** | N/A (no auth within pod) | PVC data corruption | No file-level audit | Credential in env (G3 accepted); tmpfs-backed (G15 fixed); env var injection (G37); agentd user port unauthenticated (G40) | Resource exhaustion (mitigated: limits) | Container escape (mitigated: seccomp, caps; G1 accepted) |
-| **Database** | SQL injection (mitigated: pgx parameterized) | Data corruption (mitigated: transactions) | No query audit log | Wrapped DEK exposure (mitigated: encryption) | Connection exhaustion | N/A |
+| **Database** | SQL injection (mitigated: pgx parameterized) | Data corruption (mitigated: transactions) | No query audit log | Wrapped DEK exposure (mitigated: AES-256-GCM); credential rows now carry `key_version` for rotation (US-50.3); authorized-decrypt exfiltration undetectable — audit wrapper built but not wired (G50) | Connection exhaustion | N/A |
 | **Redis** | Auth bypass (mitigated: auto-generated password, datastore NetworkPolicy) | Cache poisoning | No operation audit | DEK in memory (G10 accepted) | Memory exhaustion; SSE tracking leak (G42) | N/A |
 | **Frontend** | Session theft via XSS (mitigated: rehype-sanitize — needs fuzzing) | DOM tampering (mitigated: React auto-escape) | No client audit | JWT in HttpOnly Secure cookie | UI freeze via huge messages | N/A |
 | **Workspace Network** | Cross-tenant traffic (mitigated: NetworkPolicy) | N/A | NetworkPolicy events not audited | DNS exfil via external resolvers (G30); IPv6 unrestricted (G43) | N/A | N/A |
@@ -402,7 +429,7 @@ Per `README-LLM.md` Rule 7, every assumption must be validated. Where validation
 | A5 | Redis not exposed outside cluster | Service type review | **Validated** | Chart does not create a Redis service. Document network requirement. Datastore NetworkPolicy restricts ingress (chart_test.go:447-470). |
 | A6 | PostgreSQL not exposed outside cluster | Service type review | **Validated** | Same as A5. Datastore NetworkPolicy restricts ingress (chart_test.go:419-443). |
 | A7 | Container images from trusted registry | Dockerfile review | **Partial** | Base image uses tag-only `debian:bookworm-slim` (not digest-pinned). opencode and gh downloaded over TLS without checksum verification (G9). mise uses MISE_GITHUB_ATTESTATIONS=1. AWS CLI has full PGP verification. |
-| A8 | JWT signing keys rotated periodically | Code search | **Refuted** | No rotation primitives in code; key sourced from config at startup. Document operator runbook for restart-with-new-secret rotation. |
+| A8 | JWT signing keys rotated periodically | Code search | **Refuted (JWT); Partial (KEK)** | JWT signing keys: no rotation primitives in code; sourced from config at startup (restart-with-new-secret only). Master KEK: zero-downtime rotation is now supported at the provider layer — multi-key `StaticKeyProvider` (`root_key.go:82-109`, US-50.4), `key_version` columns (US-50.3), rotation-aware write path (US-50.6). The operational `rotate-kek` CLI (US-50.5) is the remaining piece. |
 | A9 | rehype-sanitize default schema is sufficient for LLM output | Bypass fuzz testing | **Unvalidated** | Needs fuzz testing with known XSS bypass corpora (RT-7.9). |
 | A10 | Operator deploys etcd, K8s, CNI per chart documentation | Documentation completeness | **Unvalidated** | Chart README lists requirements. No automated preflight check. |
 
@@ -425,13 +452,15 @@ Per `README-LLM.md` Rule 7, every assumption must be validated. Where validation
 
 | Category | Total | Fixed | Open | Accepted |
 |----------|-------|-------|------|----------|
-| Security gaps (G1–G47) | 47 | 18 | 22 | 7 |
+| Security gaps (G1–G50) | 50 | 17 | 26 | 7 |
 
-**Open gaps (require remediation):** G4, G6, G9, G13, G21, G25, G28, G29, G30, G33–G47
+**Open gaps (require remediation):** G4, G6, G9, G13, G21, G25, G28, G29, G30, G33–G47, G49, G50
 
 **Accepted risks (documented rationale):** G1, G3, G7, G10, G14, G23, G32
 
 **Critical open gaps:** G33 (proxy IDOR), G34 (header forwarding)
+
+> **v2.2 count correction:** the prior summary (v2.1) reported 18 Fixed / 22 Open; a row-by-row recount of the table showed 16 Fixed / 24 Open. The recount is folded into this revision alongside the G48–G50 additions. Counts now reconcile exactly (17 + 26 + 7 = 50).
 
 ---
 
@@ -439,6 +468,7 @@ Per `README-LLM.md` Rule 7, every assumption must be validated. Where validation
 
 | Version | Change |
 |---------|--------|
+| 2.2 | Synced with Epic 50 (master KEK hardening) landings (worklogs 0460, 0504, 0505, 0513, 0514, 0515). Added master KEK as an explicit critical asset (§2). Attack tree 4.1 gains nodes [2.3]–[2.5]: `/proc/1/environ` exposure now closed by the file-mount default (US-50.1, 🟢 G48); in-memory KEK exposure documented as residual with KMS/Vault deferred; KEK blast radius now bounded by rotation primitives (US-50.3/.4/.6) with the `rotate-kek` CLI pending, and narrowed by US-50.7 domain separation (api_keys provider moved off the Redis DEK-cache purpose). New gaps: G48 (KEK env delivery, Fixed), G49 (operational KEK rotation, Open — provider/columns/write-path shipped, CLI pending), G50 (decrypt audit, Open — `AuditedProvider` shipped but **not wired** into production decrypt paths; wiring awaits US-50.2 unification — `AdminKeyDeriver` still present at `credential_store.go:81`). Assumption A8 split: JWT rotation still refuted, KEK rotation now partial. STRIDE Database row updated (key_version + G50 detection gap). Recounted the gap table (prior summary was stale: 18/22 reported vs 16/24 actual) — now reconciles at 17 Fixed / 26 Open / 7 Accepted / 50 Total. |
 | 2.1 | Added 15 new gaps (G33-G47) from adversarial re-validation. Critical: G33 (proxy IDOR — no ownership check), G34 (all client headers forwarded to sandbox). High: G35 (RecoveryAccount no rate limit), G36 (secrets persist after deletion), G37 (env var name injection), G38 (sessions survive password change). Full report in security-report-g33-g47.md. STRIDE table updated with new findings. Implementation status updated. |
 | 2.0 | Full rewrite against verified code state. 12 gaps updated from stale "Open" to reflect actual fixed status (G5, G8, G11, G12, G15, G18, G19, G22, G24, G26, G27, G31). Attack trees updated to reflect current mitigations. STRIDE table updated. Assumptions re-validated against code. Trust boundaries updated. Removed stale file:line references to deleted controller.go code (now pod_builder.go). |
 | 1.4 | Phase C remediation (worklogs 0095-0116). 19 of 32 G-findings claimed closed. |
