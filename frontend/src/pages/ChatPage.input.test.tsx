@@ -8,6 +8,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ChatPage } from "./ChatPage";
 import { TooltipProvider } from "../components/ui";
+import { SessionActivityProvider } from "../providers/SessionActivityProvider";
 import type { WorkspaceStreamEvent } from "../api/types";
 
 // --- Mocks ---
@@ -22,16 +23,11 @@ vi.mock("../api/workspaces", () => ({
     getSessions: vi.fn().mockResolvedValue([]),
   },
 }));
-vi.mock("../providers/SessionActivityProvider", () => ({
-  useClearPendingUnread: () => () => {},
-  useIsSessionBusy: () => false,
-  useIsSessionUnread: () => false,
-  useWorkspaceBusyCount: () => 0,
-  useIsSessionPendingAction: () => false,
-  useSessionPendingActions: () => new Set<string>(),
-  useAddPendingAction: () => () => {},
-  useRemovePendingAction: () => () => {},
-  SessionActivityProvider: ({ children }: { children: any }) => <>{children}</>,
+// Use the REAL SessionActivityProvider here: these tests verify the SSE →
+// provider → prompt-render chain end-to-end, which a stub mock cannot drive
+// (no state update → no re-render). Only the user-wide event stream is stubbed.
+vi.mock("../hooks/useUserEventStream", () => ({
+  useUserEventStream: () => {},
 }));
 vi.mock("../api/messages", () => ({ messagesApi: { getHistory: vi.fn().mockResolvedValue([]), getHistoryPage: vi.fn().mockResolvedValue({ messages: [], nextCursor: undefined }), sendAsync: vi.fn(), queueMessage: vi.fn().mockResolvedValue({ messageID: "msg_q_mock" }), getQueue: vi.fn().mockResolvedValue({ messages: [] }), deleteQueueMessage: vi.fn().mockResolvedValue(undefined) } }));
 vi.mock("../api/sessions", () => ({ sessionsApi: { create: vi.fn() } }));
@@ -82,11 +78,13 @@ function renderChat(qc: QueryClient, path: string) {
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[path]}>
-        <TooltipProvider delayDuration={0}>
-          <Routes>
-            <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
-          </Routes>
-        </TooltipProvider>
+        <SessionActivityProvider>
+          <TooltipProvider delayDuration={0}>
+            <Routes>
+              <Route path="/chat/:workspaceId/:sessionId" element={<ChatPage />} />
+            </Routes>
+          </TooltipProvider>
+        </SessionActivityProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   );

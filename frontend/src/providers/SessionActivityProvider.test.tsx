@@ -2,7 +2,8 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { SessionActivityProvider, useIsSessionBusy, useIsSessionUnread, useWorkspaceBusyCount, useClearPendingUnread, useIsSessionPendingAction, useAddPendingAction, useRemovePendingAction, useSessionPendingActions } from "./SessionActivityProvider";
+import { SessionActivityProvider, useIsSessionBusy, useIsSessionUnread, useWorkspaceBusyCount, useClearPendingUnread, useIsSessionPendingAction, useAddPendingAction, useRemovePendingAction, useSessionPendingActions, useAddPendingQuestion, useAddPendingPermission, usePendingQuestionsForSession, usePendingPermissionsForSession, useClearSessionPendingPrompts } from "./SessionActivityProvider";
+import type { QuestionRequest, PermissionRequest } from "../api/types";
 
 let capturedOnEvent: ((data: unknown) => void) | undefined;
 let capturedOnReconnect: (() => void) | undefined;
@@ -1109,5 +1110,191 @@ describe("SessionActivityProvider — pending actions", () => {
     );
 
     expect(screen.getByTestId("count").textContent).toBe("0");
+  });
+});
+
+// --- Pending prompt content (issue #346): content lives in the global layer so
+// it survives within-tab session navigation. Filtered by session at read time. ---
+
+function makeQuestion(id: string, sessionId: string, rootSessionId?: string): QuestionRequest {
+  return { id, session_id: sessionId, root_session_id: rootSessionId ?? sessionId, questions: [] };
+}
+
+function makePermission(id: string, sessionId: string, rootSessionId?: string): PermissionRequest {
+  return { id, session_id: sessionId, root_session_id: rootSessionId ?? sessionId, permission: "bash", patterns: [] };
+}
+
+describe("SessionActivityProvider — pending prompt content", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedOnEvent = undefined;
+    capturedOnReconnect = undefined;
+  });
+
+  it("stores question content and returns it filtered by session", () => {
+    function Display({ sessionId }: { sessionId: string }) {
+      const addQ = useAddPendingQuestion();
+      const questions = usePendingQuestionsForSession(sessionId);
+      return (
+        <>
+          <span data-testid="count">{questions.length}</span>
+          <span data-testid="ids">{questions.map((q) => q.id).join(",")}</span>
+          <button data-testid="add" onClick={() => addQ("ws-1", makeQuestion("q1", "sess-A"))} />
+        </>
+      );
+    }
+
+    renderProvider(<Display sessionId="sess-A" />);
+    expect(screen.getByTestId("count").textContent).toBe("0");
+
+    act(() => {
+      screen.getByTestId("add").click();
+    });
+
+    expect(screen.getByTestId("count").textContent).toBe("1");
+    expect(screen.getByTestId("ids").textContent).toBe("q1");
+  });
+
+  it("isolates prompts per session (no clear-on-navigation) — the #346 fix", () => {
+    // The provider holds content keyed by request, not by the viewed session.
+    // Adding a prompt for session A must NOT be affected by also adding/viewing
+    // session B; querying A after touching B still returns A's prompt.
+    function Display({ sessionId }: { sessionId: string }) {
+      const addQ = useAddPendingQuestion();
+      const questions = usePendingQuestionsForSession(sessionId);
+      return (
+        <>
+          <span data-testid={`count-${sessionId}`}>{questions.length}</span>
+          <button data-testid="add-A" onClick={() => addQ("ws-1", makeQuestion("qA", "sess-A"))} />
+          <button data-testid="add-B" onClick={() => addQ("ws-1", makeQuestion("qB", "sess-B"))} />
+        </>
+      );
+    }
+
+    const { rerender } = renderProvider(<Display sessionId="sess-A" />);
+    act(() => screen.getByTestId("add-A").click());
+    // "Navigate" to sess-B and add a prompt there.
+    rerender(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <Display sessionId="sess-B" />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    act(() => screen.getByTestId("add-B").click());
+    expect(screen.getByTestId("count-sess-B").textContent).toBe("1");
+
+    // Navigate back to sess-A — its prompt MUST still be present (the bug would
+    // have cleared it on the session switch).
+    rerender(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}>
+        <MemoryRouter>
+          <SessionActivityProvider>
+            <Display sessionId="sess-A" />
+          </SessionActivityProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(screen.getByTestId("count-sess-A").textContent).toBe("1");
+  });
+
+  it("matches a subtask prompt to its parent via root_session_id", () => {
+    function Display({ sessionId }: { sessionId: string }) {
+      const addQ = useAddPendingQuestion();
+      const questions = usePendingQuestionsForSession(sessionId);
+      return (
+        <>
+          <span data-testid={`count-${sessionId}`}>{questions.length}</span>
+          <button
+            data-testid="add"
+            // Subtask session "child" whose root is the parent "parent".
+            onClick={() => addQ("ws-1", makeQuestion("q1", "child", "parent"))}
+          />
+        </>
+      );
+    }
+
+    renderProvider(<Display sessionId="parent" />);
+    act(() => screen.getByTestId("add").click());
+    // The prompt bubbles to the parent view (root_session_id match)…
+    expect(screen.getByTestId("count-parent").textContent).toBe("1");
+  });
+
+  it("removePendingAction clears the stored content (resolved event)", () => {
+    function Display({ sessionId }: { sessionId: string }) {
+      const addQ = useAddPendingQuestion();
+      const remove = useRemovePendingAction();
+      const questions = usePendingQuestionsForSession(sessionId);
+      return (
+        <>
+          <span data-testid="count">{questions.length}</span>
+          <button data-testid="add" onClick={() => addQ("ws-1", makeQuestion("q1", "sess-A"))} />
+          <button data-testid="resolve" onClick={() => remove("q1")} />
+        </>
+      );
+    }
+
+    renderProvider(<Display sessionId="sess-A" />);
+    act(() => screen.getByTestId("add").click());
+    expect(screen.getByTestId("count").textContent).toBe("1");
+    act(() => screen.getByTestId("resolve").click());
+    expect(screen.getByTestId("count").textContent).toBe("0");
+  });
+
+  it("clearSessionPendingPrompts clears content + indicator for one session only (US-16.12 idle/error)", () => {
+    // Renders BOTH sessions' pulses/content independently of a viewed-session
+    // prop, so we can assert sess-B is untouched after clearing sess-A.
+    function Display() {
+      const addQ = useAddPendingQuestion();
+      const clear = useClearSessionPendingPrompts();
+      const questionsA = usePendingQuestionsForSession("sess-A");
+      const questionsB = usePendingQuestionsForSession("sess-B");
+      const pendingA = useIsSessionPendingAction("sess-A");
+      const pendingB = useIsSessionPendingAction("sess-B");
+      return (
+        <>
+          <span data-testid="count-A">{questionsA.length}</span>
+          <span data-testid="count-B">{questionsB.length}</span>
+          <span data-testid="pulse-A">{pendingA ? "1" : "0"}</span>
+          <span data-testid="pulse-B">{pendingB ? "1" : "0"}</span>
+          <button data-testid="add-A" onClick={() => addQ("ws-1", makeQuestion("qA", "sess-A"))} />
+          <button data-testid="add-B" onClick={() => addQ("ws-1", makeQuestion("qB", "sess-B"))} />
+          <button data-testid="clear-A" onClick={() => clear("sess-A")} />
+        </>
+      );
+    }
+
+    renderProvider(<Display />);
+    act(() => screen.getByTestId("add-A").click());
+    act(() => screen.getByTestId("add-B").click());
+    expect(screen.getByTestId("pulse-A").textContent).toBe("1");
+    expect(screen.getByTestId("pulse-B").textContent).toBe("1");
+
+    act(() => screen.getByTestId("clear-A").click());
+
+    expect(screen.getByTestId("count-A").textContent).toBe("0");
+    expect(screen.getByTestId("pulse-A").textContent).toBe("0");
+    // sess-B untouched.
+    expect(screen.getByTestId("count-B").textContent).toBe("1");
+    expect(screen.getByTestId("pulse-B").textContent).toBe("1");
+  });
+
+  it("stores permission content and returns it filtered by session", () => {
+    function Display({ sessionId }: { sessionId: string }) {
+      const addP = useAddPendingPermission();
+      const permissions = usePendingPermissionsForSession(sessionId);
+      return (
+        <>
+          <span data-testid="count">{permissions.length}</span>
+          <button data-testid="add" onClick={() => addP("ws-1", makePermission("p1", "sess-A"))} />
+        </>
+      );
+    }
+
+    renderProvider(<Display sessionId="sess-A" />);
+    act(() => screen.getByTestId("add").click());
+    expect(screen.getByTestId("count").textContent).toBe("1");
   });
 });

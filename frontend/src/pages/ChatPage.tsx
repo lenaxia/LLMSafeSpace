@@ -26,7 +26,7 @@ import { sessionsApi } from "../api/sessions";
 import type { Message, SessionListItem, WorkspaceStreamEvent, OpenCodeEvent, QuestionRequest, PermissionRequest } from "../api/types";
 import { QuestionPrompt } from "../components/chat/QuestionPrompt";
 import { PermissionPrompt } from "../components/chat/PermissionPrompt";
-import { useClearPendingUnread, useAddPendingAction, useRemovePendingAction } from "../providers/SessionActivityProvider";
+import { useClearPendingUnread, useAddPendingQuestion, useAddPendingPermission, useRemovePendingAction, usePendingQuestionsForSession, usePendingPermissionsForSession, useClearSessionPendingPrompts } from "../providers/SessionActivityProvider";
 
 type StreamPart = { type: "text" | "thinking" | "tool"; text: string; toolState?: string; toolCallID?: string; toolInput?: unknown; toolOutput?: string };
 
@@ -49,8 +49,9 @@ export function ChatPage() {
     setServerBusy(false);
     setRetryStatus(null);
     sseHasDrivenBusy.current = false;
-    setPendingQuestions([]);
-    setPendingPermissions([]);
+    // Pending prompt content is NOT cleared here — it lives in the global
+    // SessionActivityProvider (keyed by requestId) so it survives within-tab
+    // navigation between a parent session and its subtasks (issue #346).
     // Reset compaction state on session switch to prevent false positives:
     // prevContextUsedRef from the old session would otherwise be compared against
     // the new session's first contextUsed value, triggering spurious compaction banners.
@@ -79,8 +80,10 @@ export function ChatPage() {
 
   const isReady = status?.phase === "Active";
   const clearPendingUnread = useClearPendingUnread();
-  const addPendingAction = useAddPendingAction();
+  const addPendingQuestion = useAddPendingQuestion();
+  const addPendingPermission = useAddPendingPermission();
   const removePendingAction = useRemovePendingAction();
+  const clearSessionPendingPrompts = useClearSessionPendingPrompts();
 
   useEffect(() => {
     if (!workspaceId || !sessionId || !isReady) return;
@@ -245,8 +248,11 @@ export function ChatPage() {
   }, [contextUsedForDisplay]);
 
   // US-16.11: Pending input requests from the agent
-  const [pendingQuestions, setPendingQuestions] = useState<QuestionRequest[]>([]);
-  const [pendingPermissions, setPendingPermissions] = useState<PermissionRequest[]>([]);
+  // Pending prompt content comes from the global SessionActivityProvider
+  // (keyed by requestId, filtered to this session) so it survives within-tab
+  // navigation (#346). No session-local state — nothing to clear on switch.
+  const pendingQuestions = usePendingQuestionsForSession(sessionId ?? "");
+  const pendingPermissions = usePendingPermissionsForSession(sessionId ?? "");
 
   const queue = useMessageQueue(activeWorkspaceId, sessionId);
 
@@ -347,13 +353,14 @@ export function ChatPage() {
   // questions/permissions arrived via SSE (meaning opencode's queue is empty).
   //
   // After abort we reconcile history and surface an "interrupted" banner.
+  const pendingPromptCount = pendingQuestions.length + pendingPermissions.length;
   useEffect(() => {
     if (!isReconnectMode.current) return;
     if (!workspaceId || !sessionId) return;
     if (!history || history.length === 0) return;
     if (hasAutoAbortedRef.current) return;
     // If SSE already delivered the question/permission, don't abort — let the user answer.
-    if (pendingQuestions.length > 0 || pendingPermissions.length > 0) return;
+    if (pendingPromptCount > 0) return;
 
     const lastAssistant = [...history].reverse().find((m) => m.role === "assistant");
     if (!lastAssistant) return;
@@ -370,7 +377,7 @@ export function ChatPage() {
     workspacesApi.abortSession(workspaceId, sessionId)
       .then(() => { setSessionWasInterrupted(true); reconcileOnIdle(); })
       .catch(() => { setSessionWasInterrupted(true); reconcileOnIdle(); });
-  }, [workspaceId, sessionId, history, pendingQuestions, pendingPermissions, reconcileOnIdle]);
+  }, [workspaceId, sessionId, history, pendingPromptCount, reconcileOnIdle]);
   const hasAutoRenamedRef = useRef(false);
   useEffect(() => {
     if (!sessionTitle || !workspaceName || !workspaceId || hasAutoRenamedRef.current) return;
@@ -565,9 +572,9 @@ export function ChatPage() {
           clearStreamTimedOut();
           reconcileOnIdle();
           queue.refreshQueue();
-          // US-16.12: Clear stale prompts on session idle
-          setPendingQuestions([]);
-          setPendingPermissions([]);
+          // US-16.12: Clear stale prompts on session idle (global, scoped to
+          // this session — survives across views, cleared when idle).
+          clearSessionPendingPrompts(event.session_id);
         } else if (event.status === "busy") {
           sseHasDrivenBusy.current = true;
           setServerBusy(true);
@@ -670,9 +677,8 @@ export function ChatPage() {
             role: "assistant",
             parts: [{ type: "error" as const, text: `⚠️ ${text}` }],
           }]);
-          // US-16.12: Clear stale prompts on session error
-          setPendingQuestions([]);
-          setPendingPermissions([]);
+          // US-16.12: Clear stale prompts on session error (global, scoped).
+          clearSessionPendingPrompts(sessionId ?? "");
         }
       }
       // Route streaming events to the active session parser
@@ -681,30 +687,23 @@ export function ChatPage() {
       }
     } else if (event.type === "agent.question") {
       const req = event.data as QuestionRequest;
-      const eventRoot = req.root_session_id ?? req.session_id;
-      if (eventRoot === sessionId || req.session_id === sessionId) {
-        setPendingQuestions((prev) => prev.some((q) => q.id === req.id) ? prev : [...prev, req]);
-      }
-      addPendingAction(workspaceId ?? "", req.session_id, req.id);
+      // Store content globally (keyed by requestId); the selector filters by
+      // session at render. Storing unconditionally (not gated by the viewed
+      // session) means the prompt survives navigation to/from this session.
+      addPendingQuestion(workspaceId ?? "", req);
     } else if (event.type === "agent.question.resolved") {
       const { request_id } = event.data as { request_id: string };
-      setPendingQuestions((prev) => prev.filter((q) => q.id !== request_id));
       removePendingAction(request_id);
     } else if (event.type === "agent.permission") {
       const req = event.data as PermissionRequest;
-      const eventRoot = req.root_session_id ?? req.session_id;
-      if (eventRoot === sessionId || req.session_id === sessionId) {
-        setPendingPermissions((prev) => prev.some((p) => p.id === req.id) ? prev : [...prev, req]);
-      }
-      addPendingAction(workspaceId ?? "", req.session_id, req.id);
+      addPendingPermission(workspaceId ?? "", req);
     } else if (event.type === "agent.permission.resolved") {
       const { request_id } = event.data as { request_id: string };
-      setPendingPermissions((prev) => prev.filter((p) => p.id !== request_id));
       removePendingAction(request_id);
     } else if (event.type === "agent_died") {
       setAgentDied(true);
     }
-  }, [queryClient, workspaceId, sessionId, parseStreamEvent, notifySessionIdle, reconcileOnIdle, queue, addPendingAction, removePendingAction, clearStreamTimedOut]);
+  }, [queryClient, workspaceId, sessionId, parseStreamEvent, notifySessionIdle, reconcileOnIdle, queue, addPendingQuestion, addPendingPermission, removePendingAction, clearSessionPendingPrompts, clearStreamTimedOut]);
 
   // US-15.2: On SSE reconnect, re-poll status to catch missed transitions
   const handleSSEReconnect = useCallback(() => {
@@ -1001,11 +1000,11 @@ export function ChatPage() {
                 <>
                   {pendingQuestions.map((q) => (
                     <QuestionPrompt key={q.id} workspaceId={workspaceId!} request={q}
-                      onResolved={() => setPendingQuestions((prev) => prev.filter((x) => x.id !== q.id))} />
+                      onResolved={() => removePendingAction(q.id)} />
                   ))}
                   {pendingPermissions.map((p) => (
                     <PermissionPrompt key={p.id} workspaceId={workspaceId!} request={p}
-                      onResolved={() => setPendingPermissions((prev) => prev.filter((x) => x.id !== p.id))} />
+                      onResolved={() => removePendingAction(p.id)} />
                   ))}
                 </>
               ) : undefined

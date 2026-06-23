@@ -23,6 +23,11 @@ vi.mock("../api/workspaces", () => ({
     getSessions: vi.fn().mockResolvedValue([]),
   },
 }));
+// Stateful prompt store so the auto-abort guard (pendingPromptCount > 0)
+// reflects questions/permissions delivered via SSE. Mutated synchronously by
+// the add/remove/clear mocks; read at render time by the selector mocks.
+const promptStore = vi.hoisted(() => ({ questions: [] as Array<{ id: string }>, permissions: [] as Array<{ id: string }> }));
+
 vi.mock("../providers/SessionActivityProvider", () => ({
   useClearPendingUnread: () => () => {},
   useIsSessionBusy: () => false,
@@ -31,7 +36,22 @@ vi.mock("../providers/SessionActivityProvider", () => ({
   useIsSessionPendingAction: () => false,
   useSessionPendingActions: () => new Set<string>(),
   useAddPendingAction: () => () => {},
-  useRemovePendingAction: () => () => {},
+  useRemovePendingAction: () => (id: string) => {
+    promptStore.questions = promptStore.questions.filter((q) => q.id !== id);
+    promptStore.permissions = promptStore.permissions.filter((p) => p.id !== id);
+  },
+  useAddPendingQuestion: () => (_ws: string, req: { id: string }) => {
+    if (!promptStore.questions.some((q) => q.id === req.id)) promptStore.questions = [...promptStore.questions, req];
+  },
+  useAddPendingPermission: () => (_ws: string, req: { id: string }) => {
+    if (!promptStore.permissions.some((p) => p.id === req.id)) promptStore.permissions = [...promptStore.permissions, req];
+  },
+  usePendingQuestionsForSession: () => promptStore.questions,
+  usePendingPermissionsForSession: () => promptStore.permissions,
+  useClearSessionPendingPrompts: () => () => {
+    promptStore.questions = [];
+    promptStore.permissions = [];
+  },
   SessionActivityProvider: ({ children }: { children: any }) => <>{children}</>,
 }));
 vi.mock("../api/messages", () => {
@@ -168,6 +188,13 @@ function makePartDeltaWithId(sessionId: string, partId: string, delta: string): 
 }
 
 // --- Test Groups ---
+
+// Reset the stateful prompt store between tests so a question delivered in one
+// test cannot leak into another's auto-abort guard check.
+beforeEach(() => {
+  promptStore.questions = [];
+  promptStore.permissions = [];
+});
 
 describe("US-15.1 + US-15.2: Status-Driven Streaming Indicator", () => {
   let qc: QueryClient;
