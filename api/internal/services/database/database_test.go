@@ -1063,6 +1063,7 @@ func TestCreateAPIKey_WithDEKWrappingColumns(t *testing.T) {
 
 	err := service.CreateAPIKey(ctx, apiKey)
 	assert.NoError(t, err)
+	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestCreateAPIKey_WithoutDEKWrappingColumns(t *testing.T) {
@@ -1255,6 +1256,8 @@ func TestListAPIKeysWithDecrypt(t *testing.T) {
 	assert.True(t, keys[0].DecryptAccess)
 	assert.True(t, keys[0].DekSynced)
 	assert.False(t, keys[1].DekSynced)
+	assert.Equal(t, 1, keys[0].KeyVersion)
+	assert.Equal(t, 1, keys[1].KeyVersion)
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
