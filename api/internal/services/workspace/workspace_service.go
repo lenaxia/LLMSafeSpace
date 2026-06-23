@@ -573,20 +573,17 @@ func (s *Service) SuspendWorkspace(ctx context.Context, userID, workspaceID stri
 }
 
 // NeutralizeUserWorkspaces suspends every Active workspace owned by
-// userID and scrubs the ephemeral workspace-secrets-<id> Kubernetes
-// Secret for each. It is invoked by the email password-reset flow so
-// that live pods are destroyed (their in-memory and /sandbox-cfg tmpfs
-// copies of decrypted keys die with the pod) and so a later resume
-// cannot re-materialize the previous plaintext from a stale
-// workspace-secrets-<id> Secret.
+// userID and best-effort deletes any legacy workspace-secrets-<id> K8s
+// Secret for each. Post-Epic-35, workspaces no longer create this Secret
+// (secretless injection), so this is an upgrade-path cleanup no-op for
+// post-Epic-35 workspaces. For pre-Epic-35 workspaces with a leftover
+// Secret, it ensures the plaintext is scrubbed.
 //
 // Suspend is best-effort: workspaces not in the Active phase (Creating,
 // Resuming, already Suspended, ...) are skipped without aborting the
-// loop, and individual failures are logged. The K8s Secret scrub runs
-// for every workspace regardless of phase and ignores NotFound (the
-// controller already deletes the Secret for Active workspaces; the
-// scrub is the guarantee for Suspended/Failed ones). A nil k8sClient
-// (dev/test) makes the whole call a no-op.
+// loop, and individual failures are logged. The Secret scrub runs for
+// every workspace regardless of phase and ignores NotFound.
+// A nil k8sClient (dev/test) makes the scrub a no-op.
 func (s *Service) NeutralizeUserWorkspaces(ctx context.Context, userID string) error {
 	phases := s.fetchUserWorkspacePhases(ctx, userID)
 	for wsID := range phases {
@@ -609,9 +606,9 @@ func (s *Service) NeutralizeUserWorkspaces(ctx context.Context, userID string) e
 	return nil
 }
 
-// deleteWorkspaceSecretsManifest deletes the workspace-secrets-<id>
-// Kubernetes Secret. It is the scrub half of NeutralizeUserWorkspaces
-// and mirrors the client access path of EnsureSecretsManifest.
+// deleteWorkspaceSecretsManifest deletes a legacy workspace-secrets-<id>
+// K8s Secret if one exists (upgrade-path cleanup; post-Epic-35
+// workspaces never create it).
 func (s *Service) deleteWorkspaceSecretsManifest(ctx context.Context, workspaceID string) error {
 	if s.k8sClient == nil {
 		return nil

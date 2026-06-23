@@ -49,11 +49,13 @@ func (f *fakeBootstrapLookup) GetWorkspace(_ context.Context, _ string) (*types.
 	return f.ws, f.err
 }
 
+const testBootstrapNamespace = "llmsafespace"
+
 func newTestBootstrapRouter(t *testing.T, reviewer *fakeTokenReviewer, injector *fakeBootstrapInjector, lookup *fakeBootstrapLookup) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	h := NewPodBootstrapHandler(reviewer, injector, lookup)
+	h := NewPodBootstrapHandler(reviewer, injector, lookup, testBootstrapNamespace)
 	r.POST("/internal/v1/pod-bootstrap", h.Bootstrap)
 	return r
 }
@@ -177,24 +179,48 @@ func TestPodBootstrap_MissingWorkspaceID_Returns400(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestParseWorkspaceIDFromSAName(t *testing.T) {
+func TestParseSAPrincipal(t *testing.T) {
 	tests := []struct {
 		name     string
 		username string
+		wantNS   string
 		wantID   string
 		wantOK   bool
 	}{
-		{"uuid", "system:serviceaccount:llmsafespace:workspace-550e8400-e29b-41d4-a716-446655440000", "550e8400-e29b-41d4-a716-446655440000", true},
-		{"short", "system:serviceaccount:default:workspace-abc", "abc", true},
-		{"not workspace prefix", "system:serviceaccount:default:default", "", false},
-		{"garbage", "not-a-valid-username", "", false},
-		{"empty", "", "", false},
+		{"uuid", "system:serviceaccount:llmsafespace:workspace-550e8400-e29b-41d4-a716-446655440000", "llmsafespace", "550e8400-e29b-41d4-a716-446655440000", true},
+		{"short", "system:serviceaccount:default:workspace-abc", "default", "abc", true},
+		{"not workspace prefix", "system:serviceaccount:default:default", "", "", false},
+		{"garbage", "not-a-valid-username", "", "", false},
+		{"empty", "", "", "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			id, ok := parseWorkspaceIDFromSAName(tt.username)
+			ns, id, ok := parseSAPrincipal(tt.username)
 			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.wantNS, ns)
 			assert.Equal(t, tt.wantID, id)
 		})
 	}
+}
+
+// TestPodBootstrap_AuthenticatedFalse_Returns401 (C1) — a token rejected by
+// the apiserver (Authenticated=false) must return 401, not 500. This is a
+// client error (invalid/expired/wrong-audience token), not a server fault.
+func TestPodBootstrap_AuthenticatedFalse_Returns401(t *testing.T) {
+	reviewer := &fakeTokenReviewer{username: "", err: errTokenNotAuthenticated}
+	router := newTestBootstrapRouter(t, reviewer, &fakeBootstrapInjector{}, &fakeBootstrapLookup{})
+	w := doBootstrap(t, router, "rejected-token", `{"workspaceID":"ws-abc"}`)
+	assert.Equal(t, http.StatusUnauthorized, w.Code, "Authenticated=false must be 401, not 500 (C1)")
+}
+
+// TestPodBootstrap_CrossNamespaceSA_Rejected (S1) — a valid token from a
+// workspace-<id> SA in a DIFFERENT namespace must be rejected (403). An
+// attacker with namespace-creation privileges must not be able to forge a
+// workspace SA and extract another workspace's credentials.
+func TestPodBootstrap_CrossNamespaceSA_Rejected(t *testing.T) {
+	reviewer := &fakeTokenReviewer{username: "system:serviceaccount:attacker-ns:workspace-ws-abc"}
+	lookup := &fakeBootstrapLookup{ws: &types.WorkspaceMetadata{ID: "ws-abc", UserID: "user-1"}}
+	router := newTestBootstrapRouter(t, reviewer, &fakeBootstrapInjector{}, lookup)
+	w := doBootstrap(t, router, "token", `{"workspaceID":"ws-abc"}`)
+	assert.Equal(t, http.StatusForbidden, w.Code, "cross-namespace SA must be rejected (S1)")
 }

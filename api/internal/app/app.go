@@ -488,8 +488,9 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		// Epic 35 US-35.3: pod bootstrap handler. Uses the API's K8s
 		// clientset for TokenReview + the SecretService for credential
 		// decryption + the DB for workspace lookup + default model.
+		// expectedNamespace validates the SA namespace (S1 defense-in-depth).
 		podBootstrapHandler = handlers.NewPodBootstrapHandlerFromClientset(
-			k8sClient.Clientset(), secretService, dbSvc,
+			k8sClient.Clientset(), secretService, dbSvc, cfg.Kubernetes.Namespace,
 		)
 		// User provider-credential bind/unbind routes are NOT under
 		// /api/v1/workspaces/:id (they live under /api/v1/provider-credentials/:id/bind/:workspaceId),

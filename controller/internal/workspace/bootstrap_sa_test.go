@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
@@ -155,4 +156,35 @@ func TestEnsureWorkspaceServiceAccount_SetControllerReferenceCompat(t *testing.T
 	r := reconcilerFor(t)
 	err := controllerutil.SetControllerReference(ws, sa, r.Scheme)
 	require.NoError(t, err, "SetControllerReference must succeed for Workspace→ServiceAccount")
+}
+
+// TestEnsureWorkspaceServiceAccount_ConcurrentCreate — the idempotent Get→Create
+// pattern can race if two reconciles run concurrently: both see NotFound, both
+// Create, the second gets AlreadyExists. ensureWorkspaceServiceAccount must
+// treat AlreadyExists as success (the SA exists, which is the desired state),
+// not propagate it as an error. This mirrors ensurePasswordSecret's tolerance.
+func TestEnsureWorkspaceServiceAccount_AlreadyExistsIsTolerated(t *testing.T) {
+	ws := &v1.Workspace{}
+	ws.Name = "ws-race"
+	ws.Namespace = "ns"
+	ws.UID = "uid-race"
+
+	r := reconcilerFor(t)
+
+	// Pre-create the SA directly (simulating a concurrent creator).
+	falseVal := false
+	preCreated := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      bootstrapSAName(ws.Name),
+			Namespace: ws.Namespace,
+		},
+		AutomountServiceAccountToken: &falseVal,
+	}
+	require.NoError(t, controllerutil.SetControllerReference(ws, preCreated, r.Scheme))
+	require.NoError(t, r.Create(context.Background(), preCreated))
+
+	// Now call ensureWorkspaceServiceAccount — it should find the existing SA
+	// via Get and return nil (idempotent), not error on AlreadyExists.
+	require.NoError(t, r.ensureWorkspaceServiceAccount(context.Background(), ws),
+		"SA already existing must be tolerated, not treated as an error")
 }

@@ -223,7 +223,7 @@ rules:
   # workspace namespace via the Role above. Without these the cache
   # reflector fails to start and the controller crash-loops.
   - apiGroups: [""]
-    resources: ["pods", "secrets", "persistentvolumeclaims", "events"]
+    resources: ["pods", "secrets", "persistentvolumeclaims", "events", "serviceaccounts"]
     verbs: ["get", "list", "watch"]
 {{- if .Values.controller.inferenceRelay.enabled }}
   # ConfigMaps for relay-router-peers sync (InferenceRelay reconciler)

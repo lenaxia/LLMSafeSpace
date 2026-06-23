@@ -6,6 +6,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -22,6 +23,12 @@ import (
 // ServiceAccountToken volume's audience in the init container (US-35.4) and
 // the agentd bootstrap subcommand (US-35.2).
 const bootstrapAudience = "llmsafespace-api"
+
+// errTokenNotAuthenticated is returned by TokenReviewer.Review when the K8s
+// API server successfully processed the TokenReview but reported
+// Status.Authenticated == false (invalid token, wrong audience, expired).
+// This is a CLIENT error (401), distinct from a transport-level failure (500).
+var errTokenNotAuthenticated = errors.New("token not authenticated")
 
 // TokenReviewer validates a projected ServiceAccount token via K8s TokenReview.
 // Returns the authenticated username (e.g.
@@ -57,7 +64,7 @@ func (r *k8sTokenReviewer) Review(ctx context.Context, token string) (string, er
 		return "", fmt.Errorf("token review: %w", err)
 	}
 	if !tr.Status.Authenticated {
-		return "", fmt.Errorf("token not authenticated")
+		return "", errTokenNotAuthenticated
 	}
 	return tr.Status.User.Username, nil
 }
@@ -74,29 +81,33 @@ type bootstrapAPIResponse struct {
 //
 // Auth is via K8s TokenReview (projected SA token, audience "llmsafespace-api").
 // No JWT middleware — the init container has no user identity. The handler
-// verifies the SA name matches workspace-<workspaceID> to enforce pod-to-
-// workspace isolation: a compromised workspace pod can only retrieve its own
-// credentials.
+// verifies the SA name matches workspace-<workspaceID> AND the SA namespace
+// matches the expected workspace namespace to enforce pod-to-workspace
+// isolation: a compromised workspace pod can only retrieve its own credentials.
 type PodBootstrapHandler struct {
-	tokenReviewer TokenReviewer
-	injector      bootstrapInjector
-	lookup        bootstrapWorkspaceLookup
+	tokenReviewer     TokenReviewer
+	injector          bootstrapInjector
+	lookup            bootstrapWorkspaceLookup
+	expectedNamespace string
 }
 
 // NewPodBootstrapHandler constructs the handler. In production, pass a
-// *k8sTokenReviewer wrapping the API's K8s clientset.
-func NewPodBootstrapHandler(reviewer TokenReviewer, injector bootstrapInjector, lookup bootstrapWorkspaceLookup) *PodBootstrapHandler {
+// *k8sTokenReviewer wrapping the API's K8s clientset. expectedNamespace is the
+// K8s namespace where workspace ServiceAccounts live — validated against the
+// SA namespace in the TokenReview username (S1 defense-in-depth).
+func NewPodBootstrapHandler(reviewer TokenReviewer, injector bootstrapInjector, lookup bootstrapWorkspaceLookup, expectedNamespace string) *PodBootstrapHandler {
 	return &PodBootstrapHandler{
-		tokenReviewer: reviewer,
-		injector:      injector,
-		lookup:        lookup,
+		tokenReviewer:     reviewer,
+		injector:          injector,
+		lookup:            lookup,
+		expectedNamespace: expectedNamespace,
 	}
 }
 
 // NewPodBootstrapHandlerFromClientset is the production constructor that wraps
 // a kubernetes.Interface into a k8sTokenReviewer.
-func NewPodBootstrapHandlerFromClientset(clientset kubernetes.Interface, injector bootstrapInjector, lookup bootstrapWorkspaceLookup) *PodBootstrapHandler {
-	return NewPodBootstrapHandler(&k8sTokenReviewer{clientset: clientset}, injector, lookup)
+func NewPodBootstrapHandlerFromClientset(clientset kubernetes.Interface, injector bootstrapInjector, lookup bootstrapWorkspaceLookup, expectedNamespace string) *PodBootstrapHandler {
+	return NewPodBootstrapHandler(&k8sTokenReviewer{clientset: clientset}, injector, lookup, expectedNamespace)
 }
 
 // Bootstrap handles POST /internal/v1/pod-bootstrap.
@@ -109,6 +120,12 @@ func (h *PodBootstrapHandler) Bootstrap(c *gin.Context) {
 
 	username, err := h.tokenReviewer.Review(c.Request.Context(), token)
 	if err != nil {
+		// C1: distinguish "token rejected by apiserver" (401, client error)
+		// from "TokenReview API call failed" (500, server fault).
+		if errors.Is(err, errTokenNotAuthenticated) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "token not authenticated"})
+			return
+		}
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "token review failed"})
 		return
 	}
@@ -121,8 +138,10 @@ func (h *PodBootstrapHandler) Bootstrap(c *gin.Context) {
 		return
 	}
 
-	saWorkspaceID, ok := parseWorkspaceIDFromSAName(username)
-	if !ok || saWorkspaceID != req.WorkspaceID {
+	// S1: validate both the workspaceID (from SA name) AND the namespace.
+	// A token from a different namespace's workspace-<id> SA must be rejected.
+	saNamespace, saWorkspaceID, ok := parseSAPrincipal(username)
+	if !ok || saWorkspaceID != req.WorkspaceID || saNamespace != h.expectedNamespace {
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "workspace identity mismatch"})
 		return
 	}
@@ -148,7 +167,14 @@ func (h *PodBootstrapHandler) Bootstrap(c *gin.Context) {
 
 	resp := bootstrapAPIResponse{Secrets: secretsJSON}
 	if ws.DefaultModel != "" {
-		cfgJSON, _ := json.Marshal(types.WorkspaceConfig{DefaultModel: ws.DefaultModel})
+		cfgJSON, err := json.Marshal(types.WorkspaceConfig{DefaultModel: ws.DefaultModel})
+		if err != nil {
+			// ST2: WorkspaceConfig has a single string field; json.Marshal can
+			// only fail on invalid UTF-8 (which Go replaces with U+FFFD). If
+			// it does fail, omit workspaceConfig rather than failing the boot.
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "workspace config marshal failed"})
+			return
+		}
 		resp.WorkspaceConfig = cfgJSON
 	}
 
@@ -162,27 +188,28 @@ func extractBearerToken(header string) string {
 	return strings.TrimPrefix(header, "Bearer ")
 }
 
-// parseWorkspaceIDFromSAName extracts the workspace ID from a K8s
+// parseSAPrincipal extracts the namespace and workspace ID from a K8s
 // TokenReview username of the form
 // "system:serviceaccount:<namespace>:workspace-<workspaceID>".
 //
-// The SA name uses "workspace-" as a prefix (not a delimiter) so UUID hyphens
-// in the workspaceID are preserved. Returns ok=false if the username does not
-// match the workspace SA pattern.
-func parseWorkspaceIDFromSAName(username string) (string, bool) {
+// Returns (namespace, workspaceID, ok). The SA name uses "workspace-" as a
+// prefix (not a delimiter) so UUID hyphens in the workspaceID are preserved.
+// Returns ok=false if the username does not match the workspace SA pattern.
+func parseSAPrincipal(username string) (namespace, workspaceID string, ok bool) {
 	const saPrefix = "system:serviceaccount:"
 	if !strings.HasPrefix(username, saPrefix) {
-		return "", false
+		return "", "", false
 	}
 	rest := strings.TrimPrefix(username, saPrefix)
 	parts := strings.SplitN(rest, ":", 2)
 	if len(parts) != 2 {
-		return "", false
+		return "", "", false
 	}
+	namespace = parts[0]
 	saName := parts[1]
 	const wsPrefix = "workspace-"
 	if !strings.HasPrefix(saName, wsPrefix) {
-		return "", false
+		return "", "", false
 	}
-	return strings.TrimPrefix(saName, wsPrefix), true
+	return namespace, strings.TrimPrefix(saName, wsPrefix), true
 }

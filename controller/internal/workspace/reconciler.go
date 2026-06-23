@@ -133,6 +133,7 @@ func (r *WorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&v1.Workspace{}).
 		Owns(&corev1.Pod{}).
 		Owns(&corev1.Secret{}).
+		Owns(&corev1.ServiceAccount{}).
 		Complete(r)
 }
 
