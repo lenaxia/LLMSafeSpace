@@ -3,36 +3,20 @@ import { cn } from "../lib/utils";
 import { UserSettingsTab } from "../components/settings/UserSettingsTab";
 import { SecretsTab } from "../components/settings/SecretsTab";
 import { ApiKeysTab } from "../components/settings/ApiKeysTab";
-import { AdminSettingsPage } from "./AdminSettingsPage";
-import { AdminProviderCredentialsTab } from "../components/settings/AdminProviderCredentialsTab";
 import { UserProviderCredentialsTab } from "../components/settings/UserProviderCredentialsTab";
 import { MyOrganisationTab } from "../components/settings/MyOrganisationTab";
-import { OrgSettingsTab } from "../components/settings/OrgSettingsTab";
-import { PlatformAuditTab } from "../components/settings/PlatformAuditTab";
-import { PlatformUsersTab } from "../components/settings/PlatformUsersTab";
-import { RelayTab } from "../components/settings/RelayTab";
-import { useAuth } from "../providers/AuthProvider";
 
 const allTabs = [
-  { id: "preferences", label: "Preferences", adminOnly: false },
-  { id: "provider-keys", label: "Provider Keys", adminOnly: false },
-  { id: "secrets", label: "Secrets", adminOnly: false },
-  { id: "api-keys", label: "API Keys", adminOnly: false },
-  { id: "my-organisation", label: "My Organisation", adminOnly: false },
-  { id: "platform-credentials", label: "Platform Credentials", adminOnly: true },
-  { id: "admin-orgs", label: "Organisations", adminOnly: true },
-  { id: "admin-users", label: "Users", adminOnly: true },
-  { id: "platform-audit", label: "Platform Audit", adminOnly: true },
-  { id: "relay", label: "Relay", adminOnly: true },
-  { id: "admin", label: "Admin", adminOnly: true },
+  { id: "preferences", label: "Preferences" },
+  { id: "provider-keys", label: "Provider Keys" },
+  { id: "secrets", label: "Secrets" },
+  { id: "api-keys", label: "API Keys" },
+  { id: "my-organisation", label: "My Organisation" },
 ] as const;
 
 type TabId = (typeof allTabs)[number]["id"];
 
 export function SettingsPage() {
-  const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
-  const tabs = allTabs.filter((t) => !t.adminOnly || isAdmin);
   const [activeTab, setActiveTab] = useState<TabId>("preferences");
 
   return (
@@ -41,7 +25,7 @@ export function SettingsPage() {
       <nav className="border-b border-border p-2 md:border-b-0 md:border-r md:w-52 md:p-4 md:shrink-0">
         <h2 className="hidden md:block mb-4 text-sm font-semibold">Settings</h2>
         <ul className="flex gap-1 overflow-x-auto touch-manipulation md:flex-col">
-          {tabs.map((tab) => (
+          {allTabs.map((tab) => (
             <li key={tab.id}>
               <button
                 onClick={() => setActiveTab(tab.id)}
@@ -62,12 +46,6 @@ export function SettingsPage() {
         {activeTab === "secrets" && <SecretsTab />}
         {activeTab === "api-keys" && <ApiKeysTab />}
         {activeTab === "my-organisation" && <MyOrganisationTab />}
-        {activeTab === "platform-credentials" && isAdmin && <AdminProviderCredentialsTab />}
-        {activeTab === "admin-orgs" && isAdmin && <OrgSettingsTab />}
-        {activeTab === "admin-users" && isAdmin && <PlatformUsersTab />}
-        {activeTab === "platform-audit" && isAdmin && <PlatformAuditTab />}
-        {activeTab === "relay" && isAdmin && <RelayTab />}
-        {activeTab === "admin" && isAdmin && <AdminSettingsPage />}
       </div>
     </div>
   );
