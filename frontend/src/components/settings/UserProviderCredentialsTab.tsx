@@ -2,20 +2,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Epic 30 US-30.8: User LLM Provider Credentials UI
-// Users can add their own API keys which take priority over platform defaults
-// when bound to a workspace.
+// Users can add their own API keys. Each key is automatically available across
+// all of the user's workspaces and takes priority over platform defaults.
 
 import { useEffect, useState } from "react";
 import {
   userProviderCredentialsApi,
   type UserProviderCredential,
   type CreateUserCredentialRequest,
-  type CredentialBindingInfo,
   type CreateUserCredentialResponse,
   type ProbeModelEntry,
 } from "../../api/providerCredentials";
-import { workspacesApi } from "../../api/workspaces";
-import type { WorkspaceListItem } from "../../api/types";
 import { useToast } from "../../providers/ToastProvider";
 import { Spinner } from "../ui/Spinner";
 import { ModelConfigTable, type ModelRow } from "../shared/ModelConfigTable";
@@ -28,12 +25,10 @@ import {
   EyeOff,
   ChevronDown,
   ChevronUp,
-  Link,
-  Unlink,
+  Lock,
   RefreshCw,
   Search,
 } from "lucide-react";
-import { Tooltip } from "../ui/Tooltip";
 
 // ─── Main tab ────────────────────────────────────────────────────────────────
 
@@ -77,7 +72,7 @@ export function UserProviderCredentialsTab() {
     setCreds((prev) => [...prev, cred]);
     setShowCreate(false);
     if (res.bindWarning) {
-      toast(`Added "${cred.name}" — workspace auto-bind failed; bind manually`, "error");
+      toast(`Added "${cred.name}" — it may not have synced to all existing workspaces; new workspaces will pick it up automatically`, "error");
     } else {
       toast(`Added "${cred.name}"`);
     }
@@ -92,7 +87,8 @@ export function UserProviderCredentialsTab() {
         <div>
           <h3 className="text-lg font-medium">My LLM Provider Keys</h3>
           <p className="text-sm text-muted-foreground">
-            Your personal API keys. These take priority over platform defaults when bound to a workspace.
+            Your personal API keys. They're automatically available across all of your workspaces and
+            take priority over platform defaults.
           </p>
         </div>
         <button
@@ -102,6 +98,33 @@ export function UserProviderCredentialsTab() {
         >
           <Plus className="h-3 w-3" /> Add key
         </button>
+      </div>
+
+      {/* Zero-knowledge security explainer */}
+      <div className="rounded-md border border-border bg-muted/20 p-4">
+        <div className="flex items-start gap-3">
+          <Lock className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+          <div className="space-y-2 text-xs text-muted-foreground">
+            <p className="font-medium text-foreground">How your keys are protected</p>
+            <p>
+              Your API keys are encrypted with a key derived from your password and protected in such
+              a way that even we cannot read your secrets. If an attacker gets a full copy of our
+              database, your secrets would still be protected. This is called Zero Knowledge
+              encryption: we hold your keys, but only your password can unlock them. All secrets are
+              encrypted at rest and only decrypted for use in active workspaces.
+            </p>
+            <p>
+              As a consequence of Zero Knowledge encryption,{" "}
+              <span className="font-medium text-foreground">
+                if you ever forget your password and reset it by email, your saved keys cannot be
+                recovered by anyone, ever.
+              </span>{" "}
+              We cannot restore them, because we cannot read them ourselves. They will be deleted and
+              you will need to re-add them, so even if your account is compromised, an attacker would
+              not be able to steal your secrets.
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* Error banner */}
@@ -140,7 +163,6 @@ export function UserProviderCredentialsTab() {
               expanded={expanded === c.id}
               onToggle={() => setExpanded(expanded === c.id ? null : c.id)}
               onDelete={() => handleDelete(c.id, c.name)}
-              onError={(msg) => setError(msg)}
             />
           ))}
         </div>
@@ -148,7 +170,7 @@ export function UserProviderCredentialsTab() {
 
       {creds.length > 0 && (
         <p className="text-xs text-muted-foreground">
-          Expand a key to bind or unbind it from specific workspaces.
+          Your keys are automatically available across all of your workspaces.
         </p>
       )}
     </div>
@@ -162,69 +184,13 @@ function CredentialRow({
   expanded,
   onToggle,
   onDelete,
-  onError,
 }: {
   cred: UserProviderCredential;
   expanded: boolean;
   onToggle: () => void;
   onDelete: () => void;
-  onError: (msg: string) => void;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [workspaces, setWorkspaces] = useState<WorkspaceListItem[] | null>(null);
-  const [bindings, setBindings] = useState<CredentialBindingInfo[]>([]);
-  const [loadingWs, setLoadingWs] = useState(false);
-  const [bindingId, setBindingId] = useState<string | null>(null);
-  const { toast } = useToast();
-
-  // Load workspace list + bindings (with sourceType) on expand (M-1 fix).
-  useEffect(() => {
-    if (!expanded || workspaces !== null) return;
-    setLoadingWs(true);
-
-    Promise.all([
-      workspacesApi.list(),
-      userProviderCredentialsApi.listBindings(cred.id),
-    ])
-      .then(([wsRes, bindingsRes]) => {
-        const list = (wsRes as { workspaces?: WorkspaceListItem[] }).workspaces ?? [];
-        setWorkspaces(list);
-        setBindings(bindingsRes.bindings ?? []);
-      })
-      .catch(() => setWorkspaces([]))
-      .finally(() => setLoadingWs(false));
-  }, [expanded, workspaces, cred.id]);
-
-  const getBinding = (wsId: string): CredentialBindingInfo | undefined =>
-    bindings.find((b) => b.workspaceId === wsId);
-
-  const handleBind = async (wsId: string) => {
-    setBindingId(wsId);
-    try {
-      await userProviderCredentialsApi.bindToWorkspace(cred.id, wsId);
-      setBindings((prev) => [...prev, { workspaceId: wsId, sourceType: "explicit" }]);
-      toast(`Bound to workspace`);
-    } catch (e: unknown) {
-      onError(e instanceof Error ? e.message : "Bind failed");
-    } finally {
-      setBindingId(null);
-    }
-  };
-
-  const handleUnbind = async (wsId: string) => {
-    setBindingId(wsId);
-    try {
-      await userProviderCredentialsApi.unbindFromWorkspace(cred.id, wsId);
-      setBindings((prev) => prev.filter((b) => b.workspaceId !== wsId));
-      toast(`Unbound from workspace`);
-    } catch (e: unknown) {
-      // 409 = auto-binding protected (H-1 fix: surface meaningful message)
-      const msg = e instanceof Error ? e.message : "Unbind failed";
-      onError(msg);
-    } finally {
-      setBindingId(null);
-    }
-  };
 
   return (
     <div>
@@ -283,10 +249,9 @@ function CredentialRow({
         </div>
       </div>
 
-      {/* Expanded panel */}
+      {/* Expanded panel — read-only details */}
       {expanded && (
         <div className="space-y-3 border-t border-border bg-muted/20 px-4 py-4">
-          {/* Details */}
           <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
             <MetaRow label="ID" value={cred.id} mono />
             <MetaRow label="Updated" value={new Date(cred.updatedAt).toLocaleString()} />
@@ -300,81 +265,6 @@ function CredentialRow({
                 <MetaRow label="Model allowlist" value={cred.modelAllowlist?.join(", ") ?? ""} />
               </div>
             )}
-          </div>
-
-          {/* Workspace bindings */}
-          <div>
-            <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-              <Link className="h-3 w-3" /> Workspace bindings
-            </p>
-
-            {loadingWs && <p className="text-xs text-muted-foreground">Loading workspaces…</p>}
-
-            {!loadingWs && workspaces !== null && workspaces.length === 0 && (
-              <p className="text-xs text-muted-foreground">
-                No workspaces found. Create a workspace first.
-              </p>
-            )}
-
-            {!loadingWs && workspaces !== null && workspaces.length > 0 && (
-              <div className="divide-y divide-border rounded border border-border">
-                {workspaces.map((ws) => {
-                  const binding = getBinding(ws.id);
-                  const isAuto = binding?.sourceType === "auto";
-                  const isBound = !!binding;
-                  const isPending = bindingId === ws.id;
-                  return (
-                    <div key={ws.id} className="flex items-center justify-between px-3 py-2">
-                      <div className="min-w-0">
-                        <span className="text-xs font-medium">{ws.name}</span>
-                        <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                          {ws.phase || "unknown"}
-                        </span>
-                        {isAuto && (
-                          <Tooltip
-                            content="Auto-bound by credential seeding. Cannot be manually unbound."
-                            side="top"
-                            align="start"
-                          >
-                            <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground cursor-default">
-                              auto
-                            </span>
-                          </Tooltip>
-                        )}
-                      </div>
-                      {isAuto ? (
-                        <Tooltip content="Auto-bindings are managed automatically" side="top" align="start">
-                          <span className="text-[10px] text-muted-foreground cursor-default">
-                            seeded
-                          </span>
-                        </Tooltip>
-                      ) : (
-                        <button
-                          onClick={() => isBound ? handleUnbind(ws.id) : handleBind(ws.id)}
-                          disabled={isPending}
-                          className={`flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors disabled:opacity-50 ${
-                            isBound
-                              ? "text-destructive hover:bg-destructive/10"
-                              : "text-primary hover:bg-primary/10"
-                          }`}
-                        >
-                          {isPending ? (
-                            "…"
-                          ) : isBound ? (
-                            <><Unlink className="h-3 w-3" /> Unbind</>
-                          ) : (
-                            <><Link className="h-3 w-3" /> Bind</>
-                          )}
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            <p className="mt-1.5 text-[10px] text-muted-foreground">
-              Binding activates this key for that workspace. The workspace agent reloads secrets automatically.
-            </p>
           </div>
         </div>
       )}

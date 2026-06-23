@@ -1621,3 +1621,34 @@ func TestListAllUsers_QueryShape(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet(),
 		"query must LEFT JOIN org_memberships + organizations to resolve org fields")
 }
+
+func TestPurgeUserSecrets_DeletesBothTables(t *testing.T) {
+	service, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	// provider_credentials (user-owned) deleted first, then user_secrets.
+	// Both scoped to the user; FK ON DELETE CASCADE clears the bindings.
+	mock.ExpectExec(`DELETE FROM provider_credentials WHERE owner_type = 'user' AND owner_id = \$1`).
+		WithArgs("user-1").
+		WillReturnResult(sqlmock.NewResult(0, 3))
+	mock.ExpectExec(`DELETE FROM user_secrets WHERE user_id = \$1`).
+		WithArgs("user-1").
+		WillReturnResult(sqlmock.NewResult(0, 2))
+
+	err := service.PurgeUserSecrets(context.Background(), "user-1")
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPurgeUserSecrets_DBError(t *testing.T) {
+	service, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	mock.ExpectExec(`DELETE FROM provider_credentials`).
+		WithArgs("user-1").
+		WillReturnError(errors.New("connection refused"))
+
+	err := service.PurgeUserSecrets(context.Background(), "user-1")
+	require.Error(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

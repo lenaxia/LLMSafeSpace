@@ -130,6 +130,30 @@ func (m *memSessionRevoker) RevokeAllUserSessions(userID string) error {
 	return nil
 }
 
+type memSecretPurger struct {
+	calls  int
+	lastID string
+	err    error
+}
+
+func (m *memSecretPurger) PurgeUserSecrets(_ context.Context, userID string) error {
+	m.calls++
+	m.lastID = userID
+	return m.err
+}
+
+type memWorkspaceNeutralizer struct {
+	calls  int
+	lastID string
+	err    error
+}
+
+func (m *memWorkspaceNeutralizer) NeutralizeUserWorkspaces(_ context.Context, userID string) error {
+	m.calls++
+	m.lastID = userID
+	return m.err
+}
+
 // --- helpers ---
 
 func lowerEmail(s string) string {
@@ -259,6 +283,68 @@ func TestPasswordReset_Confirm_ValidToken_ResetsEverything(t *testing.T) {
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "new-recovery-key", resp["recoveryKey"])
+}
+
+func TestPasswordReset_Confirm_PurgesUserSecrets(t *testing.T) {
+	store := newMemTokenStore()
+	tokenHash := hashTokenForTest("purge-token")
+	store.tokens[tokenHash] = &types.EmailToken{
+		ID:        "tok-purge",
+		UserID:    "user-1",
+		Kind:      "password_reset",
+		TokenHash: tokenHash,
+		ExpiresAt: time.Now().Add(10 * time.Minute),
+	}
+	users := newMemUserStore()
+	users.users["alice@test.com"] = &memUser{id: "user-1", email: "alice@test.com"}
+	users.emailVer["user-1"] = true
+
+	purger := &memSecretPurger{}
+	neutralizer := &memWorkspaceNeutralizer{}
+
+	h := NewPasswordResetHandler(store, users, &memKeyInit{recoverK: "rk"}, &memPwUpdater{}, &memSessionRevoker{}, emailsvc.NewService(&fakeEmailProvider{}, "", ""), nil)
+	h.SetSecretPurger(purger)
+	h.SetWorkspaceNeutralizer(neutralizer)
+	router := setupPasswordResetRouter(h)
+
+	w := doRequest(router, http.MethodPost, "/api/v1/auth/password-reset/confirm",
+		`{"token":"purge-token","newPassword":"newpass123"}`)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	// Both cleanup collaborators must be invoked exactly once for the
+	// token's user, after the DEK reinit succeeds.
+	assert.Equal(t, 1, purger.calls, "PurgeUserSecrets must be called once")
+	assert.Equal(t, "user-1", purger.lastID)
+	assert.Equal(t, 1, neutralizer.calls, "NeutralizeUserWorkspaces must be called once")
+	assert.Equal(t, "user-1", neutralizer.lastID)
+}
+
+func TestPasswordReset_Confirm_PurgeFailure_IsNonFatal(t *testing.T) {
+	// A purge or neutralize failure must NOT fail the reset: the DEK
+	// reinit already cryptographically erased the secrets, so cleanup is
+	// best-effort. The user still gets a recovery key and a 200.
+	store := newMemTokenStore()
+	tokenHash := hashTokenForTest("purgefail-token")
+	store.tokens[tokenHash] = &types.EmailToken{
+		ID:        "tok-purgefail",
+		UserID:    "user-1",
+		Kind:      "password_reset",
+		TokenHash: tokenHash,
+		ExpiresAt: time.Now().Add(10 * time.Minute),
+	}
+
+	h := NewPasswordResetHandler(store, newMemUserStore(), &memKeyInit{recoverK: "rk"}, &memPwUpdater{}, &memSessionRevoker{}, emailsvc.NewService(&fakeEmailProvider{}, "", ""), nil)
+	h.SetSecretPurger(&memSecretPurger{err: errors.New("db down")})
+	h.SetWorkspaceNeutralizer(&memWorkspaceNeutralizer{err: errors.New("k8s down")})
+	router := setupPasswordResetRouter(h)
+
+	w := doRequest(router, http.MethodPost, "/api/v1/auth/password-reset/confirm",
+		`{"token":"purgefail-token","newPassword":"newpass123"}`)
+	require.Equal(t, http.StatusOK, w.Code, "reset must succeed even if cleanup fails")
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "rk", resp["recoveryKey"], "recovery key must still be returned")
 }
 
 func TestPasswordReset_Confirm_ExpiredToken_410(t *testing.T) {

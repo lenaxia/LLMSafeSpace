@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8s "k8s.io/client-go/kubernetes"
@@ -1319,6 +1320,98 @@ func TestSuspendWorkspace_Idempotent_AlreadySuspending(t *testing.T) {
 
 	assert.NoError(t, err)
 	f.ws.AssertNotCalled(t, "Update")
+}
+
+// NeutralizeUserWorkspaces is the password-reset workspace cleanup: it
+// suspends Active pods (so live in-memory/tmpfs keys die with the pod)
+// and scrubs the workspace-secrets-* K8s Secret for every workspace so a
+// later resume cannot re-materialize stale plaintext.
+func TestNeutralizeUserWorkspaces_SuspendsActiveAndScrubsAllSecrets(t *testing.T) {
+	f := newFixtureWithFakeClientset(t)
+	ctx := context.Background()
+
+	// Two workspaces: one Active (must be suspended), one already
+	// Suspended (suspend is a no-op). Both must be scrubbed regardless
+	// of phase — the stale Secret on a Suspended workspace is exactly
+	// what would be re-cp'd into /sandbox-cfg on resume.
+	activeCrd := crdWorkspace("ws-active", "default", "user1", "10Gi")
+	activeCrd.Status.Phase = v1.WorkspacePhaseActive
+	suspendedCrd := crdWorkspace("ws-sus", "default", "user1", "10Gi")
+	suspendedCrd.Status.Phase = v1.WorkspacePhaseSuspended
+
+	f.ws.On("List", mock.Anything, mock.Anything).Return(&v1.WorkspaceList{
+		Items: []v1.Workspace{*activeCrd, *suspendedCrd},
+	}, nil)
+	f.db.On("GetWorkspace", ctx, "ws-active").Return(dbWorkspace("ws-active", "user1", "active", "10Gi"), nil)
+	f.db.On("GetWorkspace", ctx, "ws-sus").Return(dbWorkspace("ws-sus", "user1", "suspended", "10Gi"), nil)
+	f.ws.On("Get", mock.Anything, "ws-active", mock.Anything).Return(activeCrd, nil)
+	f.ws.On("Get", mock.Anything, "ws-sus", mock.Anything).Return(suspendedCrd, nil)
+
+	suspended := false
+	f.ws.On("Update", mock.Anything, mock.AnythingOfType("*v1.Workspace")).Run(func(args mock.Arguments) {
+		w := args.Get(1).(*v1.Workspace)
+		if w.Name == "ws-active" && w.Spec.Suspend != nil && *w.Spec.Suspend {
+			suspended = true
+		}
+	}).Return(activeCrd, nil)
+
+	secrets := f.fakeCS.CoreV1().Secrets("default")
+	for _, name := range []string{"ws-active", "ws-sus"} {
+		_, err := secrets.Create(ctx, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "workspace-secrets-" + name},
+			Data:       map[string][]byte{"secrets.json": []byte("stale-plaintext")},
+		}, metav1.CreateOptions{})
+		require.NoError(t, err)
+	}
+
+	err := f.svc.NeutralizeUserWorkspaces(ctx, "user1")
+	require.NoError(t, err)
+
+	for _, name := range []string{"ws-active", "ws-sus"} {
+		_, gErr := secrets.Get(ctx, "workspace-secrets-"+name, metav1.GetOptions{})
+		assert.True(t, k8serrors.IsNotFound(gErr),
+			"workspace-secrets-%s must be scrubbed regardless of phase", name)
+	}
+	assert.True(t, suspended, "the Active workspace must be suspended (Spec.Suspend=true)")
+}
+
+func TestNeutralizeUserWorkspaces_NoWorkspaces_Noop(t *testing.T) {
+	f := newFixtureWithFakeClientset(t)
+	ctx := context.Background()
+
+	f.ws.On("List", mock.Anything, mock.Anything).Return(&v1.WorkspaceList{Items: []v1.Workspace{}}, nil)
+
+	err := f.svc.NeutralizeUserWorkspaces(ctx, "user1")
+	require.NoError(t, err)
+	f.ws.AssertNotCalled(t, "Update")
+}
+
+func TestNeutralizeUserWorkspaces_NonActiveConflictIsNotNoisy(t *testing.T) {
+	// A workspace in Creating/Resuming returns a conflict from
+	// SuspendWorkspace; neutralize must treat it as expected (not error,
+	// not abort) and still scrub its Secret.
+	f := newFixtureWithFakeClientset(t)
+	ctx := context.Background()
+
+	resumingCrd := crdWorkspace("ws-res", "default", "user1", "10Gi")
+	resumingCrd.Status.Phase = v1.WorkspacePhaseResuming
+	f.ws.On("List", mock.Anything, mock.Anything).Return(&v1.WorkspaceList{
+		Items: []v1.Workspace{*resumingCrd},
+	}, nil)
+	f.db.On("GetWorkspace", ctx, "ws-res").Return(dbWorkspace("ws-res", "user1", "resuming", "10Gi"), nil)
+	f.ws.On("Get", mock.Anything, "ws-res", mock.Anything).Return(resumingCrd, nil)
+
+	_, err := f.fakeCS.CoreV1().Secrets("default").Create(ctx, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "workspace-secrets-ws-res"},
+		Data:       map[string][]byte{"secrets.json": []byte("stale")},
+	}, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	err = f.svc.NeutralizeUserWorkspaces(ctx, "user1")
+	require.NoError(t, err, "conflict on a non-Active workspace must not fail neutralize")
+
+	_, gErr := f.fakeCS.CoreV1().Secrets("default").Get(ctx, "workspace-secrets-ws-res", metav1.GetOptions{})
+	assert.True(t, k8serrors.IsNotFound(gErr), "Secret must still be scrubbed for non-Active workspaces")
 }
 
 func TestE2E_CreateWorkspace_SetsOwnerAndStorageInCRD(t *testing.T) {

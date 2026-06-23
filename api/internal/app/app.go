@@ -1152,5 +1152,13 @@ func initEmailStack(
 		emailService,
 		log,
 	)
+	// Purge the user's encrypted secret rows on reset (makes the
+	// "your saved keys will be deleted" guarantee literal).
+	passwordResetHandler.SetSecretPurger(dbSvc)
+	// Suspend the user's active workspaces + scrub their ephemeral
+	// workspace-secrets-* K8s Secrets so relaunch yields no secrets.
+	if wsSvc, ok := svc.GetWorkspace().(*workspace.Service); ok {
+		passwordResetHandler.SetWorkspaceNeutralizer(wsSvc)
+	}
 	return emailService, emailHandler, passwordResetHandler, nil
 }
