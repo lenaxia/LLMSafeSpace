@@ -258,7 +258,7 @@ func runCRDDrift(root string) int {
 // never depends on cluster reachability — pre-commit/CI without a
 // kubeconfig must remain green.
 //
-// Originating incident: worklog 0463 (2026-06-19) — the deployed
+// Originating incident: worklog 0465 (2026-06-19) — the deployed
 // Workspace CRD was missing spec.suspend (chart had it, cluster did
 // not, because Helm's crds/ directory is install-only). Every resume
 // request returned 200 OK but the field was silently pruned and the
@@ -295,7 +295,7 @@ func runClusterDrift(root string) int {
 			"  Fix: re-apply the chart CRDs to the cluster.\n"+
 				"      kubectl apply -f charts/llmsafespaces/crds/\n"+
 				"  Helm's crds/ directory is install-only; helm upgrade\n"+
-				"  does not reconcile CRDs. See worklog 0463 for context.")
+				"  does not reconcile CRDs. See worklog 0465 for context.")
 		return 1
 	}
 	fmt.Printf("ok    cluster-drift (%d bindings checked against current kubeconfig context)\n", len(bindings))

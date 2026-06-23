@@ -111,7 +111,7 @@ traversal, and binding-list sanity. All pass without envtest.
 
 ### Item 2 — Rename migration design doc (commit `6f03f2e3` + remediations in `ec0bd415`)
 
-`design/0042_2026-06-19_api-group-rename-migration.md` (~330 lines).
+`design/0043_2026-06-19_api-group-rename-migration.md` (~330 lines).
 
 Initially recommended a naive uninstall+reinstall, then re-checked the
 cluster: PVCs have ownerRefs to Workspace CRs with `blockOwnerDeletion: true`,
@@ -138,7 +138,7 @@ Five validation gates before declaring the design ready.
 Phase 1 found two real findings, validated in Phase 2, remediated in
 Phase 3 (commit `ec0bd415`):
 
-1. **Phase 3 of design 0042 only covered PVC ownerRef migration**, but
+1. **Phase 3 of design 0043 only covered PVC ownerRef migration**, but
    the controller also sets ownerReferences on per-workspace Secrets
    (`controller/internal/workspace/secrets.go:86`) and NetworkPolicies
    (`controller/internal/workspace/network_policy.go:355`). Without
@@ -207,7 +207,7 @@ follow-up work):
 
 1. The migration tool (`cmd/rename-migrate/`) needs to be built and
    tested before any post-rename binary can be deployed.
-2. The `audit-policy.yaml` referenced in design 0042 Appendix A still
+2. The `audit-policy.yaml` referenced in design 0043 Appendix A still
    points at the singular group; needs to be updated alongside the
    migration deploy.
 
@@ -234,7 +234,7 @@ follow-up work):
 1. Push branch, open PR, iterate to APPROVE per the
    review-iterate-approve-merge cycle in README-LLM.md.
 2. After this PR merges: tackle the migration tool work (`cmd/rename-migrate/`)
-   in a separate branch. Reference design 0042.
+   in a separate branch. Reference design 0043.
 3. After this PR merges: consider extending the post-write assertion
    pattern to other CRD-write paths if they prove vulnerable
    (Suspend, Restart, Settings updates).
@@ -244,7 +244,7 @@ follow-up work):
 ## Files Modified
 
 Created:
-- `design/0042_2026-06-19_api-group-rename-migration.md`
+- `design/0043_2026-06-19_api-group-rename-migration.md`
 - `pkg/repolint/cluster_drift.go`
 - `pkg/repolint/cluster_drift_test.go`
 - `worklogs/0465_2026-06-19_crd-deployment-drift-followups.md` (this file)

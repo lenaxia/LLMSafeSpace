@@ -12,7 +12,7 @@ package repolint
 // Why this exists: CRDDriftCheck (crd_drift.go) catches Go↔chart-yaml
 // drift at commit time. It does NOT catch chart-yaml↔cluster drift —
 // the case where the chart is correct but the cluster's CRD is older.
-// This is the failure mode behind worklog 0463: a workspace resume
+// This is the failure mode behind worklog 0465: a workspace resume
 // returned HTTP 200 but the controller never observed a transition
 // because the deployed CRD was missing spec.suspend, so the apiserver
 // silently pruned the field on every Update.
@@ -72,7 +72,7 @@ type ClusterDriftReport struct {
 	// ChartMissingInCluster lists keys declared in the chart YAML but
 	// absent from the deployed CRD. These are fields the binary will
 	// try to write but the apiserver will silently drop. This is the
-	// worklog 0463 incident symptom and the primary thing this check
+	// worklog 0465 incident symptom and the primary thing this check
 	// is here to surface.
 	ChartMissingInCluster []string
 	// ClusterMissingInChart lists keys declared on the deployed CRD
@@ -174,23 +174,23 @@ func ClusterDriftCheck(ctx context.Context, root string, b ClusterDriftBinding, 
 	ignoreCluster := toSet(b.IgnoreClusterProperties)
 	ignoreChart := toSet(b.IgnoreChartProperties)
 
-	for f := range chartProps {
-		if _, ok := clusterProps[f]; ok {
+	for name := range chartProps {
+		if _, ok := clusterProps[name]; ok {
 			continue
 		}
-		if _, ok := ignoreChart[f]; ok {
+		if _, ok := ignoreChart[name]; ok {
 			continue
 		}
-		rep.ChartMissingInCluster = append(rep.ChartMissingInCluster, f)
+		rep.ChartMissingInCluster = append(rep.ChartMissingInCluster, name)
 	}
-	for f := range clusterProps {
-		if _, ok := chartProps[f]; ok {
+	for name := range clusterProps {
+		if _, ok := chartProps[name]; ok {
 			continue
 		}
-		if _, ok := ignoreCluster[f]; ok {
+		if _, ok := ignoreCluster[name]; ok {
 			continue
 		}
-		rep.ClusterMissingInChart = append(rep.ClusterMissingInChart, f)
+		rep.ClusterMissingInChart = append(rep.ClusterMissingInChart, name)
 	}
 	sort.Strings(rep.ChartMissingInCluster)
 	sort.Strings(rep.ClusterMissingInChart)

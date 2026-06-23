@@ -231,10 +231,9 @@ kubectl get all,secret,configmap,networkpolicy,pdb,hpa,servicemonitor -A -o json
    This is the post-rename chart, so only plural CRDs.
 3. New controller binary starts. It watches `llmsafespaces.dev`, finds
    the 13 plural-group CRs we created in Phase 3, all with phase empty
-   (the controller initializes them). Each goes Pending → Suspended (the
-   controller observes the suspend state we set on the spec... wait, we
-   didn't set it on the new CRs. Adjust Phase 3 step 3: copy over
-   `spec.suspend: true` so workspaces stay suspended through the deploy).
+   (the controller initializes them). Each goes Pending → Suspended as
+   the controller observes the `spec.suspend: true` carried over in
+   Phase 3.
 4. Verify all 13 workspaces are visible in the API and listed in the UI.
 5. Resume workspaces one at a time — each resume creates a new pod that
    mounts the existing PVC at `/workspace`. User data is unchanged.
@@ -344,7 +343,7 @@ drop to zero unless the file is updated.
 ## Appendix C: why not other approaches
 
 **Why not just re-apply the old singular CRD with the new schema?** That's
-what worklog 0463 did as an emergency fix, and it works for keeping the
+what worklog 0465 did as an emergency fix, and it works for keeping the
 existing binary running. But it doesn't get us to the new (plural-group)
 binary, which is where ongoing development is happening. We need a path
 forward, not a stationary fix.

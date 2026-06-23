@@ -220,7 +220,7 @@ func TestClusterDriftCheck_ChartFileMissing(t *testing.T) {
 	assert.Contains(t, err.Error(), "parse chart CRD")
 }
 
-func TestClusterDriftCheck_ClusterPathInvalid(t *testing.T) {
+func TestClusterDriftCheck_InvalidVersionIndex_ChartFailsFirst(t *testing.T) {
 	root, rel := chartFixture(t, "alpha")
 	binding := ClusterDriftBinding{
 		CRDName: "workspaces.llmsafespaces.dev",
@@ -282,6 +282,44 @@ func TestExtractDeployedCRDProperties_TraversesItems(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"id", "title", "status"}, mapKeys(out))
+}
+
+// extractDeployedCRDProperties error paths — these reach the deployed-CRD
+// walker directly, unlike TestClusterDriftCheck_InvalidVersionIndex_ChartFailsFirst
+// which exercises the chart parser first.
+
+func TestExtractDeployedCRDProperties_VersionIndexOutOfRange(t *testing.T) {
+	crd := crdWithSpec("workspaces.llmsafespaces.dev", "alpha")
+	_, err := extractDeployedCRDProperties(crd, []string{
+		"spec", "versions", "9", "schema", "openAPIV3Schema", "properties", "spec",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "out of range")
+}
+
+func TestExtractDeployedCRDProperties_MissingOpenAPIV3Schema(t *testing.T) {
+	crd := &apiextv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{Name: "workspaces.llmsafespaces.dev"},
+		Spec: apiextv1.CustomResourceDefinitionSpec{
+			Versions: []apiextv1.CustomResourceDefinitionVersion{
+				{Name: "v1", Schema: nil},
+			},
+		},
+	}
+	_, err := extractDeployedCRDProperties(crd, []string{
+		"spec", "versions", "0", "schema", "openAPIV3Schema", "properties", "spec",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no openAPIV3Schema")
+}
+
+func TestExtractDeployedCRDProperties_UnsupportedPathPrefix(t *testing.T) {
+	crd := crdWithSpec("workspaces.llmsafespaces.dev", "alpha")
+	_, err := extractDeployedCRDProperties(crd, []string{
+		"status", "versions", "0", "schema", "openAPIV3Schema", "properties", "spec",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported path prefix")
 }
 
 func mapKeys(m map[string]struct{}) []string {
