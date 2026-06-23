@@ -31,6 +31,12 @@ paths = [
   '''api/internal/services/auth/auth_test\.go''',
   '''api/internal/services/auth/auth_settings_test\.go''',
   '''api/internal/middleware/tests/logging_test\.go''',
+  # Synthetic test fixtures for the auth-method classifier. Tokens are
+  # short, low-entropy, and explicitly invalid — they exist only to
+  # exercise the prefix/shape branches of authMethodForToken. Verified
+  # 2026-06-22 (worklog 0508): the lsp_ value is 16 'a' chars, the JWT
+  # uses {alg:none} and a single-char signature.
+  '''api/internal/middleware/auth_method_test\.go''',
   # Worklog 0030 documents a real e2e test run; the JWT shown is a
   # short-lived test token bound to localhost. Worklog 0089 is the
   # epic-17 phase-4 audit narrative — it cites secret patterns the

@@ -79,6 +79,7 @@ func AuthMiddleware(authService apiinterfaces.AuthService, log pkginterfaces.Log
 			}
 
 			metrics.RecordAuthFailure("missing_token")
+			metrics.RecordAuthAttempt(authMethodForToken(""), "failure")
 			apiErr := errors.NewAuthenticationError("Authentication required", nil)
 			c.AbortWithStatusJSON(apiErr.StatusCode(), gin.H{
 				"error": apiErr.Message,
@@ -100,12 +101,18 @@ func AuthMiddleware(authService apiinterfaces.AuthService, log pkginterfaces.Log
 			}
 
 			metrics.RecordAuthFailure("invalid_token")
+			metrics.RecordAuthAttempt(authMethodForToken(token), "failure")
 			apiErr := errors.NewAuthenticationError("Invalid or expired token", nil)
 			c.AbortWithStatusJSON(apiErr.StatusCode(), gin.H{
 				"error": apiErr.Message,
 			})
 			return
 		}
+
+		// Successful authentication — record before any further work so
+		// a panic deeper in the request lifecycle still leaves the
+		// metric incremented.
+		metrics.RecordAuthAttempt(authMethodForToken(token), "success")
 
 		// Store authentication result in Gin context (for middleware/handlers)
 		// and in the request context (for service layer via ctx.Value).
@@ -130,14 +137,6 @@ func AuthMiddleware(authService apiinterfaces.AuthService, log pkginterfaces.Log
 				c.Set("logger", newLogger)
 			}
 		}
-
-		// Add user ID to span if tracing is enabled - commented out until we properly import trace packages
-		/*
-			if span := trace.SpanFromContext(c.Request.Context()); span != nil {
-				span.SetAttributes(attribute.String("user.id", authResult.UserID))
-				span.SetAttributes(attribute.String("user.role", authResult.Role))
-			}
-		*/
 
 		c.Next()
 	}
@@ -253,4 +252,24 @@ func extractToken(c *gin.Context, cfg AuthConfig) string {
 	}
 
 	return utilities.ExtractToken(c, extractorConfig)
+}
+
+// authMethodForToken classifies a credential string into a low-cardinality
+// method label for the auth_attempts_total metric. The empty string maps
+// to "missing" so the missing-token failure path still has a label and
+// the dashboard's failure ratio includes those attempts. The "lsp_"
+// prefix is the platform's standard API-key prefix (charts/.../values.yaml
+// auth.apiKeyPrefix); the middleware does not have direct access to the
+// configured prefix, so it pattern-matches on the standard literal. A
+// future config plumbing would let admin-overridden prefixes also classify
+// as "apikey" — for now those tokens classify as "jwt", which is benign:
+// the dashboard's failure ratio is method-summed.
+func authMethodForToken(token string) string {
+	if token == "" {
+		return "missing"
+	}
+	if utilities.IsAPIKey(token, "lsp_") {
+		return "apikey"
+	}
+	return "jwt"
 }

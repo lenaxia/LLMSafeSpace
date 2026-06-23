@@ -28,6 +28,7 @@ import (
 	"github.com/lenaxia/llmsafespaces/api/internal/services/cache"
 	"github.com/lenaxia/llmsafespaces/api/internal/services/database"
 	emailsvc "github.com/lenaxia/llmsafespaces/api/internal/services/email"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/health"
 	"github.com/lenaxia/llmsafespaces/api/internal/services/metering"
 	"github.com/lenaxia/llmsafespaces/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespaces/api/internal/services/msgqueue"
@@ -68,6 +69,7 @@ type App struct {
 	asyncAudit         *secrets.AsyncAuditLogger // nil if pgxpool path not used
 	secretsPool        *pgxpool.Pool             // pgx pool for secrets store; closed on shutdown
 	dekCacheClient     *redis.Client             // redis client for DEK cache; closed on shutdown
+	healthChecker      *health.Checker           // periodic dependency probe; nil only in degraded test setups
 	pendingOrgCleaner  *handlers.PendingOrgCleaner
 	invitationsHandler *handlers.InvitationsHandler
 	emailService       *emailsvc.Service
@@ -258,6 +260,12 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			Password: cfg.Redis.Password,
 			DB:       cfg.Redis.DB,
 		})
+		// Attach the same metrics hook the primary cache service uses
+		// so DEK-cache traffic also feeds the redis duration and error
+		// metrics. Without this, traffic that goes exclusively through
+		// the DEK cache (key unlock paths) is invisible on the
+		// dashboard.
+		dekCacheClient.AddHook(cache.NewMetricsHook())
 		dekCache := secrets.NewRedisDEKCache(dekCacheClient, mk)
 
 		// Create pgxpool for secret stores (same DB, separate pool for pgx native queries).
@@ -265,7 +273,17 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			cfg.Database.Host, cfg.Database.Port, cfg.Database.User,
 			cfg.Database.Password, cfg.Database.Database, cfg.Database.SSLMode)
 		var pgxErr error
-		secretsPool, pgxErr = pgxpool.New(context.Background(), pgxDSN)
+		// Attach the same QueryTracer used by the *sql.DB pool so every
+		// query issued by the secrets/keys/credentials pgx-native code
+		// also feeds llmsafespaces_db_query_duration_seconds and
+		// llmsafespaces_db_errors_total. Without this the secret-store
+		// queries are invisible to the operational dashboard.
+		var pgxCfg *pgxpool.Config
+		pgxCfg, pgxErr = pgxpool.ParseConfig(pgxDSN)
+		if pgxErr == nil {
+			pgxCfg.ConnConfig.Tracer = database.NewQueryTracer()
+			secretsPool, pgxErr = pgxpool.NewWithConfig(context.Background(), pgxCfg)
+		}
 
 		var secretService *secrets.SecretService
 		var auditStore secrets.SecretStore
@@ -803,6 +821,24 @@ func (a *App) Run() error {
 		return fmt.Errorf("failed to start services: %w", err)
 	}
 
+	// Start the dependency health probe so llmsafespaces_dependency_up
+	// and the db-pool gauges have a continuous signal independent of
+	// request traffic. Constructed here (not in New) so we have access
+	// to the already-initialized services.
+	if dbSvc, ok := a.services.Database.(*database.Service); ok {
+		deps := map[string]health.Pingable{
+			"postgres": dbSvc,
+		}
+		if cacheSvc, ok := a.services.Cache.(*cache.Service); ok {
+			deps["redis"] = cacheSvc
+		}
+		a.healthChecker = health.NewChecker(a.logger, health.Config{
+			Dependencies: deps,
+			PoolSource:   dbSvc.DB,
+		})
+		a.healthChecker.Start(a.ctx)
+	}
+
 	// Disabled: self-service org creation removed. Re-enable when billing portal ships.
 	// if a.pendingOrgCleaner != nil {
 	// 	go a.pendingOrgCleaner.Run(a.ctx)
@@ -932,6 +968,14 @@ func (a *App) Shutdown() error {
 	a.logger.Info("Shutting down application")
 
 	a.cancel()
+
+	// Stop the dependency probe before the rest of the shutdown so the
+	// loop is not still pinging dependencies as their connections are
+	// closing. Stop is idempotent and safe even if Run never made it
+	// past health-checker construction.
+	if a.healthChecker != nil {
+		a.healthChecker.Stop()
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), a.config.Server.ShutdownTimeout)
 	defer cancel()

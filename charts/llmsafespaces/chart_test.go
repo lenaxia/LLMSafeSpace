@@ -34,6 +34,7 @@ package chart_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -2140,9 +2141,84 @@ func TestMonitoring_DashboardConfigMap_NotEmpty(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// InferenceRelay — WireGuard removal regression guards (worklog 0442)
-// =============================================================================
+// TestMonitoring_DashboardJobVariablesPortable verifies that the operational
+// and billing dashboards do not hard-code a specific job-label spelling for
+// the $job and $controller_job template variables. Helm release names vary
+// (e.g. `llmsafespace` singular vs `llmsafespaces` plural); the resulting
+// scrape-job labels are tied to Service names, which are tied to release
+// names. A dashboard with `current.value=["llmsafespaces-api"]` saved as
+// the default renders empty in any deployment whose Service labels emit
+// `llmsafespace-api` (or any other release-derived name).
+//
+// Two contracts are enforced:
+//
+//   - includeAll=true so $job/$controller_job has an "All" option that
+//     matches every job emitting the metric.
+//   - allValue=".*" so the regex query expands to "match anything",
+//     working in single-instance and multi-instance deployments alike.
+//
+// Worklog 0508 documents the cluster state where this regressed: the
+// dashboard JSON shipped with current.value=["llmsafespaces-api"] but
+// the Service emitted job=llmsafespace-api, leaving every panel empty
+// on first load until the operator manually picked a job.
+func TestMonitoring_DashboardJobVariablesPortable(t *testing.T) {
+	docs := helmTemplate(t, "monitoring:\n  enabled: true\n")
+	var cm map[string]any
+	for _, d := range docs {
+		if d["kind"] == "ConfigMap" && strings.Contains(metaName(d), "grafana-dashboards") {
+			cm = d
+			break
+		}
+	}
+	require.NotNil(t, cm)
+	data, _ := cm["data"].(map[string]any)
+
+	for _, key := range []string{"operational.json", "billing.json"} {
+		content, ok := data[key].(string)
+		if !ok {
+			continue // billing.json may not define both vars; checked per-var
+		}
+		var dash map[string]any
+		require.NoError(t, json.Unmarshal([]byte(content), &dash),
+			"dashboard %q must be valid JSON", key)
+		tmpl, _ := dash["templating"].(map[string]any)
+		list, _ := tmpl["list"].([]any)
+		for _, item := range list {
+			v, _ := item.(map[string]any)
+			name, _ := v["name"].(string)
+			if name != "job" && name != "controller_job" {
+				continue
+			}
+			includeAll, _ := v["includeAll"].(bool)
+			require.True(t, includeAll,
+				"%s.%s must have includeAll=true so the dashboard is portable across release names",
+				key, name)
+			allValue, _ := v["allValue"].(string)
+			require.Equal(t, ".*", allValue,
+				"%s.%s must have allValue=\".*\" so the All selection matches every emitted job label",
+				key, name)
+			cur, _ := v["current"].(map[string]any)
+			curVal := cur["value"]
+			// Reject any saved default that hard-codes a specific
+			// release-derived job label. Either '$__all' or an empty
+			// list is acceptable; anything containing "llmsafespace"
+			// is a regression.
+			s := strings.ToLower(toString(curVal))
+			require.NotContains(t, s, "llmsafespace",
+				"%s.%s.current.value must not hard-code a release-specific job name (got %v)",
+				key, name, curVal)
+		}
+	}
+}
+
+// toString is a tiny helper for the assertion above: format any JSON value
+// to a string for substring checks. Avoids pulling in fmt.Sprint's verb
+// quirks for slices/maps.
+func toString(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
+}
+
 //
 // These tests guard the post-WG-removal chart contract: the relay-router
 // Deployment must have NO privileged sidecar / NET_ADMIN / WG volumes; the

@@ -788,6 +788,11 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 		if countStr, err := s.cacheService.Get(ctx, lockoutKey); err == nil && countStr != "" {
 			var count int
 			if _, err := fmt.Sscanf(countStr, "%d", &count); err == nil && count >= lockoutAttempts {
+				// A locked-out attempt is still an attempt from
+				// the dashboard's perspective: include it in
+				// the auth_attempts_total denominator so the
+				// failure ratio reflects reality.
+				metrics.RecordAuthAttempt("password", "failure")
 				return nil, errors.New("account temporarily locked due to too many failed attempts")
 			}
 		}
@@ -800,11 +805,13 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 		// compare so a DB error path takes the same observable time
 		// as a successful user lookup with wrong password.
 		_ = bcrypt.CompareHashAndPassword([]byte(dummyBcryptHash), []byte(req.Password))
+		metrics.RecordAuthAttempt("password", "failure")
 		return nil, errors.New("invalid email or password")
 	}
 	if user == nil {
 		s.recordFailedAttempt(ctx, email)
 		metrics.RecordAuthFailure("user_not_found")
+		metrics.RecordAuthAttempt("password", "failure")
 		// G27: same as VerifyPassword — burn the bcrypt cycles so
 		// no-such-user takes ~226ms instead of ~16ms.
 		_ = bcrypt.CompareHashAndPassword([]byte(dummyBcryptHash), []byte(req.Password))
@@ -814,18 +821,21 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
 		s.recordFailedAttempt(ctx, email)
 		metrics.RecordAuthFailure("wrong_password")
+		metrics.RecordAuthAttempt("password", "failure")
 		return nil, errors.New("invalid email or password")
 	}
 
 	if user.Status == types.UserStatusSuspended {
 		s.recordFailedAttempt(ctx, email)
 		metrics.RecordAuthFailure("account_suspended")
+		metrics.RecordAuthAttempt("password", "failure")
 		return nil, errors.New("account suspended")
 	}
 
 	if !user.Active {
 		s.recordFailedAttempt(ctx, email)
 		metrics.RecordAuthFailure("account_inactive")
+		metrics.RecordAuthAttempt("password", "failure")
 		return nil, errors.New("invalid email or password")
 	}
 
@@ -836,6 +846,7 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 	// branch.
 	if !user.EmailVerified {
 		metrics.RecordAuthFailure("email_not_verified")
+		metrics.RecordAuthAttempt("password", "failure")
 		return nil, ErrEmailNotVerified
 	}
 
@@ -850,6 +861,7 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 
 	token, err := s.GenerateTokenWithDuration(user.ID, tokenDur)
 	if err != nil {
+		metrics.RecordAuthAttempt("password", "failure")
 		return nil, errors.New("login failed")
 	}
 
@@ -881,6 +893,7 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 	}
 
 	user.PasswordHash = ""
+	metrics.RecordAuthAttempt("password", "success")
 	return &types.AuthResponse{Token: token, User: *user, TokenTTL: tokenDur}, nil
 }
 
