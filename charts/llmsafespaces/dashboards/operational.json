@@ -1580,9 +1580,9 @@
       },
       "id": 20,
       "panels": [],
-      "title": "Noisy Neighbor Detection",
+      "title": "Noisy Neighbor Detection \u2014 by Workspace",
       "type": "row",
-      "description": "Top resource consumers by workspace and user. These panels enable the primary multitenant action: identify and throttle/terminate workspaces or users consuming disproportionate resources. Each bar gauge shows the top-10 consumers at the current instant."
+      "description": "Top-10 workspaces by CPU, memory, and disk. Pinpoints the specific workspace pod consuming disproportionate resources. Each bar gauge shows the top-10 consumers at the current instant. See the by-User row below for per-tenant aggregates."
     },
     {
       "datasource": {
@@ -1614,7 +1614,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 6,
+        "w": 8,
         "x": 0,
         "y": 41
       },
@@ -1679,8 +1679,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 6,
-        "x": 6,
+        "w": 8,
+        "x": 8,
         "y": 41
       },
       "id": 22,
@@ -1746,8 +1746,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 6,
-        "x": 12,
+        "w": 8,
+        "x": 16,
         "y": 41
       },
       "id": 23,
@@ -1813,7 +1813,7 @@
         "h": 8,
         "w": 6,
         "x": 18,
-        "y": 41
+        "y": 50
       },
       "id": 24,
       "options": {
@@ -1853,6 +1853,217 @@
         "w": 24,
         "x": 0,
         "y": 49
+      },
+      "id": 38,
+      "panels": [],
+      "title": "Noisy Neighbor Detection \u2014 by User",
+      "type": "row",
+      "description": "Top-10 users by aggregated workspace CPU, memory, and disk, plus concurrent active compute. A user with high values across multiple panels has both heavy single-workspace usage and parallel workspaces. Action: enforce per-user quota, contact user, or terminate workspaces."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 16
+              }
+            ]
+          },
+          "unit": "cpucores"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 50
+      },
+      "id": 39,
+      "options": {
+        "displayMode": "lcd",
+        "minVizHeight": 10,
+        "minVizWidth": 0,
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "showUnfilled": true,
+        "text": {}
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "topk(10, sum by (user_id) (rate(llmsafespaces_workspace_cpu_milliseconds_total{job=~\"__LLMSAFESPACES_CTRL_JOB__\"}[5m])) / 1000)",
+          "legendFormat": "{{user_id}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Top-10 Users by CPU",
+      "type": "bargauge",
+      "description": "Top-10 users by aggregated CPU across all their workspaces (cores). Red threshold at 16 cores = 4 workspaces continuously bursting at the per-workspace red of 4 cores each. A user above this is using more compute than the platform's average tenant by a wide margin. Action: enforce per-user CPU quota, contact user."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 8589934592
+              }
+            ]
+          },
+          "unit": "decbytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 50
+      },
+      "id": 40,
+      "options": {
+        "displayMode": "lcd",
+        "minVizHeight": 10,
+        "minVizWidth": 0,
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "showUnfilled": true,
+        "text": {}
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "topk(10, sum by (user_id) (llmsafespaces_workspace_memory_used_bytes{job=~\"__LLMSAFESPACES_CTRL_JOB__\"}))",
+          "legendFormat": "{{user_id}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Top-10 Users by Memory",
+      "type": "bargauge",
+      "description": "Top-10 users by aggregated memory across all their workspaces (bytes). Red threshold at 8 GiB = 4 workspaces continuously near the per-workspace red of 2 GiB each. Users approaching this likely have many parallel workspaces or memory leaks. Action: enforce per-user memory quota, investigate, contact user."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 95
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 50
+      },
+      "id": 41,
+      "options": {
+        "displayMode": "lcd",
+        "minVizHeight": 10,
+        "minVizWidth": 0,
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "showUnfilled": true,
+        "text": {}
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "topk(10, sum by (user_id) (llmsafespaces_workspace_disk_used_bytes{job=~\"__LLMSAFESPACES_CTRL_JOB__\"}) / clamp_min(sum by (user_id) (llmsafespaces_workspace_storage_bytes{job=~\"__LLMSAFESPACES_CTRL_JOB__\"}), 1) * 100)",
+          "legendFormat": "{{user_id}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Top-10 Users by Disk % of PVC",
+      "type": "bargauge",
+      "description": "Top-10 users by aggregated disk usage as % of their total allocated PVC space across all workspaces. Red threshold at 95%: a user near their aggregate PVC limit risks workspace agent crashes (no space for opencode.db, auth.json, etc.). Action: alert user, audit large files, resize PVCs, or enforce per-user disk quota."
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 58
       },
       "id": 25,
       "panels": [],
@@ -1923,7 +2134,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 50
+        "y": 59
       },
       "id": 26,
       "options": {
@@ -2020,7 +2231,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 50
+        "y": 59
       },
       "id": 27,
       "options": {
@@ -2117,7 +2328,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 50
+        "y": 59
       },
       "id": 28,
       "options": {
@@ -2156,7 +2367,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 58
+        "y": 67
       },
       "id": 29,
       "panels": [],
@@ -2229,7 +2440,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 59
+        "y": 68
       },
       "id": 30,
       "options": {
@@ -2321,7 +2532,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 59
+        "y": 68
       },
       "id": 31,
       "options": {
@@ -2418,7 +2629,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 59
+        "y": 68
       },
       "id": 32,
       "options": {
@@ -2457,7 +2668,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 67
+        "y": 76
       },
       "id": 33,
       "panels": [],
@@ -2574,7 +2785,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 68
+        "y": 77
       },
       "id": 34,
       "options": {
@@ -2657,7 +2868,7 @@
         "h": 8,
         "w": 4,
         "x": 12,
-        "y": 68
+        "y": 77
       },
       "id": 35,
       "options": {
@@ -2719,7 +2930,7 @@
         "h": 8,
         "w": 4,
         "x": 16,
-        "y": 68
+        "y": 77
       },
       "id": 36,
       "options": {
@@ -2815,7 +3026,7 @@
         "h": 8,
         "w": 4,
         "x": 20,
-        "y": 68
+        "y": 77
       },
       "id": 37,
       "options": {
@@ -2886,5 +3097,5 @@
   "timezone": "utc",
   "title": "LLMSafeSpaces - Operational",
   "uid": "llmsafespaces-operational",
-  "version": 2
+  "version": 3
 }
