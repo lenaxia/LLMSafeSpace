@@ -299,6 +299,29 @@ controller:
       tolerations: []
       affinity: {}
 
+  # 2026-06-23 cold-start optimization (item #1a): the controller
+  # periodically fetches the opencode free-tier model catalog from
+  # models.dev and publishes it as a ConfigMap. Workspace pods consume
+  # the CM to pre-render their relay agent-config.json before opencode
+  # boots, eliminating the in-pod opencode-restart cycle that the
+  # legacy relay-injector goroutine imposed (~6-8s saved per cold
+  # start AND every resume).
+  #
+  # When disabled, workspace pods fall back to the in-pod relay
+  # injector goroutine (legacy behavior).
+  #
+  # The ConfigMap is created in the release namespace and named
+  # `llmsafespaces-free-models`.
+  freeModelsRefresher:
+    enabled: true
+    # How often to re-fetch from upstream. Catalog changes ~weekly so
+    # 6h is generous; lower values increase load on models.dev.
+    refreshInterval: 6h
+    # Override URL for the free-models catalog. Empty defaults to
+    # https://models.dev/api.json. Useful for air-gapped clusters that
+    # mirror the catalog internally.
+    apiURL: ""
+
   resources:
     requests:
       cpu: 100m

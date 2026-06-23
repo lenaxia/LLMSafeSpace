@@ -130,6 +130,15 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps", "secrets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+{{- else if .Values.controller.freeModelsRefresher.enabled }}
+  # ConfigMaps for the free-models refresher (2026-06-23 cold-start
+  # optimization, item #1a). When inferenceRelay.enabled is also true,
+  # the broader rule above already covers configmaps; this is the
+  # narrower fallback when the relay controller is off but the
+  # free-models refresher is on (the default).
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
 {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
