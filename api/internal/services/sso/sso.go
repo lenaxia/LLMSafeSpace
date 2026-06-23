@@ -52,6 +52,14 @@ var (
 	// register victim@example.com unverified would let the attacker SSO into
 	// the victim's existing account (US-43.10 / F8).
 	ErrEmailUnverified = apierrors.NewForbiddenError("identity provider has not verified the email claim", nil)
+	// ErrRedirectBaseURLNotSet fires when an SSO flow needs to build an
+	// absolute callback URL but oidc.redirectBaseUrl is not configured.
+	// Returned instead of deriving the URL from X-Forwarded-* / Host headers
+	// (F11): those headers are attacker-influenceable at a misconfigured
+	// reverse proxy, and the SSO callback URL is security-sensitive (it is
+	// where the IdP redirects with the authorization code). The deployment
+	// must state the canonical base URL explicitly.
+	ErrRedirectBaseURLNotSet = errors.New("OIDC redirect base URL is not configured; set oidc.redirectBaseUrl")
 )
 
 // orgStore is the org-data subset the SSO service depends on. PgOrgStore

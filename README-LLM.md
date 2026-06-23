@@ -2,8 +2,8 @@
 
 > **Repository:** `github.com/lenaxia/llmsafespaces`
 
-**Version:** 1.19
-**Last Updated:** 2026-06-22
+**Version:** 1.20
+**Last Updated:** 2026-06-23
 **Project Status:** Active Development
 
 ---
@@ -1548,7 +1548,7 @@ The state cookie carries `{state, verifier, orgID, exp}` because the API is stat
 | Last-admin protection | IdP demotion refused if user is sole org admin | `sso.go:491` |
 | Secret never in responses | `OrgSSOConfigResponse.HasSecret` replaces the blob | `orgs.go:189`, `org_sso.go:60` |
 | SameSite=Lax state cookie | Survives top-level IdP→callback redirect, blocked on cross-site POST | `org_sso.go:268` |
-| IdP-registered redirect URI | Primary mitigation when `redirectBaseURL` is derived from headers | `org_sso.go:245` |
+| IdP-registered redirect URI | Defense-in-depth: the IdP only redirects to registered URIs. `redirectBaseUrl` is now **required** for SSO (fail-loud, F11) — header derivation removed | `org_sso.go:319` |
 | Auto-provision off → 403 | `ErrAutoProvisionOff` mapped to `provisioning_disabled` | `sso.go:45`, `org_sso.go:300` |
 
 ### Configuration
@@ -1562,7 +1562,7 @@ The state cookie carries `{state, verifier, orgID, exp}` because the API is stat
 
 | Helm key | Env var | Default | Purpose |
 |----------|---------|---------|---------|
-| `oidc.redirectBaseUrl` | `LLMSAFESPACES_OIDC_REDIRECTBASEURL` | `""` | Absolute base for SSO callback URLs. **Set this in production** to remove header trust (F11). Full callback = `{redirectBaseUrl}/api/v1/auth/sso/:orgSlug/callback`. |
+| `oidc.redirectBaseUrl` | `LLMSAFESPACES_OIDC_REDIRECTBASEURL` | `""` | Absolute base for SSO callback URLs. **Required for SSO** — Start/Callback return a config error if unset, rather than trusting `X-Forwarded-*` headers (F11). Full callback = `{redirectBaseUrl}/api/v1/auth/sso/:orgSlug/callback`. |
 | `oidc.frontendRedirectUrl` | `LLMSAFESPACES_OIDC_FRONTENDREDIRECTURL` | `""` | Browser landing URL after SSO callback (e.g. `https://app.example.com`). Empty → `/`. |
 | `oidc.stateCookieName` | `LLMSAFESPACES_OIDC_STATECOOKIENAME` | `""` (→ `lsp_sso_state` in Go) | PKCE/state cookie name. Override only on collision. |
 
@@ -1675,6 +1675,7 @@ The API service is configured via `api/config/config.yaml` with environment vari
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.20 | 2026-06-23 | Closed the F11 header-trust gap: `resolveCallbackURL` (`org_sso.go`) no longer derives the SSO callback URL from `X-Forwarded-Proto`/`Host` when `oidc.redirectBaseUrl` is unset. Start returns HTTP 500 with a config hint; Callback redirects to the frontend with `?sso=config_error`. New sentinel `sso.ErrRedirectBaseURLNotSet`. The default (empty) is now safe-by-construction — SSO fails closed instead of trusting attacker-influenceable headers. |
 | 1.19 | 2026-06-22 | Documented the self-hosted multi-cloud inference relay fleet (Epic 42): new `InferenceRelay` cluster-scoped CRD (3rd CRD), `cmd/relay-router` + `cmd/relay-proxy` binaries, `controller/internal/relay` reconciler with AWS/OCI/GCP drivers, and the `/api/v1/admin/relay/*` admin API; noted the WireGuard→HTTPS+per-VM-token transition (worklog 0447). Added Master KEK delivery subsection (Epic 50 US-50.1: file mount, not env var) and Tenant isolation subsection (Epic 51: gVisor RuntimeClass + per-tenant quota webhook). Updated CRD count (2→3), repository structure, deliverables framing, Rule 8 design-doc table, and API route inventory. |
 | 1.18 | 2026-06-20 | Shipped DNS verification of claimed SSO domains (D17 Q-S2): new `verified_domains` + `verification_token` columns (migration 000041); on-demand DNS verification via `POST /orgs/:id/sso/domains/:domain/verify`; token rotation endpoint; login-page discovery (`ListSSODomains`) now filters on verified only; existing domains grandfathered as verified; updated §14 endpoints + known gaps |
 | 1.17 | 2026-06-20 | Surfaced per-org OIDC SSO instance-plumbing config (`oidc.redirectBaseUrl`, `oidc.frontendRedirectUrl`, `oidc.stateCookieName`) in the Helm chart (`values.yaml` + `configmap-api.yaml`), exposing the F11 header-trust mitigation (operators set `oidc.redirectBaseUrl` to close it; ships default-empty so the gap remains open in unconfigured deploys); updated §14 Configuration to document both chart and env-var paths |
