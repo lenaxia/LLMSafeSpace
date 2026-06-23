@@ -175,7 +175,7 @@ added rows/panels and adjusted gridPos values.
   bar-gauge panels, the new row header, the moved panel, the widened
   workspace panels, and the y-shift on Controller & Recovery and below.
   Dashboard `version` 2 → 3.
-- `worklogs/NNNN_2026-06-23_dashboard-noisy-neighbor-by-user.md` — this
+- `worklogs/0526_2026-06-23_dashboard-noisy-neighbor-by-user.md` — this
   worklog.
 
 ## Followups
