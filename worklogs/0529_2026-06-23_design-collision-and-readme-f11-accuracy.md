@@ -100,5 +100,5 @@ No functional code changed; no unit/integration tests applicable.
 - `design/stories/epic-46-codebase-debt-audit/README.md` — 3 parent-doc links
   updated 0037 → 0044
 - `README-LLM.md` — line 1680 (v1.17 changelog F11 wording corrected)
-- `worklogs/NNNN_2026-06-23_design-collision-and-readme-f11-accuracy.md` —
+- `worklogs/0529_2026-06-23_design-collision-and-readme-f11-accuracy.md` —
   this file
