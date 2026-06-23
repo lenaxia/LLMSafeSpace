@@ -117,4 +117,4 @@ None.
   `Start`/`Callback`/`errorReason` updated; doc comment rewritten.
 - `api/internal/handlers/org_sso_test.go` — 4 F11 tests (1 replaced, 3 new).
 - `README-LLM.md` — v1.20 entry, config/security tables, file ref.
-- `worklogs/NNNN_2026-06-23_f11-redirect-baseurl-fail-loud.md` — this file.
+- `worklogs/0531_2026-06-23_f11-redirect-baseurl-fail-loud.md` — this file.
