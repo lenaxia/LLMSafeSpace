@@ -79,7 +79,7 @@ done
 EXPECTED_UIDS="llmsafespaces-operational llmsafespaces-billing"
 
 echo "==> Listing dashboards in Grafana matching prefix llmsafespace*"
-LIST_JSON=$(curl -sf -u "${USER}:${PASS}" "${URL}/api/search?type=dash-db&query=") || {
+LIST_JSON=$(curl -sf --max-time 30 -u "${USER}:${PASS}" "${URL}/api/search?type=dash-db&query=") || {
     echo "ERROR: failed to list dashboards from ${URL}" >&2
     exit 1
 }
@@ -139,18 +139,36 @@ if [ "$APPLY" != "--apply" ]; then
 fi
 
 echo "==> Deleting orphans..."
+# Track failures so we can report at the end without `set -e` aborting
+# mid-loop. The script is idempotent (re-running completes the cleanup),
+# but a transient `curl` failure on one orphan should NOT prevent us
+# from attempting the others.
+DELETE_FAILURES=0
 for uid in $ORPHANS; do
     printf "  %s ... " "$uid"
-    response=$(curl -s -u "${USER}:${PASS}" -X DELETE "${URL}/api/dashboards/uid/${uid}")
+    response=$(curl -s --max-time 30 -u "${USER}:${PASS}" -X DELETE "${URL}/api/dashboards/uid/${uid}" 2>&1) || {
+        echo "TRANSPORT ERROR: $response (will retry on next script run)"
+        DELETE_FAILURES=$((DELETE_FAILURES + 1))
+        continue
+    }
     # Grafana returns {"title":"...","message":"Dashboard ... deleted"} on
     # success, {"message":"...","title":"Not found"} on miss. Either is OK
     # (idempotent — a dashboard already gone is the desired state).
     case "$response" in
         *deleted*) echo "deleted" ;;
         *"Not found"*) echo "already gone (skipped)" ;;
-        *) echo "UNEXPECTED RESPONSE: $response"; exit 1 ;;
+        *)
+            echo "UNEXPECTED RESPONSE: $response"
+            DELETE_FAILURES=$((DELETE_FAILURES + 1))
+            ;;
     esac
 done
+
+if [ $DELETE_FAILURES -gt 0 ]; then
+    echo ""
+    echo "==> $DELETE_FAILURES delete(s) failed. Re-run with --apply to retry only the remaining orphans."
+    exit 1
+fi
 
 echo ""
 echo "==> Cleanup complete. The Grafana sidecar provisioner should now be able"

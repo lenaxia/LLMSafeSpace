@@ -115,7 +115,7 @@ If you observe panels with "No data" despite Prometheus having metric series, ch
 
 ## Dependency-up + db-pool metrics
 
-PR #356 wired five metric families that previously had no observation calls in production code:
+PR #356 wired six metric families that previously had no observation calls in production code:
 
 - `llmsafespaces_db_query_duration_seconds` — pgx tracer attached to all `*sql.DB` and `*pgxpool.Pool` instances
 - `llmsafespaces_db_errors_total` — same tracer

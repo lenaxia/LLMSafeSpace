@@ -2250,9 +2250,10 @@ func TestMonitoring_DashboardJobVariablesPortable(t *testing.T) {
 // stable contract between operators' bookmarks/links and the dashboards
 // themselves: changing them silently breaks every existing URL.
 //
-// Worklog 0522 incident: the chart was previously named `llmsafespace`
-// (singular) and shipped dashboards with UIDs `llmsafespace-operational`
-// / `llmsafespace-billing`. When the chart was renamed to `llmsafespaces`
+// Failure mode discovered during worklog 0522 incident response: the
+// chart was previously named `llmsafespace` (singular) and shipped
+// dashboards with UIDs `llmsafespace-operational` /
+// `llmsafespace-billing`. When the chart was renamed to `llmsafespaces`
 // (plural), the dashboard UIDs followed and became
 // `llmsafespaces-operational` / `llmsafespaces-billing`. The Grafana
 // sidecar provisioner saw both variants in its database (the old singular
@@ -2261,7 +2262,9 @@ func TestMonitoring_DashboardJobVariablesPortable(t *testing.T) {
 // of dashboards for id ...: found 2, desired 1"). Operators' bookmarked
 // singular URLs returned the stale singular dashboards (with stale,
 // release-mismatched job-label matchers), which appeared as "No data" on
-// every panel. See worklog NNNN for the redesign.
+// every panel. Worklog 0522 documented the URL-template-variable angle of
+// the same incident; this test pins the UID-stability angle. See worklog
+// NNNN for the full redesign.
 //
 // This test enforces three contracts:
 //
@@ -2287,21 +2290,35 @@ func TestMonitoring_DashboardUIDsAreStable(t *testing.T) {
 	require.NotNil(t, cm)
 	data, _ := cm["data"].(map[string]any)
 
-	// Pinned UIDs. To intentionally change either, you must:
+	// Pinned UIDs for the dashboards we know about. To intentionally
+	// change either, you must:
 	//   1. Update the value here.
 	//   2. Update the dashboard JSON's top-level "uid" field.
 	//   3. Update CHART-UPGRADE.md with the migration steps.
-	//   4. Notify operators that bookmarked URLs will break.
+	//   4. Update the EXPECTED_UIDS list in
+	//      charts/llmsafespaces/scripts/grafana-purge-stale-dashboards.sh.
+	//   5. Notify operators that bookmarked URLs will break.
 	expectedUIDs := map[string]string{
 		"operational.json": "llmsafespaces-operational",
 		"billing.json":     "llmsafespaces-billing",
 	}
 
-	for filename, want := range expectedUIDs {
-		content, ok := data[filename].(string)
-		require.True(t, ok, "dashboard %q must be present in the ConfigMap", filename)
+	// Contract 0: every JSON file in the rendered ConfigMap is exercised
+	// by this test, even ones we don't have a pinned expectation for.
+	// Iterating over `data` (rather than `expectedUIDs`) ensures that any
+	// future dashboard added to charts/llmsafespaces/dashboards/ without
+	// being added to `expectedUIDs` will fail this test — catching the
+	// "added a third dashboard with a different prefix and forgot to
+	// update the test" regression vector flagged in PR #375 review.
+	for filename, raw := range data {
+		// Helm renders the ConfigMap "data" entries as strings; a non-string
+		// value here would indicate a Helm-template structural change worth
+		// failing on.
+		content, ok := raw.(string)
+		require.True(t, ok, "ConfigMap data[%q] must be a string", filename)
 
 		// Contract 3: no placeholder leaked into the rendered output.
+		// Run this on every file, regardless of whether we have a pin.
 		require.NotContains(t, content, "__LLMSAFESPACES_API_JOB__",
 			"%s: rendered ConfigMap must not contain placeholder strings — see TestMonitoring_DashboardJobVariablesPortable",
 			filename)
@@ -2312,9 +2329,7 @@ func TestMonitoring_DashboardUIDsAreStable(t *testing.T) {
 		uidRe := regexp.MustCompile(`(?m)^\s{0,2}"uid":\s*"([^"]+)",?$`)
 		matches := uidRe.FindAllStringSubmatch(content, -1)
 
-		// Contract 1: at least one top-level uid must exist, and the
-		// FIRST top-level "uid": "..." encountered (top-level fields are
-		// 2-space indented; nested ones are 8+) must be the pinned value.
+		// Contract 1: at least one top-level uid must exist.
 		var topLevelUIDs []string
 		for _, m := range matches {
 			topLevelUIDs = append(topLevelUIDs, m[1])
@@ -2334,19 +2349,52 @@ func TestMonitoring_DashboardUIDsAreStable(t *testing.T) {
 				break
 			}
 		}
-		require.Equal(t, want, foundTopLevel,
-			"%s: top-level dashboard UID has changed — this breaks operator bookmarks AND triggers "+
-				"the worklog 0522 multi-version-coexisting failure mode in Grafana's sidecar provisioner. "+
-				"If this change is intentional, see CHART-UPGRADE.md for the required cleanup procedure.",
-			filename)
 
-		// Contract 2: prefix consistency. Forces any future dashboard
-		// added to this chart to follow the same convention.
+		// Contract 2: prefix consistency. Forces any dashboard in the
+		// ConfigMap (including future additions) to follow the
+		// `llmsafespaces-*` UID convention. Mixed prefixes complicate
+		// the manual cleanup procedure in CHART-UPGRADE.md.
+		require.NotEmpty(t, foundTopLevel,
+			"%s: no top-level UID with the `llmsafespaces-` prefix found. "+
+				"Every dashboard in this chart must use the consistent UID prefix; "+
+				"saw top-level UIDs %v.",
+			filename, topLevelUIDs)
 		require.True(t, strings.HasPrefix(foundTopLevel, "llmsafespaces-"),
 			"%s: top-level UID %q must begin with `llmsafespaces-` so all dashboards in the chart "+
 				"share a consistent namespace; mixed prefixes complicate the manual cleanup procedure "+
 				"in CHART-UPGRADE.md",
 			filename, foundTopLevel)
+
+		// Contract 1 (specific): if we have a pinned expectation for
+		// this file, verify the UID matches exactly. New dashboards
+		// must be added to expectedUIDs (forcing the developer to also
+		// update CHART-UPGRADE.md and the cleanup script).
+		want, pinned := expectedUIDs[filename]
+		require.True(t, pinned,
+			"%s: dashboard added to charts/llmsafespaces/dashboards/ without being added "+
+				"to TestMonitoring_DashboardUIDsAreStable's `expectedUIDs` map. Add it (along "+
+				"with the matching entry in scripts/grafana-purge-stale-dashboards.sh's "+
+				"EXPECTED_UIDS list) so the UID stability contract covers all dashboards.",
+			filename)
+		require.Equal(t, want, foundTopLevel,
+			"%s: top-level dashboard UID has changed — this breaks operator bookmarks AND triggers "+
+				"the multi-version-coexistence failure mode in Grafana's sidecar provisioner "+
+				"discovered during worklog 0522 incident response. "+
+				"If this change is intentional, see CHART-UPGRADE.md for the required cleanup procedure.",
+			filename)
+	}
+
+	// Belt-and-suspenders sanity check: every entry in expectedUIDs must
+	// correspond to a real file in the rendered ConfigMap. Catches the
+	// case where a dashboard is removed from the chart but its pin is
+	// left dangling.
+	for filename := range expectedUIDs {
+		_, ok := data[filename]
+		require.True(t, ok,
+			"%s: pinned in expectedUIDs but not present in the rendered ConfigMap. "+
+				"Either restore the dashboard JSON file or remove the pin (and the "+
+				"matching EXPECTED_UIDS entry in the cleanup script).",
+			filename)
 	}
 }
 

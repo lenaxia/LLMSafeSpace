@@ -25,9 +25,10 @@ The user asked whether avoiding future renames would be sufficient. **Mostly yes
 
 ### What
 
-Added `TestMonitoring_DashboardUIDsAreStable` to `charts/llmsafespaces/chart_test.go`. Pins three contracts:
+Added `TestMonitoring_DashboardUIDsAreStable` to `charts/llmsafespaces/chart_test.go`. Pins four contracts:
 
-1. **Each dashboard's top-level `uid` field is exactly the value below** — any change is a regression that breaks operator bookmarks AND triggers the worklog 0522 multi-version-coexistence failure mode.
+0. **Every JSON file in the rendered ConfigMap is exercised** — the test iterates over the actual ConfigMap data (not just over `expectedUIDs`), so any future dashboard added to `charts/llmsafespaces/dashboards/` without being pinned in `expectedUIDs` triggers a hard test failure with explicit guidance to update the pin AND the cleanup script's `EXPECTED_UIDS` list. Closes the regression vector flagged by the PR #375 review.
+1. **Each dashboard's top-level `uid` field is exactly the value below** — any change is a regression that breaks operator bookmarks AND triggers the multi-version-coexistence failure mode (discovered during worklog 0522 incident response).
 2. **The UID prefix is consistent** (`llmsafespaces-`) — forces any future dashboard added to `charts/llmsafespaces/dashboards/` to follow the same convention.
 3. **The UIDs survive the Helm `replace` pipeline** — no placeholder leaks into the UID field (placeholders are only meant for PromQL `expr` strings, never the dashboard identity).
 
@@ -39,6 +40,8 @@ expectedUIDs := map[string]string{
     "billing.json":     "llmsafespaces-billing",
 }
 ```
+
+A "belt-and-suspenders" final loop also verifies every entry in `expectedUIDs` corresponds to a real file (catches dangling pins after a dashboard is removed).
 
 ### Why this matters
 
@@ -131,6 +134,18 @@ Live verification of the cleanup script against the production Grafana:
 5. **Could the multi-replica race trigger on a fresh install with no orphans?** Yes, theoretically — but the impact is much smaller (the dashboard might just take a few sidecar polling cycles to settle). The leader-election fix in Grafana's values is the structural prevention; the cleanup script + scale-down/up procedure is the recovery path. Both are documented in MONITORING-OPERATIONAL.md.
 
 6. **Why didn't I add a Helm hook for automatic cleanup?** Discussed in CHART-UPGRADE.md. Three reasons: credential coupling, blocking-failure mode, and edge-case-tax. The user agreed with the manual-procedure choice in the planning conversation.
+
+---
+
+## PR #375 Review Findings (Addressed)
+
+The first review identified five non-blocking findings, all addressed in a follow-up commit:
+
+1. **Dynamic dashboard discovery** — the test now iterates over the actual ConfigMap data keys (not just `expectedUIDs`), so any future dashboard added to `charts/llmsafespaces/dashboards/` without being pinned triggers a hard test failure. New "Contract 0" + a belt-and-suspenders loop that verifies every pin still corresponds to a real file.
+2. **`--max-time 30` on curl calls** — both the listing and deletion calls now have explicit timeouts so a stuck Grafana doesn't hang the script.
+3. **Resilient delete loop** — replaced the `set -e`-aborting failure with explicit per-orphan failure tracking. One transient curl failure no longer prevents the others from being attempted; the script reports the failure count at the end and exits non-zero so re-running picks up where it left off.
+4. **"five" → "six" metric families typo** in MONITORING-OPERATIONAL.md.
+5. **Narrative attribution precision** — the "found 2, desired 1" failure mode was discovered DURING worklog 0522 incident response, not documented IN worklog 0522 itself. Reworded the test docstring and CHART-UPGRADE.md heading to "discovered during worklog 0522 incident response" and "What was discovered during worklog 0522 incident response" respectively.
 
 ---
 

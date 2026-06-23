@@ -27,7 +27,9 @@ https://grafana.example.com/d/llmsafespaces-operational/llmsafespaces-operationa
 
 If a chart upgrade renames the UID, the bookmark breaks (Grafana returns 404 or shows a different unrelated dashboard if the new UID happens to collide with something else). Worse, the **old dashboard with the old UID** stays in Grafana's database — the sidecar provisioner does NOT garbage-collect rows whose source files vanished. Operators end up looking at the stale dashboard with stale, release-mismatched PromQL queries, while the new dashboard sits unused at a different URL.
 
-### What happened in worklog 0522
+### What was discovered during worklog 0522 incident response
+
+Worklog 0522 documented "No data" on Grafana dashboards from the URL-template-variable angle (stale `var-controller_job=` in bookmarked URLs). During incident response, a deeper failure mode was uncovered that this document captures:
 
 The chart was previously named `llmsafespace` (singular) and shipped dashboards with UIDs `llmsafespace-operational` and `llmsafespace-billing`. After the chart was renamed to `llmsafespaces` (plural), the dashboard UIDs followed the chart name and became `llmsafespaces-operational` / `llmsafespaces-billing`.
 
@@ -62,7 +64,7 @@ If a UID change is genuinely required:
 4. **Notify operators** that bookmarked URLs will break after the next chart upgrade.
 5. **After the chart upgrade lands**, run the purge script (below) to remove the old UID rows from Grafana so the sidecar provisioner doesn't trip the optimistic-concurrency check.
 
-### Manual cleanup procedure (after a UID change OR after observing the worklog 0522 symptoms)
+### Manual cleanup procedure (after a UID change OR after observing the symptoms below)
 
 Symptoms that warrant cleanup:
 - Grafana logs contain `"unexpected number of dashboards for id ...: found 2, desired 1"` for files in `/tmp/dashboards/`
