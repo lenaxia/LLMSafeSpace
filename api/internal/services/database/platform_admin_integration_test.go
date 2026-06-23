@@ -56,10 +56,10 @@ func TestIntegration_ListAllUsers_UserWithoutOrgMembership(t *testing.T) {
 
 	var orgID string
 	err = pool.QueryRow(ctx, `
-		INSERT INTO organizations (name, slug, status, plan_id, subscription_status)
-		VALUES ('Int Test Org', $1, 'active', 'free', 'active')
+		INSERT INTO organizations (name, slug, created_by, status, plan_id, subscription_status)
+		VALUES ('Int Test Org', $1, $2, 'active', 'free', 'active')
 		RETURNING id
-	`, orgSlug).Scan(&orgID)
+	`, orgSlug, userInOrg).Scan(&orgID)
 	require.NoError(t, err, "seed one organization")
 
 	_, err = pool.Exec(ctx, `
