@@ -95,7 +95,9 @@ Doc-only change; no Go/frontend tests apply. Verifications run:
 ```bash
 # Confirm AuditedProvider is unwired (A1)
 rg "NewAuditedProvider\(" --glob '*.go'
-# 3 hits: 1 definition + 2 test constructions. Confirms G50.
+# 1 hit: the constructor definition at audited_provider.go:50.
+# (The two test refs are &AuditedProvider{} struct literals — see A1.)
+# => NewAuditedProvider is never called anywhere; constructor is untested. Confirms G50.
 
 # Confirm rotate-kek CLI absent (A4)
 ls cmd/rotate-kek/ 2>&1
