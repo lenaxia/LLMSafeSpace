@@ -43,11 +43,15 @@ func TestIntegration_ListAllUsers_UserWithoutOrgMembership(t *testing.T) {
 	cleanup()
 	t.Cleanup(cleanup)
 
+	const fakeHash = "$2a$12$placeholderhashplaceholderhashplaceholderhash"
 	_, err := pool.Exec(ctx, `
-		INSERT INTO users (id, username, email, password_hash, status)
-		VALUES ($1, $1, $1@example.test, '$2a$12$placeholderhashplaceholderhashplaceholderhash', 'active'),
-		       ($2, $2, $2@example.test, '$2a$12$placeholderhashplaceholderhashplaceholderhash', 'active')
-	`, userInOrg, userNoOrg)
+		INSERT INTO users (id, username, email, password_hash, status) VALUES
+		($1, $1, $2, $3, 'active'),
+		($4, $4, $5, $6, 'active')
+	`,
+		userInOrg, userInOrg+"@example.test", fakeHash,
+		userNoOrg, userNoOrg+"@example.test", fakeHash,
+	)
 	require.NoError(t, err, "seed two users")
 
 	var orgID string
