@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
 import { useUserEventStream } from "../hooks/useUserEventStream";
+import type { QuestionRequest, PermissionRequest } from "../api/types";
 
 interface SessionActivityContextValue {
   isSessionBusy: (sessionId: string) => boolean;
@@ -14,11 +15,34 @@ interface SessionActivityContextValue {
   addPendingAction: (workspaceId: string, sessionId: string, requestId: string) => void;
   removePendingAction: (requestId: string) => void;
   clearWorkspacePendingActions: (workspaceId: string) => void;
+  // Pending prompt CONTENT (issue #346). The indicator (pendingActions above)
+  // drives the sidebar pulse; the content (question/permission bodies) drives
+  // the in-chat prompt UI. Content lives in this global layer — not in
+  // ChatPage session-local state — so it survives within-tab navigation
+  // between a parent session and its subtasks. Filtered by session at read.
+  addPendingQuestion: (workspaceId: string, req: QuestionRequest) => void;
+  addPendingPermission: (workspaceId: string, req: PermissionRequest) => void;
+  pendingQuestionsForSession: (sessionId: string) => QuestionRequest[];
+  pendingPermissionsForSession: (sessionId: string) => PermissionRequest[];
+  clearSessionPendingPrompts: (sessionId: string) => void;
 }
 
 const SessionActivityContext = createContext<SessionActivityContextValue | null>(null);
 
 const NON_ACTIVE_PHASES = new Set(["Suspending", "Suspended", "Terminating", "Terminated", "Failed"]);
+
+// pruneMany returns a copy of m with every key in doomed removed, or m itself
+// if none matched (avoids needless re-renders).
+function pruneMany<V>(m: Map<string, V>, doomed: Set<string>): Map<string, V> {
+  let next: Map<string, V> | null = null;
+  for (const k of doomed) {
+    if (m.has(k)) {
+      if (!next) next = new Map(m);
+      next.delete(k);
+    }
+  }
+  return next ?? m;
+}
 
 export function SessionActivityProvider({ children }: { children: ReactNode }) {
   const [busySessions, setBusySessions] = useState<Map<string, string>>(new Map());
@@ -52,6 +76,12 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
   // Track which workspace each session belongs to so clearWorkspacePendingActions
   // can scope its clearing to a single workspace.
   const pendingActionWsRef = useRef(new Map<string, string>());
+
+  // Pending prompt CONTENT, keyed by requestId. Paired with pendingActions
+  // (the ID-only indicator). Content is global so it survives within-tab
+  // session navigation (#346); consumers filter by session at read time.
+  const [pendingQuestionContent, setPendingQuestionContent] = useState<Map<string, QuestionRequest>>(new Map());
+  const [pendingPermissionContent, setPendingPermissionContent] = useState<Map<string, PermissionRequest>>(new Map());
 
   useEffect(() => {
     const queryCache = queryClient.getQueryCache();
@@ -342,6 +372,22 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const removePendingAction = useCallback((requestId: string) => {
+    // Clear prompt content first (unconditionally) so a resolved event always
+    // drops the in-chat prompt even if the indicator entry was already cleared
+    // by a session-scoped clear.
+    setPendingQuestionContent((prev) => {
+      if (!prev.has(requestId)) return prev;
+      const next = new Map(prev);
+      next.delete(requestId);
+      return next;
+    });
+    setPendingPermissionContent((prev) => {
+      if (!prev.has(requestId)) return prev;
+      const next = new Map(prev);
+      next.delete(requestId);
+      return next;
+    });
+
     const sessionId = requestToSessionRef.current.get(requestId);
     if (!sessionId) return;
     requestToSessionRef.current.delete(requestId);
@@ -361,17 +407,101 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const clearWorkspacePendingActions = useCallback((workspaceId: string) => {
+    // Collect doomed requestIds from the CURRENT pendingActions snapshot. This
+    // must happen outside a setState updater: updaters run asynchronously at
+    // render time, so collecting inside one would race the content prune and
+    // leave prompt content stranded after the indicator was cleared.
+    const doomedRequests = new Set<string>();
+    for (const [sid, rids] of pendingActions) {
+      if (pendingActionWsRef.current.get(sid) === workspaceId) {
+        for (const rid of rids) doomedRequests.add(rid);
+      }
+    }
+    if (doomedRequests.size === 0) return;
     setPendingActions((prev) => {
       let next: Map<string, Set<string>> | null = null;
-      for (const [sid] of prev) {
+      for (const sid of prev.keys()) {
         if (pendingActionWsRef.current.get(sid) === workspaceId) {
           if (!next) next = new Map(prev);
-          next!.delete(sid);
+          next.delete(sid);
         }
       }
       return next ?? prev;
     });
-  }, []);
+    setPendingQuestionContent((prev) => pruneMany(prev, doomedRequests));
+    setPendingPermissionContent((prev) => pruneMany(prev, doomedRequests));
+    for (const rid of doomedRequests) requestToSessionRef.current.delete(rid);
+  }, [pendingActions]);
+
+  const addPendingQuestion = useCallback((workspaceId: string, req: QuestionRequest) => {
+    addPendingAction(workspaceId, req.session_id, req.id);
+    setPendingQuestionContent((prev) => {
+      if (prev.has(req.id)) return prev;
+      const next = new Map(prev);
+      next.set(req.id, req);
+      return next;
+    });
+  }, [addPendingAction]);
+
+  const addPendingPermission = useCallback((workspaceId: string, req: PermissionRequest) => {
+    addPendingAction(workspaceId, req.session_id, req.id);
+    setPendingPermissionContent((prev) => {
+      if (prev.has(req.id)) return prev;
+      const next = new Map(prev);
+      next.set(req.id, req);
+      return next;
+    });
+  }, [addPendingAction]);
+
+  // pendingQuestionsForSession matches both the owning session and any session
+  // whose root_session_id points here, so subtask prompts bubble to the parent
+  // view (same rule ChatPage previously applied at write time — now applied at
+  // read time so the content is stored regardless of the currently-viewed session).
+  const pendingQuestionsForSession = useCallback((sessionId: string): QuestionRequest[] => {
+    const out: QuestionRequest[] = [];
+    for (const q of pendingQuestionContent.values()) {
+      const root = q.root_session_id ?? q.session_id;
+      if (root === sessionId || q.session_id === sessionId) out.push(q);
+    }
+    return out;
+  }, [pendingQuestionContent]);
+
+  const pendingPermissionsForSession = useCallback((sessionId: string): PermissionRequest[] => {
+    const out: PermissionRequest[] = [];
+    for (const p of pendingPermissionContent.values()) {
+      const root = p.root_session_id ?? p.session_id;
+      if (root === sessionId || p.session_id === sessionId) out.push(p);
+    }
+    return out;
+  }, [pendingPermissionContent]);
+
+  // clearSessionPendingPrompts drops all prompt content + the indicator for one
+  // session (US-16.12: clear stale prompts on session idle/error). Scoped to the
+  // session's OWN prompts (session_id match) — NOT root_session_id — so a parent
+  // going idle/error does not clear or orphan its subtasks' live prompts (the
+  // subtask indicator lives under the subtask's session_id and must survive).
+  const clearSessionPendingPrompts = useCallback((sessionId: string) => {
+    const doomed = new Set<string>();
+    for (const rid of pendingActions.get(sessionId) ?? []) doomed.add(rid);
+    const collect = <T extends { id: string; session_id: string }>(m: Map<string, T>) => {
+      for (const v of m.values()) {
+        if (v.session_id === sessionId) doomed.add(v.id);
+      }
+    };
+    collect(pendingQuestionContent);
+    collect(pendingPermissionContent);
+    if (doomed.size === 0) return;
+    setPendingQuestionContent((prev) => pruneMany(prev, doomed));
+    setPendingPermissionContent((prev) => pruneMany(prev, doomed));
+    // Clear the indicator entry for this session too.
+    setPendingActions((prev) => {
+      if (!prev.has(sessionId)) return prev;
+      const next = new Map(prev);
+      next.delete(sessionId);
+      return next;
+    });
+    for (const rid of doomed) requestToSessionRef.current.delete(rid);
+  }, [pendingActions, pendingQuestionContent, pendingPermissionContent]);
 
   const isSessionPendingAction = useCallback(
     (sessionId: string) => pendingActions.has(sessionId),
@@ -385,7 +515,7 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
 
   return (
     <SessionActivityContext.Provider
-      value={{ isSessionBusy, isSessionUnread, workspaceBusyCount, clearPendingUnread, isSessionPendingAction, pendingActionSessionIds, addPendingAction, removePendingAction, clearWorkspacePendingActions }}
+      value={{ isSessionBusy, isSessionUnread, workspaceBusyCount, clearPendingUnread, isSessionPendingAction, pendingActionSessionIds, addPendingAction, removePendingAction, clearWorkspacePendingActions, addPendingQuestion, addPendingPermission, pendingQuestionsForSession, pendingPermissionsForSession, clearSessionPendingPrompts }}
     >
       {children}
     </SessionActivityContext.Provider>
@@ -438,4 +568,34 @@ export function useSessionPendingActions(): Set<string> {
   const ctx = useContext(SessionActivityContext);
   if (!ctx) return new Set();
   return ctx.pendingActionSessionIds;
+}
+
+export function useAddPendingQuestion(): (workspaceId: string, req: QuestionRequest) => void {
+  const ctx = useContext(SessionActivityContext);
+  if (!ctx) return () => {};
+  return ctx.addPendingQuestion;
+}
+
+export function useAddPendingPermission(): (workspaceId: string, req: PermissionRequest) => void {
+  const ctx = useContext(SessionActivityContext);
+  if (!ctx) return () => {};
+  return ctx.addPendingPermission;
+}
+
+export function usePendingQuestionsForSession(sessionId: string): QuestionRequest[] {
+  const ctx = useContext(SessionActivityContext);
+  if (!ctx) return [];
+  return ctx.pendingQuestionsForSession(sessionId);
+}
+
+export function usePendingPermissionsForSession(sessionId: string): PermissionRequest[] {
+  const ctx = useContext(SessionActivityContext);
+  if (!ctx) return [];
+  return ctx.pendingPermissionsForSession(sessionId);
+}
+
+export function useClearSessionPendingPrompts(): (sessionId: string) => void {
+  const ctx = useContext(SessionActivityContext);
+  if (!ctx) return () => {};
+  return ctx.clearSessionPendingPrompts;
 }
