@@ -3,7 +3,7 @@
 **Status:** Proposed
 **Created:** 2026-06-18
 **Author:** Audit session (see worklog 0337)
-**Parent design doc:** [`design/0037_2026-06-18_epic-46-codebase-debt-audit.md`](../../0037_2026-06-18_epic-46-codebase-debt-audit.md)
+**Parent design doc:** [`design/0044_2026-06-18_epic-46-codebase-debt-audit.md`](../../0044_2026-06-18_epic-46-codebase-debt-audit.md)
 
 ---
 
@@ -72,7 +72,7 @@ Findings from the production code audit (worklog 0337) that are **not already ow
 
 ## Success Criteria
 
-Tracked in the parent design doc ([§ Success Criteria](../../0037_2026-06-18_epic-46-codebase-debt-audit.md#success-criteria)). Each story's PR must show:
+Tracked in the parent design doc ([§ Success Criteria](../../0044_2026-06-18_epic-46-codebase-debt-audit.md#success-criteria)). Each story's PR must show:
 
 1. The grep count proving the targeted violation is gone
 2. `make build && make test && make lint` passing
@@ -89,4 +89,4 @@ Tracked in the parent design doc ([§ Success Criteria](../../0037_2026-06-18_ep
 | **B — define when extending** | 1 consumer + imminent second | `metering.UsageExporter` (Epic 42), `database.WorkspaceMetadataStore` |
 | **C — do NOT abstract** | Speculative / single-consumer | Generic `Handler` marker, `Repository[T]`, `EventBus`, duplicate `Logger` |
 
-Full rationale in [parent design doc § Abstraction Opportunities](../../0037_2026-06-18_epic-46-codebase-debt-audit.md#abstraction-opportunities-where-interfaces-earn-their-keep).
+Full rationale in [parent design doc § Abstraction Opportunities](../../0044_2026-06-18_epic-46-codebase-debt-audit.md#abstraction-opportunities-where-interfaces-earn-their-keep).
