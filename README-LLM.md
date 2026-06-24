@@ -36,7 +36,7 @@
 
 - Every sandbox runs an AI agent (`opencode serve`) — no bare code execution
 - Every sandbox is workspace-backed — PVC-mounted persistent filesystem at `/workspace`
-- Workspaces can be suspended (pod deleted, PVC retained) and resumed (~3s)
+- Workspaces can be suspended (pod deleted, PVC retained) and resumed (~22s measured post-optimization; design target is faster — see worklog 0541 + the post-optimization benchmark)
 - Credentials stored exclusively in K8s Secrets — never in PostgreSQL, Redis, or logs
 - LLMSafeSpaces is an MCP server — any MCP-compatible client can connect
 - Stateless API server — horizontally scalable, no sticky sessions required
@@ -371,7 +371,7 @@ Pending → Creating → Active → Suspending → Suspended → Resuming → Ac
 
 Nine phases: `Pending`, `Creating`, `Active`, `Suspending`, `Suspended`, `Resuming`, `Terminating`, `Terminated`, `Failed`.
 
-Suspend deletes the pod but retains the PVC. Activating a suspended workspace re-creates the pod (~3s). Session history in the PVC survives.
+Suspend deletes the pod but retains the PVC. Activating a suspended workspace re-creates the pod (~22s measured post-optimization; PVC re-attach + opencode boot dominate the remaining cost — the original ~3s figure was an unvalidated design target). Session history in the PVC survives.
 
 ### State management: K8s CRD vs PostgreSQL
 

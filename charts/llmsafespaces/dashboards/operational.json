@@ -733,7 +733,7 @@
       "panels": [],
       "title": "Workspace Lifecycle",
       "type": "row",
-      "description": "How fast do workspaces launch, and are any stuck in failure loops? Create duration is the primary user-facing UX metric. Resume duration should be ~3s per design. Restart loops indicate systemic problems."
+      "description": "How fast do workspaces launch, and are any stuck in failure loops? Create duration is the primary user-facing UX metric. Resume duration is ~22s post-optimization (n=5 home-cluster benchmark, 2026-06-24); the original ~3s design target was unvalidated and is currently aspirational. Restart loops indicate systemic problems."
     },
     {
       "datasource": {
@@ -943,7 +943,7 @@
       ],
       "title": "Workspace Resume Duration p95 / p99",
       "type": "timeseries",
-      "description": "Time from resume request to Active (pod deleted, PVC retained, re-created). Design target is ~3s. Red line at 10s: a resume taking >10s indicates slow PVC attach, node pressure, or image pull miss. Action: check node health, ensure runtime images are cached on resume-target nodes."
+      "description": "Time from resume request to Active (pod deleted, PVC retained, re-created). Measured baseline post-optimization is ~22s (n=5 home-cluster benchmark, 2026-06-24); the original ~3s design target was unvalidated and is currently aspirational. Red line at 10s: useful for detecting acute regressions (slow PVC attach, node pressure, image pull miss); current measured baseline already exceeds this threshold pending PVC-attach or warm-pool work. Action when crossing line: check node health, ensure runtime images are cached on resume-target nodes."
     },
     {
       "datasource": {
