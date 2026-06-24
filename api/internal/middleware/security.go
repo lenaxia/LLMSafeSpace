@@ -126,6 +126,10 @@ func SecurityMiddleware(log interfaces.LoggerInterface, config ...SecurityConfig
 			c.Next()
 			return
 		}
+		if strings.HasPrefix(c.Request.URL.Path, "/internal/") {
+			c.Next()
+			return
+		}
 
 		// Apply secure middleware
 		err := secureMiddleware.Process(c.Writer, c.Request)
