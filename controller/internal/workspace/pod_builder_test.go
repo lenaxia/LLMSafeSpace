@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
@@ -99,4 +100,198 @@ func TestPodBuilder_ContainerEnv_OpenCodeExperimentalEventSystem(t *testing.T) {
 	assert.True(t, found,
 		"OPENCODE_EXPERIMENTAL_EVENT_SYSTEM must be present in the workspace container env — "+
 			"it is required for the context usage bar to display real values")
+}
+
+// TestPodBuilder_ReadinessProbe_TightTiming verifies the readiness probe
+// is configured for fast pod-Ready detection (cold-start optimization,
+// 2026-06-23 perf audit).
+//
+// Pre-fix: InitialDelaySeconds=10, PeriodSeconds=15 — kubelet would wait
+// 10s before probing, then poll every 15s. The agent reaches /v1/readyz=200
+// at roughly T+22s after PodScheduled, so on a bad probe-phase alignment
+// the pod could remain "not Ready" for an additional 5–13s after the agent
+// was actually ready.
+//
+// Post-fix: InitialDelaySeconds=2, PeriodSeconds=2 — overall ready-detection
+// budget is similar (FailureThreshold raised to 30 → 60s tolerance) but
+// post-readyz-200 latency drops to a single 2s tick.
+func TestPodBuilder_ReadinessProbe_TightTiming(t *testing.T) {
+	ws := newWorkspaceForPodBuilder(t)
+	r := reconcilerFor(t)
+
+	pod, err := r.buildPod(context.Background(), ws)
+	require.NoError(t, err)
+
+	require.Len(t, pod.Spec.Containers, 1, "expected one main container")
+	probe := pod.Spec.Containers[0].ReadinessProbe
+	require.NotNil(t, probe, "readiness probe must be set")
+
+	assert.Equal(t, int32(2), probe.InitialDelaySeconds,
+		"InitialDelaySeconds must be 2s — kubelet should start probing quickly so "+
+			"a cold-started agent transitions to Ready within one poll period")
+	assert.Equal(t, int32(2), probe.PeriodSeconds,
+		"PeriodSeconds must be 2s — readiness checks must align tightly to "+
+			"agent /v1/readyz=200 to minimize post-ready dead time")
+	assert.Equal(t, int32(2), probe.TimeoutSeconds,
+		"TimeoutSeconds must be 2s — /v1/readyz is cache-backed, sub-50ms in "+
+			"the steady state, so 2s is a generous failure budget")
+	assert.Equal(t, int32(30), probe.FailureThreshold,
+		"FailureThreshold must be 30 — preserves 60s total ready budget at 2s period")
+}
+
+// TestPodBuilder_StartupProbe_FastDetection verifies the startup probe
+// allows aggressive cold-start polling without affecting steady-state
+// liveness behavior (2026-06-23 perf audit).
+//
+// Why a separate startup probe: kubelet runs only one probe at a time
+// per container — when the startup probe is set, liveness and readiness
+// probes are paused until startup succeeds. This lets us probe at 1s
+// intervals during boot without paying the cost on every steady-state
+// liveness check.
+func TestPodBuilder_StartupProbe_FastDetection(t *testing.T) {
+	ws := newWorkspaceForPodBuilder(t)
+	r := reconcilerFor(t)
+
+	pod, err := r.buildPod(context.Background(), ws)
+	require.NoError(t, err)
+
+	probe := pod.Spec.Containers[0].StartupProbe
+	require.NotNil(t, probe, "startup probe must be set so the readiness probe is "+
+		"unblocked the moment agentd reports ready, not on the next poll cycle")
+	require.NotNil(t, probe.HTTPGet, "startup probe must use HTTP, matching readiness")
+	assert.Equal(t, "/v1/readyz", probe.HTTPGet.Path,
+		"startup probe path must match readiness — same gate, faster cadence")
+	assert.Equal(t, int32(1), probe.PeriodSeconds,
+		"PeriodSeconds=1 — probe every second during boot")
+	assert.GreaterOrEqual(t, probe.FailureThreshold, int32(60),
+		"FailureThreshold must be >=60 to give the relay-injector restart cycle (~30s) "+
+			"plus a safety margin before the pod is killed")
+}
+
+// TestPodBuilder_Probes_AuthHeader closes the test gap noted in the
+// PR #386 review (commit 35c248c8 follow-up): /v1/readyz is gated by
+// requireBearerToken in cmd/workspace-agentd/server.go, so BOTH the
+// readiness probe AND the startup probe must include
+// `Authorization: Bearer <admin-token>` headers. A probe without the
+// header would 401 on every attempt and the pod would never pass —
+// a silent, hard-to-debug failure.
+//
+// The header value comes from the password Secret created by
+// ensurePasswordSecret in handlePending (Data["password"]). The pod
+// builder reads the Secret via the controller client; this test
+// seeds a password Secret into the fake client so adminToken is
+// non-empty and the header MUST be present.
+//
+// 2026-06-23 perf audit, items #3 + #4 (readiness + startup probes).
+func TestPodBuilder_Probes_AuthHeader(t *testing.T) {
+	ws := newWorkspaceForPodBuilder(t)
+	pwSecret := makePasswordSecret(ws.Name, ws.Namespace)
+	r := reconcilerFor(t, pwSecret)
+
+	pod, err := r.buildPod(context.Background(), ws)
+	require.NoError(t, err)
+	require.Len(t, pod.Spec.Containers, 1)
+	main := &pod.Spec.Containers[0]
+
+	expectAuthHeader := func(t *testing.T, probe *corev1.Probe, label string) {
+		t.Helper()
+		require.NotNil(t, probe, "%s probe must be set", label)
+		require.NotNil(t, probe.HTTPGet, "%s probe must use HTTP", label)
+		var got *corev1.HTTPHeader
+		for i := range probe.HTTPGet.HTTPHeaders {
+			if probe.HTTPGet.HTTPHeaders[i].Name == "Authorization" {
+				got = &probe.HTTPGet.HTTPHeaders[i]
+				break
+			}
+		}
+		require.NotNil(t, got,
+			"%s probe MUST include an Authorization header — "+
+				"/v1/readyz is gated by requireBearerToken (server.go), "+
+				"a probe without the header always 401s and the pod stays NotReady",
+			label)
+		assert.Equal(t, "Bearer test-password", got.Value,
+			"%s probe header value must be `Bearer <admin-token>` where "+
+				"admin-token is read from the password Secret's `password` key",
+			label)
+	}
+
+	expectAuthHeader(t, main.ReadinessProbe, "readiness")
+	expectAuthHeader(t, main.StartupProbe, "startup")
+}
+
+// TestPodBuilder_Probes_NoAuthHeaderWhenSecretMissing covers the
+// graceful-degradation path: if the password Secret is somehow not
+// available at buildPod time (Get fails or Data["password"] is
+// missing), the probes must NOT carry an empty Bearer header (which
+// /v1/readyz would still reject). Instead they omit the header
+// entirely — the probe will 401 and the pod stays NotReady, which
+// is observable + safe (vs. a malformed header which would be
+// harder to diagnose).
+func TestPodBuilder_Probes_NoAuthHeaderWhenSecretMissing(t *testing.T) {
+	ws := newWorkspaceForPodBuilder(t)
+	r := reconcilerFor(t) // no pwSecret seeded
+
+	pod, err := r.buildPod(context.Background(), ws)
+	require.NoError(t, err)
+	main := &pod.Spec.Containers[0]
+
+	for _, p := range []*corev1.Probe{main.ReadinessProbe, main.StartupProbe} {
+		require.NotNil(t, p)
+		require.NotNil(t, p.HTTPGet)
+		assert.Empty(t, p.HTTPGet.HTTPHeaders,
+			"probe must omit headers entirely when admin token is unavailable — "+
+				"a `Bearer ` (empty) header would still be rejected, providing no value")
+	}
+}
+
+// TestPodBuilder_LivenessProbe_StableTiming pins the liveness probe to a
+// gentle steady-state cadence. Liveness-probe failures kill the pod, so
+// timeouts and failure thresholds must be conservative; the startup probe
+// (above) handles the boot-time tightening.
+func TestPodBuilder_LivenessProbe_StableTiming(t *testing.T) {
+	ws := newWorkspaceForPodBuilder(t)
+	r := reconcilerFor(t)
+
+	pod, err := r.buildPod(context.Background(), ws)
+	require.NoError(t, err)
+
+	probe := pod.Spec.Containers[0].LivenessProbe
+	require.NotNil(t, probe)
+	require.NotNil(t, probe.HTTPGet)
+	assert.Equal(t, "/v1/healthz", probe.HTTPGet.Path)
+	// Period and threshold are deliberately gentle — liveness failures
+	// kill the pod, so we want lots of slack against transient network
+	// or overload conditions.
+	assert.GreaterOrEqual(t, probe.PeriodSeconds, int32(10))
+	assert.GreaterOrEqual(t, probe.FailureThreshold, int32(3))
+}
+
+// TestPodBuilder_TerminationGracePeriod_Tight verifies the pod's
+// terminationGracePeriodSeconds is set to a tight value (2026-06-23 perf
+// audit, item #5). The default kubelet value is 30s, but agentd has been
+// measured to exit cleanly in under 1s on the live cluster — the headroom
+// was unused.
+//
+// Concrete impact: on every controller-initiated pod recycle (suspend,
+// restartGeneration bump, architecture drift, password-secret heal),
+// this saves up to ~25s of dead time waiting for SIGKILL.
+//
+// Lower bound is 5s (not 1s) to leave room for opencode SIGTERM
+// propagation by agentd's supervisor (managed_process.go reserves a
+// 5s SIGTERM-then-SIGKILL window for the opencode child).
+func TestPodBuilder_TerminationGracePeriod_Tight(t *testing.T) {
+	ws := newWorkspaceForPodBuilder(t)
+	r := reconcilerFor(t)
+
+	pod, err := r.buildPod(context.Background(), ws)
+	require.NoError(t, err)
+
+	require.NotNil(t, pod.Spec.TerminationGracePeriodSeconds,
+		"terminationGracePeriodSeconds must be set explicitly — "+
+			"the default of 30s wastes ~25s on every pod termination")
+	assert.GreaterOrEqual(t, *pod.Spec.TerminationGracePeriodSeconds, int64(5),
+		"must allow >=5s for agentd to SIGTERM opencode and exit cleanly")
+	assert.LessOrEqual(t, *pod.Spec.TerminationGracePeriodSeconds, int64(15),
+		"must be tight enough that suspend/recycle latency benefits — "+
+			"agentd exits in <1s in practice, 30s default was over-provisioned")
 }

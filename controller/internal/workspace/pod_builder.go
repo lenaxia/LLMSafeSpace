@@ -102,7 +102,39 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 					}(),
 				},
 			},
-			InitialDelaySeconds: 10, PeriodSeconds: 15, TimeoutSeconds: 3, FailureThreshold: 5,
+			// Tight cadence (2026-06-23 perf audit, item #3). The startup
+			// probe below handles boot-time tightening; this readiness
+			// probe runs at steady-state and after startup completes.
+			// Period=2s means a Ready transition happens at most 2s after
+			// the agent's first /v1/readyz=200. Total ready budget is
+			// FailureThreshold * Period = 60s, generous against transient
+			// network issues.
+			InitialDelaySeconds: 2, PeriodSeconds: 2, TimeoutSeconds: 2, FailureThreshold: 30,
+		},
+		// StartupProbe (2026-06-23 perf audit, item #4). When set,
+		// kubelet pauses readiness/liveness probes until startup
+		// succeeds (one HTTP 200 response from /v1/readyz). This lets
+		// us probe at 1s during boot without paying the cost on every
+		// steady-state liveness check. FailureThreshold=120 gives a
+		// 2-minute boot budget, comfortably covering the relay-injector
+		// restart cycle (~30s today, ~5s once item #1a lands) plus all
+		// other init work.
+		StartupProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{
+					Path: "/v1/readyz",
+					Port: intstr.FromInt(agentd.AgentdAdminPort),
+					HTTPHeaders: func() []corev1.HTTPHeader {
+						if adminToken == "" {
+							return nil
+						}
+						return []corev1.HTTPHeader{
+							{Name: "Authorization", Value: "Bearer " + adminToken},
+						}
+					}(),
+				},
+			},
+			InitialDelaySeconds: 1, PeriodSeconds: 1, TimeoutSeconds: 2, FailureThreshold: 120,
 		},
 		LivenessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
@@ -204,6 +236,35 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		runtimeClassName = *workspace.Spec.RuntimeClass
 	}
 
+	// terminationGracePeriodSeconds (2026-06-23 perf audit, item #5).
+	// The kubelet default of 30s wasted ~25s on every pod termination.
+	//
+	// agentd has TWO different shutdown budgets layered:
+	//   1. The HTTP server's overall shutdown context is 25s
+	//      (cmd/workspace-agentd/main.go runShutdown). It includes
+	//      graceful HTTP server drain, background goroutine wait
+	//      (5s), and the opencode child SIGTERM→SIGKILL fallback.
+	//   2. The opencode child SIGTERM grace is 5s (managed_process.go
+	//      stop()). After 5s without exit, agentd SIGKILLs opencode.
+	//
+	// Setting kubelet's terminationGracePeriodSeconds=5 means kubelet
+	// will SIGKILL the entire pod 5s after sending SIGTERM,
+	// short-circuiting agentd's outer 25s budget. That sounds
+	// aggressive, but it's safe in this codebase because:
+	//   - The 25s budget is a worst-case for a stuck HTTP server or
+	//     hung goroutine; live cluster measurement (see worklog) shows
+	//     pod-gone in ~2.2s after pod-delete in normal operation.
+	//   - opencode's 5s SIGTERM window matches kubelet's 5s here;
+	//     agentd will have just enough time to send SIGTERM and
+	//     observe a clean exit before kubelet SIGKILLs the whole pod.
+	//   - Even when agentd is killed mid-shutdown by kubelet, the only
+	//     state on disk is the workspace PVC, which is not modified
+	//     by shutdown. There is no graceful-state to lose.
+	//
+	// If the in-process measurement ever shows clean shutdowns
+	// approaching 5s, raise this to 10s rather than back to 30s.
+	terminationGrace := int64(5)
+
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        name,
@@ -212,10 +273,11 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 			Annotations: annotations,
 		},
 		Spec: corev1.PodSpec{
-			InitContainers: initContainers,
-			Containers:     []corev1.Container{mainContainer},
-			Volumes:        volumes,
-			NodeSelector:   buildNodeSelector(workspace),
+			InitContainers:                initContainers,
+			Containers:                    []corev1.Container{mainContainer},
+			Volumes:                       volumes,
+			NodeSelector:                  buildNodeSelector(workspace),
+			TerminationGracePeriodSeconds: &terminationGrace,
 			// G17 (Epic 17): Sandbox pods MUST NOT automount the default
 			// ServiceAccount token. The agent has no business calling the
 			// K8s API; mounting the token only widens the blast radius for
