@@ -11,7 +11,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -600,37 +599,19 @@ type k8sWorkspaceGetterAdapter struct {
 	namespace string
 }
 
-func (a *k8sWorkspaceGetterAdapter) GetWorkspace(id string) (*v1.Workspace, error) {
+func (a *k8sWorkspaceGetterAdapter) GetWorkspace(ctx context.Context, id string) (*v1.Workspace, error) {
 	v1Client, err := a.client.LlmsafespacesV1()
 	if err != nil {
 		return nil, fmt.Errorf("initialize LLMSafespacesV1 client: %w", err)
 	}
-	return v1Client.Workspaces(a.namespace).Get(context.Background(), id, metav1.GetOptions{})
-}
-
-// GetWorkspacePassword reads the workspace password from its K8s Secret.
-// The secret name follows the controller's passwordSecretName convention:
-// "workspace-pw-<workspaceID>".
-func (a *k8sWorkspaceGetterAdapter) GetWorkspacePassword(id string) (string, error) {
-	secretName := fmt.Sprintf("workspace-pw-%s", id)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	secret, err := a.client.Clientset().CoreV1().Secrets(a.namespace).Get(ctx, secretName, metav1.GetOptions{})
-	if err != nil {
-		return "", fmt.Errorf("workspace password secret not found: %w", err)
-	}
-	pw := string(secret.Data["password"])
-	if pw == "" {
-		return "", fmt.Errorf("workspace password secret has no password key")
-	}
-	return pw, nil
+	return v1Client.Workspaces(a.namespace).Get(ctx, id, metav1.GetOptions{})
 }
 
 // workspaceCRDGetter is the minimal interface needed by secretsPodIPResolver.
 // Defined here (rather than reusing handlers.WorkspaceGetter) to keep the
 // dependency direction one-way: app depends on handlers, not the other way.
 type workspaceCRDGetter interface {
-	GetWorkspace(id string) (*v1.Workspace, error)
+	GetWorkspace(ctx context.Context, id string) (*v1.Workspace, error)
 }
 
 // dbOwnerLookup is the minimal interface needed to verify workspace ownership
@@ -696,7 +677,7 @@ func (r *secretsPodIPResolver) GetWorkspacePodIP(ctx context.Context, userID, wo
 		}
 	}
 
-	ws, err := r.crd.GetWorkspace(workspaceID)
+	ws, err := r.crd.GetWorkspace(ctx, workspaceID)
 	if err != nil {
 		// Workspace CR missing or apiserver error — caller treats as
 		// "no running pod"; do not surface raw K8s errors upstream.

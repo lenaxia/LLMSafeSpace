@@ -281,7 +281,9 @@ func TestSecretsHandler_PodIPResolverWired(t *testing.T) {
 // Behavioral tests live in secrets_podip_resolver_test.go.
 type fakeAppCRDGetter struct{}
 
-func (f *fakeAppCRDGetter) GetWorkspace(string) (*v1.Workspace, error) { return nil, nil }
+func (f *fakeAppCRDGetter) GetWorkspace(context.Context, string) (*v1.Workspace, error) {
+	return nil, nil
+}
 
 type fakeAppDBLookup struct{}
 

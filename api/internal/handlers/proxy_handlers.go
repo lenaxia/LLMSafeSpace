@@ -21,7 +21,6 @@ import (
 	"github.com/lenaxia/llmsafespaces/api/internal/services/msgqueue"
 	apitypes "github.com/lenaxia/llmsafespaces/api/internal/types"
 	"github.com/lenaxia/llmsafespaces/pkg/agentd"
-	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 func (h *ProxyHandler) CreateSession(c *gin.Context) {
@@ -284,14 +283,6 @@ func (h *ProxyHandler) DeleteSession(c *gin.Context) {
 // tombstones to a shared key so the suppression is cluster-wide.
 func (h *ProxyHandler) isSessionDeleted(workspaceID, sessionID string) bool {
 	return h.state().IsSessionDeleted(context.Background(), workspaceID, sessionID)
-}
-
-func (h *ProxyHandler) GetWorkspaceCRD(workspaceID string) (*v1.Workspace, error) {
-	v1Client, err := h.k8sClient.LlmsafespacesV1()
-	if err != nil {
-		return nil, fmt.Errorf("initialize LLMSafespacesV1 client: %w", err)
-	}
-	return v1Client.Workspaces(h.namespace).Get(context.Background(), workspaceID, metav1.GetOptions{})
 }
 
 // RenameSessionInAgent sends a title update to the opencode agent running on
