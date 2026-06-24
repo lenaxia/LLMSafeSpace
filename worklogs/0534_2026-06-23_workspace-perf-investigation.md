@@ -2,7 +2,10 @@
 
 **Date:** 2026-06-23
 **Session:** Benchmark workspace lifecycle, identify latency contributors, plan and implement optimizations
-**Status:** Implementation in progress — boot-path optimizations (#2–#6) done, #1a (cluster-wide free-model fetch) is the remaining item.
+**Status:** Implementation in progress — boot-path optimizations
+(#2–#5) done, #6 deferred (Epic 35 conflict — see "DEFERRED"
+section below), #1a (cluster-wide free-model fetch) is the remaining
+item.
 
 ---
 
@@ -473,25 +476,29 @@ Modified:
   retuned (#3), startup probe added (#4),
   `pod.Spec.TerminationGracePeriodSeconds = 5` (#5). Init container
   merge (#6) NOT applied — see DEFERRED note above.
-- `controller/internal/workspace/pod_builder_test.go` — 4 new tests
+- `controller/internal/workspace/pod_builder_test.go` — 6 new tests
   (`TestPodBuilder_ReadinessProbe_TightTiming`,
   `TestPodBuilder_StartupProbe_FastDetection`,
   `TestPodBuilder_LivenessProbe_StableTiming`,
-  `TestPodBuilder_TerminationGracePeriod_Tight`)
+  `TestPodBuilder_TerminationGracePeriod_Tight`,
+  `TestPodBuilder_Probes_AuthHeader`,
+  `TestPodBuilder_Probes_NoAuthHeaderWhenSecretMissing` — last two
+  added in commit `c81e59c0` to close the auth-header gap noted in
+  the first PR review)
 - `controller/internal/workspace/startup_metrics_test.go` — fixture
-  container name updated to use `workspace-bootstrap` for the
-  intentionally-non-matching test (any non-`workspace-setup` name
-  works; just needed renaming alongside the PR's editorial passes
-  before #6 was deferred)
+  container name updated to `nonexistent-container` (any
+  non-`workspace-setup` name works; explicit non-real name is
+  clearer than re-using either real sibling container's name)
+- `README-LLM.md` — single +1 blank-line whitespace touch (no
+  content change; init-layout description unchanged)
 
-NOT modified (despite earlier draft of this worklog claiming
-otherwise — reconciled per PR #386 review feedback):
+NOT modified:
 - `controller/internal/workspace/security_test.go` — left at
   `workspace-dirs` since #6 didn't ship
 - `controller/internal/workspace/health_test.go` — left at Epic 35's
   `credential-setup` assertions; no changes from this PR
-- `README.md` and `README-LLM.md` — left describing the
-  `workspace-setup + credential-setup` init layout that ships on main
+- `README.md` — left describing the `workspace-setup +
+  credential-setup` init layout that ships on main
 
 Created:
 - `/tmp/benchmark-workspaces.sh` — re-runnable benchmark harness
