@@ -55,7 +55,7 @@ type passwordResetPwUpdater interface {
 
 // passwordResetSessionRevoker revokes all outstanding JWTs for a user.
 type passwordResetSessionRevoker interface {
-	RevokeAllUserSessions(userID string) error
+	RevokeAllUserSessions(ctx context.Context, userID string) error
 }
 
 // passwordResetSecretPurger deletes every user-owned secret row for a
@@ -309,7 +309,7 @@ func (h *PasswordResetHandler) Confirm(c *gin.Context) {
 
 	// Step 3: Revoke all outstanding sessions (OWASP-mandated). Best-effort.
 	if h.revoker != nil {
-		if err := h.revoker.RevokeAllUserSessions(tok.UserID); err != nil && h.log != nil {
+		if err := h.revoker.RevokeAllUserSessions(ctx, tok.UserID); err != nil && h.log != nil {
 			h.log.Warn("password-reset: session revocation failed (non-fatal)", "user_id", tok.UserID)
 		}
 	}

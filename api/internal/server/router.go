@@ -709,7 +709,7 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, insta
 			CookieName: cookieName,
 		})
 		if token != "" && !utilities.IsAPIKey(token, "lsp_") {
-			if err := authSvc.RevokeToken(token); err != nil {
+			if err := authSvc.RevokeToken(c.Request.Context(), token); err != nil {
 				logger.Warn("auth.logout: RevokeToken failed (proceeding with cookie clear)",
 					"error", err.Error())
 			}

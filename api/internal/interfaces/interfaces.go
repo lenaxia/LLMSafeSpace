@@ -33,7 +33,7 @@ type AuthService interface {
 	// the active session (G18, Epic 17). Implementations must be safe to
 	// call with an empty token (return nil) and with non-JWT inputs (the
 	// caller filters out API-key-shaped tokens before calling).
-	RevokeToken(token string) error
+	RevokeToken(ctx context.Context, token string) error
 	// MarkUserSuspended writes a per-user revocation marker so the auth
 	// middleware rejects the user's existing JWTs/API keys immediately,
 	// without a DB round-trip and during a DB outage (F4, US-43.19). Called

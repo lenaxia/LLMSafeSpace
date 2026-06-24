@@ -299,6 +299,31 @@ func TestValidateAPIKey_PropagatesContext(t *testing.T) {
 	cache.AssertExpectations(t)
 }
 
+func TestRevokeToken_PropagatesContext(t *testing.T) {
+	log, _ := logger.New(true, "debug", "console")
+	cfg := &config.Config{}
+	cfg.Auth.JWTSecret = "test-secret"
+	cfg.Auth.TokenDuration = 24 * time.Hour
+	cfg.Auth.APIKeyPrefix = "api_"
+	mockDB := new(mocks.MockDatabaseService)
+	cache := new(mocks.MockCacheService)
+	service, err := New(cfg, log, mockDB, cache)
+	require.NoError(t, err)
+
+	token, err := service.GenerateToken("user-p2")
+	require.NoError(t, err)
+
+	// RevokeToken writes both token:<hash> and token:<jti> via Set. The ctx
+	// matcher is load-bearing: a context.Background() regression leaves the
+	// sentinel absent, the Sets become unexpected, and the mock fails.
+	ctx := context.WithValue(context.Background(), ctxPropKey{}, "present")
+	matchesPropagated := func(c context.Context) bool { return c.Value(ctxPropKey{}) == "present" }
+	cache.On("Set", mock.MatchedBy(matchesPropagated), mock.Anything, "revoked", mock.Anything).Return(nil).Twice()
+
+	require.NoError(t, service.RevokeToken(ctx, token))
+	cache.AssertExpectations(t)
+}
+
 func TestRevokeToken(t *testing.T) {
 	// Create test dependencies
 	log, _ := logger.New(true, "debug", "console")
@@ -340,10 +365,37 @@ func TestRevokeToken(t *testing.T) {
 		mock.MatchedBy(func(key string) bool { return len(key) > 6 && key[:6] == "token:" }),
 		"revoked", mock.Anything).Return(nil).Twice()
 
-	err = service.RevokeToken(token)
+	err = service.RevokeToken(context.Background(), token)
 	assert.NoError(t, err)
 
 	mockCacheService.AssertExpectations(t)
+}
+
+// TestRevokeAllUserSessions_PropagatesContext mirrors the RevokeToken test for
+// its sibling: RevokeAllUserSessions has its OWN independent ctx derivation
+// (auth.go:953), so a single-line regression there would not be caught by the
+// RevokeToken test. The sentinel matcher on GetObject/Set/Delete is load-bearing.
+func TestRevokeAllUserSessions_PropagatesContext(t *testing.T) {
+	log, _ := logger.New(true, "debug", "console")
+	cfg := &config.Config{}
+	cfg.Auth.JWTSecret = "test-secret"
+	cfg.Auth.TokenDuration = 24 * time.Hour
+	mockDB := new(mocks.MockDatabaseService)
+	cache := new(mocks.MockCacheService)
+	service, err := New(cfg, log, mockDB, cache)
+	require.NoError(t, err)
+
+	userID := "user-prop2"
+	ctx := context.WithValue(context.Background(), ctxPropKey{}, "present")
+	matchesPropagated := func(c context.Context) bool { return c.Value(ctxPropKey{}) == "present" }
+	entries := []string{"jti-x|token:hashx"} // one entry -> 2 Sets (jti + hash) + 1 Delete
+	cache.On("GetObject", mock.MatchedBy(matchesPropagated), "user-sessions:"+userID, mock.Anything).
+		Run(func(args mock.Arguments) { *args.Get(2).(*[]string) = entries }).Return(nil).Once()
+	cache.On("Set", mock.MatchedBy(matchesPropagated), mock.Anything, "revoked", mock.Anything).Return(nil).Twice()
+	cache.On("Delete", mock.MatchedBy(matchesPropagated), "user-sessions:"+userID).Return(nil).Once()
+
+	require.NoError(t, service.RevokeAllUserSessions(ctx, userID))
+	cache.AssertExpectations(t)
 }
 
 // TestRevokeAllUserSessions_RevokesAllTrackedSessions verifies that
@@ -378,7 +430,7 @@ func TestRevokeAllUserSessions_RevokesAllTrackedSessions(t *testing.T) {
 	mockCacheService.On("Set", mock.Anything, "token:hashbbb", "revoked", mock.Anything).Return(nil)
 	mockCacheService.On("Delete", mock.Anything, "user-sessions:"+userID).Return(nil)
 
-	err = service.RevokeAllUserSessions(userID)
+	err = service.RevokeAllUserSessions(context.Background(), userID)
 	require.NoError(t, err)
 	mockCacheService.AssertExpectations(t)
 }
@@ -401,7 +453,7 @@ func TestRevokeAllUserSessions_NoTrackedSessions_Noop(t *testing.T) {
 	mockCacheService.On("GetObject", mock.Anything, "user-sessions:ghost", mock.Anything).
 		Return(errors.New("redis: nil"))
 
-	err = service.RevokeAllUserSessions("ghost")
+	err = service.RevokeAllUserSessions(context.Background(), "ghost")
 	require.NoError(t, err, "must be nil-safe when no sessions tracked")
 	// No Set/Delete calls expected
 	mockCacheService.AssertNotCalled(t, "Set", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
@@ -439,7 +491,7 @@ func TestRevokeAllUserSessions_UsesMaxTTL(t *testing.T) {
 	})).Return(nil)
 	mockCacheService.On("Delete", mock.Anything, "user-sessions:"+userID).Return(nil)
 
-	err = service.RevokeAllUserSessions(userID)
+	err = service.RevokeAllUserSessions(context.Background(), userID)
 	require.NoError(t, err)
 	mockCacheService.AssertExpectations(t)
 }

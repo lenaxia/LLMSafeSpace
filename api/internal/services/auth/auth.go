@@ -305,9 +305,11 @@ func (s *Service) isUserSuspendedCached(ctx context.Context, userID string) bool
 	return err == nil && v != ""
 }
 
-// RevokeToken revokes a JWT token
-func (s *Service) RevokeToken(token string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// RevokeToken revokes a JWT token. ctx propagates the caller's
+// deadline/cancellation into the cache calls (US-46.5 / #224 P2); the 5s cap
+// is retained as a per-call safety bound derived from ctx.
+func (s *Service) RevokeToken(ctx context.Context, token string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	// Parse token (accepts active key or any previous key for F1.7.5)
@@ -947,8 +949,8 @@ func (s *Service) maxSessionRevocationTTL() time.Duration {
 // "revoked" under each tracked jti key AND hash key (both paths that
 // ValidateToken checks). Used by password-reset confirm (US-49.5) so a
 // stolen JWT stops working after the victim resets their password.
-func (s *Service) RevokeAllUserSessions(userID string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (s *Service) RevokeAllUserSessions(ctx context.Context, userID string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	key := "user-sessions:" + userID
