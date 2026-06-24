@@ -27,22 +27,46 @@ vi.mock("../api/workspaces", () => ({
     getSessions: vi.fn().mockResolvedValue([]),
   },
 }));
-vi.mock("../providers/SessionActivityProvider", () => ({
-  useClearPendingUnread: () => () => {},
-  useIsSessionBusy: () => false,
-  useIsSessionUnread: () => false,
-  useWorkspaceBusyCount: () => 0,
-  useIsSessionPendingAction: () => false,
-  useSessionPendingActions: () => new Set<string>(),
-  useAddPendingAction: () => () => {},
-  useRemovePendingAction: () => () => {},
-  useAddPendingQuestion: () => () => {},
-  useAddPendingPermission: () => () => {},
-  usePendingQuestionsForSession: () => [],
-  usePendingPermissionsForSession: () => [],
-  useClearSessionPendingPrompts: () => () => {},
-  SessionActivityProvider: ({ children }: { children: any }) => <>{children}</>,
-}));
+const mockBusyState = vi.hoisted(() => {
+  let val = false;
+  const listeners = new Set<(v: boolean) => void>();
+  return {
+    get: () => val,
+    set: (v: boolean) => { val = v; listeners.forEach((l) => l(v)); },
+    subscribe: (l: (v: boolean) => void) => { listeners.add(l); },
+    unsubscribe: (l: (v: boolean) => void) => { listeners.delete(l); },
+    reset: () => { val = false; listeners.clear(); },
+  };
+});
+
+vi.mock("../providers/SessionActivityProvider", async () => {
+  const { useState, useEffect } = await vi.importActual<typeof import("react")>("react");
+  return {
+    useClearPendingUnread: () => () => {},
+    useIsSessionBusy: () => {
+      const [val, setVal] = useState(mockBusyState.get());
+      useEffect(() => {
+        mockBusyState.subscribe(setVal);
+        return () => { mockBusyState.unsubscribe(setVal); };
+      }, []);
+      return val;
+    },
+    useIsSessionUnread: () => false,
+    useWorkspaceBusyCount: () => 0,
+    useIsSessionPendingAction: () => false,
+    useSessionPendingActions: () => new Set<string>(),
+    useAddPendingAction: () => () => {},
+    useRemovePendingAction: () => () => {},
+    useAddPendingQuestion: () => () => {},
+    useAddPendingPermission: () => () => {},
+    usePendingQuestionsForSession: () => [],
+    usePendingPermissionsForSession: () => [],
+    useClearSessionPendingPrompts: () => () => {},
+    useSessionStatus: () => "idle",
+    resolveSessionStatus: () => "idle",
+    SessionActivityProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  };
+});
 vi.mock("../api/messages", () => ({
   messagesApi: {
     getHistory: vi.fn().mockResolvedValue([]),
@@ -91,12 +115,16 @@ function renderChat(qc: QueryClient, path: string) {
 }
 
 function sendSSE(event: Record<string, unknown>) {
+  if (event.type === "session.status") {
+    mockBusyState.set(event.status === "busy");
+  }
   act(() => { capturedSSEHandler?.(event); });
 }
 
 describe("ChatPage message queue (backend-backed)", () => {
   beforeEach(() => {
     capturedSSEHandler = null;
+    mockBusyState.reset();
     vi.clearAllMocks();
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({ phase: "Active", sessions: [{ id: "ses_1", status: "idle" }] });
     (workspacesApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({ items: [], pagination: { limit: 20, offset: 0, total: 0 } });
@@ -213,7 +241,7 @@ describe("ChatPage message queue (backend-backed)", () => {
 
     sendSSE({ type: "session.status", session_id: "ses_1", status: "busy" });
 
-    expect(screen.getByLabelText("Stop generating")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Stop generating")).toBeInTheDocument());
   });
 
   it("dismiss removes error pill", async () => {
