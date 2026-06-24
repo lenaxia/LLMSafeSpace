@@ -24,8 +24,8 @@ import (
 func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 	phase := workspace.Status.Phase
 
-	prior, hadPrior := h.state().GetPriorPhase(workspace.Name)
-	h.state().SetPriorPhase(workspace.Name, string(phase))
+	prior, hadPrior := h.state().GetPriorPhase(context.Background(), workspace.Name)
+	h.state().SetPriorPhase(context.Background(), workspace.Name, string(phase))
 
 	if h.userBroker != nil && workspace.Spec.Owner.UserID != "" {
 		h.userBroker.RecordWorkspaceOwner(workspace.Name, workspace.Spec.Owner.UserID)
@@ -63,7 +63,7 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 	}
 
 	if phase == phaseSuspending || phase == phaseSuspended || phase == phaseTerminating || phase == phaseTerminated {
-		h.invalidateCaches(workspace.Name)
+		h.invalidateCaches(context.Background(), workspace.Name)
 		if h.sseTracker != nil {
 			h.sseTracker.StopWatching(workspace.Name)
 		}
@@ -74,7 +74,7 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 			}
 		}
 		if phase == phaseTerminated || phase == phaseTerminating {
-			h.state().DeletePriorPhase(workspace.Name)
+			h.state().DeletePriorPhase(context.Background(), workspace.Name)
 
 			if h.activityTracker != nil {
 				h.activityTracker.Delete(workspace.Name)
@@ -84,7 +84,7 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 	}
 
 	if phase == v1.WorkspacePhaseFailed {
-		h.invalidateCaches(workspace.Name)
+		h.invalidateCaches(context.Background(), workspace.Name)
 		return
 	}
 
@@ -99,19 +99,19 @@ func (h *ProxyHandler) onPhaseChange(workspace *v1.Workspace) {
 		// cases require starting the SSE subscription. prior == phaseActive
 		// means a watch event with no phase change — only clear cached config.
 		if !hadPrior || prior != string(phaseActive) {
-			h.invalidateCaches(workspace.Name)
+			h.invalidateCaches(context.Background(), workspace.Name)
 			if h.sseTracker != nil {
 				h.sseTracker.StopWatching(workspace.Name)
 				h.sseTracker.EnsureWatching(workspace.Name)
 			}
 		} else {
-			h.state().InvalidateWorkspaceConfig(workspace.Name)
+			h.state().InvalidateWorkspaceConfig(context.Background(), workspace.Name)
 		}
 	}
 }
 
 func (h *ProxyHandler) onSessionIdle(workspaceID, sessionID string) {
-	h.removeActiveSession(workspaceID, sessionID)
+	h.removeActiveSession(context.Background(), workspaceID, sessionID)
 
 	if h.userBroker != nil {
 		h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
@@ -145,12 +145,12 @@ func (h *ProxyHandler) onSessionIdle(workspaceID, sessionID string) {
 }
 
 func (h *ProxyHandler) onSessionActive(workspaceID, sessionID string) {
-	cfg, ok := h.state().GetWorkspaceConfig(workspaceID)
+	cfg, ok := h.state().GetWorkspaceConfig(context.Background(), workspaceID)
 	maxSessions := defaultMaxActiveSessions
 	if ok && cfg.MaxActiveSessions > 0 {
 		maxSessions = cfg.MaxActiveSessions
 	}
-	h.checkAndAddActiveSession(workspaceID, sessionID, maxSessions)
+	h.checkAndAddActiveSession(context.Background(), workspaceID, sessionID, maxSessions)
 
 	if h.userBroker != nil {
 		h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
@@ -180,7 +180,7 @@ func (h *ProxyHandler) onRawEvent(workspaceID, eventType, rawData string) {
 	// concurrent POST is admitted, corrupting opencode's SQLite session
 	// history. EXPIRE on a non-existent key is a no-op, so this is safe to
 	// call unconditionally. For InMemoryStore it is a no-op (no TTL).
-	h.state().TouchActiveSessions(workspaceID)
+	h.state().TouchActiveSessions(context.Background(), workspaceID)
 
 	if h.userBroker != nil {
 		var parsed interface{}
@@ -273,7 +273,7 @@ func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData 
 			return
 		}
 
-		if h.shouldAutoApprovePermissions(workspaceID) {
+		if h.shouldAutoApprovePermissions(context.Background(), workspaceID) {
 			go h.autoApprovePermission(workspaceID, req.ID)
 			return
 		}
@@ -587,11 +587,11 @@ func (h *ProxyHandler) reconcileSessionState(workspaceID, podIP, password string
 		// Reconcile stale activeSess entries: opencode says idle, but our
 		// local map says active. This is the OOM/SIGTERM case — clean up
 		// regardless of whether there are queued messages.
-		if h.isSessionActive(workspaceID, sess.ID) {
+		if h.isSessionActive(ctx, workspaceID, sess.ID) {
 			h.logger.Info("reconcileSessionState: clearing stale activeSess entry",
 				"workspaceID", workspaceID, "sessionID", sess.ID,
 				"reason", "session is idle in opencode but marked active locally")
-			h.removeActiveSession(workspaceID, sess.ID)
+			h.removeActiveSession(ctx, workspaceID, sess.ID)
 			// Publish session.status=idle so connected clients update their UI.
 			// Without this, browsers showing the session keep their busy
 			// indicator until the next page reload.

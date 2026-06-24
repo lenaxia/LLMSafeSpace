@@ -55,53 +55,71 @@ func activeKey(workspaceID string) string {
 // Lua script: CheckAndAddActiveSession
 // ---------------------------------------------------------------------------
 
+func TestRedisStore_PropagatesContext(t *testing.T) {
+	store, _, _, cleanup := setupRedisStore(t)
+	defer cleanup()
+
+	// The session is NOT in Redis, so a live ctx returns false (not deleted).
+	require.False(t, store.IsSessionDeleted(context.Background(), "ws-ctx", "s1"),
+		"live ctx: session absent -> false")
+
+	// A pre-canceled ctx must reach the Redis client. go-redis returns
+	// context.Canceled client-side; IsSessionDeleted fail-closes -> true. If
+	// the Store ignored ctx (context.Background()), no error would occur and
+	// it would return false — so a true return proves propagation (#224 / P1-b).
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	assert.True(t, store.IsSessionDeleted(ctx, "ws-ctx", "s1"),
+		"canceled ctx must error and fail-close -> true, proving ctx propagation")
+}
+
 func TestRedisStore_CheckAndAddActiveSession_FirstAdd_Succeeds(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
 
-	assert.True(t, store.CheckAndAddActiveSession("ws-1", "s1", 5),
+	assert.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-1", "s1", 5),
 		"first session add must succeed")
 	isMember, err := mr.IsMember(activeKey("ws-1"), "s1")
 	require.NoError(t, err)
 	assert.True(t, isMember)
-	assert.Equal(t, 1, store.ActiveSessionCount("ws-1"))
+	assert.Equal(t, 1, store.ActiveSessionCount(context.Background(), "ws-1"))
 }
 
 func TestRedisStore_CheckAndAddActiveSession_DuplicateID_IsIdempotent(t *testing.T) {
 	store, _, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	require.True(t, store.CheckAndAddActiveSession("ws-1", "s1", 5))
+	require.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-1", "s1", 5))
 
 	// Adding the same session ID again must succeed (idempotent) and
 	// must NOT bump the count.
-	assert.True(t, store.CheckAndAddActiveSession("ws-1", "s1", 5))
-	assert.Equal(t, 1, store.ActiveSessionCount("ws-1"),
+	assert.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-1", "s1", 5))
+	assert.Equal(t, 1, store.ActiveSessionCount(context.Background(), "ws-1"),
 		"idempotent re-add of same session must not increase count")
 }
 
 func TestRedisStore_CheckAndAddActiveSession_AtLimit_BlocksNewSession(t *testing.T) {
 	store, _, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	require.True(t, store.CheckAndAddActiveSession("ws-1", "s1", 2))
-	require.True(t, store.CheckAndAddActiveSession("ws-1", "s2", 2))
+	require.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-1", "s1", 2))
+	require.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-1", "s2", 2))
 
-	assert.False(t, store.CheckAndAddActiveSession("ws-1", "s3", 2),
+	assert.False(t, store.CheckAndAddActiveSession(context.Background(), "ws-1", "s3", 2),
 		"third session add with maxSessions=2 must be blocked")
-	assert.False(t, store.IsSessionActive("ws-1", "s3"))
-	assert.Equal(t, 2, store.ActiveSessionCount("ws-1"),
+	assert.False(t, store.IsSessionActive(context.Background(), "ws-1", "s3"))
+	assert.Equal(t, 2, store.ActiveSessionCount(context.Background(), "ws-1"),
 		"blocked session must not be added to the set")
 }
 
 func TestRedisStore_CheckAndAddActiveSession_AtLimit_AllowsExistingSession(t *testing.T) {
 	store, _, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	require.True(t, store.CheckAndAddActiveSession("ws-1", "s1", 2))
-	require.True(t, store.CheckAndAddActiveSession("ws-1", "s2", 2))
+	require.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-1", "s1", 2))
+	require.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-1", "s2", 2))
 
 	// Even at limit, an existing session must still report active=true.
 	// This matters for retry logic: a client retrying an in-flight
 	// session must not be told "limit reached" for its own session.
-	assert.True(t, store.CheckAndAddActiveSession("ws-1", "s1", 2),
+	assert.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-1", "s1", 2),
 		"existing session at limit must still succeed (idempotent re-check)")
 }
 
@@ -130,7 +148,7 @@ func TestRedisStore_CheckAndAddActiveSession_Concurrent_AtLimitNoOversubscribe(t
 			// Use a fresh client per goroutine to mimic distinct replicas
 			// sharing the same Redis. (miniredis accepts any client
 			// pointing at its addr.)
-			results <- store.CheckAndAddActiveSession("ws-1",
+			results <- store.CheckAndAddActiveSession(context.Background(), "ws-1",
 				fmt.Sprintf("s-%d", idx), maxSessions)
 		}(i)
 	}
@@ -145,7 +163,7 @@ func TestRedisStore_CheckAndAddActiveSession_Concurrent_AtLimitNoOversubscribe(t
 	}
 	assert.Equal(t, maxSessions, added,
 		"concurrent adds must respect maxSessions exactly — oversubscription is the bug class US-45.2 fixes")
-	assert.Equal(t, maxSessions, store.ActiveSessionCount("ws-1"),
+	assert.Equal(t, maxSessions, store.ActiveSessionCount(context.Background(), "ws-1"),
 		"post-concurrent count must match maxSessions")
 	// Cross-check against miniredis directly (not via the store).
 	count, err := client.SCard(context.Background(), activeKey("ws-1")).Result()
@@ -163,7 +181,7 @@ func TestRedisStore_CheckAndAddActiveSession_Concurrent_AtLimitNoOversubscribe(t
 func TestRedisStore_CheckAndAddActiveSession_TTLRefreshedOnEveryOp(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	require.True(t, store.CheckAndAddActiveSession("ws-1", "s1", 5))
+	require.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-1", "s1", 5))
 
 	ttl1 := mr.TTL(activeKey("ws-1"))
 	require.True(t, ttl1 > 0, "key must have a TTL after first add")
@@ -172,7 +190,7 @@ func TestRedisStore_CheckAndAddActiveSession_TTLRefreshedOnEveryOp(t *testing.T)
 	mr.FastForward(10 * time.Minute)
 
 	// Idempotent re-add of the same session must refresh the TTL.
-	require.True(t, store.CheckAndAddActiveSession("ws-1", "s1", 5))
+	require.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-1", "s1", 5))
 
 	ttl2 := mr.TTL(activeKey("ws-1"))
 	assert.Greater(t, ttl2, ttl1-10*time.Minute,
@@ -187,15 +205,15 @@ func TestRedisStore_CheckAndAddActiveSession_TTLRefreshedOnEveryOp(t *testing.T)
 func TestRedisStore_CheckAndAddActiveSession_TTLAutoRecoversStuckEntries(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	require.True(t, store.CheckAndAddActiveSession("ws-1", "s1", 5))
-	require.True(t, store.IsSessionActive("ws-1", "s1"))
+	require.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-1", "s1", 5))
+	require.True(t, store.IsSessionActive(context.Background(), "ws-1", "s1"))
 
 	// Fast-forward past the TTL.
 	mr.FastForward(testActiveSessTTL + time.Second)
 
-	assert.False(t, store.IsSessionActive("ws-1", "s1"),
+	assert.False(t, store.IsSessionActive(context.Background(), "ws-1", "s1"),
 		"stuck entry must auto-expire after TTL — this is the multi-replica fix for the 2026-06-16 incident")
-	assert.Equal(t, 0, store.ActiveSessionCount("ws-1"),
+	assert.Equal(t, 0, store.ActiveSessionCount(context.Background(), "ws-1"),
 		"workspace active set must be empty after TTL expiry")
 }
 
@@ -206,25 +224,25 @@ func TestRedisStore_CheckAndAddActiveSession_TTLAutoRecoversStuckEntries(t *test
 func TestRedisStore_RemoveActiveSession_RemovesFromSet(t *testing.T) {
 	store, _, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	require.True(t, store.CheckAndAddActiveSession("ws-1", "s1", 5))
-	require.True(t, store.CheckAndAddActiveSession("ws-1", "s2", 5))
+	require.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-1", "s1", 5))
+	require.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-1", "s2", 5))
 
-	store.RemoveActiveSession("ws-1", "s1")
+	store.RemoveActiveSession(context.Background(), "ws-1", "s1")
 
-	assert.False(t, store.IsSessionActive("ws-1", "s1"))
-	assert.True(t, store.IsSessionActive("ws-1", "s2"))
-	assert.Equal(t, 1, store.ActiveSessionCount("ws-1"))
+	assert.False(t, store.IsSessionActive(context.Background(), "ws-1", "s1"))
+	assert.True(t, store.IsSessionActive(context.Background(), "ws-1", "s2"))
+	assert.Equal(t, 1, store.ActiveSessionCount(context.Background(), "ws-1"))
 }
 
 func TestRedisStore_RemoveActiveSession_LastRemoval_CleansWorkspaceEntry(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	require.True(t, store.CheckAndAddActiveSession("ws-1", "s1", 5))
+	require.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-1", "s1", 5))
 
-	store.RemoveActiveSession("ws-1", "s1")
+	store.RemoveActiveSession(context.Background(), "ws-1", "s1")
 
-	assert.Equal(t, 0, store.ActiveSessionCount("ws-1"))
-	assert.Nil(t, store.GetActiveSessions("ws-1"),
+	assert.Equal(t, 0, store.ActiveSessionCount(context.Background(), "ws-1"))
+	assert.Nil(t, store.GetActiveSessions(context.Background(), "ws-1"),
 		"GetActiveSessions must return nil after the workspace's set is cleaned up")
 	assert.False(t, mr.Exists(activeKey("ws-1")),
 		"Redis key must be DELeted after the last session is removed (no orphans)")
@@ -233,29 +251,29 @@ func TestRedisStore_RemoveActiveSession_LastRemoval_CleansWorkspaceEntry(t *test
 func TestRedisStore_RemoveActiveSession_UnknownSession_NoOp(t *testing.T) {
 	store, _, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	require.True(t, store.CheckAndAddActiveSession("ws-1", "s1", 5))
+	require.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-1", "s1", 5))
 
-	store.RemoveActiveSession("ws-1", "nonexistent")
-	store.RemoveActiveSession("ws-unknown", "s1")
+	store.RemoveActiveSession(context.Background(), "ws-1", "nonexistent")
+	store.RemoveActiveSession(context.Background(), "ws-unknown", "s1")
 
-	assert.True(t, store.IsSessionActive("ws-1", "s1"),
+	assert.True(t, store.IsSessionActive(context.Background(), "ws-1", "s1"),
 		"removing an unknown session or workspace must not affect existing state")
 }
 
 func TestRedisStore_IsSessionActive_UnknownWorkspace_ReturnsFalse(t *testing.T) {
 	store, _, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	assert.False(t, store.IsSessionActive("ws-unknown", "s1"))
+	assert.False(t, store.IsSessionActive(context.Background(), "ws-unknown", "s1"))
 }
 
 func TestRedisStore_GetActiveSessions_ReturnsAllAndNoMore(t *testing.T) {
 	store, _, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	require.True(t, store.CheckAndAddActiveSession("ws-1", "s1", 5))
-	require.True(t, store.CheckAndAddActiveSession("ws-1", "s2", 5))
-	require.True(t, store.CheckAndAddActiveSession("ws-1", "s3", 5))
+	require.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-1", "s1", 5))
+	require.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-1", "s2", 5))
+	require.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-1", "s3", 5))
 
-	got := store.GetActiveSessions("ws-1")
+	got := store.GetActiveSessions(context.Background(), "ws-1")
 	assert.Len(t, got, 3)
 	assert.ElementsMatch(t, []string{"s1", "s2", "s3"}, got)
 }
@@ -263,23 +281,23 @@ func TestRedisStore_GetActiveSessions_ReturnsAllAndNoMore(t *testing.T) {
 func TestRedisStore_GetActiveSessions_EmptyWorkspace_ReturnsNil(t *testing.T) {
 	store, _, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	assert.Nil(t, store.GetActiveSessions("ws-1"))
+	assert.Nil(t, store.GetActiveSessions(context.Background(), "ws-1"))
 }
 
 func TestRedisStore_ClearActiveSessions_RemovesEntireSet(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	require.True(t, store.CheckAndAddActiveSession("ws-1", "s1", 5))
-	require.True(t, store.CheckAndAddActiveSession("ws-1", "s2", 5))
-	require.True(t, store.CheckAndAddActiveSession("ws-2", "s1", 5))
+	require.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-1", "s1", 5))
+	require.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-1", "s2", 5))
+	require.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-2", "s1", 5))
 
-	store.ClearActiveSessions("ws-1")
+	store.ClearActiveSessions(context.Background(), "ws-1")
 
-	assert.Equal(t, 0, store.ActiveSessionCount("ws-1"))
-	assert.Nil(t, store.GetActiveSessions("ws-1"))
+	assert.Equal(t, 0, store.ActiveSessionCount(context.Background(), "ws-1"))
+	assert.Nil(t, store.GetActiveSessions(context.Background(), "ws-1"))
 	assert.False(t, mr.Exists(activeKey("ws-1")),
 		"Redis key for ws-1 must be deleted")
-	assert.Equal(t, 1, store.ActiveSessionCount("ws-2"),
+	assert.Equal(t, 1, store.ActiveSessionCount(context.Background(), "ws-2"),
 		"ClearActiveSessions must be scoped to one workspace")
 	assert.True(t, mr.Exists(activeKey("ws-2")),
 		"Redis key for ws-2 must be unaffected")
@@ -305,7 +323,7 @@ func TestRedisStore_CheckAndAddActiveSession_RedisDown_FailsOpen(t *testing.T) {
 	// Tear down Redis before the call.
 	mr.Close()
 
-	assert.True(t, store.CheckAndAddActiveSession("ws-1", "s1", 5),
+	assert.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-1", "s1", 5),
 		"Redis-down must fail-OPEN for activeSess: allow the request, log/metric the error")
 	_ = client.Close()
 }
@@ -321,13 +339,13 @@ func TestRedisStore_IsSessionActive_RedisDown_ReturnsFalse(t *testing.T) {
 	require.NoError(t, err)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	store := NewRedisStore(client, testActiveSessTTL)
-	require.True(t, store.CheckAndAddActiveSession("ws-1", "s1", 5))
+	require.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-1", "s1", 5))
 
 	mr.Close()
 
-	assert.False(t, store.IsSessionActive("ws-1", "s1"),
+	assert.False(t, store.IsSessionActive(context.Background(), "ws-1", "s1"),
 		"Redis-down must return false for IsSessionActive — don't trap the user in 409 based on possibly-stale state")
-	assert.Equal(t, 0, store.ActiveSessionCount("ws-1"),
+	assert.Equal(t, 0, store.ActiveSessionCount(context.Background(), "ws-1"),
 		"Redis-down must return 0 for ActiveSessionCount")
 	_ = client.Close()
 }
@@ -340,8 +358,8 @@ func TestRedisStore_DelegatesPriorPhaseToInMemory(t *testing.T) {
 	store, _, _, cleanup := setupRedisStore(t)
 	defer cleanup()
 
-	store.SetPriorPhase("ws-1", "Active")
-	phase, ok := store.GetPriorPhase("ws-1")
+	store.SetPriorPhase(context.Background(), "ws-1", "Active")
+	phase, ok := store.GetPriorPhase(context.Background(), "ws-1")
 	require.True(t, ok)
 	assert.Equal(t, "Active", phase)
 }
@@ -350,8 +368,8 @@ func TestRedisStore_DelegatesParentBackfilledToInMemory(t *testing.T) {
 	store, _, _, cleanup := setupRedisStore(t)
 	defer cleanup()
 
-	store.SetParentBackfilled("ws-1")
-	assert.True(t, store.GetParentBackfilled("ws-1"))
+	store.SetParentBackfilled(context.Background(), "ws-1")
+	assert.True(t, store.GetParentBackfilled(context.Background(), "ws-1"))
 }
 
 // TestRedisStore_InvalidateAll_ClearsRedisActiveAndInMemoryState verifies
@@ -361,28 +379,28 @@ func TestRedisStore_DelegatesParentBackfilledToInMemory(t *testing.T) {
 func TestRedisStore_InvalidateAll_ClearsRedisActiveAndInMemoryState(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	require.True(t, store.CheckAndAddActiveSession("ws-1", "s1", 5))
-	store.MarkSessionDeleted("ws-1", "s2")
-	store.SetCachedPassword("ws-1", "pw")
-	store.SetWorkspaceConfig("ws-1", Config{MaxActiveSessions: 3})
-	store.SetPriorPhase("ws-1", "Active")
-	store.SetParentBackfilled("ws-1")
+	require.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-1", "s1", 5))
+	store.MarkSessionDeleted(context.Background(), "ws-1", "s2")
+	store.SetCachedPassword(context.Background(), "ws-1", "pw")
+	store.SetWorkspaceConfig(context.Background(), "ws-1", Config{MaxActiveSessions: 3})
+	store.SetPriorPhase(context.Background(), "ws-1", "Active")
+	store.SetParentBackfilled(context.Background(), "ws-1")
 
-	store.InvalidateAll("ws-1")
+	store.InvalidateAll(context.Background(), "ws-1")
 
 	// Redis-backed: active set must be cleared AND the key deleted.
-	assert.Equal(t, 0, store.ActiveSessionCount("ws-1"))
+	assert.Equal(t, 0, store.ActiveSessionCount(context.Background(), "ws-1"))
 	assert.False(t, mr.Exists(activeKey("ws-1")),
 		"InvalidateAll must DEL the Redis key, not just SREM members")
 	// InMemory-backed: deleted tombstones, password, config, backfill cleared.
-	assert.False(t, store.IsSessionDeleted("ws-1", "s2"))
-	_, pwOk := store.GetCachedPassword("ws-1")
+	assert.False(t, store.IsSessionDeleted(context.Background(), "ws-1", "s2"))
+	_, pwOk := store.GetCachedPassword(context.Background(), "ws-1")
 	assert.False(t, pwOk)
-	_, cfgOk := store.GetWorkspaceConfig("ws-1")
+	_, cfgOk := store.GetWorkspaceConfig(context.Background(), "ws-1")
 	assert.False(t, cfgOk)
-	assert.False(t, store.GetParentBackfilled("ws-1"))
+	assert.False(t, store.GetParentBackfilled(context.Background(), "ws-1"))
 	// priorPhase must survive (per US-45.1 contract).
-	phase, phaseOk := store.GetPriorPhase("ws-1")
+	phase, phaseOk := store.GetPriorPhase(context.Background(), "ws-1")
 	assert.True(t, phaseOk)
 	assert.Equal(t, "Active", phase)
 }
@@ -429,7 +447,7 @@ func TestRedisStore_LoadTest_1000ConcurrentOps_NoDoubleCounting(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			results <- store.CheckAndAddActiveSession("ws-load",
+			results <- store.CheckAndAddActiveSession(context.Background(), "ws-load",
 				fmt.Sprintf("s-%d", idx), maxSessions)
 		}(i)
 	}
@@ -444,7 +462,7 @@ func TestRedisStore_LoadTest_1000ConcurrentOps_NoDoubleCounting(t *testing.T) {
 	}
 	assert.Equal(t, maxSessions, added,
 		"1000 concurrent ops with maxSessions=10 must produce exactly 10 successful adds — no oversubscription")
-	assert.Equal(t, maxSessions, store.ActiveSessionCount("ws-load"),
+	assert.Equal(t, maxSessions, store.ActiveSessionCount(context.Background(), "ws-load"),
 		"final count must match maxSessions exactly")
 }
 
@@ -462,7 +480,7 @@ func TestRedisStore_TouchActiveSessions_RefreshesTTL(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
 
-	require.True(t, store.CheckAndAddActiveSession("ws-c3", "s1", 5))
+	require.True(t, store.CheckAndAddActiveSession(context.Background(), "ws-c3", "s1", 5))
 	ttlBefore := mr.TTL(activeKey("ws-c3"))
 	require.Greater(t, ttlBefore, 20*time.Minute, "initial TTL must be near 30m")
 
@@ -471,7 +489,7 @@ func TestRedisStore_TouchActiveSessions_RefreshesTTL(t *testing.T) {
 	ttlAged := mr.TTL(activeKey("ws-c3"))
 	require.Less(t, ttlAged, 10*time.Minute, "TTL must have aged after fast-forward")
 
-	store.TouchActiveSessions("ws-c3")
+	store.TouchActiveSessions(context.Background(), "ws-c3")
 	ttlAfter := mr.TTL(activeKey("ws-c3"))
 	assert.Greater(t, ttlAfter, 25*time.Minute,
 		"TouchActiveSessions must refresh the TTL back near 30m")
@@ -485,10 +503,10 @@ func TestRedisStore_TouchActiveSessions_NonExistentKey_NoOp(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
 
-	assert.NotPanics(t, func() { store.TouchActiveSessions("ws-empty") })
+	assert.NotPanics(t, func() { store.TouchActiveSessions(context.Background(), "ws-empty") })
 	assert.False(t, mr.Exists(activeKey("ws-empty")),
 		"touching a non-existent key must NOT create it")
-	assert.Equal(t, 0, store.ActiveSessionCount("ws-empty"))
+	assert.Equal(t, 0, store.ActiveSessionCount(context.Background(), "ws-empty"))
 }
 
 // TestRedisStore_TouchActiveSessions_RedisDown_NoPanic verifies graceful
@@ -499,7 +517,7 @@ func TestRedisStore_TouchActiveSessions_RedisDown_NoPanic(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	store := NewRedisStore(client, testActiveSessTTL)
 	mr.Close()
-	assert.NotPanics(t, func() { store.TouchActiveSessions("ws-down") })
+	assert.NotPanics(t, func() { store.TouchActiveSessions(context.Background(), "ws-down") })
 	_ = client.Close()
 }
 
@@ -523,8 +541,8 @@ func TestRedisStore_IsSessionDeleted_RedisDown_IncrementsFailClosedCounter(t *te
 	mr.Close()
 
 	// Two calls → counter increments twice.
-	assert.True(t, store.IsSessionDeleted("ws-m1", "s1"))
-	assert.True(t, store.IsSessionDeleted("ws-m1", "s2"))
+	assert.True(t, store.IsSessionDeleted(context.Background(), "ws-m1", "s1"))
+	assert.True(t, store.IsSessionDeleted(context.Background(), "ws-m1", "s2"))
 
 	after := testutil.ToFloat64(pkgIsSessionDeletedFailClosedTotal)
 	assert.Equal(t, before+2, after,
@@ -542,8 +560,8 @@ func TestRedisStore_IsSessionDeleted_RealTombstone_DoesNotIncrementCounter(t *te
 	store, _, _, cleanup := setupRedisStore(t)
 	defer cleanup()
 
-	store.MarkSessionDeleted("ws-m1b", "s-dead")
-	assert.True(t, store.IsSessionDeleted("ws-m1b", "s-dead"))
+	store.MarkSessionDeleted(context.Background(), "ws-m1b", "s-dead")
+	assert.True(t, store.IsSessionDeleted(context.Background(), "ws-m1b", "s-dead"))
 
 	after := testutil.ToFloat64(pkgIsSessionDeletedFailClosedTotal)
 	assert.Equal(t, before, after,

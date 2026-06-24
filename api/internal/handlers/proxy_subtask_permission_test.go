@@ -230,7 +230,7 @@ func TestSessionParentCache_InvalidateOnWorkspaceCacheFlush(t *testing.T) {
 	_ = env.handler.sessionParents.resolveRoot(context.Background(), "ws-1", "ses_x")
 	require.Equal(t, 1, calls)
 
-	env.handler.invalidateCaches("ws-1")
+	env.handler.invalidateCaches(context.Background(), "ws-1")
 
 	_ = env.handler.sessionParents.resolveRoot(context.Background(), "ws-1", "ses_x")
 	require.Equal(t, 2, calls, "cache must be invalidated on workspace cache flush")

@@ -55,7 +55,7 @@ func (h *AdminSessionHandler) ForceAbortSession(c *gin.Context) {
 		return
 	}
 
-	if !h.proxyHandler.isSessionActive(workspaceID, sessionID) {
+	if !h.proxyHandler.isSessionActive(c.Request.Context(), workspaceID, sessionID) {
 		c.JSON(http.StatusNotFound, gin.H{
 			"error":       "session is not currently active (nothing to abort)",
 			"sessionId":   sessionID,
@@ -64,7 +64,7 @@ func (h *AdminSessionHandler) ForceAbortSession(c *gin.Context) {
 		return
 	}
 
-	h.proxyHandler.removeActiveSession(workspaceID, sessionID)
+	h.proxyHandler.removeActiveSession(c.Request.Context(), workspaceID, sessionID)
 
 	h.proxyHandler.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
 		Type:      "session.status",

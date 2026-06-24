@@ -17,6 +17,8 @@
 // memory) and must remain local even after the Redis migration.
 package wsstate
 
+import "context"
+
 // Config is the cached view of a workspace's spec-derived configuration
 // (formerly ProxyHandler.workspaceConfig). It is populated from the
 // Workspace CRD on first access and invalidated on phase transitions.
@@ -53,30 +55,30 @@ type Store interface {
 	// limit by one). The InMemoryStore implements this with a mutex;
 	// a future Redis implementation will use a Lua script for the
 	// same atomicity guarantee.
-	CheckAndAddActiveSession(workspaceID, sessionID string, maxSessions int) bool
+	CheckAndAddActiveSession(ctx context.Context, workspaceID, sessionID string, maxSessions int) bool
 
 	// RemoveActiveSession removes sessionID from the workspace's active
 	// set. No-op if not present. Cleans up the per-workspace map entry
 	// when the set becomes empty to keep memory bounded.
-	RemoveActiveSession(workspaceID, sessionID string)
+	RemoveActiveSession(ctx context.Context, workspaceID, sessionID string)
 
 	// IsSessionActive reports whether sessionID is in the workspace's
 	// active set.
-	IsSessionActive(workspaceID, sessionID string) bool
+	IsSessionActive(ctx context.Context, workspaceID, sessionID string) bool
 
 	// ActiveSessionCount returns the number of sessions currently in
 	// the workspace's active set. Returns 0 if the workspace has no
 	// active set (no sessions ever added).
-	ActiveSessionCount(workspaceID string) int
+	ActiveSessionCount(ctx context.Context, workspaceID string) int
 
 	// GetActiveSessions returns the IDs of all sessions currently in
 	// the workspace's active set. Returns nil for an empty/unknown
 	// workspace. Order is unspecified; callers must not rely on it.
-	GetActiveSessions(workspaceID string) []string
+	GetActiveSessions(ctx context.Context, workspaceID string) []string
 
 	// ClearActiveSessions removes the workspace's entire active set.
 	// Called by InvalidateAll on phase transitions.
-	ClearActiveSessions(workspaceID string)
+	ClearActiveSessions(ctx context.Context, workspaceID string)
 
 	// TouchActiveSessions refreshes the TTL of the workspace's active
 	// session set without adding or removing any session. Called on SSE
@@ -86,7 +88,7 @@ type Store interface {
 	// admit a concurrent turn that would corrupt opencode's SQLite session
 	// history. For InMemoryStore this is a no-op (no TTL); for RedisStore
 	// it runs EXPIRE on the active-set key.
-	TouchActiveSessions(workspaceID string)
+	TouchActiveSessions(ctx context.Context, workspaceID string)
 
 	// --- Deleted-session tombstones (formerly deletedSessions) ---
 
@@ -94,18 +96,18 @@ type Store interface {
 	// explicitly deleted via the API, so late SSE events arriving after
 	// deletion are suppressed (preventing zombie sessions in
 	// session_index).
-	MarkSessionDeleted(workspaceID, sessionID string)
+	MarkSessionDeleted(ctx context.Context, workspaceID, sessionID string)
 
 	// IsSessionDeleted reports whether the session was recently deleted.
 	// Implementations may age out tombstones (the InMemoryStore bounds
 	// the set to 500 entries with batch eviction); callers must treat a
 	// false response as "not recently deleted" rather than "never
 	// deleted".
-	IsSessionDeleted(workspaceID, sessionID string) bool
+	IsSessionDeleted(ctx context.Context, workspaceID, sessionID string) bool
 
 	// ClearDeletedSessions removes all tombstones for the workspace.
 	// Called by InvalidateAll.
-	ClearDeletedSessions(workspaceID string)
+	ClearDeletedSessions(ctx context.Context, workspaceID string)
 
 	// --- Workspace password cache (formerly pwCache) ---
 
@@ -113,43 +115,43 @@ type Store interface {
 	// if present. Cache-only — does NOT fall back to the K8s Secret
 	// fetch. The fallback stays in ProxyHandler.getPassword so the
 	// store remains pure-state (no I/O dependencies).
-	GetCachedPassword(workspaceID string) (string, bool)
+	GetCachedPassword(ctx context.Context, workspaceID string) (string, bool)
 
 	// SetCachedPassword populates the password cache for the workspace.
-	SetCachedPassword(workspaceID, password string)
+	SetCachedPassword(ctx context.Context, workspaceID, password string)
 
 	// InvalidatePassword clears the cached password for the workspace.
 	// Called on 401 from upstream and on phase transitions.
-	InvalidatePassword(workspaceID string)
+	InvalidatePassword(ctx context.Context, workspaceID string)
 
 	// --- Workspace config cache (formerly wsConfig) ---
 
 	// GetWorkspaceConfig returns the cached config for the workspace, if
 	// present. Cache-only — ProxyHandler.shouldAutoApprovePermissions
 	// falls back to fetching the Workspace CRD on miss.
-	GetWorkspaceConfig(workspaceID string) (Config, bool)
+	GetWorkspaceConfig(ctx context.Context, workspaceID string) (Config, bool)
 
 	// SetWorkspaceConfig populates the config cache for the workspace.
-	SetWorkspaceConfig(workspaceID string, cfg Config)
+	SetWorkspaceConfig(ctx context.Context, workspaceID string, cfg Config)
 
 	// InvalidateWorkspaceConfig clears the cached config.
-	InvalidateWorkspaceConfig(workspaceID string)
+	InvalidateWorkspaceConfig(ctx context.Context, workspaceID string)
 
 	// --- Prior phase tracking (formerly priorPhase) ---
 
 	// GetPriorPhase returns the workspace's last-observed phase, if any.
 	// Used by onPhaseChange to detect real transitions vs no-op events.
-	GetPriorPhase(workspaceID string) (string, bool)
+	GetPriorPhase(ctx context.Context, workspaceID string) (string, bool)
 
 	// SetPriorPhase records the workspace's current phase as the prior
 	// phase for the next onPhaseChange invocation.
-	SetPriorPhase(workspaceID, phase string)
+	SetPriorPhase(ctx context.Context, workspaceID, phase string)
 
 	// DeletePriorPhase removes the prior-phase entry. Called on
 	// terminate so the workspace starts fresh if ever re-created with
 	// the same name. NOT called by InvalidateAll — see the contract
 	// doc on InvalidateAll for why.
-	DeletePriorPhase(workspaceID string)
+	DeletePriorPhase(ctx context.Context, workspaceID string)
 
 	// --- Parent-backfill marker (formerly parentBackfilled) ---
 
@@ -157,15 +159,15 @@ type Store interface {
 	// backfill has already run. The marker is per-replica today; a
 	// future Redis-backed implementation will move it to a shared key
 	// so only one replica performs the backfill.
-	GetParentBackfilled(workspaceID string) bool
+	GetParentBackfilled(ctx context.Context, workspaceID string) bool
 
 	// SetParentBackfilled marks the workspace's backfill as done.
-	SetParentBackfilled(workspaceID string)
+	SetParentBackfilled(ctx context.Context, workspaceID string)
 
 	// DeleteParentBackfilled clears the marker, allowing the backfill
 	// to re-run on the next opportunity. Called on backfill failure so
 	// it can be retried, and on workspace terminate.
-	DeleteParentBackfilled(workspaceID string)
+	DeleteParentBackfilled(ctx context.Context, workspaceID string)
 
 	// --- Bulk invalidation ---
 
@@ -177,5 +179,5 @@ type Store interface {
 	// surviving invalidation to distinguish first-invocation from
 	// Active→Active reconcile. Terminate/Terminating explicitly calls
 	// DeletePriorPhase when the workspace is truly gone.
-	InvalidateAll(workspaceID string)
+	InvalidateAll(ctx context.Context, workspaceID string)
 }
