@@ -156,7 +156,7 @@ controller/internal/freemodels/fetcher_test.go     (new, ~201 lines)
 controller/internal/freemodels/refresher.go        (new, ~225 lines)
 controller/internal/freemodels/refresher_test.go   (new, ~417 lines)
 controller/main.go                                 +45 lines (flag wiring + mgr.Add)
-worklogs/NNNN_2026-06-23_phase-a-free-models-refresher.md  (this file)
+worklogs/0542_2026-06-23_phase-a-free-models-refresher.md  (this file)
 ```
 
 ## Next steps
