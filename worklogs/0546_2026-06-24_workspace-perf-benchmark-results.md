@@ -156,7 +156,7 @@ None. mechanic-watcher restored to 1 replica before this worklog was committed.
 
 ## Files Modified
 
-- `worklogs/NNNN_2026-06-24_workspace-perf-benchmark-results.md` (this file; bot renumbers post-merge per project convention).
+- `worklogs/0546_2026-06-24_workspace-perf-benchmark-results.md` (this file; bot renumbers post-merge per project convention).
 - `README-LLM.md` — corrected ~3s resume claim at lines 39 and 374 to reflect measured reality with a link to this worklog.
 - `charts/llmsafespaces/dashboards/operational.json` — corrected description of design target on the workspace-launch + resume-duration panels (lines 736, 946); kept the 10s red-line as a future target, noted measured baseline is above it.
 
