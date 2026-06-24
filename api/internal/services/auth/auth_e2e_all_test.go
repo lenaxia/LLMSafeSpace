@@ -670,10 +670,10 @@ func (m *apiKeyAwareDB) CountActiveWorkspacesByUserAndOrg(context.Context, strin
 }
 func (m *apiKeyAwareDB) SyncWorkspaceVersionInfo(context.Context, string, string, string) {}
 func (m *apiKeyAwareDB) MarkWorkspaceDeleted(context.Context, string)                     {}
-func (m *apiKeyAwareDB) CheckPermission(string, string, string, string) (bool, error) {
+func (m *apiKeyAwareDB) CheckPermission(context.Context, string, string, string, string) (bool, error) {
 	return false, nil
 }
-func (m *apiKeyAwareDB) CheckResourceOwnership(string, string, string) (bool, error) {
+func (m *apiKeyAwareDB) CheckResourceOwnership(context.Context, string, string, string) (bool, error) {
 	return false, nil
 }
 func (m *apiKeyAwareDB) ListSessionIndex(context.Context, string) ([]types.SessionListItem, error) {

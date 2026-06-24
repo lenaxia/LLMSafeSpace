@@ -163,6 +163,31 @@ func TestGetUserByAPIKey(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestCheckResourceOwnership_PropagatesContext proves ctx reaches the DB query
+// (US-46.5 / #224 P1-c). database/sql's QueryRowContext fails fast on a
+// pre-canceled ctx WITHOUT running the query — so an error return proves
+// propagation (a context.Background() regression would run the query).
+func TestCheckResourceOwnership_PropagatesContext(t *testing.T) {
+	service, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	// Live ctx: query runs and returns ownership.
+	mock.ExpectQuery("SELECT COUNT(.*) FROM workspaces").
+		WithArgs("r", "u").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	owned, err := service.CheckResourceOwnership(context.Background(), "u", "workspace", "r")
+	require.NoError(t, err)
+	require.True(t, owned)
+
+	// canceled ctx: must error without running the query.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = service.CheckResourceOwnership(ctx, "u", "workspace", "r")
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NoError(t, mock.ExpectationsWereMet(), "canceled ctx must not run the query")
+}
+
 func TestCheckResourceOwnership(t *testing.T) {
 	service, mock, cleanup := setupMockDB(t)
 	defer cleanup()
@@ -179,7 +204,7 @@ func TestCheckResourceOwnership(t *testing.T) {
 		WillReturnRows(rows)
 
 	// Call the method
-	owned, err := service.CheckResourceOwnership(userID, resourceType, resourceID)
+	owned, err := service.CheckResourceOwnership(context.Background(), userID, resourceType, resourceID)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
@@ -195,7 +220,7 @@ func TestCheckResourceOwnership(t *testing.T) {
 		WillReturnRows(rows)
 
 	// Call the method
-	owned, err = service.CheckResourceOwnership(otherUserID, resourceType, resourceID)
+	owned, err = service.CheckResourceOwnership(context.Background(), otherUserID, resourceType, resourceID)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
@@ -204,7 +229,7 @@ func TestCheckResourceOwnership(t *testing.T) {
 	}
 
 	// Test case: Unsupported resource type
-	_, err = service.CheckResourceOwnership(userID, "unsupported", resourceID)
+	_, err = service.CheckResourceOwnership(context.Background(), userID, "unsupported", resourceID)
 	if err == nil {
 		t.Errorf("Expected error for unsupported resource type, got nil")
 	}
@@ -232,7 +257,7 @@ func TestCheckPermission(t *testing.T) {
 		WillReturnRows(rows)
 
 	// Call the method
-	hasPermission, err := service.CheckPermission(userID, resourceType, resourceID, action)
+	hasPermission, err := service.CheckPermission(context.Background(), userID, resourceType, resourceID, action)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
@@ -247,7 +272,7 @@ func TestCheckPermission(t *testing.T) {
 		WillReturnRows(rows)
 
 	// Call the method
-	hasPermission, err = service.CheckPermission(userID, resourceType, resourceID, "write")
+	hasPermission, err = service.CheckPermission(context.Background(), userID, resourceType, resourceID, "write")
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}

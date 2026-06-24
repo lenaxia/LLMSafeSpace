@@ -432,7 +432,7 @@ func (s *Service) GetUserByAPIKey(ctx context.Context, apiKey string) (*types.Us
 }
 
 // CheckResourceOwnership checks if a user owns a resource
-func (s *Service) CheckResourceOwnership(userID, resourceType, resourceID string) (bool, error) {
+func (s *Service) CheckResourceOwnership(ctx context.Context, userID, resourceType, resourceID string) (bool, error) {
 	var count int
 	var query string
 
@@ -443,12 +443,7 @@ func (s *Service) CheckResourceOwnership(userID, resourceType, resourceID string
 		return false, fmt.Errorf("unsupported resource type: %s", resourceType)
 	}
 
-	// QueryRow without context is intentional here: this method is called
-	// from CheckResourceAccess which currently does not propagate context.
-	// Plumbing ctx through CheckResourceAccess + the AuthService interface
-	// is a larger refactor tracked separately.
-	//nolint:noctx // see comment above
-	err := s.DB.QueryRow(query, resourceID, userID).Scan(&count)
+	err := s.DB.QueryRowContext(ctx, query, resourceID, userID).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("failed to check resource ownership: %w", err)
 	}
@@ -457,7 +452,7 @@ func (s *Service) CheckResourceOwnership(userID, resourceType, resourceID string
 }
 
 // CheckPermission checks if a user has permission to perform an action on a resource
-func (s *Service) CheckPermission(userID, resourceType, resourceID, action string) (bool, error) {
+func (s *Service) CheckPermission(ctx context.Context, userID, resourceType, resourceID, action string) (bool, error) {
 	var count int
 	query := `
 		SELECT COUNT(*) FROM permissions
@@ -467,10 +462,7 @@ func (s *Service) CheckPermission(userID, resourceType, resourceID, action strin
 		AND (action = $4 OR action = '*')
 	`
 
-	// QueryRow without context: same caller-side limitation as
-	// CheckResourceOwnership above. See note there.
-	//nolint:noctx // see CheckResourceOwnership for context
-	err := s.DB.QueryRow(query, userID, resourceType, resourceID, action).Scan(&count)
+	err := s.DB.QueryRowContext(ctx, query, userID, resourceType, resourceID, action).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("failed to check permission: %w", err)
 	}

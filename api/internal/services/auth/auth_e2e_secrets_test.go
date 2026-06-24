@@ -259,8 +259,12 @@ func (m *fullMockDB) CountActiveWorkspacesByUserAndOrg(context.Context, string, 
 }
 func (m *fullMockDB) SyncWorkspaceVersionInfo(context.Context, string, string, string) {}
 func (m *fullMockDB) MarkWorkspaceDeleted(context.Context, string)                     {}
-func (m *fullMockDB) CheckPermission(string, string, string, string) (bool, error)     { return false, nil }
-func (m *fullMockDB) CheckResourceOwnership(string, string, string) (bool, error)      { return false, nil }
+func (m *fullMockDB) CheckPermission(context.Context, string, string, string, string) (bool, error) {
+	return false, nil
+}
+func (m *fullMockDB) CheckResourceOwnership(context.Context, string, string, string) (bool, error) {
+	return false, nil
+}
 func (m *fullMockDB) ListSessionIndex(context.Context, string) ([]types.SessionListItem, error) {
 	return nil, nil
 }

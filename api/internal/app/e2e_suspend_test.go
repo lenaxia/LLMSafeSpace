@@ -211,10 +211,12 @@ func (d *recordingDB) CountActiveWorkspacesByUserAndOrg(context.Context, string,
 }
 func (d *recordingDB) SyncWorkspaceVersionInfo(context.Context, string, string, string) {}
 func (d *recordingDB) MarkWorkspaceDeleted(context.Context, string)                     {}
-func (d *recordingDB) CheckPermission(string, string, string, string) (bool, error) {
+func (d *recordingDB) CheckPermission(context.Context, string, string, string, string) (bool, error) {
 	return false, nil
 }
-func (d *recordingDB) CheckResourceOwnership(string, string, string) (bool, error) { return false, nil }
+func (d *recordingDB) CheckResourceOwnership(context.Context, string, string, string) (bool, error) {
+	return false, nil
+}
 func (d *recordingDB) ListSessionIndex(context.Context, string) ([]types.SessionListItem, error) {
 	return nil, nil
 }
