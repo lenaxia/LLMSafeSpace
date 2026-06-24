@@ -460,24 +460,38 @@ In this order, with each item as a separate commit on
 
 ## Files Modified
 
-This worklog covers the boot-path optimization PR (items #2–#6).
+This worklog covers the boot-path optimization PR (items #2–#5; #6
+deferred — see "### #6 — Merge init containers (DEFERRED)" above).
 Item #1a will be a separate PR.
 
 Modified:
-- `controller/internal/workspace/reconciler.go` — `Owns(PVC)`
-- `controller/internal/workspace/constants.go` — `requeueCreating` 5 s → 2 s
+- `controller/internal/workspace/reconciler.go` — added
+  `Owns(&corev1.PersistentVolumeClaim{})` (#2)
+- `controller/internal/workspace/constants.go` — `requeueCreating`
+  5 s → 2 s (#2)
 - `controller/internal/workspace/pod_builder.go` — readiness probe
-  retuned, startup probe added, `terminationGracePeriodSeconds=5`,
-  init containers merged
-- `controller/internal/workspace/pod_builder_test.go` — 7 new tests
-- `controller/internal/workspace/security_test.go` — updated container
-  name reference
-- `controller/internal/workspace/health_test.go` — updated container
-  name references (2 places)
-- `controller/internal/workspace/startup_metrics_test.go` — updated
-  fixture container name
-- `README.md` — architecture diagram init-container line
-- `README-LLM.md` — `/tmp` PVC subPath note
+  retuned (#3), startup probe added (#4),
+  `pod.Spec.TerminationGracePeriodSeconds = 5` (#5). Init container
+  merge (#6) NOT applied — see DEFERRED note above.
+- `controller/internal/workspace/pod_builder_test.go` — 4 new tests
+  (`TestPodBuilder_ReadinessProbe_TightTiming`,
+  `TestPodBuilder_StartupProbe_FastDetection`,
+  `TestPodBuilder_LivenessProbe_StableTiming`,
+  `TestPodBuilder_TerminationGracePeriod_Tight`)
+- `controller/internal/workspace/startup_metrics_test.go` — fixture
+  container name updated to use `workspace-bootstrap` for the
+  intentionally-non-matching test (any non-`workspace-setup` name
+  works; just needed renaming alongside the PR's editorial passes
+  before #6 was deferred)
+
+NOT modified (despite earlier draft of this worklog claiming
+otherwise — reconciled per PR #386 review feedback):
+- `controller/internal/workspace/security_test.go` — left at
+  `workspace-dirs` since #6 didn't ship
+- `controller/internal/workspace/health_test.go` — left at Epic 35's
+  `credential-setup` assertions; no changes from this PR
+- `README.md` and `README-LLM.md` — left describing the
+  `workspace-setup + credential-setup` init layout that ships on main
 
 Created:
 - `/tmp/benchmark-workspaces.sh` — re-runnable benchmark harness

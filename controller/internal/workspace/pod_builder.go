@@ -238,11 +238,31 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 
 	// terminationGracePeriodSeconds (2026-06-23 perf audit, item #5).
 	// The kubelet default of 30s wasted ~25s on every pod termination.
-	// agentd's runShutdown gives opencode a 5s SIGTERM grace then SIGKILLs;
-	// in cluster measurement on this codebase, agentd exited cleanly in
-	// ~2s after pod-delete. 5s is conservative — the absolute minimum
-	// agentd needs is the SIGTERM-then-SIGKILL window for the opencode
-	// child (see managed_process.go).
+	//
+	// agentd has TWO different shutdown budgets layered:
+	//   1. The HTTP server's overall shutdown context is 25s
+	//      (cmd/workspace-agentd/main.go runShutdown). It includes
+	//      graceful HTTP server drain, background goroutine wait
+	//      (5s), and the opencode child SIGTERM→SIGKILL fallback.
+	//   2. The opencode child SIGTERM grace is 5s (managed_process.go
+	//      stop()). After 5s without exit, agentd SIGKILLs opencode.
+	//
+	// Setting kubelet's terminationGracePeriodSeconds=5 means kubelet
+	// will SIGKILL the entire pod 5s after sending SIGTERM,
+	// short-circuiting agentd's outer 25s budget. That sounds
+	// aggressive, but it's safe in this codebase because:
+	//   - The 25s budget is a worst-case for a stuck HTTP server or
+	//     hung goroutine; live cluster measurement (see worklog) shows
+	//     pod-gone in ~2.2s after pod-delete in normal operation.
+	//   - opencode's 5s SIGTERM window matches kubelet's 5s here;
+	//     agentd will have just enough time to send SIGTERM and
+	//     observe a clean exit before kubelet SIGKILLs the whole pod.
+	//   - Even when agentd is killed mid-shutdown by kubelet, the only
+	//     state on disk is the workspace PVC, which is not modified
+	//     by shutdown. There is no graceful-state to lose.
+	//
+	// If the in-process measurement ever shows clean shutdowns
+	// approaching 5s, raise this to 10s rather than back to 30s.
 	terminationGrace := int64(5)
 
 	pod := &corev1.Pod{
