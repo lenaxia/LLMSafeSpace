@@ -171,7 +171,6 @@ func TestCheckResourceOwnership_PropagatesContext(t *testing.T) {
 	service, mock, cleanup := setupMockDB(t)
 	defer cleanup()
 
-	// Live ctx: query runs and returns ownership.
 	mock.ExpectQuery("SELECT COUNT(.*) FROM workspaces").
 		WithArgs("r", "u").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
@@ -179,10 +178,30 @@ func TestCheckResourceOwnership_PropagatesContext(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, owned)
 
-	// canceled ctx: must error without running the query.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err = service.CheckResourceOwnership(ctx, "u", "workspace", "r")
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NoError(t, mock.ExpectationsWereMet(), "canceled ctx must not run the query")
+}
+
+// TestCheckPermission_PropagatesContext is the companion for CheckPermission
+// (same migration; mirrored coverage).
+func TestCheckPermission_PropagatesContext(t *testing.T) {
+	service, mock, cleanup := setupMockDB(t)
+	defer cleanup()
+
+	mock.ExpectQuery("SELECT COUNT(.*) FROM permissions").
+		WithArgs("u", "workspace", "r", "read").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	ok, err := service.CheckPermission(context.Background(), "u", "workspace", "r", "read")
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = service.CheckPermission(ctx, "u", "workspace", "r", "read")
 	require.Error(t, err)
 	require.ErrorIs(t, err, context.Canceled)
 	require.NoError(t, mock.ExpectationsWereMet(), "canceled ctx must not run the query")
