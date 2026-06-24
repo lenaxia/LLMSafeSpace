@@ -103,7 +103,9 @@ export function LoginPage() {
               ? "Your account is suspended."
               : ssoStatus === "state_invalid"
                 ? "Single sign-on session expired or was invalid. Please try again."
-                : "Single sign-in failed. Please try again."}
+                : ssoStatus === "config_error"
+                  ? "Single sign-on is not configured on this instance. Please contact your administrator."
+                  : "Single sign-in failed. Please try again."}
         </p>
       )}
       {lookupStatus === "not_found" && (
