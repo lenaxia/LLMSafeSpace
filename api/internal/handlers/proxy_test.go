@@ -1886,9 +1886,15 @@ func (s *ctxRecordingStore) MarkSessionDeleted(ctx context.Context, workspaceID,
 }
 
 // TestProxy_DeleteSession_TombstoneUsesDetachedContext asserts the deleted-
-// session tombstone is written with context.Background() (NOT the request
-// context), so a client disconnect mid-request cannot cancel the tombstone
-// write and reopen the zombie-session window the tombstone exists to close.
+// session tombstone is written with a context NOT derived from the request,
+// so a client disconnect mid-request cannot cancel the tombstone write and
+// reopen the zombie-session window the tombstone exists to close.
+//
+// Method: the request is dispatched with a sentinel-bearing context. If
+// MarkSessionDeleted used c.Request.Context(), the recorded ctx would carry
+// the sentinel; using context.Background() (the fix) it does not. (Comparing
+// to context.Background() directly is vacuous — httptest.NewRequest already
+// sets the request ctx to context.Background().)
 func TestProxy_DeleteSession_TombstoneUsesDetachedContext(t *testing.T) {
 	store := &ctxRecordingStore{Store: wsstate.NewInMemoryStore()}
 	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
@@ -1900,7 +1906,11 @@ func TestProxy_DeleteSession_TombstoneUsesDetachedContext(t *testing.T) {
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
-	w := env.doRequestWithT(t, "DELETE", "/api/v1/workspaces/ws-1/sessions/s1", nil)
+	type sentinelKey struct{}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/workspaces/ws-1/sessions/s1", nil).
+		WithContext(context.WithValue(context.Background(), sentinelKey{}, "request"))
+	env.router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	store.mu.Lock()
@@ -1908,8 +1918,8 @@ func TestProxy_DeleteSession_TombstoneUsesDetachedContext(t *testing.T) {
 	recorded := store.recordedCtx
 	store.mu.Unlock()
 	require.True(t, called, "MarkSessionDeleted must be called")
-	assert.Equal(t, context.Background(), recorded,
-		"tombstone must use context.Background() (detached) so it survives client disconnect, not the request ctx")
+	assert.Nil(t, recorded.Value(sentinelKey{}),
+		"tombstone must use a detached context (not the request ctx) so it survives client disconnect")
 }
 
 type recordingDeleteSessionIndex struct {
