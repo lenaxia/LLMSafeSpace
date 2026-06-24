@@ -403,7 +403,7 @@ Shutdown reverses this order.
 
 The master KEK is the root of trust for at-rest encryption: it wraps API-key DEKs, org SSO client secrets, and (via the `AdminKeyDeriver` callback) every admin/org LLM provider credential. Two crypto layers consume it today (Layer 1 `RootKeyProvider` for `api_keys` + `org_sso_configs`; Layer 2 `AdminKeyDeriver` for `provider_credentials`); Epic 50 US-50.2 will unify them under `RootKeyProvider`.
 
-**Delivery (US-50.1, shipped):** projected as a read-only file mount at `/etc/llmsafespaces/master-secret` (Helm `masterSecret.deliveryMethod=file`, the default), read via `LLMSAFESPACES_MASTER_SECRET_FILE`. This eliminates `/proc/1/environ` exposure — the previous env-var delivery (`LLMSAFESPACES_MASTER_SECRET`) remains as a deprecated opt-in (`deliveryMethod=env`) for non-Helm deploys. Multi-file colon-separated paths support the future US-50.4 rotation window (active = last ≥32-byte file). See `design/stories/epic-50-master-kek-hardening/README.md`.
+**Delivery (US-50.1, shipped):** projected as a read-only file mount at `/var/run/secrets/llmsafespaces/master-secret` (Helm `masterSecret.deliveryMethod=file`, the default), read via `LLMSAFESPACES_MASTER_SECRET_FILE`. This eliminates `/proc/1/environ` exposure — the previous env-var delivery (`LLMSAFESPACES_MASTER_SECRET`) remains as a deprecated opt-in (`deliveryMethod=env`) for non-Helm deploys. Multi-file colon-separated paths support the future US-50.4 rotation window (active = last ≥32-byte file). See `design/stories/epic-50-master-kek-hardening/README.md`.
 
 ### Tenant isolation
 

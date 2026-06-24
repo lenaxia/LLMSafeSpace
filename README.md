@@ -491,7 +491,7 @@ CI builds and pushes these to `ghcr.io/lenaxia/llmsafespaces/{api,controller,bas
 - **Container-runtime isolation**: optional gVisor (`runsc`) RuntimeClass (Epic 51) for kernel-level isolation of tenant pods; enabled via `gvisor.defaultRuntimeClass`, with per-workspace opt-out via `spec.runtimeClass`
 - **Per-tenant resource quotas**: validating admission webhook (Epic 51 S51.2) keyed on the `llmsafespaces.dev/tenant` pod label — caps workspaces / CPU / memory per tenant; disabled by default
 - **Zero-knowledge secret store**: user secrets encrypted with per-user DEK (AES-256-GCM), derived from password via HKDF-SHA256. Platform never stores plaintext.
-- **Master KEK delivery**: the server root key (root of trust for credential encryption) is projected as a read-only file mount (`/etc/llmsafespaces/master-secret`), not an env var, eliminating `/proc/1/environ` exposure (Epic 50 US-50.1). Legacy env delivery remains as an opt-in for non-Helm deploys.
+- **Master KEK delivery**: the server root key (root of trust for credential encryption) is projected as a read-only file mount (`/var/run/secrets/llmsafespaces/master-secret`), not an env var, eliminating `/proc/1/environ` exposure (Epic 50 US-50.1). Legacy env delivery remains as an opt-in for non-Helm deploys.
 - **Workspace credentials** stored exclusively as Kubernetes Secrets — never in PostgreSQL, Redis, or logs
 - **Egress filtering** via NetworkPolicies (configurable per Workspace)
 - **API hardening**: rate limiting (Redis-backed, configurable via admin settings), account lockout, restrictive CORS defaults, JWT cache hashing, no token-in-query-string

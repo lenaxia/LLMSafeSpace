@@ -72,7 +72,7 @@ spec:
                   key: master-secret
             {{- else }}
             - name: LLMSAFESPACES_MASTER_SECRET_FILE
-              value: {{ default "/etc/llmsafespaces/master-secret" .Values.masterSecret.fileMountPath | quote }}
+              value: {{ default "/var/run/secrets/llmsafespaces/master-secret" .Values.masterSecret.fileMountPath | quote }}
             {{- end }}
             {{/* F5 (worklog 0372): shared secret the controller presents as
                    X-Internal-Token to authenticate internal org-status polls.
@@ -111,7 +111,7 @@ spec:
               readOnly: true
             {{- if ne (default "file" .Values.masterSecret.deliveryMethod) "env" }}
             - name: master-secret
-              mountPath: {{ default "/etc/llmsafespaces/master-secret" .Values.masterSecret.fileMountPath }}
+              mountPath: {{ default "/var/run/secrets/llmsafespaces/master-secret" .Values.masterSecret.fileMountPath }}
               subPath: master-secret
               readOnly: true
             {{- end }}

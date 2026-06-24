@@ -457,7 +457,11 @@ externalSecret:
 #                    deprecation Warn when this path is used.
 masterSecret:
   deliveryMethod: file
-  fileMountPath: /etc/llmsafespaces/master-secret
+  # NOTE: must NOT be inside the api config volume mountPath (/etc/llmsafespaces).
+  # Nested subPath secret-over-configmap mounts fail at runc with "not a directory"
+  # on some kernel/runtime combinations. /var/run/secrets/<svc>/ is the FHS-correct
+  # location for projected service secrets and avoids the collision.
+  fileMountPath: /var/run/secrets/llmsafespaces/master-secret
 
 # ----------------------------------------------------------------------------
 # Datastore NetworkPolicies (G26)

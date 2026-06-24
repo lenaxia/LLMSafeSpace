@@ -316,7 +316,7 @@ and a worklog entry.
 K8s Secret as a read-only file volume; read it from disk in `deriveServerKey`.
 
 **Files:**
-- `charts/llmsafespaces/templates/api-deployment.yaml` — replace the `LLMSAFESPACES_MASTER_SECRET` env var block (lines 63-67) with a projected volume + volumeMount, mode `0440`, mounted at `/etc/llmsafespaces/master-secret`
+- `charts/llmsafespaces/templates/api-deployment.yaml` — replace the `LLMSAFESPACES_MASTER_SECRET` env var block (lines 63-67) with a projected volume + volumeMount, mode `0440`, mounted at `/var/run/secrets/llmsafespaces/master-secret`
 - `api/internal/app/secrets_adapters.go` — `deriveServerKey` reads from `LLMSAFESPACES_MASTER_SECRET_FILE` (file path env var) first; falls back to `LLMSAFESPACES_MASTER_SECRET` (legacy value env var) with a one-release deprecation log; same fallback for `LLMSAFESPACES_DEK_MASTER_KEY`
 - `api/internal/app/app.go` — `validateMasterSecret` updated to validate whichever source is configured
 - `api/internal/app/app_master_key_test.go` — new tests for the file path
@@ -336,7 +336,7 @@ working. A structured Warn is logged on startup if the env-var path is used
 
 **Acceptance criteria:**
 - After `helm install`, `kubectl exec <api-pod> -- env | grep MASTER` returns empty
-- After `helm install`, the secret is readable at `/etc/llmsafespaces/master-secret` with mode `0440`
+- After `helm install`, the secret is readable at `/var/run/secrets/llmsafespaces/master-secret` with mode `0440`
 - Pod boots successfully; credentials decrypt correctly
 - An explicit `LLMSAFESPACES_MASTER_SECRET` env var still works for one release (with deprecation log)
 - E2E: rotate the K8s Secret value, restart the pod, verify all credentials still decrypt
