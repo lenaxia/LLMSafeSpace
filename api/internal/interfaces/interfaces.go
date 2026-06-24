@@ -83,8 +83,8 @@ type DatabaseService interface {
 	CountActiveWorkspacesByUserAndOrg(ctx context.Context, userID, orgID string) (int, error)
 	SyncWorkspaceVersionInfo(ctx context.Context, workspaceID, imageTag, agentVersion string)
 	MarkWorkspaceDeleted(ctx context.Context, workspaceID string)
-	CheckPermission(userID, resourceType, resourceID, action string) (bool, error)
-	CheckResourceOwnership(userID, resourceType, resourceID string) (bool, error)
+	CheckPermission(ctx context.Context, userID, resourceType, resourceID, action string) (bool, error)
+	CheckResourceOwnership(ctx context.Context, userID, resourceType, resourceID string) (bool, error)
 	ListSessionIndex(ctx context.Context, workspaceID string) ([]types.SessionListItem, error)
 	DeleteSessionIndex(ctx context.Context, workspaceID string) error
 	DeleteSessionTree(ctx context.Context, workspaceID, sessionID string) error

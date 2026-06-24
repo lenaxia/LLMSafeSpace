@@ -375,8 +375,11 @@ func (s *Service) RevokeToken(token string) error {
 
 // CheckResourceAccess checks if a user has access to a resource
 func (s *Service) CheckResourceAccess(userID, resourceType, resourceID, action string) bool {
-	// Check resource ownership
-	isOwner, err := s.dbService.CheckResourceOwnership(userID, resourceType, resourceID)
+	// CheckResourceAccess has no production callers (interface-satisfying only);
+	// it uses context.Background() here pending either deletion or a future
+	// ctx-propagating signature. The live CheckResourceOwnership caller in
+	// handlers/usage.go uses the request ctx.
+	isOwner, err := s.dbService.CheckResourceOwnership(context.Background(), userID, resourceType, resourceID)
 	if err != nil {
 		s.logger.Error("Failed to check resource ownership", err,
 			"user_id", userID,
@@ -391,7 +394,7 @@ func (s *Service) CheckResourceAccess(userID, resourceType, resourceID, action s
 	}
 
 	// Check RBAC permissions
-	hasPermission, err := s.dbService.CheckPermission(userID, resourceType, resourceID, action)
+	hasPermission, err := s.dbService.CheckPermission(context.Background(), userID, resourceType, resourceID, action)
 	if err != nil {
 		s.logger.Error("Failed to check permission", err,
 			"user_id", userID,

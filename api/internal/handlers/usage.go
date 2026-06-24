@@ -62,7 +62,7 @@ func (h *UsageHandler) GetWorkspaceUsage(c *gin.Context) {
 		return
 	}
 
-	owned, err := h.dbSvc.CheckResourceOwnership(userID, "workspace", workspaceID)
+	owned, err := h.dbSvc.CheckResourceOwnership(c.Request.Context(), userID, "workspace", workspaceID)
 	if err != nil || !owned {
 		c.JSON(http.StatusForbidden, gin.H{"error": "access denied"})
 		return
