@@ -1867,6 +1867,51 @@ func TestProxy_DeleteSession_IndexErrorStillReturns200(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code, "should still return 200 even if index delete fails")
 }
 
+// ctxRecordingStore wraps an InMemoryStore to capture the context passed to
+// MarkSessionDeleted, so the tombstone's detach-from-request contract can be
+// asserted (regression guard: the tombstone must survive client disconnect).
+type ctxRecordingStore struct {
+	wsstate.Store
+	mu          sync.Mutex
+	recordedCtx context.Context
+	called      bool
+}
+
+func (s *ctxRecordingStore) MarkSessionDeleted(ctx context.Context, workspaceID, sessionID string) {
+	s.mu.Lock()
+	s.recordedCtx = ctx
+	s.called = true
+	s.mu.Unlock()
+	s.Store.MarkSessionDeleted(ctx, workspaceID, sessionID)
+}
+
+// TestProxy_DeleteSession_TombstoneUsesDetachedContext asserts the deleted-
+// session tombstone is written with context.Background() (NOT the request
+// context), so a client disconnect mid-request cannot cancel the tombstone
+// write and reopen the zombie-session window the tombstone exists to close.
+func TestProxy_DeleteSession_TombstoneUsesDetachedContext(t *testing.T) {
+	store := &ctxRecordingStore{Store: wsstate.NewInMemoryStore()}
+	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]bool{"deleted": true})
+	})
+	env.handler.SetStateStore(store)
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+	env.setupWorkspaceWithT(t, "ws-1", 5)
+
+	w := env.doRequestWithT(t, "DELETE", "/api/v1/workspaces/ws-1/sessions/s1", nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	store.mu.Lock()
+	called := store.called
+	recorded := store.recordedCtx
+	store.mu.Unlock()
+	require.True(t, called, "MarkSessionDeleted must be called")
+	assert.Equal(t, context.Background(), recorded,
+		"tombstone must use context.Background() (detached) so it survives client disconnect, not the request ctx")
+}
+
 type recordingDeleteSessionIndex struct {
 	mu          sync.Mutex
 	called      bool

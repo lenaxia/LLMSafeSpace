@@ -244,7 +244,11 @@ func (h *ProxyHandler) DeleteSession(c *gin.Context) {
 		return
 	}
 
-	h.state().MarkSessionDeleted(c.Request.Context(), workspaceID, sid)
+	// Detached ctx (not c.Request.Context()): the tombstone suppresses late
+	// SSE events arriving after deletion, so it MUST be written even if the
+	// client disconnects mid-request. Matches the sibling session-index
+	// delete below (which uses context.Background() for the same reason).
+	h.state().MarkSessionDeleted(context.Background(), workspaceID, sid) //nolint:contextcheck // G118: tombstone must survive client disconnect
 
 	if h.sessionIndex != nil {
 		// Use context.Background() so a client disconnect after the agent
