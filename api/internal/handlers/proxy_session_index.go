@@ -79,9 +79,17 @@ func (h *ProxyHandler) BackfillSessionParents(ctx context.Context, workspaceID s
 	}
 	h.state().SetParentBackfilled(ctx, workspaceID)
 
-	go h.runParentBackfill(workspaceID)
+	// Fire-and-forget: the backfill benefits future requests, not this one, so
+	// it must survive client disconnect. runParentBackfill uses a detached
+	// context.Background() bounded by a 15s timeout (not the request ctx).
+	go h.runParentBackfill(workspaceID) //nolint:gosec,contextcheck // G118: intentional fire-and-forget detach
 }
 
+// runParentBackfill deliberately uses a detached context.Background() (bounded
+// by a 15s timeout): the backfill must survive client disconnect (the request
+// ctx is canceled once the response is flushed), which would abort the
+// parent_session_id persistence. It takes no ctx so contextcheck does not
+// expect propagation from the (request-scoped) caller.
 func (h *ProxyHandler) runParentBackfill(workspaceID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
