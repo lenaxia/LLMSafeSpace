@@ -305,6 +305,12 @@ type bootstrapE2EConfig struct {
 	// (matching production's "skip with audit event" behavior at injection.go:176).
 	wireAdmin *bool // nil = true (default); set to addr-of-false to disable
 	wireOrg   *bool
+	// wrongOrgKey, when non-empty, wires a RootKeyProvider built from this key
+	// instead of the correct org KEK (0x02). The org binding is encrypted under
+	// 0x02, so decrypt FAILS at injection.go:74 — exercising the real wrong-key
+	// decrypt-failure path (audit + skip + fall through), distinct from the
+	// nil-provider skip path exercised by wireOrg=false.
+	wrongOrgKey []byte
 	// reviewerErr makes the token reviewer reject the token (simulates a
 	// forged/expired SA token). When set, bootstrap must degrade gracefully.
 	reviewerErr error
@@ -355,7 +361,11 @@ func runBootstrapMaterializeE2EWith(t *testing.T, cfg bootstrapE2EConfig) (agent
 		svc.SetAdminProvider(adminProv)
 	}
 	if cfg.wireOrg == nil || *cfg.wireOrg {
-		orgProv, err := secrets.NewStaticKeyProvider(deterministicKey(0x02))
+		orgKey := deterministicKey(0x02)
+		if cfg.wrongOrgKey != nil {
+			orgKey = cfg.wrongOrgKey // exercise the real decrypt-failure path
+		}
+		orgProv, err := secrets.NewStaticKeyProvider(orgKey)
 		require.NoError(t, err)
 		svc.SetOrgProvider(orgProv)
 	}
@@ -593,23 +603,23 @@ func TestE2E_BootstrapMaterialize_WorkspaceNotFound_StillBoots(t *testing.T) {
 }
 
 // TestE2E_BootstrapMaterialize_WrongKEK_SkipsBinding pins that a credential
-// encrypted under a different KEK than the configured provider is skipped
-// (injection.go:74-82 — decrypt fails, audit logged, fall through to lower
-// priority) rather than crashing or surface garbled plaintext. This guards
-// against a key-rotation half-state where old ciphertext lingers.
+// encrypted under key A but decrypted with a DIFFERENT key B (a key-rotation
+// half-state where old ciphertext lingers) fails decrypt, is audited + skipped
+// (injection.go:74-82), and the pod still boots. This exercises the real
+// decrypt-failure path — distinct from the nil-provider skip path tested by
+// OrgProviderUnwired. The org binding is encrypted under 0x02; the harness
+// wires a wrong key (0xFF), so decrypt is ATTEMPTED and FAILS (not skipped).
 func TestE2E_BootstrapMaterialize_WrongKEK_SkipsBinding(t *testing.T) {
 	agentCfgPath, _, materializeExit, _, materializeStderr :=
 		runBootstrapMaterializeE2EWith(t, bootstrapE2EConfig{
 			bindings: []e2eProviderBinding{
-				// Encrypted under the org KEK (0x02) but we wire a WRONG org key.
-				// encryptE2EBinding always uses 0x02 for org; the harness wires
-				// 0x02 by default. To force a mismatch we'd need a custom path,
-				// so instead we disable the org provider entirely and confirm
-				// the binding is skipped — same failure mode (decrypt unavailable).
 				{ownerType: "org", ownerID: "org-1", provider: "anthropic", apiKey: "sk-org"},
 				{ownerType: "admin", ownerID: "_platform", provider: "opencode", apiKey: "sk-admin"},
 			},
-			wireOrg: boolPtr(false),
+			// Wire a WRONG org key — decrypt is attempted and fails (AES-GCM
+			// auth tag mismatch), exercising injection.go:74-82. Distinct from
+			// wireOrg=false which skips BEFORE decrypt (injection.go:176).
+			wrongOrgKey: deterministicKey(0xFF),
 		})
 	require.Equal(t, 0, materializeExit, "wrong-KEK binding must be skipped, not crash; stderr=%s", materializeStderr)
 	cfg := readAgentConfig(t, agentCfgPath)
