@@ -389,7 +389,7 @@ set -e
 # $WORKSPACE/.local/opencode/auth.json) become symlinks pointing into
 # /sandbox-runtime/rt/*. On pod death, tmpfs is wiped — the PVC retains
 # only dangling symlink inodes, no plaintext bytes.
-mkdir -p /sandbox-runtime/rt/ssh /sandbox-runtime/rt/secrets
+mkdir -p /sandbox-runtime/rt/ssh /sandbox-runtime/rt/secrets /sandbox-runtime/rt
 chmod 700 /sandbox-runtime/rt/ssh /sandbox-runtime/rt/secrets
 
 # rm -rf is required: ln -s into an existing directory creates the symlink
@@ -431,7 +431,7 @@ cp /mnt/secrets/password/password /sandbox-cfg/password
 	// audience and expiry. Mounted only on the init container — the main
 	// container never sees this token (AutomountServiceAccountToken: false
 	// suppresses the default mount; this is an explicit projected volume).
-	tokenTTL := int64(300)
+	tokenTTL := int64(600)
 	bootstrapTokenVolume := corev1.Volume{
 		Name: "bootstrap-token",
 		VolumeSource: corev1.VolumeSource{

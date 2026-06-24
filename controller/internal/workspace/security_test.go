@@ -159,8 +159,8 @@ func TestSandboxPod_VolumeFootprint(t *testing.T) {
 	require.Equal(t, "llmsafespace-api", satProj.Audience,
 		"bootstrap-token audience must be llmsafespace-api")
 	require.NotNil(t, satProj.ExpirationSeconds)
-	require.Equal(t, int64(300), *satProj.ExpirationSeconds,
-		"bootstrap-token TTL must be 300s (5 minutes)")
+	require.Equal(t, int64(600), *satProj.ExpirationSeconds,
+		"bootstrap-token TTL must be 600s (10 minutes, K8s minimum)")
 
 	// bootstrap-token must be mounted on the init container only, NOT on the main container.
 	require.NotEmpty(t, pod.Spec.Containers)
