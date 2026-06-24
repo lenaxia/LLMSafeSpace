@@ -22,7 +22,7 @@ type fakeWorkspaceCRDGetter struct {
 	err error
 }
 
-func (f *fakeWorkspaceCRDGetter) GetWorkspace(id string) (*v1.Workspace, error) {
+func (f *fakeWorkspaceCRDGetter) GetWorkspace(_ context.Context, id string) (*v1.Workspace, error) {
 	return f.ws, f.err
 }
 
