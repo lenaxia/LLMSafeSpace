@@ -972,22 +972,73 @@ func TestF135_APIDoesNotGrantPodsLog(t *testing.T) {
 }
 
 // TestF131_ControllerDoesNotGrantUnusedResources asserts services and
-// configmaps are removed from the controller's grants (F1.3.1).
+// configmaps are removed from the controller's grants (F1.3.1) — but
+// allows the narrow configmaps grant required by the free-models
+// refresher (2026-06-23 cold-start optimization, item #1a) when that
+// feature is enabled.
+//
+// The F1.3.1 invariant is "only what's used"; the freemodels refresher
+// uses configmaps to publish the cluster-wide opencode free-tier model
+// catalog. This test verifies that when the refresher is OFF,
+// configmaps are not granted at all (preserving the original invariant
+// for clusters that don't need the optimization), and when the
+// refresher is ON, the verbs are scoped to what the refresher actually
+// performs (no `delete`).
 func TestF131_ControllerDoesNotGrantUnusedResources(t *testing.T) {
-	docs := helmTemplate(t, "rbac:\n  scope: cluster\n")
-	for _, kind := range []string{"Role", "ClusterRole"} {
-		for _, doc := range findResources(docs, kind) {
-			name := metaName(doc)
-			if !strings.Contains(name, "controller") {
-				continue
+	t.Run("freeModelsRefresher_disabled_no_configmaps", func(t *testing.T) {
+		// Opt out of the refresher so the F1.3.1 invariant is exact:
+		// no configmaps anywhere in the controller's RBAC.
+		docs := helmTemplate(t, `
+rbac:
+  scope: cluster
+controller:
+  freeModelsRefresher:
+    enabled: false
+`)
+		for _, kind := range []string{"Role", "ClusterRole"} {
+			for _, doc := range findResources(docs, kind) {
+				name := metaName(doc)
+				if !strings.Contains(name, "controller") {
+					continue
+				}
+				rv := resourceVerbs(doc)
+				require.NotContains(t, rv, "/services",
+					"%s %q must NOT grant services (F1.3.1)", kind, name)
+				require.NotContains(t, rv, "/configmaps",
+					"%s %q must NOT grant configmaps when freeModelsRefresher is disabled (F1.3.1)", kind, name)
 			}
-			rv := resourceVerbs(doc)
-			require.NotContains(t, rv, "/services",
-				"%s %q must NOT grant services (F1.3.1)", kind, name)
-			require.NotContains(t, rv, "/configmaps",
-				"%s %q must NOT grant configmaps (F1.3.1)", kind, name)
 		}
-	}
+	})
+
+	t.Run("freeModelsRefresher_enabled_narrow_configmaps", func(t *testing.T) {
+		// Default (refresher on): configmaps grant must be scoped to
+		// what the refresher actually does — no `delete`, no
+		// secrets-style breadth.
+		docs := helmTemplate(t, "rbac:\n  scope: cluster\n")
+		var found bool
+		for _, kind := range []string{"Role", "ClusterRole"} {
+			for _, doc := range findResources(docs, kind) {
+				name := metaName(doc)
+				if !strings.Contains(name, "controller") {
+					continue
+				}
+				rv := resourceVerbs(doc)
+				require.NotContains(t, rv, "/services",
+					"%s %q must NOT grant services (F1.3.1)", kind, name)
+
+				if cmVerbs, ok := rv["/configmaps"]; ok {
+					found = true
+					assert.NotContains(t, cmVerbs, "delete",
+						"%s %q must NOT grant configmaps `delete` — the freemodels refresher "+
+							"only publishes the catalog (Create + Update + Patch); deletion is "+
+							"never required", kind, name)
+				}
+			}
+		}
+		assert.True(t, found,
+			"expected at least one controller Role/ClusterRole to grant configmaps "+
+				"when freeModelsRefresher is enabled (the default)")
+	})
 }
 
 // TestF137_StorageClassesIsAlwaysClusterRole asserts storageclasses
