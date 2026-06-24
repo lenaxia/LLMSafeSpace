@@ -386,9 +386,12 @@ func TestInitContainerDurationMissingTimestamps(t *testing.T) {
 func TestInitContainerDurationWrongName(t *testing.T) {
 	start := time.Now().Add(-5 * time.Second)
 	pod := makeRunningPodWithInitStatus(start, time.Now())
-	// Rename the container status to anything other than "workspace-setup"
-	// so the lookup must miss and return 0. Any non-matching name works.
-	pod.Status.InitContainerStatuses[0].Name = "workspace-bootstrap"
+	// Use a container name that explicitly does not exist in the
+	// workspace pod spec, so the lookup must miss and return 0.
+	// "credential-setup" is the real sibling init container; using it
+	// here would conflate "name doesn't match the target" with "the
+	// other real init container is at index 0", which obscures intent.
+	pod.Status.InitContainerStatuses[0].Name = "nonexistent-container"
 	d := initContainerDuration(pod, "workspace-setup")
 	assert.Zero(t, d)
 }

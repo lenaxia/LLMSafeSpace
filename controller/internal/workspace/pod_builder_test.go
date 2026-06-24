@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
@@ -165,6 +166,82 @@ func TestPodBuilder_StartupProbe_FastDetection(t *testing.T) {
 	assert.GreaterOrEqual(t, probe.FailureThreshold, int32(60),
 		"FailureThreshold must be >=60 to give the relay-injector restart cycle (~30s) "+
 			"plus a safety margin before the pod is killed")
+}
+
+// TestPodBuilder_Probes_AuthHeader closes the test gap noted in the
+// PR #386 review (commit 35c248c8 follow-up): /v1/readyz is gated by
+// requireBearerToken in cmd/workspace-agentd/server.go, so BOTH the
+// readiness probe AND the startup probe must include
+// `Authorization: Bearer <admin-token>` headers. A probe without the
+// header would 401 on every attempt and the pod would never pass —
+// a silent, hard-to-debug failure.
+//
+// The header value comes from the password Secret created by
+// ensurePasswordSecret in handlePending (Data["password"]). The pod
+// builder reads the Secret via the controller client; this test
+// seeds a password Secret into the fake client so adminToken is
+// non-empty and the header MUST be present.
+//
+// 2026-06-23 perf audit, items #3 + #4 (readiness + startup probes).
+func TestPodBuilder_Probes_AuthHeader(t *testing.T) {
+	ws := newWorkspaceForPodBuilder(t)
+	pwSecret := makePasswordSecret(ws.Name, ws.Namespace)
+	r := reconcilerFor(t, pwSecret)
+
+	pod, err := r.buildPod(context.Background(), ws)
+	require.NoError(t, err)
+	require.Len(t, pod.Spec.Containers, 1)
+	main := &pod.Spec.Containers[0]
+
+	expectAuthHeader := func(t *testing.T, probe *corev1.Probe, label string) {
+		t.Helper()
+		require.NotNil(t, probe, "%s probe must be set", label)
+		require.NotNil(t, probe.HTTPGet, "%s probe must use HTTP", label)
+		var got *corev1.HTTPHeader
+		for i := range probe.HTTPGet.HTTPHeaders {
+			if probe.HTTPGet.HTTPHeaders[i].Name == "Authorization" {
+				got = &probe.HTTPGet.HTTPHeaders[i]
+				break
+			}
+		}
+		require.NotNil(t, got,
+			"%s probe MUST include an Authorization header — "+
+				"/v1/readyz is gated by requireBearerToken (server.go), "+
+				"a probe without the header always 401s and the pod stays NotReady",
+			label)
+		assert.Equal(t, "Bearer test-password", got.Value,
+			"%s probe header value must be `Bearer <admin-token>` where "+
+				"admin-token is read from the password Secret's `password` key",
+			label)
+	}
+
+	expectAuthHeader(t, main.ReadinessProbe, "readiness")
+	expectAuthHeader(t, main.StartupProbe, "startup")
+}
+
+// TestPodBuilder_Probes_NoAuthHeaderWhenSecretMissing covers the
+// graceful-degradation path: if the password Secret is somehow not
+// available at buildPod time (Get fails or Data["password"] is
+// missing), the probes must NOT carry an empty Bearer header (which
+// /v1/readyz would still reject). Instead they omit the header
+// entirely — the probe will 401 and the pod stays NotReady, which
+// is observable + safe (vs. a malformed header which would be
+// harder to diagnose).
+func TestPodBuilder_Probes_NoAuthHeaderWhenSecretMissing(t *testing.T) {
+	ws := newWorkspaceForPodBuilder(t)
+	r := reconcilerFor(t) // no pwSecret seeded
+
+	pod, err := r.buildPod(context.Background(), ws)
+	require.NoError(t, err)
+	main := &pod.Spec.Containers[0]
+
+	for _, p := range []*corev1.Probe{main.ReadinessProbe, main.StartupProbe} {
+		require.NotNil(t, p)
+		require.NotNil(t, p.HTTPGet)
+		assert.Empty(t, p.HTTPGet.HTTPHeaders,
+			"probe must omit headers entirely when admin token is unavailable — "+
+				"a `Bearer ` (empty) header would still be rejected, providing no value")
+	}
 }
 
 // TestPodBuilder_LivenessProbe_StableTiming pins the liveness probe to a
