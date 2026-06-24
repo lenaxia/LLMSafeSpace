@@ -83,18 +83,6 @@ export interface OpenCodeSession {
   share?: string;
 }
 
-export interface ActiveSessionsResponse {
-  active: string[];
-  maxActive: number;
-}
-
-export interface WorkspaceSessionItem {
-  id: string;
-  phase: string;
-  podIP?: string;
-  workspaceRef?: string;
-}
-
 export interface WorkspaceStatus {
   phase: string;
   podName?: string;

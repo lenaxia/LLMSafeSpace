@@ -441,7 +441,6 @@ function WorkspaceGroup({
         workspace={workspace}
         open={showSettings}
         onOpenChange={setShowSettings}
-        onSave={async () => {}}
       />
     </div>
   );

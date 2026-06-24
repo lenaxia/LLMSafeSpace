@@ -2,8 +2,6 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { useState, useEffect } from "react";
 import type { WorkspaceListItem } from "../../api/types";
-import { Toggle } from "../ui/Toggle";
-import { NumberInput } from "../ui/NumberInput";
 import { secretsApi, type SecretResponse } from "../../api/secrets";
 import { api } from "../../api/client";
 
@@ -11,12 +9,6 @@ interface Props {
   workspace: WorkspaceListItem;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSave: (settings: WorkspaceSettings) => Promise<void>;
-}
-
-export interface WorkspaceSettings {
-  autoSuspendEnabled?: boolean;
-  autoSuspendIdleMinutes?: number;
 }
 
 const SECRET_TYPE_LABELS: Record<string, { label: string; icon: string }> = {
@@ -28,9 +20,7 @@ const SECRET_TYPE_LABELS: Record<string, { label: string; icon: string }> = {
   "api-key": { label: "API Keys (legacy)", icon: "🗝️" },
 };
 
-export function WorkspaceSettingsDrawer({ workspace, open, onOpenChange, onSave }: Props) {
-  const [autoSuspend, setAutoSuspend] = useState(true);
-  const [idleMinutes, setIdleMinutes] = useState(60);
+export function WorkspaceSettingsDrawer({ workspace, open, onOpenChange }: Props) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [allSecrets, setAllSecrets] = useState<SecretResponse[]>([]);
@@ -52,10 +42,6 @@ export function WorkspaceSettingsDrawer({ workspace, open, onOpenChange, onSave 
     setSaving(true);
     setError(null);
     try {
-      await onSave({
-        autoSuspendEnabled: autoSuspend,
-        autoSuspendIdleMinutes: idleMinutes,
-      });
       if (bindingsChanged) {
         await api.put(`/workspaces/${workspace.id}/bindings`, { secretIds: Array.from(boundIds) });
       }
@@ -77,7 +63,6 @@ export function WorkspaceSettingsDrawer({ workspace, open, onOpenChange, onSave 
     setBindingsChanged(true);
   };
 
-  // Group secrets by type
   const grouped = Object.entries(SECRET_TYPE_LABELS)
     .map(([type, meta]) => ({
       type,
@@ -106,32 +91,6 @@ export function WorkspaceSettingsDrawer({ workspace, open, onOpenChange, onSave 
           <p className="text-xs text-muted-foreground mb-6 truncate">{workspace.name}</p>
 
           <div className="space-y-5">
-            {/* Auto-suspend */}
-            <div className="flex items-center justify-between">
-              <div>
-                <label className="text-sm font-medium" htmlFor="autoSuspend">Auto-Suspend</label>
-                <p className="text-xs text-muted-foreground">Suspend when no activity</p>
-              </div>
-              <Toggle id="autoSuspend" checked={autoSuspend} onCheckedChange={(v) => { setAutoSuspend(v); }} />
-            </div>
-
-            {!autoSuspend && (
-              <p className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-950/30 dark:text-amber-400 rounded px-2 py-1.5">
-                ⚠️ Disabling auto-suspend will keep this workspace running indefinitely, consuming compute minutes and potentially causing unexpected costs.
-              </p>
-            )}
-
-            {autoSuspend && (
-              <div className="flex items-center justify-between">
-                <div>
-                  <label className="text-sm font-medium" htmlFor="idleMinutes">Idle Timeout (min)</label>
-                  <p className="text-xs text-muted-foreground">Minutes of zero traffic before suspend. Active LLM conversations and streaming keep the workspace alive.</p>
-                </div>
-                <NumberInput id="idleMinutes" value={idleMinutes} onChange={setIdleMinutes} min={5} max={10080} />
-              </div>
-            )}
-
-            {/* Attached Secrets - grouped by type */}
             {allSecrets.length > 0 && (
               <div className="border-t border-border pt-4">
                 <label className="text-sm font-medium">Attached Secrets</label>
