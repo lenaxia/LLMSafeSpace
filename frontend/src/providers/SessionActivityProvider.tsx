@@ -367,6 +367,18 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      if (evt.type === "agent_died" && evt.workspace_id) {
+        const wsId = evt.workspace_id;
+        setBusySessions((prev) => {
+          const next = new Map();
+          for (const [sid, wid] of prev) {
+            if (wid !== wsId) next.set(sid, wid);
+          }
+          return next;
+        });
+        clearWorkspacePendingActions(wsId);
+      }
+
       if (evt.type === "workspace.phase" && evt.workspace_id && evt.phase) {
         const wsId = evt.workspace_id;
         if (NON_ACTIVE_PHASES.has(evt.phase)) {

@@ -1670,3 +1670,69 @@ describe("US-55.3: provider onEvent input-event handling", () => {
     expect(screen.getByTestId("pending").textContent).toBe("no");
   });
 });
+
+describe("agent_died handler", () => {
+  function BusyIndicator({ sessionId }: { sessionId: string }) {
+    const isBusy = useIsSessionBusy(sessionId);
+    return <span data-testid="busy">{isBusy ? "yes" : "no"}</span>;
+  }
+
+  it("clears busy state for the workspace on agent_died", () => {
+    renderProvider(<BusyIndicator sessionId="ses-1" />);
+
+    act(() => {
+      capturedOnEvent!({
+        type: "session.status",
+        workspace_id: "ws-1",
+        session_id: "ses-1",
+        status: "busy",
+      });
+    });
+    expect(screen.getByTestId("busy").textContent).toBe("yes");
+
+    act(() => {
+      capturedOnEvent!({
+        type: "agent_died",
+        workspace_id: "ws-1",
+      });
+    });
+    expect(screen.getByTestId("busy").textContent).toBe("no");
+  });
+
+  it("does not clear busy state for other workspaces on agent_died", () => {
+    renderProvider(
+      <>
+        <BusyIndicator sessionId="ses-1" />
+        <BusyIndicator sessionId="ses-2" />
+      </>,
+    );
+
+    act(() => {
+      capturedOnEvent!({
+        type: "session.status",
+        workspace_id: "ws-1",
+        session_id: "ses-1",
+        status: "busy",
+      });
+    });
+    act(() => {
+      capturedOnEvent!({
+        type: "session.status",
+        workspace_id: "ws-2",
+        session_id: "ses-2",
+        status: "busy",
+      });
+    });
+
+    act(() => {
+      capturedOnEvent!({
+        type: "agent_died",
+        workspace_id: "ws-1",
+      });
+    });
+
+    const busyIndicators = screen.getAllByTestId("busy");
+    expect(busyIndicators[0]!.textContent).toBe("no"); // ws-1 cleared
+    expect(busyIndicators[1]!.textContent).toBe("yes"); // ws-2 untouched
+  });
+});
