@@ -53,7 +53,7 @@ func mountPaths(mounts []corev1.VolumeMount) map[string]bool {
 
 // findInitContainer returns the init container with the given name, failing
 // the test if absent.
-func findInitContainer(t *testing.T, pod *corev1.Pod, name string) corev1.Container {
+func findInitContainerOrFatal(t *testing.T, pod *corev1.Pod, name string) corev1.Container {
 	t.Helper()
 	for _, c := range pod.Spec.InitContainers {
 		if c.Name == name {
@@ -122,7 +122,7 @@ func TestE2E_Reconcile_PodSpec_InitContainerSelfConsistent(t *testing.T) {
 	const apiURL = "http://test-api.e2e:8080"
 	_, pod := reconcileToCreatingPod(t, ws, apiURL)
 
-	credInit := findInitContainer(t, pod, "credential-setup")
+	credInit := findInitContainerOrFatal(t, pod, "credential-setup")
 	script := credInit.Command[len(credInit.Command)-1]
 	envs := envMap(credInit.Env)
 	mounts := mountPaths(credInit.VolumeMounts)
