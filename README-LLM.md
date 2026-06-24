@@ -1461,7 +1461,7 @@ One row per org in `org_sso_configs` (`api/migrations/000038_org_sso_configs.up.
 | `auto_provision` | `BOOLEAN` | Create a new user on first SSO login if none exists for the email |
 | `group_role_mapping` | `JSONB` | `{groupId: "admin"|"member"}`; applied on every login |
 
-Go types in `pkg/types/orgs.go:174-215`:
+Go types in `pkg/types/orgs.go:203-242`:
 - `OrgSSOConfig` — DB shape (`ClientSecret []byte`, `json:"-"`)
 - `OrgSSOConfigResponse` — API shape (`HasSecret bool` replaces the secret)
 - `UpsertSSOConfigRequest` — `PUT` body (empty `ClientSecret` = "leave existing unchanged")
@@ -1480,7 +1480,7 @@ Go types in `pkg/types/orgs.go:174-215`:
 | `GET` | `/api/v1/auth/sso/:orgSlug/start` | Public | Begin PKCE flow; 302 to IdP, sets signed state cookie |
 | `GET` | `/api/v1/auth/sso/:orgSlug/callback` | Public | Complete flow; sets `lsp_session` JWT cookie, 302 to frontend |
 
-The CRUD routes are registered in `registerOrgRoutes` behind `OrgAdminGuard` (`api/internal/server/router.go:1192-1194`). The public login routes sit under the auth group (`router.go:599-601`). `/auth/config` advertises `oidcEnabled = (CountSSOConfigs > 0)` so the frontend can hide SSO UI when no org has configured it.
+The CRUD routes are registered in `registerOrgRoutes` behind `OrgAdminGuard` (`api/internal/server/router.go:1234-1238`). The public login routes sit under the auth group (`router.go:633-635`). `/auth/config` advertises `oidcEnabled = (CountSSOConfigs > 0)` so the frontend can hide SSO UI when no org has configured it.
 
 ### Login flow (PKCE)
 
@@ -1520,9 +1520,9 @@ The state cookie carries `{state, verifier, orgID, exp}` because the API is stat
 
 ### Org admin config flow
 
-`PUT /api/v1/orgs/:id/sso` (`api/internal/handlers/org_sso.go:101`):
+`PUT /api/v1/orgs/:id/sso` (`api/internal/handlers/org_sso.go:111`):
 1. Handler loads any existing config to capture the current encrypted secret (for the partial-update path).
-2. `sso.Service.ApplyConfigMutation` (`services/sso/sso.go:194`):
+2. `sso.Service.ApplyConfigMutation` (`services/sso/sso.go:246`):
    - Validates role values (`admin`/`member` only).
    - If `ClientSecret` present → `EncryptClientSecret` with server KEK; if empty → reuse existing blob; if empty and no existing → `400 client secret is required`.
    - `NormalizeDomains` lowercases, strips leading `@`, dedups.
@@ -1531,27 +1531,27 @@ The state cookie carries `{state, verifier, orgID, exp}` because the API is stat
 
 ### Auto-provisioning and role mapping
 
-- **`resolveUser`** (`services/sso/sso.go:436`): lookup by lowercased email; if not found and `auto_provision=true`, create a user with a random unusable bcrypt hash (`$2a$12$<random>`) so password login is permanently blocked — the user has no password to derive a DEK from. Personal credential operations stay unavailable until they set a password; org workspaces still work via server-side injection.
-- **`resolveRole`** (`services/sso/sso.go:606`): walk IdP groups (OIDC `groups` ∪ Azure AD `memberOf`); the highest-privilege match wins; `admin` outranks `member`; unmapped/empty → `member` (safe default).
-- **`ensureMembership`** (`services/sso/sso.go:475`): create or update the membership row so IdP-driven role changes propagate on every re-login. A demotion `admin→member` is skipped when the user is the sole admin (last-admin protection; logged at WARN).
+- **`resolveUser`** (`services/sso/sso.go:606`): lookup by lowercased email; if not found and `auto_provision=true`, create a user with a random unusable bcrypt hash (`$2a$12$<random>`) so password login is permanently blocked — the user has no password to derive a DEK from. Personal credential operations stay unavailable until they set a password; org workspaces still work via server-side injection.
+- **`resolveRole`** (`services/sso/sso.go:777`): walk IdP groups (OIDC `groups` ∪ Azure AD `memberOf`); the highest-privilege match wins; `admin` outranks `member`; unmapped/empty → `member` (safe default).
+- **`ensureMembership`** (`services/sso/sso.go:645`): create or update the membership row so IdP-driven role changes propagate on every re-login. A demotion `admin→member` is skipped when the user is the sole admin (last-admin protection; logged at WARN).
 
 ### Security controls
 
 | Control | Implementation | Reference |
 |---------|----------------|-----------|
-| Client secret encryption at rest | Server KEK (`RootKeyProvider.Encrypt`), `BYTEA` column | D17-S4, `sso.go:163` |
-| PKCE S256 | `code_challenge` derived from random verifier, verifier carried in signed cookie | `sso.go:294,622` |
-| State cookie integrity | HMAC-SHA256 over `{state, verifier, orgID, exp}`; constant-time compare | `sso.go:534,553` |
-| State cookie expiry | 10-minute TTL (`DefaultStateTTL`) | `sso.go:111` |
-| Callback bound to start org | `org.ID == payload.OrgID` check on callback | `sso.go:346` |
-| `email_verified` enforcement (F8) | Absent/false → `ErrEmailUnverified` (403) | `sso.go:401` |
-| Email-claim trust | `email` only used for account binding when IdP-verified | `sso.go:395-403` |
-| Suspended-user block | `user.Status == suspended` → `ErrUserSuspended` | `sso.go:409` |
-| Last-admin protection | IdP demotion refused if user is sole org admin | `sso.go:491` |
-| Secret never in responses | `OrgSSOConfigResponse.HasSecret` replaces the blob | `orgs.go:189`, `org_sso.go:60` |
-| SameSite=Lax state cookie | Survives top-level IdP→callback redirect, blocked on cross-site POST | `org_sso.go:268` |
+| Client secret encryption at rest | Server KEK (`RootKeyProvider.Encrypt`), `BYTEA` column | D17-S4, `sso.go:212` |
+| PKCE S256 | `code_challenge` derived from random verifier, verifier carried in signed cookie | `sso.go:475,792` |
+| State cookie integrity | HMAC-SHA256 over `{state, verifier, orgID, exp}`; constant-time compare | `sso.go:713,730` |
+| State cookie expiry | 10-minute TTL (`DefaultStateTTL`) | `sso.go:150` |
+| Callback bound to start org | `org.ID == payload.OrgID` check on callback | `sso.go:516` |
+| `email_verified` enforcement (F8) | Absent/false → `ErrEmailUnverified` (403) | `sso.go:571` |
+| Email-claim trust | `email` only used for account binding when IdP-verified | `sso.go:562-571` |
+| Suspended-user block | `user.Status == suspended` → `ErrUserSuspended` | `sso.go:579` |
+| Last-admin protection | IdP demotion refused if user is sole org admin | `sso.go:671` |
+| Secret never in responses | `OrgSSOConfigResponse.HasSecret` replaces the blob | `orgs.go:222`, `org_sso.go:65` |
+| SameSite=Lax state cookie | Survives top-level IdP→callback redirect, blocked on cross-site POST | `org_sso.go:346` |
 | IdP-registered redirect URI | Defense-in-depth: the IdP only redirects to registered URIs. `redirectBaseUrl` is now **required** for SSO (fail-loud, F11) — header derivation removed | `org_sso.go:319` |
-| Auto-provision off → 403 | `ErrAutoProvisionOff` mapped to `provisioning_disabled` | `sso.go:45`, `org_sso.go:300` |
+| Auto-provision off → 403 | `ErrAutoProvisionOff` mapped to `provisioning_disabled` | `sso.go:46`, `org_sso.go:378` |
 
 ### Configuration
 
@@ -1568,7 +1568,7 @@ The state cookie carries `{state, verifier, orgID, exp}` because the API is stat
 | `oidc.frontendRedirectUrl` | `LLMSAFESPACES_OIDC_FRONTENDREDIRECTURL` | `""` | Browser landing URL after SSO callback (e.g. `https://app.example.com`). Empty → `/`. |
 | `oidc.stateCookieName` | `LLMSAFESPACES_OIDC_STATECOOKIENAME` | `""` (→ `lsp_sso_state` in Go) | PKCE/state cookie name. Override only on collision. |
 
-The state-cookie signing key is `deriveServerKey("oidc-state-cookie")` (`api/internal/app/app.go:396`), derived from the same master secret as the KEK. When unset, the SSO service constructs but rejects config mutation and login at runtime (`sso.go:259,329`).
+The state-cookie signing key is `deriveServerKey("oidc-state-cookie")` (`api/internal/app/app.go:445`), derived from the same master secret as the KEK. When unset, the SSO service constructs but rejects config mutation and login at runtime (`sso.go:429,499`).
 
 **Per-org IdP config** is not in `config.yaml`, `values.yaml`, or the settings system — it is entered by the org admin through the API and stored in `org_sso_configs`.
 
@@ -1593,12 +1593,12 @@ The state-cookie signing key is `deriveServerKey("oidc-state-cookie")` (`api/int
 | OIDC unit tests (fake IdP with JWKS) | `api/internal/services/sso/sso_test.go` |
 | HTTP handler (CRUD + login + discovery) | `api/internal/handlers/org_sso.go` |
 | Handler integration tests + fake IdP helpers | `api/internal/handlers/org_sso_test.go`, `org_sso_idp_helpers_test.go` |
-| Store interface + Postgres impl | `api/internal/services/database/pg_org_store.go` (interface `OrgStore:116-133`, SSO impl `1571-1680`) |
+| Store interface + Postgres impl | `api/internal/services/database/pg_org_store.go` (interface `OrgStore:32`, SSO impl `1660-1830`) |
 | Store tests | `api/internal/services/database/pg_org_store_sso_test.go` |
 | Schema migration | `api/migrations/000038_org_sso_configs.up.sql` |
-| API DTOs | `pkg/types/orgs.go:174-215` |
-| Router registration | `api/internal/server/router.go:599-601, 1192-1194` |
-| Service wiring (KEK, state key) | `api/internal/app/app.go:395-413` |
+| API DTOs | `pkg/types/orgs.go:203-242` |
+| Router registration | `api/internal/server/router.go:633-635, 1234-1238` |
+| Service wiring (KEK, state key) | `api/internal/app/app.go:445-459` |
 | Frontend admin UI | `frontend/src/components/org-admin/OrgSSOTab.tsx` |
 | Frontend login integration | `frontend/src/pages/LoginPage.tsx`, `frontend/src/api/sso.ts` |
 | Design doc (D17 decisions) | `design/stories/epic-43-organization-management/README.md` (Q-S1..Q-S4) |
