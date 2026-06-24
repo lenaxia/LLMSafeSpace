@@ -78,4 +78,4 @@ None (CI will confirm).
 
 - `runtimes/base/tools/smoke-test.sh` — rewritten (per-check reporting, pip
   fallback, mise ls diagnostic, soft JVM).
-- `worklogs/NNNN_2026-06-24_issue-87-smoke-test-diagnostics.md` — this file.
+- `worklogs/0540_2026-06-24_issue-87-smoke-test-diagnostics.md` — this file.
