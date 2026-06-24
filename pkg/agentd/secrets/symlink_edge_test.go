@@ -63,11 +63,10 @@ func TestReset_TmpfsNotYetCreated(t *testing.T) {
 	m := &Materializer{FS: RealFS(), Paths: paths}
 
 	// reset must not panic or error — RemoveAll handles ENOENT, MkdirAll
-	// creates the path.
+	// creates the path (including parents).
 	require.NoError(t, m.reset())
 
-	// Directories must now exist.
-	require.NoError(t, os.MkdirAll(filepath.Dir(paths.SSHDir), 0o755))
+	// Directories must now exist (created by reset's MkdirAll, including parents).
 	_, err := os.Stat(paths.SSHDir)
 	require.NoError(t, err, "SSH dir must exist after reset created it")
 }
