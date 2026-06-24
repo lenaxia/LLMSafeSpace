@@ -122,6 +122,29 @@ func (s *Service) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
+// DeleteByPrefix deletes all keys matching the given prefix using SCAN + DEL.
+// Uses UNLINK for non-blocking deletion when available (Redis 4.0+).
+func (s *Service) DeleteByPrefix(ctx context.Context, prefix string) error {
+	var cursor uint64
+	for {
+		var keys []string
+		var err error
+		keys, cursor, err = s.client.Scan(ctx, cursor, prefix+"*", 100).Result()
+		if err != nil {
+			return fmt.Errorf("failed to scan cache keys with prefix %s: %w", prefix, err)
+		}
+		if len(keys) > 0 {
+			if err := s.client.Unlink(ctx, keys...).Err(); err != nil {
+				_ = s.client.Del(ctx, keys...).Err()
+			}
+		}
+		if cursor == 0 {
+			break
+		}
+	}
+	return nil
+}
+
 // GetObject gets an object from the cache and unmarshals it into the provided value
 func (s *Service) GetObject(ctx context.Context, key string, value interface{}) error {
 	data, err := s.client.Get(ctx, key).Bytes()

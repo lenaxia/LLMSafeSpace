@@ -95,6 +95,8 @@ type RouterConfig struct {
 	EmailVerifyHandler   *handlers.EmailVerifyHandler
 	PasswordResetHandler *handlers.PasswordResetHandler
 	PolicyHandler        *handlers.PolicyHandler
+	PromptHandler        *handlers.PromptHandler
+	AgentRoleHandler     *handlers.AgentRoleHandler
 	AuditHandler         *handlers.AuditHandler
 
 	// RelayAdminHandler handles relay admin setup + status endpoints (optional)
@@ -404,6 +406,25 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 	}
 
 	// US-43.19: Platform-admin org/user suspension (D19/D20). Behind
+	if cfg.PromptHandler != nil {
+		promptAdmin := router.Group("/api/v1/admin/prompt")
+		promptAdmin.Use(services.GetAuth().AuthMiddleware())
+		promptAdmin.Use(middleware.AdminGuard())
+		promptAdmin.GET("", cfg.PromptHandler.GetPlatform)
+		promptAdmin.PUT("", cfg.PromptHandler.SetPlatform)
+	}
+
+	if cfg.AgentRoleHandler != nil {
+		roleAdmin := router.Group("/api/v1/admin/agent-roles")
+		roleAdmin.Use(services.GetAuth().AuthMiddleware())
+		roleAdmin.Use(middleware.AdminGuard())
+		roleAdmin.GET("", cfg.AgentRoleHandler.ListPlatform)
+		roleAdmin.POST("", cfg.AgentRoleHandler.CreatePlatform)
+		roleAdmin.GET("/:id", cfg.AgentRoleHandler.GetPlatform)
+		roleAdmin.PUT("/:id", cfg.AgentRoleHandler.UpdatePlatform)
+		roleAdmin.DELETE("/:id", cfg.AgentRoleHandler.DeletePlatform)
+	}
+
 	// AuthMiddleware + AdminGuard so only users.role='admin' can call them.
 	// US-43.18: the same group also hosts the dashboard list endpoints
 	// (GET /admin/orgs, GET /admin/users).
@@ -491,7 +512,7 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 
 	// Org CRUD routes (Epic 11)
 	if cfg.OrgsHandler != nil {
-		registerOrgRoutes(router, services, cfg.OrgsHandler, cfg.OrgCredentialsHandler, cfg.InvitationsHandler, cfg.PolicyHandler, cfg.AuditHandler, cfg.SSOHandler)
+		registerOrgRoutes(router, services, cfg.OrgsHandler, cfg.OrgCredentialsHandler, cfg.InvitationsHandler, cfg.PolicyHandler, cfg.PromptHandler, cfg.AgentRoleHandler, cfg.AuditHandler, cfg.SSOHandler)
 	}
 
 	// Metrics endpoint.
@@ -1088,6 +1109,18 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, idGroup *gin.RouterGroup, serv
 		}
 		c.Status(http.StatusNoContent)
 	})
+
+	// Agent customization: workspace-level prompt + role selection.
+	// Registered on idGroup so WorkspaceAccessMiddleware runs first.
+	if cfg.PromptHandler != nil {
+		idGroup.GET("/prompt", cfg.PromptHandler.GetWorkspacePrompt)
+		idGroup.PUT("/prompt", cfg.PromptHandler.SetWorkspacePrompt)
+	}
+	if cfg.AgentRoleHandler != nil {
+		idGroup.GET("/agent-role", cfg.AgentRoleHandler.GetWorkspaceRole)
+		idGroup.PUT("/agent-role", cfg.AgentRoleHandler.SetWorkspaceRole)
+		idGroup.GET("/effective-agent-role", cfg.AgentRoleHandler.GetEffectiveWorkspaceRole)
+	}
 }
 
 // registerProxyRoutes adds all /api/v1/workspaces/:id proxy routes on the
@@ -1163,7 +1196,7 @@ func getMaxActiveSessions(ctx context.Context, instanceSettings *settings.Instan
 }
 
 // registerOrgRoutes adds all /api/v1/orgs routes.
-func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *handlers.OrgsHandler, credH *handlers.OrgCredentialsHandler, invH *handlers.InvitationsHandler, polH *handlers.PolicyHandler, audH *handlers.AuditHandler, ssoH *handlers.SSOHandler) {
+func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *handlers.OrgsHandler, credH *handlers.OrgCredentialsHandler, invH *handlers.InvitationsHandler, polH *handlers.PolicyHandler, promptH *handlers.PromptHandler, roleH *handlers.AgentRoleHandler, audH *handlers.AuditHandler, ssoH *handlers.SSOHandler) {
 	authMW := services.GetAuth().AuthMiddleware()
 
 	orgGroup := router.Group("/api/v1/orgs")
@@ -1222,6 +1255,19 @@ func registerOrgRoutes(router *gin.Engine, services interfaces.Services, h *hand
 		featurePolicy := orgAdminGroup.Group("", middleware.FeatureGuard(h, "policies"))
 		featurePolicy.PUT("/policies/:key", polH.Put)
 		featurePolicy.DELETE("/policies/:key", polH.Delete)
+	}
+
+	if promptH != nil {
+		orgIDGroup.GET("/prompt", promptH.GetOrg)
+		orgAdminGroup.PUT("/prompt", promptH.SetOrg)
+	}
+
+	if roleH != nil {
+		orgAdminGroup.GET("/agent-roles", roleH.ListOrg)
+		orgAdminGroup.POST("/agent-roles", roleH.CreateOrg)
+		orgAdminGroup.GET("/agent-roles/:roleId", roleH.GetOrg)
+		orgAdminGroup.PUT("/agent-roles/:roleId", roleH.UpdateOrg)
+		orgAdminGroup.DELETE("/agent-roles/:roleId", roleH.DeleteOrg)
 	}
 
 	if audH != nil {

@@ -99,6 +99,8 @@ func (c *memCache) Delete(_ context.Context, key string) error {
 	return nil
 }
 
+func (c *memCache) DeleteByPrefix(_ context.Context, _ string) error { return nil }
+
 func (c *memCache) GetObject(_ context.Context, _ string, _ interface{}) error {
 	return errors.New("not implemented")
 }

@@ -133,6 +133,18 @@ func applyPolicyValue(vals *types.OrgPolicyValues, p *types.OrgPolicy) error {
 			return err
 		}
 		vals.MaxActiveWorkspacesPerMem = &n
+	case types.PolicySysPromptOrg:
+		var s string
+		if err := json.Unmarshal(p.Value, &s); err != nil {
+			return err
+		}
+		vals.SysPromptOrg = &s
+	case types.PolicyAllowUserPrompt:
+		var b bool
+		if err := json.Unmarshal(p.Value, &b); err != nil {
+			return err
+		}
+		vals.AllowUserPrompt = &b
 	}
 	return nil
 }

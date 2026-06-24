@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
 )
 
 // bootstrapResponse is the JSON envelope returned by POST /internal/v1/pod-bootstrap.
@@ -23,6 +25,7 @@ import (
 type bootstrapResponse struct {
 	Secrets         json.RawMessage `json:"secrets"`
 	WorkspaceConfig json.RawMessage `json:"workspaceConfig,omitempty"`
+	AdminPrompt     string          `json:"adminPrompt,omitempty"`
 }
 
 // bootstrapRequest is the JSON body POSTed to the API.
@@ -72,7 +75,7 @@ func runBootstrapCommand(args []string, _ io.Writer, stderr io.Writer) int {
 		return 0
 	}
 
-	secrets, wsCfg, err := fetchBootstrapSecrets(*apiURL, *workspaceID, string(token))
+	secrets, wsCfg, adminPrompt, err := fetchBootstrapSecrets(*apiURL, *workspaceID, string(token))
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "bootstrap: fetch failed: %v\n", err)
 		writeEmptySecrets(*out)
@@ -91,14 +94,22 @@ func runBootstrapCommand(args []string, _ io.Writer, stderr io.Writer) int {
 		}
 	}
 
+	if adminPrompt != "" {
+		if err := atomicWriteSecrets(agentd.AdminPromptPath, []byte(adminPrompt)); err != nil {
+			_, _ = fmt.Fprintf(stderr, "bootstrap: failed to write admin-prompt.md: %v\n", err)
+		} else {
+			_, _ = fmt.Fprintf(stderr, "bootstrap: wrote admin prompt (%d bytes)\n", len(adminPrompt))
+		}
+	}
+
 	_, _ = fmt.Fprintf(stderr, "bootstrap: success, %d bytes secrets\n", len(secrets))
 	return 0
 }
 
-func fetchBootstrapSecrets(apiURL, workspaceID, token string) (json.RawMessage, json.RawMessage, error) {
+func fetchBootstrapSecrets(apiURL, workspaceID, token string) (json.RawMessage, json.RawMessage, string, error) {
 	body, err := json.Marshal(bootstrapRequest{WorkspaceID: workspaceID})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -107,7 +118,7 @@ func fetchBootstrapSecrets(apiURL, workspaceID, token string) (json.RawMessage, 
 	//nolint:gosec // G704: apiURL is controller-set via LLMSAFESPACE_API_URL env var, not user-controllable
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL+"/internal/v1/pod-bootstrap", bytes.NewReader(body))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -116,23 +127,23 @@ func fetchBootstrapSecrets(apiURL, workspaceID, token string) (json.RawMessage, 
 	//nolint:gosec // G704: apiURL is controller-set, not user-controllable
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("API returned %d", resp.StatusCode)
+		return nil, nil, "", fmt.Errorf("API returned %d", resp.StatusCode)
 	}
 
 	var result bootstrapResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, nil, fmt.Errorf("decode response: %w", err)
+		return nil, nil, "", fmt.Errorf("decode response: %w", err)
 	}
 
 	if len(result.Secrets) == 0 {
 		result.Secrets = json.RawMessage("[]")
 	}
-	return result.Secrets, result.WorkspaceConfig, nil
+	return result.Secrets, result.WorkspaceConfig, result.AdminPrompt, nil
 }
 
 func writeEmptySecrets(path string) {

@@ -131,6 +131,8 @@ func (c *recordingCache) Delete(_ context.Context, key string) error {
 	return nil
 }
 
+func (c *recordingCache) DeleteByPrefix(_ context.Context, _ string) error { return nil }
+
 // The remaining CacheService methods are not exercised by the suspend path;
 // no-op implementations satisfy the interface.
 func (c *recordingCache) SetNX(context.Context, string, string, time.Duration) (bool, error) {

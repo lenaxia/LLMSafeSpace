@@ -19,6 +19,7 @@ import { SessionRetryBanner, type RetryStatus } from "../components/chat/Session
 import { AgentReloadBanner } from "../components/workspace/AgentReloadBanner";
 import { DiskUsageBar } from "../components/workspace/DiskUsageBar";
 import { ModelSelector } from "../components/chat/ModelSelector";
+import { RoleSelector } from "../components/chat/RoleSelector";
 import { Spinner } from "../components/ui/Spinner";
 import { KebabMenu } from "../components/ui/KebabMenu";
 import type { KebabMenuItem } from "../components/ui/KebabMenu";
@@ -856,7 +857,14 @@ export function ChatPage() {
         </h2>
         <div className="flex items-center gap-2">
           {isReady && workspaceId && (
-            <ModelSelector workspaceId={workspaceId} disabled={!isReady} />
+            <>
+              <ModelSelector workspaceId={workspaceId} disabled={!isReady} />
+              <RoleSelector
+                workspaceId={workspaceId}
+                orgId={activeWorkspaceData?.orgId}
+                disabled={!isReady}
+              />
+            </>
           )}
           <KebabMenu items={kebabItems} footer={[
             ...(status?.agentHealth?.agentVersion ? [`opencode v${status.agentHealth.agentVersion}`] : []),

@@ -19,6 +19,10 @@ const (
 	PolicyAllowedProviders          OrgPolicyKey = "allowed_providers"
 	PolicyMaxWorkspacesPerMember    OrgPolicyKey = "max_workspaces_per_member"
 	PolicyMaxActiveWorkspacesPerMem OrgPolicyKey = "max_active_workspaces_per_member"
+
+	// Agent customization policies
+	PolicySysPromptOrg     OrgPolicyKey = "sys_prompt_org"
+	PolicyAllowUserPrompt  OrgPolicyKey = "allow_user_prompt"
 )
 
 // OrgPolicy is one row of org_policies. The Value is the raw JSONB payload; the
@@ -39,6 +43,10 @@ type OrgPolicyValues struct {
 	AllowedProviders          *[]string `json:"allowedProviders,omitempty"`
 	MaxWorkspacesPerMember    *int      `json:"maxWorkspacesPerMember,omitempty"`
 	MaxActiveWorkspacesPerMem *int      `json:"maxActiveWorkspacesPerMember,omitempty"`
+
+	// Agent customization
+	SysPromptOrg    *string `json:"sysPromptOrg,omitempty"`
+	AllowUserPrompt *bool   `json:"allowUserPrompt,omitempty"`
 }
 
 // IsModelAllowed reports whether modelID is permitted under the allowed-models
@@ -82,6 +90,23 @@ func (p *OrgPolicyValues) MaxActive() int {
 		return -1
 	}
 	return *p.MaxActiveWorkspacesPerMem
+}
+
+// OrgPrompt returns the org-level system prompt overlay, or "" when unset.
+func (p *OrgPolicyValues) OrgPrompt() string {
+	if p == nil || p.SysPromptOrg == nil {
+		return ""
+	}
+	return *p.SysPromptOrg
+}
+
+// IsUserPromptAllowed reports whether org members can customize their agent
+// prompts. Defaults to false (locked) when no policy is set.
+func (p *OrgPolicyValues) IsUserPromptAllowed() bool {
+	if p == nil || p.AllowUserPrompt == nil {
+		return false
+	}
+	return *p.AllowUserPrompt
 }
 
 // --- US-43.13: Org-scoped audit log ---

@@ -33,6 +33,8 @@ type Client struct {
 	Account                  *AccountService
 	ProviderCredentials      *ProviderCredentialsService
 	AdminProviderCredentials *AdminProviderCredentialsService
+	Prompts                  *PromptsService
+	AgentRoles               *AgentRolesService
 }
 
 // Option configures the client.
@@ -72,6 +74,8 @@ func New(baseURL string, opts ...Option) *Client {
 	c.Account = &AccountService{c: c}
 	c.ProviderCredentials = &ProviderCredentialsService{c: c}
 	c.AdminProviderCredentials = &AdminProviderCredentialsService{c: c}
+	c.Prompts = &PromptsService{c: c}
+	c.AgentRoles = &AgentRolesService{c: c}
 	return c
 }
 

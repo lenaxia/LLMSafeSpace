@@ -59,6 +59,8 @@ type AgentConfigWriter struct {
 	providerRaw json.RawMessage // raw "provider" map JSON from FormatOpenCodeConfig; nil = no providers
 	model       string          // fully-qualified "providerID/modelID" form; "" = no model
 	relay       *relaySource    // nil = relay not yet injected / skipped
+	adminPrompt string          // admin-configured system prompt from /tmp/admin-prompt.md; "" = none
+	agentsRaw   json.RawMessage // existing "agents" config from loadExisting, preserved across rebuilds
 }
 
 // newAgentConfigWriter creates the writer and initializes its sources
@@ -68,6 +70,7 @@ type AgentConfigWriter struct {
 func newAgentConfigWriter(path string) *AgentConfigWriter {
 	w := &AgentConfigWriter{path: path}
 	w.loadExisting()
+	w.loadAdminPrompt()
 	return w
 }
 
@@ -83,12 +86,26 @@ func (w *AgentConfigWriter) loadExisting() {
 	var cfg struct {
 		Provider json.RawMessage `json:"provider"`
 		Model    string          `json:"model,omitempty"`
+		Agents   json.RawMessage `json:"agents,omitempty"`
 	}
 	if json.Unmarshal(data, &cfg) != nil {
 		return
 	}
 	w.providerRaw = cfg.Provider
 	w.model = cfg.Model
+	w.agentsRaw = cfg.Agents
+}
+
+// loadAdminPrompt reads the admin-configured system prompt written by the
+// bootstrap subcommand to /tmp/admin-prompt.md. Loaded once at init;
+// persists across all rebuilds. Changes take effect on next pod boot
+// (design decision: no hot-reload).
+func (w *AgentConfigWriter) loadAdminPrompt() {
+	data, err := os.ReadFile(agentd.AdminPromptPath)
+	if err != nil || len(data) == 0 {
+		return
+	}
+	w.adminPrompt = string(data)
 }
 
 // setProviders updates the provider source from a FormatOpenCodeConfig
@@ -189,6 +206,27 @@ func (w *AgentConfigWriter) rebuild() error {
 	if w.model != "" {
 		modelJSON, _ := json.Marshal(w.model)
 		cfg["model"] = modelJSON
+	}
+
+	// Merge admin prompt into agents config. Sets agents.build.system so the
+	// prompt is prepended to the system prompt by opencode's LLM runner
+	// (agent.info.system is placed before system.baseline). Existing agents
+	// config from loadExisting is preserved; admin prompt overrides build.system.
+	if w.adminPrompt != "" || len(w.agentsRaw) > 0 {
+		agents := make(map[string]json.RawMessage)
+		if len(w.agentsRaw) > 0 {
+			_ = json.Unmarshal(w.agentsRaw, &agents)
+		}
+		if w.adminPrompt != "" {
+			buildAgent := map[string]string{"system": w.adminPrompt}
+			buildJSON, _ := json.Marshal(buildAgent)
+			agents["build"] = buildJSON
+		}
+		agentsJSON, err := json.Marshal(agents)
+		if err != nil {
+			return fmt.Errorf("agent-config writer: marshal agents: %w", err)
+		}
+		cfg["agents"] = agentsJSON
 	}
 
 	output, err := json.MarshalIndent(cfg, "", "  ")

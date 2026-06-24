@@ -55,7 +55,7 @@ func newTestBootstrapRouter(t *testing.T, reviewer *fakeTokenReviewer, injector 
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	h := NewPodBootstrapHandler(reviewer, injector, lookup, testBootstrapNamespace)
+	h := NewPodBootstrapHandler(reviewer, injector, lookup, nil, testBootstrapNamespace)
 	r.POST("/internal/v1/pod-bootstrap", h.Bootstrap)
 	return r
 }
