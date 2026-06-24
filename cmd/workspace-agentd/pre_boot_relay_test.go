@@ -304,3 +304,58 @@ func TestPreBootAuthJSONPath_EmptyHome_FallsBackToSandbox(t *testing.T) {
 	got := preBootAuthJSONPath("")
 	assert.Equal(t, "/home/sandbox/.local/opencode/auth.json", got)
 }
+
+// TestApplyRelayConfigPreBoot_AuthJSONWriteFails covers the
+// applied_auth_failed outcome — the only outcome string that returns
+// (nil error) but with a non-"applied" marker. Locks in the
+// graceful-degradation contract:
+//
+//   - agent-config.json was written successfully
+//   - auth.json write failed (parent dir missing, EROFS, perms)
+//   - return ("applied_auth_failed", nil) — NOT a hard error
+//
+// runMaterializeCommand observes a non-error outcome and continues to
+// exit 0 (info-logging the outcome rather than CrashLoop'ing). The
+// pod boots; opencode has the relay-provider block but no auth.json
+// entry — first request through the relay 401s and the user can
+// re-auth. Strictly better than failing the whole boot.
+//
+// PR #401 review finding: this outcome string had no explicit test;
+// adding one prevents a future regression where someone makes the
+// auth.json failure fatal (exit 3 → CrashLoop), which would cascade
+// every workspace creation cluster-wide for any tmpfs / volume issue
+// that affects auth.json writes.
+func TestApplyRelayConfigPreBoot_AuthJSONWriteFails(t *testing.T) {
+	withFreeModelsAtTmp(t, mustCatalogBytes(t, "model-a"))
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "agent-config.json")
+	require.NoError(t, os.WriteFile(cfgPath, []byte(`{}`), 0o600))
+
+	// Point auth.json at a path inside an unwritable directory.
+	// chmod 0o500 (r-x) means even the owner can't write here, so
+	// updateAuthJSONForRelay's os.WriteFile must fail with EACCES.
+	roDir := filepath.Join(dir, "ro")
+	require.NoError(t, os.Mkdir(roDir, 0o500))
+	t.Cleanup(func() {
+		// Restore writable so t.TempDir() cleanup can remove it.
+		_ = os.Chmod(roDir, 0o700)
+	})
+	authPath := filepath.Join(roDir, "auth.json")
+
+	outcome, err := applyRelayConfigPreBoot("https://relay.test/", authPath, cfgPath, nil)
+
+	require.NoError(t, err,
+		"auth.json write failure must NOT propagate as an error — graceful degradation requires "+
+			"the materialize subcommand to continue on this path so the pod still boots")
+	assert.Equal(t, "applied_auth_failed", outcome,
+		"this is the distinct outcome string that lets runMaterializeCommand log a warning "+
+			"instead of CrashLooping — locking it down via test prevents a future change from "+
+			"silently making this fatal")
+
+	// agent-config.json must still have been written successfully —
+	// the failure was AFTER the agent-config write.
+	cfgBytes, _ := os.ReadFile(cfgPath)
+	assert.Contains(t, string(cfgBytes), "opencode-relay",
+		"agent-config.json must contain the relay block — only auth.json failed")
+}

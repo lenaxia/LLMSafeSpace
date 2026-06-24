@@ -555,6 +555,28 @@ cp /mnt/secrets/password/password /sandbox-cfg/password
 			env := []corev1.EnvVar{
 				{Name: "WORKSPACE_ID", Value: workspace.Name},
 				{Name: "LLMSAFESPACE_API_URL", Value: r.APIServiceURL},
+				// 2026-06-24 PR #401 review fix: XDG_DATA_HOME must
+				// match the value entrypoint-opencode.sh sets in the
+				// MAIN container so agentd's materialize subcommand
+				// (running in the INIT container) reads auth.json from
+				// the same location opencode will read it from in the
+				// main container — i.e. the symlink the init script
+				// creates at /workspace/.local/opencode/auth.json
+				// pointing into /sandbox-runtime/rt/auth.json (US-35.7).
+				//
+				// Without this, preBootAuthJSONPath falls back to
+				// $HOME/.local/opencode/auth.json
+				// (=/home/sandbox/.local/opencode/auth.json), which
+				// for a fresh pod doesn't exist (correct by accident:
+				// shouldSkipRelay returns false → relay proceeds), but
+				// for a resumed pod with a stale pre-US-35.7 auth.json
+				// at PVC:home/.local/opencode/auth.json containing a
+				// personal key, the bypass check would silently miss
+				// the key and the cold-start optimization would then
+				// be lost (the legacy in-pod injector would pick up
+				// the slack and skip injection itself, but the user
+				// loses the ~6-8s savings).
+				{Name: "XDG_DATA_HOME", Value: "/workspace/.local"},
 			}
 			// 2026-06-23 cold-start optimization (item #1a): propagate
 			// the relay URL into the init container so the materialize

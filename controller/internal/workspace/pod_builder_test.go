@@ -463,9 +463,9 @@ func TestPodBuilder_RelayBaseURLEnv_MainContainer(t *testing.T) {
 // when the file is present. The materialize subcommand expects to find
 // it at /sandbox-cfg/free-models.json, sibling to other config files.
 //
-// The cp is unconditional in shell terms (no [ -f ... ] guard removal)
-// so a missing CM (Optional: true) doesn't break the script — we want
-// the copy to happen IFF the file exists.
+// The cp is guarded by `if [ -f /mnt/freemodels/models.json ]` so a
+// missing CM (Optional: true) doesn't break the script — the copy
+// happens IFF the file exists.
 func TestPodBuilder_FreeModelsScriptCopy(t *testing.T) {
 	ws := newWorkspaceForPodBuilder(t)
 	r := reconcilerWithRelay(t, "")
@@ -482,6 +482,40 @@ func TestPodBuilder_FreeModelsScriptCopy(t *testing.T) {
 		"copy must be conditional — missing CM (Optional: true) must not fail the script")
 	assert.Contains(t, script, "cp /mnt/freemodels/models.json /sandbox-cfg/free-models.json",
 		"models.json must land at /sandbox-cfg/free-models.json so materialize can find it")
+}
+
+// TestPodBuilder_InitXDGDataHome locks in the PR #401 review fix:
+// the credential-setup init container must carry XDG_DATA_HOME set
+// to /workspace/.local so agentd's materialize subcommand reads
+// auth.json from the same path opencode reads it from in the main
+// container (the symlink the init script creates that points into
+// /sandbox-runtime/rt/auth.json).
+//
+// Without this env var, preBootAuthJSONPath in the init container
+// falls back to $HOME/.local/opencode/auth.json
+// (=/home/sandbox/.local/opencode/auth.json), which is NOT the same
+// file opencode reads. For a resumed pod with a stale pre-US-35.7
+// auth.json carrying a personal opencode key on the PVC home subpath,
+// the bypass check would silently miss the key and the cold-start
+// optimization would be lost (legacy in-pod injector would still
+// catch it but the user loses the savings).
+func TestPodBuilder_InitXDGDataHome(t *testing.T) {
+	ws := newWorkspaceForPodBuilder(t)
+	r := reconcilerFor(t)
+
+	pod, err := r.buildPod(context.Background(), ws)
+	require.NoError(t, err)
+
+	credInit := findInitContainer(pod, "credential-setup")
+	require.NotNil(t, credInit)
+
+	xdg := findEnv(credInit, "XDG_DATA_HOME")
+	require.NotNil(t, xdg,
+		"credential-setup init must carry XDG_DATA_HOME so preBootAuthJSONPath "+
+			"resolves to the same auth.json opencode reads in the main container")
+	assert.Equal(t, "/workspace/.local", xdg.Value,
+		"XDG_DATA_HOME must match entrypoint-opencode.sh's value (/workspace/.local) — "+
+			"any drift between the two would silently break the personal-key bypass")
 }
 
 // Silence "imported and not used" if any test above is removed.
