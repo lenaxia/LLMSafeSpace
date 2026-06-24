@@ -371,10 +371,6 @@ func TestRevokeToken(t *testing.T) {
 	mockCacheService.AssertExpectations(t)
 }
 
-// TestRevokeAllUserSessions_RevokesAllTrackedSessions verifies that
-// RevokeAllUserSessions reads the tracked session entries and writes
-// "revoked" under both the jti key and the hash key for each entry.
-// This is the OWASP-mandated session-invalidation primitive for
 // TestRevokeAllUserSessions_PropagatesContext mirrors the RevokeToken test for
 // its sibling: RevokeAllUserSessions has its OWN independent ctx derivation
 // (auth.go:953), so a single-line regression there would not be caught by the
@@ -402,6 +398,10 @@ func TestRevokeAllUserSessions_PropagatesContext(t *testing.T) {
 	cache.AssertExpectations(t)
 }
 
+// TestRevokeAllUserSessions_RevokesAllTrackedSessions verifies that
+// RevokeAllUserSessions reads the tracked session entries and writes
+// "revoked" under both the jti key and the hash key for each entry.
+// This is the OWASP-mandated session-invalidation primitive for
 // password-reset (US-49.5).
 func TestRevokeAllUserSessions_RevokesAllTrackedSessions(t *testing.T) {
 	log, _ := logger.New(true, "debug", "console")
