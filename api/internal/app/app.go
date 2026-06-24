@@ -1183,7 +1183,7 @@ func initEmailStack(
 
 	emailTokenStore := database.NewPgEmailTokenStore(dbSvc.DB)
 	var sessionRevoker interface {
-		RevokeAllUserSessions(userID string) error
+		RevokeAllUserSessions(ctx context.Context, userID string) error
 	}
 	if authSvc, ok := svc.GetAuth().(*auth.Service); ok {
 		sessionRevoker = authSvc

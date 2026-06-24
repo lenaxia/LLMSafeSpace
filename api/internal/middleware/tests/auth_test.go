@@ -42,7 +42,7 @@ func (m *MockAuthService) ValidateToken(ctx context.Context, token string) (stri
 // by G18 (Epic 17 Phase 4 RT-4.13). Most middleware tests do not exercise
 // the revocation path, so the mock satisfies the interface and returns
 // whatever the test configures.
-func (m *MockAuthService) RevokeToken(token string) error {
+func (m *MockAuthService) RevokeToken(_ context.Context, token string) error {
 	args := m.Called(token)
 	return args.Error(0)
 }
