@@ -729,7 +729,7 @@ func TestProxyBuffer_BufferedSuccessRecordsMessageAndKeepsSession(t *testing.T) 
 
 	assert.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
 	assert.Equal(t, int32(1), atomic.LoadInt32(&spy.messages), "buffered success must run the success block (RecordMessage)")
-	assert.True(t, env.handler.isSessionActive("ws-buf-succ", "s1"), "session must remain active after buffered success (removeActiveSession must NOT have run)")
+	assert.True(t, env.handler.isSessionActive(context.Background(), "ws-buf-succ", "s1"), "session must remain active after buffered success (removeActiveSession must NOT have run)")
 }
 
 func TestProxyBuffer_FIFOOrderAcrossConcurrentMessages(t *testing.T) {

@@ -625,7 +625,7 @@ func TestEpic13_wsConfig_PopulatesMaxActiveSessions(t *testing.T) {
 
 	// Call shouldAutoApprovePermissions — this is the production code path
 	// that populates wsConfig from the workspace CRD.
-	result := handler.shouldAutoApprovePermissions("ws-1")
+	result := handler.shouldAutoApprovePermissions(context.Background(), "ws-1")
 	assert.False(t, result, "workspace CRD has AutoApprovePermissions=false")
 
 	// Verify wsConfig was populated with all fields from the CRD.

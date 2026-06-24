@@ -242,11 +242,11 @@ func activeSessKey(workspaceID string) string {
 // active set if there's room. Fail-open: if Redis is unreachable,
 // returns true and records the error. The rationale (per design):
 // better to allow a request than block legit traffic when Redis hiccups.
-func (s *RedisStore) CheckAndAddActiveSession(workspaceID, sessionID string, maxSessions int) bool {
+func (s *RedisStore) CheckAndAddActiveSession(ctx context.Context, workspaceID, sessionID string, maxSessions int) bool {
 	const op = "check_and_add_active_session"
 	start := time.Now()
 
-	res, err := checkAndAddScript.Run(context.Background(), s.client,
+	res, err := checkAndAddScript.Run(ctx, s.client,
 		[]string{activeSessKey(workspaceID)},
 		sessionID, maxSessions, int(s.activeSessTTL.Seconds())).Result()
 	if err != nil {
@@ -275,7 +275,7 @@ func (s *RedisStore) CheckAndAddActiveSession(workspaceID, sessionID string, max
 		if s.activeSessionsGauge != nil {
 			// Sample the gauge on every successful write. Cheaper than a
 			// separate polling loop, and the value is fresh.
-			n := s.ActiveSessionCount(workspaceID)
+			n := s.ActiveSessionCount(ctx, workspaceID)
 			s.activeSessionsGauge.WithLabelValues(workspaceID).Set(float64(n))
 		}
 		return true
@@ -297,12 +297,12 @@ func (s *RedisStore) CheckAndAddActiveSession(workspaceID, sessionID string, max
 // DeleteLabelValues — without this, workspaces that churn through
 // create/suspend/terminate cycles would accumulate orphan time series
 // forever (workspace_id is a UUID, so cardinality is unbounded).
-func (s *RedisStore) RemoveActiveSession(workspaceID, sessionID string) {
+func (s *RedisStore) RemoveActiveSession(ctx context.Context, workspaceID, sessionID string) {
 	const op = "remove_active_session"
 	start := time.Now()
 	key := activeSessKey(workspaceID)
 
-	res, err := removeActiveScript.Run(context.Background(), s.client,
+	res, err := removeActiveScript.Run(ctx, s.client,
 		[]string{key}, sessionID).Result()
 	if err != nil && err != redis.Nil {
 		s.recordError(op)
@@ -341,10 +341,10 @@ return redis.call('SCARD', key)
 // IsSessionActive reports whether sessionID is in the workspace's
 // active set. Returns false on Redis error (do not trap the user in 409
 // based on possibly-stale state).
-func (s *RedisStore) IsSessionActive(workspaceID, sessionID string) bool {
+func (s *RedisStore) IsSessionActive(ctx context.Context, workspaceID, sessionID string) bool {
 	const op = "is_session_active"
 	start := time.Now()
-	n, err := s.client.SIsMember(context.Background(), activeSessKey(workspaceID), sessionID).Result()
+	n, err := s.client.SIsMember(ctx, activeSessKey(workspaceID), sessionID).Result()
 	if err != nil {
 		s.recordError(op)
 		s.observeOp(op, "error", start)
@@ -356,10 +356,10 @@ func (s *RedisStore) IsSessionActive(workspaceID, sessionID string) bool {
 
 // ActiveSessionCount returns the number of sessions currently in the
 // workspace's active set. Returns 0 on Redis error.
-func (s *RedisStore) ActiveSessionCount(workspaceID string) int {
+func (s *RedisStore) ActiveSessionCount(ctx context.Context, workspaceID string) int {
 	const op = "active_session_count"
 	start := time.Now()
-	n, err := s.client.SCard(context.Background(), activeSessKey(workspaceID)).Result()
+	n, err := s.client.SCard(ctx, activeSessKey(workspaceID)).Result()
 	if err != nil {
 		s.recordError(op)
 		s.observeOp(op, "error", start)
@@ -371,10 +371,10 @@ func (s *RedisStore) ActiveSessionCount(workspaceID string) int {
 
 // GetActiveSessions returns the IDs of all sessions currently in the
 // workspace's active set. Returns nil on Redis error or empty set.
-func (s *RedisStore) GetActiveSessions(workspaceID string) []string {
+func (s *RedisStore) GetActiveSessions(ctx context.Context, workspaceID string) []string {
 	const op = "get_active_sessions"
 	start := time.Now()
-	members, err := s.client.SMembers(context.Background(), activeSessKey(workspaceID)).Result()
+	members, err := s.client.SMembers(ctx, activeSessKey(workspaceID)).Result()
 	if err != nil {
 		s.recordError(op)
 		s.observeOp(op, "error", start)
@@ -390,10 +390,10 @@ func (s *RedisStore) GetActiveSessions(workspaceID string) []string {
 // ClearActiveSessions deletes the workspace's entire active set,
 // removing the Redis key entirely so no orphan TTL countdown lingers.
 // Also cleans up the Prometheus gauge label to bound cardinality.
-func (s *RedisStore) ClearActiveSessions(workspaceID string) {
+func (s *RedisStore) ClearActiveSessions(ctx context.Context, workspaceID string) {
 	const op = "clear_active_sessions"
 	start := time.Now()
-	if err := s.client.Del(context.Background(), activeSessKey(workspaceID)).Err(); err != nil && err != redis.Nil {
+	if err := s.client.Del(ctx, activeSessKey(workspaceID)).Err(); err != nil && err != redis.Nil {
 		s.recordError(op)
 		s.observeOp(op, "error", start)
 		if s.logger != nil {
@@ -416,10 +416,10 @@ func (s *RedisStore) ClearActiveSessions(workspaceID string) {
 // EXPIRE on a non-existent key is a no-op (returns 0, no error), so it
 // is safe to call unconditionally on every SSE event even when the
 // workspace has no active sessions.
-func (s *RedisStore) TouchActiveSessions(workspaceID string) {
+func (s *RedisStore) TouchActiveSessions(ctx context.Context, workspaceID string) {
 	const op = "touch_active_sessions"
 	start := time.Now()
-	if err := s.client.Expire(context.Background(), activeSessKey(workspaceID), s.activeSessTTL).Err(); err != nil {
+	if err := s.client.Expire(ctx, activeSessKey(workspaceID), s.activeSessTTL).Err(); err != nil {
 		s.recordError(op)
 		s.observeOp(op, "error", start)
 		if s.logger != nil {
@@ -439,12 +439,12 @@ func (s *RedisStore) TouchActiveSessions(workspaceID string) {
 // relies on it to distinguish first-invocation from Active→Active
 // reconcile (per US-45.1 contract). Terminate/Terminating calls
 // DeletePriorPhase explicitly when the workspace is truly gone.
-func (s *RedisStore) InvalidateAll(workspaceID string) {
-	s.ClearActiveSessions(workspaceID)
-	s.ClearDeletedSessions(workspaceID)
-	s.InvalidatePassword(workspaceID)
-	s.InvalidateWorkspaceConfig(workspaceID)
-	s.DeleteParentBackfilled(workspaceID)
+func (s *RedisStore) InvalidateAll(ctx context.Context, workspaceID string) {
+	s.ClearActiveSessions(ctx, workspaceID)
+	s.ClearDeletedSessions(ctx, workspaceID)
+	s.InvalidatePassword(ctx, workspaceID)
+	s.InvalidateWorkspaceConfig(ctx, workspaceID)
+	s.DeleteParentBackfilled(ctx, workspaceID)
 }
 
 // --- Deleted-session tombstones (Redis-backed, US-45.3) ---
@@ -466,11 +466,11 @@ func deletedSessKey(workspaceID, sessionID string) string {
 // MarkSessionDeleted records a per-session tombstone in Redis with TTL.
 // Silently fails on Redis error — the tombstone is not recorded, but the
 // system continues. When Redis recovers, the session can be re-deleted.
-func (s *RedisStore) MarkSessionDeleted(workspaceID, sessionID string) {
+func (s *RedisStore) MarkSessionDeleted(ctx context.Context, workspaceID, sessionID string) {
 	const op = "mark_session_deleted"
 	start := time.Now()
 	key := deletedSessKey(workspaceID, sessionID)
-	if err := s.client.Set(context.Background(), key, "1", s.deletedTTL).Err(); err != nil {
+	if err := s.client.Set(ctx, key, "1", s.deletedTTL).Err(); err != nil {
 		s.recordError(op)
 		s.observeOp(op, "error", start)
 		if s.logger != nil {
@@ -491,10 +491,10 @@ func (s *RedisStore) MarkSessionDeleted(workspaceID, sessionID string) {
 // the silent suppression of session-event processing during a Redis
 // outage (title persistence, context-token recording, queue drain, and
 // sessionIndex.RecordMessage are all gated on !isSessionDeleted).
-func (s *RedisStore) IsSessionDeleted(workspaceID, sessionID string) bool {
+func (s *RedisStore) IsSessionDeleted(ctx context.Context, workspaceID, sessionID string) bool {
 	const op = "is_session_deleted"
 	start := time.Now()
-	n, err := s.client.Exists(context.Background(), deletedSessKey(workspaceID, sessionID)).Result()
+	n, err := s.client.Exists(ctx, deletedSessKey(workspaceID, sessionID)).Result()
 	if err != nil {
 		s.recordError(op)
 		s.observeOp(op, "error", start)
@@ -514,13 +514,13 @@ func (s *RedisStore) IsSessionDeleted(workspaceID, sessionID string) bool {
 // ClearDeletedSessions removes all tombstones for the workspace. Uses
 // SCAN to find keys matching `ws:{workspace_id}:deleted:*` and DELs them
 // in batches. No-op on Redis error (the tombstones will expire via TTL).
-func (s *RedisStore) ClearDeletedSessions(workspaceID string) {
+func (s *RedisStore) ClearDeletedSessions(ctx context.Context, workspaceID string) {
 	const op = "clear_deleted_sessions"
 	start := time.Now()
 	pattern := fmt.Sprintf("ws:{%s}:deleted:*", workspaceID)
 	var cursor uint64
 	for {
-		keys, next, err := s.client.Scan(context.Background(), cursor, pattern, 100).Result()
+		keys, next, err := s.client.Scan(ctx, cursor, pattern, 100).Result()
 		if err != nil {
 			s.recordError(op)
 			s.observeOp(op, "error", start)
@@ -531,7 +531,7 @@ func (s *RedisStore) ClearDeletedSessions(workspaceID string) {
 			return
 		}
 		if len(keys) > 0 {
-			if err := s.client.Del(context.Background(), keys...).Err(); err != nil {
+			if err := s.client.Del(ctx, keys...).Err(); err != nil {
 				s.recordError(op)
 				s.observeOp(op, "error", start)
 				if s.logger != nil {
@@ -573,10 +573,10 @@ func passwordCacheKey(workspaceID string) string {
 // present. Cache-only — never returns false data on Redis error. Returns
 // ("", false) on miss OR on Redis error so the caller falls through to
 // the K8s Secret fetch.
-func (s *RedisStore) GetCachedPassword(workspaceID string) (string, bool) {
+func (s *RedisStore) GetCachedPassword(ctx context.Context, workspaceID string) (string, bool) {
 	const op = "get_cached_password"
 	start := time.Now()
-	pw, err := s.client.Get(context.Background(), passwordCacheKey(workspaceID)).Result()
+	pw, err := s.client.Get(ctx, passwordCacheKey(workspaceID)).Result()
 	if err != nil {
 		// redis.Nil = key not found (cache miss) — not an error.
 		if err != redis.Nil {
@@ -616,10 +616,10 @@ func (s *RedisStore) GetCachedPassword(workspaceID string) (string, bool) {
 // passwords are per-workspace generated credentials (not user passwords),
 // bounded by the 1h TTL, and the source of truth is the K8s Secret (also
 // encrypted at rest).
-func (s *RedisStore) SetCachedPassword(workspaceID, password string) {
+func (s *RedisStore) SetCachedPassword(ctx context.Context, workspaceID, password string) {
 	const op = "set_cached_password"
 	start := time.Now()
-	if err := s.client.Set(context.Background(), passwordCacheKey(workspaceID), password, s.passwordTTL).Err(); err != nil {
+	if err := s.client.Set(ctx, passwordCacheKey(workspaceID), password, s.passwordTTL).Err(); err != nil {
 		s.recordError(op)
 		s.observeOp(op, "error", start)
 		if s.logger != nil {
@@ -635,10 +635,10 @@ func (s *RedisStore) SetCachedPassword(workspaceID, password string) {
 // DEL is the single source of truth — replicas hitting Redis on miss
 // fall through to K8s. No pubsub needed (per design: replicas hit Redis
 // on every request anyway).
-func (s *RedisStore) InvalidatePassword(workspaceID string) {
+func (s *RedisStore) InvalidatePassword(ctx context.Context, workspaceID string) {
 	const op = "invalidate_password"
 	start := time.Now()
-	if err := s.client.Del(context.Background(), passwordCacheKey(workspaceID)).Err(); err != nil && err != redis.Nil {
+	if err := s.client.Del(ctx, passwordCacheKey(workspaceID)).Err(); err != nil && err != redis.Nil {
 		s.recordError(op)
 		s.observeOp(op, "error", start)
 		if s.logger != nil {
@@ -665,10 +665,10 @@ func configCacheKey(workspaceID string) string {
 	return fmt.Sprintf("ws:{%s}:config", workspaceID)
 }
 
-func (s *RedisStore) GetWorkspaceConfig(workspaceID string) (Config, bool) {
+func (s *RedisStore) GetWorkspaceConfig(ctx context.Context, workspaceID string) (Config, bool) {
 	const op = "get_workspace_config"
 	start := time.Now()
-	raw, err := s.client.Get(context.Background(), configCacheKey(workspaceID)).Bytes()
+	raw, err := s.client.Get(ctx, configCacheKey(workspaceID)).Bytes()
 	if err != nil {
 		if err != redis.Nil {
 			s.recordError(op)
@@ -696,7 +696,7 @@ func (s *RedisStore) GetWorkspaceConfig(workspaceID string) (Config, bool) {
 	return cfg, true
 }
 
-func (s *RedisStore) SetWorkspaceConfig(workspaceID string, cfg Config) {
+func (s *RedisStore) SetWorkspaceConfig(ctx context.Context, workspaceID string, cfg Config) {
 	const op = "set_workspace_config"
 	start := time.Now()
 	data, err := json.Marshal(cfg)
@@ -709,7 +709,7 @@ func (s *RedisStore) SetWorkspaceConfig(workspaceID string, cfg Config) {
 		}
 		return
 	}
-	if err := s.client.Set(context.Background(), configCacheKey(workspaceID), data, s.configTTL).Err(); err != nil {
+	if err := s.client.Set(ctx, configCacheKey(workspaceID), data, s.configTTL).Err(); err != nil {
 		s.recordError(op)
 		s.observeOp(op, "error", start)
 		if s.logger != nil {
@@ -721,10 +721,10 @@ func (s *RedisStore) SetWorkspaceConfig(workspaceID string, cfg Config) {
 	s.observeOp(op, "ok", start)
 }
 
-func (s *RedisStore) InvalidateWorkspaceConfig(workspaceID string) {
+func (s *RedisStore) InvalidateWorkspaceConfig(ctx context.Context, workspaceID string) {
 	const op = "invalidate_workspace_config"
 	start := time.Now()
-	if err := s.client.Del(context.Background(), configCacheKey(workspaceID)).Err(); err != nil && err != redis.Nil {
+	if err := s.client.Del(ctx, configCacheKey(workspaceID)).Err(); err != nil && err != redis.Nil {
 		s.recordError(op)
 		s.observeOp(op, "error", start)
 		if s.logger != nil {
@@ -742,10 +742,10 @@ func priorPhaseCacheKey(workspaceID string) string {
 	return fmt.Sprintf("ws:{%s}:phase", workspaceID)
 }
 
-func (s *RedisStore) GetPriorPhase(workspaceID string) (string, bool) {
+func (s *RedisStore) GetPriorPhase(ctx context.Context, workspaceID string) (string, bool) {
 	const op = "get_prior_phase"
 	start := time.Now()
-	phase, err := s.client.Get(context.Background(), priorPhaseCacheKey(workspaceID)).Result()
+	phase, err := s.client.Get(ctx, priorPhaseCacheKey(workspaceID)).Result()
 	if err != nil {
 		if err != redis.Nil {
 			s.recordError(op)
@@ -775,10 +775,10 @@ func (s *RedisStore) GetPriorPhase(workspaceID string) (string, bool) {
 	return phase, true
 }
 
-func (s *RedisStore) SetPriorPhase(workspaceID, phase string) {
+func (s *RedisStore) SetPriorPhase(ctx context.Context, workspaceID, phase string) {
 	const op = "set_prior_phase"
 	start := time.Now()
-	if err := s.client.Set(context.Background(), priorPhaseCacheKey(workspaceID), phase, s.priorPhaseTTL).Err(); err != nil {
+	if err := s.client.Set(ctx, priorPhaseCacheKey(workspaceID), phase, s.priorPhaseTTL).Err(); err != nil {
 		s.recordError(op)
 		s.observeOp(op, "error", start)
 		return
@@ -786,10 +786,10 @@ func (s *RedisStore) SetPriorPhase(workspaceID, phase string) {
 	s.observeOp(op, "ok", start)
 }
 
-func (s *RedisStore) DeletePriorPhase(workspaceID string) {
+func (s *RedisStore) DeletePriorPhase(ctx context.Context, workspaceID string) {
 	const op = "delete_prior_phase"
 	start := time.Now()
-	if err := s.client.Del(context.Background(), priorPhaseCacheKey(workspaceID)).Err(); err != nil && err != redis.Nil {
+	if err := s.client.Del(ctx, priorPhaseCacheKey(workspaceID)).Err(); err != nil && err != redis.Nil {
 		s.recordError(op)
 		s.observeOp(op, "error", start)
 		return
@@ -803,10 +803,10 @@ func backfilledCacheKey(workspaceID string) string {
 	return fmt.Sprintf("ws:{%s}:backfilled", workspaceID)
 }
 
-func (s *RedisStore) GetParentBackfilled(workspaceID string) bool {
+func (s *RedisStore) GetParentBackfilled(ctx context.Context, workspaceID string) bool {
 	const op = "get_parent_backfilled"
 	start := time.Now()
-	n, err := s.client.Exists(context.Background(), backfilledCacheKey(workspaceID)).Result()
+	n, err := s.client.Exists(ctx, backfilledCacheKey(workspaceID)).Result()
 	if err != nil {
 		s.recordError(op)
 		s.observeOp(op, "error", start)
@@ -816,10 +816,10 @@ func (s *RedisStore) GetParentBackfilled(workspaceID string) bool {
 	return n > 0
 }
 
-func (s *RedisStore) SetParentBackfilled(workspaceID string) {
+func (s *RedisStore) SetParentBackfilled(ctx context.Context, workspaceID string) {
 	const op = "set_parent_backfilled"
 	start := time.Now()
-	if err := s.client.Set(context.Background(), backfilledCacheKey(workspaceID), "1", s.backfilledTTL).Err(); err != nil {
+	if err := s.client.Set(ctx, backfilledCacheKey(workspaceID), "1", s.backfilledTTL).Err(); err != nil {
 		s.recordError(op)
 		s.observeOp(op, "error", start)
 		return
@@ -827,10 +827,10 @@ func (s *RedisStore) SetParentBackfilled(workspaceID string) {
 	s.observeOp(op, "ok", start)
 }
 
-func (s *RedisStore) DeleteParentBackfilled(workspaceID string) {
+func (s *RedisStore) DeleteParentBackfilled(ctx context.Context, workspaceID string) {
 	const op = "delete_parent_backfilled"
 	start := time.Now()
-	if err := s.client.Del(context.Background(), backfilledCacheKey(workspaceID)).Err(); err != nil && err != redis.Nil {
+	if err := s.client.Del(ctx, backfilledCacheKey(workspaceID)).Err(); err != nil && err != redis.Nil {
 		s.recordError(op)
 		s.observeOp(op, "error", start)
 		return

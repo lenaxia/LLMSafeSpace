@@ -16,8 +16,8 @@ import (
 	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
-func (h *ProxyHandler) shouldAutoApprovePermissions(workspaceID string) bool {
-	if cfg, ok := h.state().GetWorkspaceConfig(workspaceID); ok {
+func (h *ProxyHandler) shouldAutoApprovePermissions(ctx context.Context, workspaceID string) bool {
+	if cfg, ok := h.state().GetWorkspaceConfig(ctx, workspaceID); ok {
 		return cfg.AutoApprovePermissions
 	}
 
@@ -25,12 +25,12 @@ func (h *ProxyHandler) shouldAutoApprovePermissions(workspaceID string) bool {
 	if err != nil {
 		return false
 	}
-	workspace, err := v1Client.Workspaces(h.namespace).Get(context.Background(), workspaceID, metav1.GetOptions{})
+	workspace, err := v1Client.Workspaces(h.namespace).Get(ctx, workspaceID, metav1.GetOptions{})
 	if err != nil {
 		return false
 	}
 
-	h.state().SetWorkspaceConfig(workspaceID, wsstate.Config{
+	h.state().SetWorkspaceConfig(ctx, workspaceID, wsstate.Config{
 		MaxActiveSessions:      int(workspace.Spec.MaxActiveSessions),
 		AutoApprovePermissions: workspace.Spec.AutoApprovePermissions,
 	})

@@ -70,14 +70,14 @@ func (h *ProxyHandler) fetchAndPersistTitle(workspaceID, sessionID string) {
 	}
 }
 
-func (h *ProxyHandler) BackfillSessionParents(workspaceID string) {
+func (h *ProxyHandler) BackfillSessionParents(ctx context.Context, workspaceID string) {
 	if h.sessionIndex == nil || h.dialect == nil {
 		return
 	}
-	if h.state().GetParentBackfilled(workspaceID) {
+	if h.state().GetParentBackfilled(ctx, workspaceID) {
 		return
 	}
-	h.state().SetParentBackfilled(workspaceID)
+	h.state().SetParentBackfilled(ctx, workspaceID)
 
 	go h.runParentBackfill(workspaceID)
 }
@@ -94,13 +94,13 @@ func (h *ProxyHandler) runParentBackfill(workspaceID string) {
 		return v1Client.Workspaces(h.namespace).Get(ctx, workspaceID, metav1.GetOptions{})
 	}()
 	if err != nil || workspace.Status.Phase != phaseActive || workspace.Status.PodIP == "" {
-		h.state().DeleteParentBackfilled(workspaceID)
+		h.state().DeleteParentBackfilled(ctx, workspaceID)
 		return
 	}
 
 	password, err := h.getPassword(ctx, workspaceID)
 	if err != nil {
-		h.state().DeleteParentBackfilled(workspaceID)
+		h.state().DeleteParentBackfilled(ctx, workspaceID)
 		return
 	}
 
@@ -114,12 +114,12 @@ func (h *ProxyHandler) runParentBackfill(workspaceID string) {
 	resp, err := h.httpClient.Do(req)
 	if err != nil {
 		h.logger.Debug("Backfill: session list fetch failed", "workspaceID", workspaceID, "error", err)
-		h.state().DeleteParentBackfilled(workspaceID)
+		h.state().DeleteParentBackfilled(ctx, workspaceID)
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		h.state().DeleteParentBackfilled(workspaceID)
+		h.state().DeleteParentBackfilled(ctx, workspaceID)
 		return
 	}
 

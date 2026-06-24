@@ -241,7 +241,7 @@ func (h *ProxyHandler) proxyToWorkspaceWithErrBody(
 	}()
 
 	if isWriteOp && sessionID != "" {
-		if !h.checkAndAddActiveSession(workspaceID, sessionID, maxSessions) {
+		if !h.checkAndAddActiveSession(c.Request.Context(), workspaceID, sessionID, maxSessions) {
 			c.Header("Retry-After", fmt.Sprintf("%d", retryAfterSec))
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error":             "active session limit reached",
@@ -325,7 +325,7 @@ func (h *ProxyHandler) proxyToWorkspaceWithErrBody(
 		if !h.requestBuffer.tryEnqueue(workspaceID, bufReq) {
 			metrics.RecordRequestBufferFull(workspaceID)
 			if isWriteOp && sessionID != "" {
-				h.removeActiveSession(workspaceID, sessionID)
+				h.removeActiveSession(c.Request.Context(), workspaceID, sessionID)
 			}
 			c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many requests during restart, please try again"})
 			return
@@ -356,7 +356,7 @@ func (h *ProxyHandler) proxyToWorkspaceWithErrBody(
 				metrics.RecordRequestBufferTimeout(workspaceID)
 			}
 			if isWriteOp && sessionID != "" {
-				h.removeActiveSession(workspaceID, sessionID)
+				h.removeActiveSession(c.Request.Context(), workspaceID, sessionID)
 			}
 			if !c.Writer.Written() && c.Request.Context().Err() == nil {
 				if errors.Is(ferr, errBufferTimeout) {
@@ -373,7 +373,7 @@ func (h *ProxyHandler) proxyToWorkspaceWithErrBody(
 	if proxyErr != nil {
 		h.logger.Error("Proxy request failed", proxyErr, "workspaceID", workspaceID)
 		if isWriteOp && sessionID != "" {
-			h.removeActiveSession(workspaceID, sessionID)
+			h.removeActiveSession(c.Request.Context(), workspaceID, sessionID)
 		}
 		if !c.Writer.Written() {
 			c.Header("Retry-After", fmt.Sprintf("%d", retryAfterSec))
@@ -464,7 +464,7 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		wsID := c.Param("id")
-		h.invalidateCaches(wsID)
+		h.invalidateCaches(c.Request.Context(), wsID)
 		h.logger.Warn("Upstream auth failed; password cache invalidated",
 			"workspaceID", wsID, "path", targetPath)
 		c.JSON(http.StatusBadGateway, gin.H{

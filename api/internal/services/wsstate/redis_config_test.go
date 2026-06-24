@@ -4,6 +4,7 @@
 package wsstate
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -44,7 +45,7 @@ func TestRedisStore_GetWorkspaceConfig_Miss_ReturnsFalse(t *testing.T) {
 	store, _, _, cleanup := setupRedisStore(t)
 	defer cleanup()
 
-	_, ok := store.GetWorkspaceConfig("ws-1")
+	_, ok := store.GetWorkspaceConfig(context.Background(), "ws-1")
 	assert.False(t, ok, "miss must return false so caller falls back to CRD fetch")
 }
 
@@ -52,9 +53,9 @@ func TestRedisStore_SetThenGetWorkspaceConfig_RoundTrips(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
 
-	store.SetWorkspaceConfig("ws-1", Config{MaxActiveSessions: 7, AutoApprovePermissions: true})
+	store.SetWorkspaceConfig(context.Background(), "ws-1", Config{MaxActiveSessions: 7, AutoApprovePermissions: true})
 
-	cfg, ok := store.GetWorkspaceConfig("ws-1")
+	cfg, ok := store.GetWorkspaceConfig(context.Background(), "ws-1")
 	require.True(t, ok)
 	assert.Equal(t, 7, cfg.MaxActiveSessions)
 	assert.True(t, cfg.AutoApprovePermissions)
@@ -65,7 +66,7 @@ func TestRedisStore_SetWorkspaceConfig_TTLSet(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
 
-	store.SetWorkspaceConfig("ws-1", Config{MaxActiveSessions: 3})
+	store.SetWorkspaceConfig(context.Background(), "ws-1", Config{MaxActiveSessions: 3})
 
 	ttl := mr.TTL(configKey("ws-1"))
 	assert.Greater(t, ttl, time.Duration(0), "cached config must have a TTL")
@@ -77,10 +78,10 @@ func TestRedisStore_SetWorkspaceConfig_OverwritesPreviousValue(t *testing.T) {
 	store, _, _, cleanup := setupRedisStore(t)
 	defer cleanup()
 
-	store.SetWorkspaceConfig("ws-1", Config{MaxActiveSessions: 3, AutoApprovePermissions: false})
-	store.SetWorkspaceConfig("ws-1", Config{MaxActiveSessions: 10, AutoApprovePermissions: true})
+	store.SetWorkspaceConfig(context.Background(), "ws-1", Config{MaxActiveSessions: 3, AutoApprovePermissions: false})
+	store.SetWorkspaceConfig(context.Background(), "ws-1", Config{MaxActiveSessions: 10, AutoApprovePermissions: true})
 
-	cfg, ok := store.GetWorkspaceConfig("ws-1")
+	cfg, ok := store.GetWorkspaceConfig(context.Background(), "ws-1")
 	require.True(t, ok)
 	assert.Equal(t, 10, cfg.MaxActiveSessions)
 	assert.True(t, cfg.AutoApprovePermissions)
@@ -90,15 +91,15 @@ func TestRedisStore_GetWorkspaceConfig_DifferentWorkspaces_Isolated(t *testing.T
 	store, _, _, cleanup := setupRedisStore(t)
 	defer cleanup()
 
-	store.SetWorkspaceConfig("ws-1", Config{MaxActiveSessions: 5})
-	store.SetWorkspaceConfig("ws-2", Config{MaxActiveSessions: 20, AutoApprovePermissions: true})
+	store.SetWorkspaceConfig(context.Background(), "ws-1", Config{MaxActiveSessions: 5})
+	store.SetWorkspaceConfig(context.Background(), "ws-2", Config{MaxActiveSessions: 20, AutoApprovePermissions: true})
 
-	cfg1, ok1 := store.GetWorkspaceConfig("ws-1")
+	cfg1, ok1 := store.GetWorkspaceConfig(context.Background(), "ws-1")
 	require.True(t, ok1)
 	assert.Equal(t, 5, cfg1.MaxActiveSessions)
 	assert.False(t, cfg1.AutoApprovePermissions)
 
-	cfg2, ok2 := store.GetWorkspaceConfig("ws-2")
+	cfg2, ok2 := store.GetWorkspaceConfig(context.Background(), "ws-2")
 	require.True(t, ok2)
 	assert.Equal(t, 20, cfg2.MaxActiveSessions)
 	assert.True(t, cfg2.AutoApprovePermissions)
@@ -114,9 +115,9 @@ func TestRedisStore_SetWorkspaceConfig_ZeroValueConfig_RoundTrips(t *testing.T) 
 
 	// Zero-value Config: MaxActiveSessions=0, AutoApprovePermissions=false.
 	// This is a valid cache entry — must NOT be confused with a miss.
-	store.SetWorkspaceConfig("ws-1", Config{})
+	store.SetWorkspaceConfig(context.Background(), "ws-1", Config{})
 
-	cfg, ok := store.GetWorkspaceConfig("ws-1")
+	cfg, ok := store.GetWorkspaceConfig(context.Background(), "ws-1")
 	require.True(t, ok, "zero-value Config must round-trip — it is a valid cache entry, not a miss")
 	assert.Equal(t, 0, cfg.MaxActiveSessions)
 	assert.False(t, cfg.AutoApprovePermissions)
@@ -129,15 +130,15 @@ func TestRedisStore_SetWorkspaceConfig_ZeroValueConfig_RoundTrips(t *testing.T) 
 func TestRedisStore_InvalidateWorkspaceConfig_RemovesEntry(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	store.SetWorkspaceConfig("ws-1", Config{MaxActiveSessions: 5})
-	store.SetWorkspaceConfig("ws-2", Config{MaxActiveSessions: 3})
+	store.SetWorkspaceConfig(context.Background(), "ws-1", Config{MaxActiveSessions: 5})
+	store.SetWorkspaceConfig(context.Background(), "ws-2", Config{MaxActiveSessions: 3})
 
-	store.InvalidateWorkspaceConfig("ws-1")
+	store.InvalidateWorkspaceConfig(context.Background(), "ws-1")
 
-	_, ok := store.GetWorkspaceConfig("ws-1")
+	_, ok := store.GetWorkspaceConfig(context.Background(), "ws-1")
 	assert.False(t, ok)
 	assert.False(t, mr.Exists(configKey("ws-1")))
-	cfg, ok := store.GetWorkspaceConfig("ws-2")
+	cfg, ok := store.GetWorkspaceConfig(context.Background(), "ws-2")
 	require.True(t, ok)
 	assert.Equal(t, 3, cfg.MaxActiveSessions)
 }
@@ -145,8 +146,8 @@ func TestRedisStore_InvalidateWorkspaceConfig_RemovesEntry(t *testing.T) {
 func TestRedisStore_InvalidateWorkspaceConfig_OnMissingEntry_IsNoOp(t *testing.T) {
 	store, _, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	store.InvalidateWorkspaceConfig("ws-never-was")
-	_, ok := store.GetWorkspaceConfig("ws-never-was")
+	store.InvalidateWorkspaceConfig(context.Background(), "ws-never-was")
+	_, ok := store.GetWorkspaceConfig(context.Background(), "ws-never-was")
 	assert.False(t, ok)
 }
 
@@ -157,15 +158,15 @@ func TestRedisStore_InvalidateWorkspaceConfig_OnMissingEntry_IsNoOp(t *testing.T
 func TestRedisStore_CachedConfig_TTLAutoExpires(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	store.SetWorkspaceConfig("ws-1", Config{MaxActiveSessions: 5})
+	store.SetWorkspaceConfig(context.Background(), "ws-1", Config{MaxActiveSessions: 5})
 	require.True(t, func() bool {
-		_, ok := store.GetWorkspaceConfig("ws-1")
+		_, ok := store.GetWorkspaceConfig(context.Background(), "ws-1")
 		return ok
 	}())
 
 	mr.FastForward(DefaultConfigTTL + time.Second)
 
-	_, ok := store.GetWorkspaceConfig("ws-1")
+	_, ok := store.GetWorkspaceConfig(context.Background(), "ws-1")
 	assert.False(t, ok, "cached config must auto-expire after TTL")
 	assert.False(t, mr.Exists(configKey("ws-1")))
 }
@@ -180,10 +181,10 @@ func TestRedisStore_GetWorkspaceConfig_RedisDown_ReturnsFalse(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	store := NewRedisStore(client, testActiveSessTTL)
 
-	store.SetWorkspaceConfig("ws-1", Config{MaxActiveSessions: 5})
+	store.SetWorkspaceConfig(context.Background(), "ws-1", Config{MaxActiveSessions: 5})
 	mr.Close()
 
-	_, ok := store.GetWorkspaceConfig("ws-1")
+	_, ok := store.GetWorkspaceConfig(context.Background(), "ws-1")
 	assert.False(t, ok, "Redis-down must return false — caller falls back to CRD fetch")
 	_ = client.Close()
 }
@@ -197,7 +198,7 @@ func TestRedisStore_SetWorkspaceConfig_RedisDown_NoPanic(t *testing.T) {
 	mr.Close()
 
 	assert.NotPanics(t, func() {
-		store.SetWorkspaceConfig("ws-1", Config{MaxActiveSessions: 5})
+		store.SetWorkspaceConfig(context.Background(), "ws-1", Config{MaxActiveSessions: 5})
 	})
 	_ = client.Close()
 }
@@ -211,7 +212,7 @@ func TestRedisStore_InvalidateWorkspaceConfig_RedisDown_NoPanic(t *testing.T) {
 	mr.Close()
 
 	assert.NotPanics(t, func() {
-		store.InvalidateWorkspaceConfig("ws-1")
+		store.InvalidateWorkspaceConfig(context.Background(), "ws-1")
 	})
 	_ = client.Close()
 }
@@ -224,12 +225,12 @@ func TestRedisStore_InvalidateAll_ClearsRedisConfigCache(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
 
-	store.SetWorkspaceConfig("ws-1", Config{MaxActiveSessions: 5})
+	store.SetWorkspaceConfig(context.Background(), "ws-1", Config{MaxActiveSessions: 5})
 	require.True(t, mr.Exists(configKey("ws-1")))
 
-	store.InvalidateAll("ws-1")
+	store.InvalidateAll(context.Background(), "ws-1")
 
-	_, ok := store.GetWorkspaceConfig("ws-1")
+	_, ok := store.GetWorkspaceConfig(context.Background(), "ws-1")
 	assert.False(t, ok)
 	assert.False(t, mr.Exists(configKey("ws-1")))
 }
@@ -243,7 +244,7 @@ func TestRedisStore_SetWorkspaceConfig_StoresValidJSON(t *testing.T) {
 	defer cleanup()
 
 	cfg := Config{MaxActiveSessions: 15, AutoApprovePermissions: true}
-	store.SetWorkspaceConfig("ws-1", cfg)
+	store.SetWorkspaceConfig(context.Background(), "ws-1", cfg)
 
 	raw, err := mr.Get(configKey("ws-1"))
 	require.NoError(t, err)

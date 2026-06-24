@@ -689,16 +689,16 @@ func TestReconcileSessionState_ClearsStaleActiveSess(t *testing.T) {
 	// "stuck-session" is actually idle in opencode (the bug condition).
 	handler.SetActiveSessionsForTest("ws-1", []string{"stuck-session", "active-session"})
 
-	require.True(t, handler.isSessionActive("ws-1", "stuck-session"),
+	require.True(t, handler.isSessionActive(context.Background(), "ws-1", "stuck-session"),
 		"precondition: stuck-session should be marked active before reconcile")
-	require.True(t, handler.isSessionActive("ws-1", "active-session"),
+	require.True(t, handler.isSessionActive(context.Background(), "ws-1", "active-session"),
 		"precondition: active-session should be marked active before reconcile")
 
 	handler.reconcileSessionState("ws-1", "127.0.0.1", "test-pw")
 
-	assert.False(t, handler.isSessionActive("ws-1", "stuck-session"),
+	assert.False(t, handler.isSessionActive(context.Background(), "ws-1", "stuck-session"),
 		"stuck-session should be cleared from activeSess (idle in opencode)")
-	assert.True(t, handler.isSessionActive("ws-1", "active-session"),
+	assert.True(t, handler.isSessionActive(context.Background(), "ws-1", "active-session"),
 		"active-session should remain (still busy in opencode)")
 }
 
@@ -723,7 +723,7 @@ func TestReconcileSessionState_NoStalenessNoOp(t *testing.T) {
 
 	handler.reconcileSessionState("ws-1", "127.0.0.1", "test-pw")
 
-	assert.True(t, handler.isSessionActive("ws-1", "ses-busy"),
+	assert.True(t, handler.isSessionActive(context.Background(), "ws-1", "ses-busy"),
 		"busy session should remain active after reconcile")
 }
 

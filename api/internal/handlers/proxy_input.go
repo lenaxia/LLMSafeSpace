@@ -119,7 +119,7 @@ func (h *ProxyHandler) emitPendingInputRequests(workspaceID string) {
 	}
 
 	// Fetch and emit pending permissions (only if not auto-approving)
-	if !h.shouldAutoApprovePermissions(workspaceID) {
+	if !h.shouldAutoApprovePermissions(ctx, workspaceID) {
 		if body, err := h.fetchFromPod(ctx, podIP, password, h.dialect.PermissionListPath()); err == nil {
 			for _, req := range h.parsePermissionList(body) {
 				if h.sessionParents != nil {
