@@ -51,7 +51,7 @@ func mountPaths(mounts []corev1.VolumeMount) map[string]bool {
 	return m
 }
 
-// findInitContainer returns the init container with the given name, failing
+// findInitContainerOrFatal returns the init container with the given name, failing
 // the test if absent.
 func findInitContainerOrFatal(t *testing.T, pod *corev1.Pod, name string) corev1.Container {
 	t.Helper()
