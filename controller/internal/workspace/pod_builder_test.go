@@ -18,6 +18,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/lenaxia/llmsafespaces/controller/internal/freemodels"
 	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
@@ -295,3 +296,227 @@ func TestPodBuilder_TerminationGracePeriod_Tight(t *testing.T) {
 		"must be tight enough that suspend/recycle latency benefits — "+
 			"agentd exits in <1s in practice, 30s default was over-provisioned")
 }
+
+// findVolume returns the named Volume from a pod spec, or nil.
+func findVolume(pod *corev1.Pod, name string) *corev1.Volume {
+	for i := range pod.Spec.Volumes {
+		if pod.Spec.Volumes[i].Name == name {
+			return &pod.Spec.Volumes[i]
+		}
+	}
+	return nil
+}
+
+// findInitContainer returns the named init container, or nil.
+func findInitContainer(pod *corev1.Pod, name string) *corev1.Container {
+	for i := range pod.Spec.InitContainers {
+		if pod.Spec.InitContainers[i].Name == name {
+			return &pod.Spec.InitContainers[i]
+		}
+	}
+	return nil
+}
+
+// findVolumeMount returns the named VolumeMount on a container, or nil.
+func findVolumeMount(c *corev1.Container, name string) *corev1.VolumeMount {
+	for i := range c.VolumeMounts {
+		if c.VolumeMounts[i].Name == name {
+			return &c.VolumeMounts[i]
+		}
+	}
+	return nil
+}
+
+// findEnv returns the named env var on a container, or nil.
+func findEnv(c *corev1.Container, name string) *corev1.EnvVar {
+	for i := range c.Env {
+		if c.Env[i].Name == name {
+			return &c.Env[i]
+		}
+	}
+	return nil
+}
+
+// reconcilerWithRelay returns a reconciler configured with a fake
+// relay URL (and optionally a secret). The relay being non-empty is
+// what triggers the Phase B free-models volume + env propagation.
+func reconcilerWithRelay(t *testing.T, secret string) *WorkspaceReconciler {
+	t.Helper()
+	r := reconcilerFor(t)
+	r.InferenceRelayURL = "https://relay.test.example/"
+	r.InferenceRelaySecret = secret
+	return r
+}
+
+// TestPodBuilder_FreeModelsVolume_AbsentWhenNoRelay verifies that when
+// the controller is configured WITHOUT a relay URL, the free-models
+// ConfigMap volume is NOT added to the pod spec — there's nothing for
+// it to feed.
+//
+// 2026-06-23 cold-start optimization, item #1a (Phase B).
+func TestPodBuilder_FreeModelsVolume_AbsentWhenNoRelay(t *testing.T) {
+	ws := newWorkspaceForPodBuilder(t)
+	r := reconcilerFor(t) // no relay URL
+	require.Empty(t, r.InferenceRelayURL)
+
+	pod, err := r.buildPod(context.Background(), ws)
+	require.NoError(t, err)
+
+	assert.Nil(t, findVolume(pod, "free-models"),
+		"free-models volume must be absent when no relay URL is configured — "+
+			"the ConfigMap exists but the pod has no use for it")
+
+	credInit := findInitContainer(pod, "credential-setup")
+	require.NotNil(t, credInit)
+	assert.Nil(t, findVolumeMount(credInit, "free-models"),
+		"credential-setup must not mount the free-models volume when relay is off")
+	assert.Nil(t, findEnv(credInit, "INFERENCE_RELAY_BASEURL"),
+		"INFERENCE_RELAY_BASEURL env must be absent when relay is off — "+
+			"its presence is what tells materialize to attempt relay injection")
+}
+
+// TestPodBuilder_FreeModelsVolume_PresentWhenRelayConfigured verifies
+// that with a relay URL, the pod spec carries:
+//   - The free-models ConfigMap volume (optional: true)
+//   - A volume mount on credential-setup at /mnt/freemodels (read-only)
+//   - INFERENCE_RELAY_BASEURL env on the credential-setup init container
+//     (so the materialize subcommand can read it before opencode boots)
+//
+// 2026-06-23 cold-start optimization, item #1a (Phase B).
+func TestPodBuilder_FreeModelsVolume_PresentWhenRelayConfigured(t *testing.T) {
+	ws := newWorkspaceForPodBuilder(t)
+	r := reconcilerWithRelay(t, "secret123")
+
+	pod, err := r.buildPod(context.Background(), ws)
+	require.NoError(t, err)
+
+	vol := findVolume(pod, "free-models")
+	require.NotNil(t, vol, "free-models volume must be present when relay is configured")
+	require.NotNil(t, vol.ConfigMap, "free-models must be sourced from a ConfigMap")
+	assert.Equal(t, freemodels.ConfigMapName, vol.ConfigMap.Name,
+		"free-models volume must reference the cluster-wide ConfigMap published by the refresher")
+	require.NotNil(t, vol.ConfigMap.Optional)
+	assert.True(t, *vol.ConfigMap.Optional,
+		"free-models ConfigMap mount MUST be optional — pods can boot before "+
+			"the controller's first refresh completes; missing CM must not fail the pod")
+
+	credInit := findInitContainer(pod, "credential-setup")
+	require.NotNil(t, credInit, "credential-setup init container must exist")
+
+	mount := findVolumeMount(credInit, "free-models")
+	require.NotNil(t, mount, "credential-setup must mount the free-models volume")
+	assert.Equal(t, "/mnt/freemodels", mount.MountPath,
+		"free-models must be mounted at /mnt/freemodels — the credential-setup script "+
+			"copies models.json from this path into /sandbox-cfg/free-models.json")
+	assert.True(t, mount.ReadOnly, "free-models mount must be read-only")
+}
+
+// TestPodBuilder_RelayBaseURLEnv_OnInitContainer verifies that
+// INFERENCE_RELAY_BASEURL is propagated to the credential-setup init
+// container env (in addition to the main container, where it already
+// was). Without this, agentd's materialize subcommand running INSIDE
+// the init container has no way to know whether to attempt relay
+// injection — and the whole point of Phase C is to do it pre-opencode.
+//
+// 2026-06-23 cold-start optimization, item #1a (Phase B).
+func TestPodBuilder_RelayBaseURLEnv_OnInitContainer(t *testing.T) {
+	ws := newWorkspaceForPodBuilder(t)
+	r := reconcilerWithRelay(t, "secret123")
+
+	pod, err := r.buildPod(context.Background(), ws)
+	require.NoError(t, err)
+
+	credInit := findInitContainer(pod, "credential-setup")
+	require.NotNil(t, credInit)
+
+	env := findEnv(credInit, "INFERENCE_RELAY_BASEURL")
+	require.NotNil(t, env,
+		"INFERENCE_RELAY_BASEURL must be set on the credential-setup init container "+
+			"so the materialize subcommand can pre-render the relay block")
+	assert.Equal(t, "https://relay.test.example//secret123", env.Value,
+		"relay URL must include the path-segment secret")
+}
+
+// TestPodBuilder_RelayBaseURLEnv_MainContainer guards the existing
+// behavior: INFERENCE_RELAY_BASEURL on the main container's env was
+// already there pre-Phase-B; this test pins it so the new Phase B
+// init-container env doesn't accidentally remove it.
+func TestPodBuilder_RelayBaseURLEnv_MainContainer(t *testing.T) {
+	ws := newWorkspaceForPodBuilder(t)
+	r := reconcilerWithRelay(t, "")
+
+	pod, err := r.buildPod(context.Background(), ws)
+	require.NoError(t, err)
+
+	require.Len(t, pod.Spec.Containers, 1)
+	main := &pod.Spec.Containers[0]
+	require.Equal(t, "workspace", main.Name)
+
+	env := findEnv(main, "INFERENCE_RELAY_BASEURL")
+	require.NotNil(t, env, "main container must carry INFERENCE_RELAY_BASEURL (legacy + future state)")
+	assert.Equal(t, "https://relay.test.example/", env.Value,
+		"empty secret means just the URL, no trailing path segment")
+}
+
+// TestPodBuilder_FreeModelsScriptCopy verifies the credential-setup
+// init script copies the optional free-models file into /sandbox-cfg/
+// when the file is present. The materialize subcommand expects to find
+// it at /sandbox-cfg/free-models.json, sibling to other config files.
+//
+// The cp is guarded by `if [ -f /mnt/freemodels/models.json ]` so a
+// missing CM (Optional: true) doesn't break the script — the copy
+// happens IFF the file exists.
+func TestPodBuilder_FreeModelsScriptCopy(t *testing.T) {
+	ws := newWorkspaceForPodBuilder(t)
+	r := reconcilerWithRelay(t, "")
+
+	pod, err := r.buildPod(context.Background(), ws)
+	require.NoError(t, err)
+
+	credInit := findInitContainer(pod, "credential-setup")
+	require.NotNil(t, credInit)
+	require.Len(t, credInit.Command, 3)
+	script := credInit.Command[2]
+
+	assert.Contains(t, script, "if [ -f /mnt/freemodels/models.json ]",
+		"copy must be conditional — missing CM (Optional: true) must not fail the script")
+	assert.Contains(t, script, "cp /mnt/freemodels/models.json /sandbox-cfg/free-models.json",
+		"models.json must land at /sandbox-cfg/free-models.json so materialize can find it")
+}
+
+// TestPodBuilder_InitXDGDataHome locks in the PR #401 review fix:
+// the credential-setup init container must carry XDG_DATA_HOME set
+// to /workspace/.local so agentd's materialize subcommand reads
+// auth.json from the same path opencode reads it from in the main
+// container (the symlink the init script creates that points into
+// /sandbox-runtime/rt/auth.json).
+//
+// Without this env var, preBootAuthJSONPath in the init container
+// falls back to $HOME/.local/opencode/auth.json
+// (=/home/sandbox/.local/opencode/auth.json), which is NOT the same
+// file opencode reads. For a resumed pod with a stale pre-US-35.7
+// auth.json carrying a personal opencode key on the PVC home subpath,
+// the bypass check would silently miss the key and the cold-start
+// optimization would be lost (legacy in-pod injector would still
+// catch it but the user loses the savings).
+func TestPodBuilder_InitXDGDataHome(t *testing.T) {
+	ws := newWorkspaceForPodBuilder(t)
+	r := reconcilerFor(t)
+
+	pod, err := r.buildPod(context.Background(), ws)
+	require.NoError(t, err)
+
+	credInit := findInitContainer(pod, "credential-setup")
+	require.NotNil(t, credInit)
+
+	xdg := findEnv(credInit, "XDG_DATA_HOME")
+	require.NotNil(t, xdg,
+		"credential-setup init must carry XDG_DATA_HOME so preBootAuthJSONPath "+
+			"resolves to the same auth.json opencode reads in the main container")
+	assert.Equal(t, "/workspace/.local", xdg.Value,
+		"XDG_DATA_HOME must match entrypoint-opencode.sh's value (/workspace/.local) — "+
+			"any drift between the two would silently break the personal-key bypass")
+}
+
+// Silence "imported and not used" if any test above is removed.
+var _ = metav1.ObjectMeta{}

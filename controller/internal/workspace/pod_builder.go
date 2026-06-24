@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
+	"github.com/lenaxia/llmsafespaces/controller/internal/freemodels"
 	"github.com/lenaxia/llmsafespaces/pkg/agentd"
 	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
@@ -203,8 +204,9 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 	// to route free-tier inference through the Cloudflare Worker for IP distribution.
 	// When InferenceRelaySecret is set it is embedded as the first path segment;
 	// the Worker strips and validates it before forwarding to upstream.
+	relayBaseURL := ""
 	if r.InferenceRelayURL != "" {
-		relayBaseURL := r.InferenceRelayURL
+		relayBaseURL = r.InferenceRelayURL
 		if r.InferenceRelaySecret != "" {
 			relayBaseURL = r.InferenceRelayURL + "/" + r.InferenceRelaySecret
 		}
@@ -219,13 +221,25 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 	}
 
 	// Credential setup init.
-	credInit, pwVolume, bootstrapTokenVol, err := r.buildCredentialSetupInit(workspace, runtimeImage)
+	credInit, pwVolume, bootstrapTokenVol, err := r.buildCredentialSetupInit(workspace, runtimeImage, relayBaseURL)
 	if err != nil {
 		return nil, err
 	}
 	initContainers = append(initContainers, credInit)
 	volumes = append(volumes, pwVolume)
 	volumes = append(volumes, bootstrapTokenVol)
+
+	// Free-models ConfigMap volume (2026-06-23 cold-start optimization,
+	// item #1a). Mounted optionally so a pod started before the
+	// controller's first refresh — or on a cluster with the refresher
+	// disabled — still boots cleanly. The credential-setup init script
+	// copies the file if present; agentd's materialize subcommand reads
+	// it to pre-render the relay-provider block in agent-config.json
+	// before opencode starts, eliminating the in-pod opencode-restart
+	// cycle that the legacy relay injector imposed.
+	if relayBaseURL != "" {
+		volumes = append(volumes, buildFreeModelsVolume())
+	}
 
 	// Epic 51 S51.1: Runtime class resolution. Per-workspace opt-out
 	// (spec.runtimeClass) takes precedence; otherwise use the controller's
@@ -442,7 +456,7 @@ func buildNodeSelector(workspace *v1.Workspace) map[string]string {
 	}
 }
 
-func (r *WorkspaceReconciler) buildCredentialSetupInit(workspace *v1.Workspace, runtimeImage string) (corev1.Container, corev1.Volume, corev1.Volume, error) {
+func (r *WorkspaceReconciler) buildCredentialSetupInit(workspace *v1.Workspace, runtimeImage string, relayBaseURL string) (corev1.Container, corev1.Volume, corev1.Volume, error) {
 	credScript := `
 set -e
 
@@ -466,6 +480,16 @@ mkdir -p /workspace/.local/opencode
 rm -f /workspace/.local/opencode/auth.json
 ln -s /sandbox-runtime/rt/auth.json /workspace/.local/opencode/auth.json
 
+# 2026-06-23 cold-start optimization (item #1a): copy the cluster-wide
+# free-models catalog into /sandbox-cfg so the materialize subcommand
+# can render the relay agent-config.json block before opencode boots.
+# Mounted optional: an absent file is normal (relay disabled or
+# controller hasn't fetched yet). The script swallows the error and
+# materialize falls back to the legacy in-pod relay injector path.
+if [ -f /mnt/freemodels/models.json ]; then
+  cp /mnt/freemodels/models.json /sandbox-cfg/free-models.json
+fi
+
 workspace-agentd bootstrap --workspace-id "$WORKSPACE_ID" --api-url "$LLMSAFESPACE_API_URL"
 workspace-agentd materialize
 cp /mnt/secrets/password/password /sandbox-cfg/password
@@ -486,6 +510,18 @@ cp /mnt/secrets/password/password /sandbox-cfg/password
 		// Without these, ReadOnlyRootFilesystem causes ln -s to silently fail.
 		{Name: "workspace", MountPath: "/home/sandbox", SubPath: "home"},
 		{Name: "workspace", MountPath: "/workspace", SubPath: "workspace"},
+	}
+
+	// 2026-06-23 cold-start optimization (item #1a). The free-models
+	// ConfigMap is added to pod.Spec.Volumes by buildPod when a relay
+	// URL is configured; we always mount it here when the volume is
+	// present (init-side) so the cp in the script can read it. Optional
+	// mount semantics live on the Volume itself (Optional: true), so an
+	// absent CM is harmless — the cp simply finds no file.
+	if relayBaseURL != "" {
+		credMounts = append(credMounts, corev1.VolumeMount{
+			Name: "free-models", MountPath: "/mnt/freemodels", ReadOnly: true,
+		})
 	}
 
 	// Epic 35 US-35.4: projected SA token volume. The kubelet creates a token
@@ -515,10 +551,45 @@ cp /mnt/secrets/password/password /sandbox-cfg/password
 		Name:    "credential-setup",
 		Image:   runtimeImage,
 		Command: []string{"/bin/sh", "-c", credScript},
-		Env: []corev1.EnvVar{
-			{Name: "WORKSPACE_ID", Value: workspace.Name},
-			{Name: "LLMSAFESPACE_API_URL", Value: r.APIServiceURL},
-		},
+		Env: func() []corev1.EnvVar {
+			env := []corev1.EnvVar{
+				{Name: "WORKSPACE_ID", Value: workspace.Name},
+				{Name: "LLMSAFESPACE_API_URL", Value: r.APIServiceURL},
+				// 2026-06-24 PR #401 review fix: XDG_DATA_HOME must
+				// match the value entrypoint-opencode.sh sets in the
+				// MAIN container so agentd's materialize subcommand
+				// (running in the INIT container) reads auth.json from
+				// the same location opencode will read it from in the
+				// main container — i.e. the symlink the init script
+				// creates at /workspace/.local/opencode/auth.json
+				// pointing into /sandbox-runtime/rt/auth.json (US-35.7).
+				//
+				// Without this, preBootAuthJSONPath falls back to
+				// $HOME/.local/opencode/auth.json
+				// (=/home/sandbox/.local/opencode/auth.json), which
+				// for a fresh pod doesn't exist (correct by accident:
+				// shouldSkipRelay returns false → relay proceeds), but
+				// for a resumed pod with a stale pre-US-35.7 auth.json
+				// at PVC:home/.local/opencode/auth.json containing a
+				// personal key, the bypass check would silently miss
+				// the key and the cold-start optimization would then
+				// be lost (the legacy in-pod injector would pick up
+				// the slack and skip injection itself, but the user
+				// loses the ~6-8s savings).
+				{Name: "XDG_DATA_HOME", Value: "/workspace/.local"},
+			}
+			// 2026-06-23 cold-start optimization (item #1a): propagate
+			// the relay URL into the init container so the materialize
+			// subcommand can pre-render the relay agent-config block
+			// before opencode boots. Without this, materialize has no
+			// way to know whether to inject relay (it currently runs
+			// in the main container as a goroutine after opencode is
+			// already up).
+			if relayBaseURL != "" {
+				env = append(env, corev1.EnvVar{Name: "INFERENCE_RELAY_BASEURL", Value: relayBaseURL})
+			}
+			return env
+		}(),
 		SecurityContext: &corev1.SecurityContext{
 			ReadOnlyRootFilesystem:   &trueVal,
 			RunAsNonRoot:             &trueVal,
@@ -550,6 +621,36 @@ func buildWorkspaceDirsInit(runtimeImage string) corev1.Container {
 			RunAsNonRoot:             &trueVal,
 			AllowPrivilegeEscalation: &falseVal,
 			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		},
+	}
+}
+
+// buildFreeModelsVolume returns the volume spec for the cluster-wide
+// free-models ConfigMap (2026-06-23 cold-start optimization, item #1a).
+// The credential-setup init container mounts it at /mnt/freemodels and
+// copies models.json into /sandbox-cfg/ so agentd's materialize
+// subcommand can read it before opencode boots.
+//
+// Optional: true is critical — pods can be created before the
+// controller's free-models refresher runs its first fetch (e.g.
+// immediately after a fresh install), and the refresher can be
+// disabled entirely via --enable-free-models-refresher=false. In
+// either case, kubelet skips the mount silently and the credential-setup
+// init script's `if [ -f ... ]` guard finds no file. agentd's
+// materialize subcommand then falls back to the legacy in-pod
+// relay-injector path (Phase D will short-circuit when this file IS
+// present).
+func buildFreeModelsVolume() corev1.Volume {
+	optionalTrue := true
+	return corev1.Volume{
+		Name: "free-models",
+		VolumeSource: corev1.VolumeSource{
+			ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: freemodels.ConfigMapName,
+				},
+				Optional: &optionalTrue,
+			},
 		},
 	}
 }
