@@ -1480,7 +1480,7 @@ Go types in `pkg/types/orgs.go:203-242`:
 | `GET` | `/api/v1/auth/sso/:orgSlug/start` | Public | Begin PKCE flow; 302 to IdP, sets signed state cookie |
 | `GET` | `/api/v1/auth/sso/:orgSlug/callback` | Public | Complete flow; sets `lsp_session` JWT cookie, 302 to frontend |
 
-The CRUD routes are registered in `registerOrgRoutes` behind `OrgAdminGuard` (`api/internal/server/router.go:1192-1194`). The public login routes sit under the auth group (`router.go:599-601`). `/auth/config` advertises `oidcEnabled = (CountSSOConfigs > 0)` so the frontend can hide SSO UI when no org has configured it.
+The CRUD routes are registered in `registerOrgRoutes` behind `OrgAdminGuard` (`api/internal/server/router.go:1234-1238`). The public login routes sit under the auth group (`router.go:633-635`). `/auth/config` advertises `oidcEnabled = (CountSSOConfigs > 0)` so the frontend can hide SSO UI when no org has configured it.
 
 ### Login flow (PKCE)
 
@@ -1593,12 +1593,12 @@ The state-cookie signing key is `deriveServerKey("oidc-state-cookie")` (`api/int
 | OIDC unit tests (fake IdP with JWKS) | `api/internal/services/sso/sso_test.go` |
 | HTTP handler (CRUD + login + discovery) | `api/internal/handlers/org_sso.go` |
 | Handler integration tests + fake IdP helpers | `api/internal/handlers/org_sso_test.go`, `org_sso_idp_helpers_test.go` |
-| Store interface + Postgres impl | `api/internal/services/database/pg_org_store.go` (interface `OrgStore:116-133`, SSO impl `1571-1680`) |
+| Store interface + Postgres impl | `api/internal/services/database/pg_org_store.go` (interface `OrgStore:32`, SSO impl `1660-1830`) |
 | Store tests | `api/internal/services/database/pg_org_store_sso_test.go` |
 | Schema migration | `api/migrations/000038_org_sso_configs.up.sql` |
-| API DTOs | `pkg/types/orgs.go:174-215` |
-| Router registration | `api/internal/server/router.go:599-601, 1192-1194` |
-| Service wiring (KEK, state key) | `api/internal/app/app.go:395-413` |
+| API DTOs | `pkg/types/orgs.go:203-242` |
+| Router registration | `api/internal/server/router.go:633-635, 1234-1238` |
+| Service wiring (KEK, state key) | `api/internal/app/app.go:445-459` |
 | Frontend admin UI | `frontend/src/components/org-admin/OrgSSOTab.tsx` |
 | Frontend login integration | `frontend/src/pages/LoginPage.tsx`, `frontend/src/api/sso.ts` |
 | Design doc (D17 decisions) | `design/stories/epic-43-organization-management/README.md` (Q-S1..Q-S4) |
