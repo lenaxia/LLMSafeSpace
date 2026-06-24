@@ -1867,6 +1867,61 @@ func TestProxy_DeleteSession_IndexErrorStillReturns200(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code, "should still return 200 even if index delete fails")
 }
 
+// ctxRecordingStore wraps an InMemoryStore to capture the context passed to
+// MarkSessionDeleted, so the tombstone's detach-from-request contract can be
+// asserted (regression guard: the tombstone must survive client disconnect).
+type ctxRecordingStore struct {
+	wsstate.Store
+	mu          sync.Mutex
+	recordedCtx context.Context
+	called      bool
+}
+
+func (s *ctxRecordingStore) MarkSessionDeleted(ctx context.Context, workspaceID, sessionID string) {
+	s.mu.Lock()
+	s.recordedCtx = ctx
+	s.called = true
+	s.mu.Unlock()
+	s.Store.MarkSessionDeleted(ctx, workspaceID, sessionID)
+}
+
+// TestProxy_DeleteSession_TombstoneUsesDetachedContext asserts the deleted-
+// session tombstone is written with a context NOT derived from the request,
+// so a client disconnect mid-request cannot cancel the tombstone write and
+// reopen the zombie-session window the tombstone exists to close.
+//
+// Method: the request is dispatched with a sentinel-bearing context. If
+// MarkSessionDeleted used c.Request.Context(), the recorded ctx would carry
+// the sentinel; using context.Background() (the fix) it does not. (Comparing
+// to context.Background() directly is vacuous — httptest.NewRequest already
+// sets the request ctx to context.Background().)
+func TestProxy_DeleteSession_TombstoneUsesDetachedContext(t *testing.T) {
+	store := &ctxRecordingStore{Store: wsstate.NewInMemoryStore()}
+	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]bool{"deleted": true})
+	})
+	env.handler.SetStateStore(store)
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+	env.setupWorkspaceWithT(t, "ws-1", 5)
+
+	type sentinelKey struct{}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/workspaces/ws-1/sessions/s1", nil).
+		WithContext(context.WithValue(context.Background(), sentinelKey{}, "request"))
+	env.router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	store.mu.Lock()
+	called := store.called
+	recorded := store.recordedCtx
+	store.mu.Unlock()
+	require.True(t, called, "MarkSessionDeleted must be called")
+	assert.Nil(t, recorded.Value(sentinelKey{}),
+		"tombstone must use a detached context (not the request ctx) so it survives client disconnect")
+}
+
 type recordingDeleteSessionIndex struct {
 	mu          sync.Mutex
 	called      bool
