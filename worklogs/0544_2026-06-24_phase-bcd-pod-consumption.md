@@ -151,7 +151,7 @@ cmd/workspace-agentd/relay_injector_test.go         +132 (4 tests)
 cmd/workspace-agentd/secrets.go                     +32 (call applyRelayConfigPreBoot)
 cmd/workspace-agentd/pre_boot_relay.go              (new, ~250 lines)
 cmd/workspace-agentd/pre_boot_relay_test.go         (new, ~310 lines)
-worklogs/NNNN_2026-06-24_phase-bcd-pod-consumption.md (this file)
+worklogs/0544_2026-06-24_phase-bcd-pod-consumption.md (this file)
 ```
 
 ## Next steps
