@@ -375,6 +375,33 @@ func TestRevokeToken(t *testing.T) {
 // RevokeAllUserSessions reads the tracked session entries and writes
 // "revoked" under both the jti key and the hash key for each entry.
 // This is the OWASP-mandated session-invalidation primitive for
+// TestRevokeAllUserSessions_PropagatesContext mirrors the RevokeToken test for
+// its sibling: RevokeAllUserSessions has its OWN independent ctx derivation
+// (auth.go:953), so a single-line regression there would not be caught by the
+// RevokeToken test. The sentinel matcher on GetObject/Set/Delete is load-bearing.
+func TestRevokeAllUserSessions_PropagatesContext(t *testing.T) {
+	log, _ := logger.New(true, "debug", "console")
+	cfg := &config.Config{}
+	cfg.Auth.JWTSecret = "test-secret"
+	cfg.Auth.TokenDuration = 24 * time.Hour
+	mockDB := new(mocks.MockDatabaseService)
+	cache := new(mocks.MockCacheService)
+	service, err := New(cfg, log, mockDB, cache)
+	require.NoError(t, err)
+
+	userID := "user-prop2"
+	ctx := context.WithValue(context.Background(), ctxPropKey{}, "present")
+	matchesPropagated := func(c context.Context) bool { return c.Value(ctxPropKey{}) == "present" }
+	entries := []string{"jti-x|token:hashx"} // one entry -> 2 Sets (jti + hash) + 1 Delete
+	cache.On("GetObject", mock.MatchedBy(matchesPropagated), "user-sessions:"+userID, mock.Anything).
+		Run(func(args mock.Arguments) { *args.Get(2).(*[]string) = entries }).Return(nil).Once()
+	cache.On("Set", mock.MatchedBy(matchesPropagated), mock.Anything, "revoked", mock.Anything).Return(nil).Twice()
+	cache.On("Delete", mock.MatchedBy(matchesPropagated), "user-sessions:"+userID).Return(nil).Once()
+
+	require.NoError(t, service.RevokeAllUserSessions(ctx, userID))
+	cache.AssertExpectations(t)
+}
+
 // password-reset (US-49.5).
 func TestRevokeAllUserSessions_RevokesAllTrackedSessions(t *testing.T) {
 	log, _ := logger.New(true, "debug", "console")
