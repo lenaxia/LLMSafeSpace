@@ -337,7 +337,8 @@ func (s *PgOrgStore) SoftDeleteOrg(ctx context.Context, orgID string) error {
 // silently skipping org-credential auto-binding via
 // BindCredentialToAllOrgWorkspaces (which filters w.org_id = $orgID).
 // That produced the same orphan state migration 000044 was created
-// to backfill — see worklog 0548 for the discovery trail.
+// to backfill. See the worklog `add-org-member-migrates-workspaces`
+// for the discovery trail.
 func (s *PgOrgStore) AddOrgMember(ctx context.Context, orgID, userID string, role types.OrgRole) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -359,9 +360,11 @@ func (s *PgOrgStore) AddOrgMember(ctx context.Context, orgID, userID string, rol
 	}
 
 	// M2: migrate the new member's personal workspaces to the org.
-	// Identical UPDATE to CreateOrgWithAdmin (line 200) and
-	// AcceptInvitationTx (line 1186) so the three join paths are
-	// behaviorally identical from the workspace's point of view.
+	// Identical UPDATE to the D4 block in CreateOrgWithAdmin and
+	// AcceptInvitationTx so the three join paths are behaviorally
+	// identical from the workspace's point of view. Search the file
+	// for "UPDATE workspaces SET org_id" to find the other two —
+	// line numbers drift; structural search is reliable.
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE workspaces SET org_id = $2, updated_at = NOW()
 		 WHERE user_id = $1 AND org_id IS NULL AND deleted_at IS NULL`,

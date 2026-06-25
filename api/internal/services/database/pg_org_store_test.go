@@ -315,18 +315,12 @@ func TestAcceptInvitationTx_MigratesPersonalWorkspaces(t *testing.T) {
 
 // TestAddOrgMember_MigratesPersonalWorkspaces verifies M2: AddOrgMember
 // (the path used by admin direct-add via POST /orgs/:id/members and by
-// SSO JIT provisioning) MUST migrate the new member's personal
-// workspaces to the org, mirroring CreateOrgWithAdmin and
-// AcceptInvitationTx. Without this UPDATE, the user's NULL-org_id
-// workspaces stay orphaned and silently skip org-credential auto-
-// binding (the same class of bug fixed by migration 000044 — see
-// worklog 0548). Discovered while answering "do all workspaces get
-// updated when a user joins an org" — the answer was "yes, except
-// for these two paths".
-//
-// This test must FAIL today (AddOrgMember does not run the UPDATE)
-// and PASS once the AddOrgMember implementation is updated to match
-// the other two join paths.
+// SSO JIT provisioning) migrates the new member's personal workspaces
+// to the org, mirroring CreateOrgWithAdmin and AcceptInvitationTx.
+// Without this UPDATE, the user's NULL-org_id workspaces stay orphaned
+// and silently skip org-credential auto-binding (the same class of bug
+// fixed by migration 000044). Regression guard: a refactor that drops
+// the UPDATE or weakens its WHERE clause must fail this test.
 func TestAddOrgMember_MigratesPersonalWorkspaces(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -349,6 +343,36 @@ func TestAddOrgMember_MigratesPersonalWorkspaces(t *testing.T) {
 
 	err = store.AddOrgMember(context.Background(), "org-1", "user-1", types.OrgRoleMember)
 	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// TestAddOrgMember_UpdateError_RollsBack pins the atomicity invariant
+// the PR body advertises: if the workspace-migration UPDATE fails, the
+// membership INSERT MUST roll back. Without this guard a future
+// refactor that moves the UPDATE outside the transaction (or breaks
+// the `committed` flag) would silently produce a partial commit —
+// the very class of half-applied join the migration was designed
+// to prevent.
+//
+// Mirrors the rollback pattern at TestPgOrgStore_SuspendUserGuardedByLastAdmin_UpdateError_RollsBack.
+func TestAddOrgMember_UpdateError_RollsBack(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	store := NewPgOrgStore(db)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO org_memberships`).
+		WithArgs("org-1", "user-1", "member").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`UPDATE workspaces SET org_id = .* WHERE user_id = .* AND org_id IS NULL AND deleted_at IS NULL`).
+		WithArgs("user-1", "org-1").
+		WillReturnError(sql.ErrConnDone)
+	mock.ExpectRollback() // and NOT ExpectCommit — the assertion is the absence
+
+	err = store.AddOrgMember(context.Background(), "org-1", "user-1", types.OrgRoleMember)
+	require.Error(t, err, "UPDATE failure must propagate")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
