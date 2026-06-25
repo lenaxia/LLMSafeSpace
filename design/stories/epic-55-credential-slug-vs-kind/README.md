@@ -2,9 +2,10 @@
 
 **Status:** Planning
 **Created:** 2026-06-24
-**Last Revision:** 2026-06-25 (review pass 3: added "DAL code paths affected by the constraint swap" section enumerating the five queries in `pg_credential_store.go` that depend on the old unique constraint or the NOT NULL on `provider` (N3); recommended option A — drop NOT NULL on `provider` in the migration — to reconcile the schema with the API surface (N4); added two integration regression tests pinning both behaviors). Earlier revisions preserved below.
+**Last Revision:** 2026-06-25 (review pass 4: added `ALTER COLUMN provider DROP NOT NULL` to the migration SQL block per recommended option A (N5 — was prose-only); extended the DAL enumeration to cover `ListCredentials`, `GetCredential`, `UpdateCredential` (N6 — projection/update-clause gaps); corrected the `HasUserProviderCredential` callsite citation (N7 — `ensureFreeTierCredential` does not invoke it; zero production callsites at HEAD); added two integration regression tests pinning the new read/update paths).
 
 **Earlier Revisions:**
+- 2026-06-25 (review pass 3: added "DAL code paths affected by the constraint swap" section enumerating the five queries in `pg_credential_store.go` that depend on the old unique constraint or the NOT NULL on `provider` (N3); recommended option A — drop NOT NULL on `provider` in the migration — to reconcile the schema with the API surface (N4); added two integration regression tests pinning both behaviors).
 - 2026-06-25 (review pass 2: corrected slug regex inconsistency between SQL and constraints table (N1 — both now use `^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$`); fixed backfill CASE producing `kind='azure'` not in CHECK enum (N2 — now maps `provider='azure'` → `kind='azure_openai'` explicitly); added regression tests for both classes; added explicit "API and DB regex are byte-identical" property test).
 - 2026-06-24 (review pass 1: corrected backfill SQL ordering bug, added missing CHECK constraints, fixed session path to honor `XDG_DATA_HOME=/workspace/.local`, dropped misleading trigger-based rollback story, corrected `orgs.go` line citation, added Q4 covering the `opencode-relay` slug-reservation collision, added test cases for adversarial backfill inputs and reserved-slug rejection, added explicit FK-relationship statement)
 **Depends On:** none (foundation epics already shipped)
@@ -125,10 +126,19 @@ ALTER TABLE provider_credentials DROP CONSTRAINT provider_credentials_owner_type
 ALTER TABLE provider_credentials ADD CONSTRAINT provider_credentials_owner_slug_uniq
   UNIQUE (owner_type, owner_id, slug);
 
--- Keep `provider` for one release as the legacy compatibility column.
--- Drop in a follow-up migration after the wire-format change has rolled
--- out and all sessions have re-pinned (or been migrated; see
--- "Session migration" below).
+-- Drop NOT NULL on the legacy provider column so new INSERTs that omit
+-- it (per the API surface change at line 167) do not fail. Existing
+-- rows keep their snapshot value (the backfill UPDATE above ran against
+-- rows whose provider was already non-NULL); new rows can omit it.
+-- See the "DAL code paths affected" section for why this is required
+-- in lockstep with the constraint swap (N4 from the review).
+ALTER TABLE provider_credentials ALTER COLUMN provider DROP NOT NULL;
+
+-- Keep `provider` (now nullable, frozen at its post-backfill value for
+-- existing rows) for one release as the legacy compatibility column.
+-- Drop the column entirely in Release N+1 after the wire-format change
+-- has rolled out and all sessions have re-pinned (or been migrated;
+-- see "Session migration" below).
 ```
 
 Notes:
@@ -170,8 +180,11 @@ Affected DAL queries (verified against `pkg/secrets/pg_credential_store.go` at H
 | `pg_credential_store.go:58–63` | `UpsertFreeTierCredential` — `INSERT … ON CONFLICT (owner_type, owner_id, provider) DO UPDATE` | Change arbiter to `(owner_type, owner_id, slug)`; populate `slug` and `kind` columns in the INSERT list |
 | `pg_credential_store.go:18–22` | `GetWorkspaceCredentials` — `SELECT pc.id, pc.owner_type, pc.owner_id, pc.provider, …` | Add `pc.slug, pc.kind` to the projection so callers receive the new identity/class fields |
 | `pg_credential_store.go:167–174` | `BackfillFreeTierBindings` — `WHERE pc.owner_type = 'admin' AND pc.owner_id = '_platform' AND pc.provider = 'opencode'` | Switch the filter to `pc.slug = 'opencode'` (the post-migration equivalent identity), with the constant kept in lockstep with the slug-reservation list (Q4) |
-| `pg_credential_store.go:182–195` | `HasUserProviderCredential(userID, provider)` | Reframe as `HasUserProviderCredential(userID, slug)` or add a parallel `HasUserProviderKind` helper, depending on what the caller needs (callsites: free-tier guard in `ensureFreeTierCredential`; verify before changing the signature) |
+| `pg_credential_store.go:182–195` | `HasUserProviderCredential(userID, provider)` | Reframe as `HasUserProviderCredential(userID, slug)` or add a parallel `HasUserProviderKind` helper. Verified at HEAD: zero production callsites — the method is on the interface (`credential_store.go:69`) and implemented but only test mocks invoke it. Verify during implementation before changing the signature. |
 | `pg_credential_store.go:222–226` | `CreateCredential` — `INSERT … (owner_type, owner_id, name, provider, ciphertext)` | Add `slug, kind` to the INSERT column list so new rows populate them |
+| `pg_credential_store.go:232–255` | `ListCredentials` — `SELECT id, ..., provider, ...` | Add `slug, kind` to the projection so callers building agent-config see the new identity/class fields |
+| `pg_credential_store.go:260–276` | `GetCredential` — `SELECT id, ..., provider, ...` | Same projection gap; used by credential-detail handlers and credential-edit flows |
+| `pg_credential_store.go:292–303` | `UpdateCredential` — `SET provider = COALESCE(NULLIF($5, ''), provider), ...` | Add `slug, kind` to the SET clause so credential updates can modify them |
 
 These five queries are exhaustive for `pg_credential_store.go`; `org_credential_store.go` uses no `ON CONFLICT` over `provider` and reads only via the views above. Tests in `pkg/secrets/credential_store_integration_test.go` and `pkg/secrets/pg_integration_test.go` exercise every path and must be updated in lockstep.
 
@@ -315,6 +328,8 @@ Per Rule 0 (TDD), every behavior change preceded by a failing test:
 - **API and DB regex are byte-identical.** A code-level test asserts the API-layer slug regex string is equal to the DB CHECK regex string (both stored in a single Go const, used by both the validator and the migration generator). Catches N1-class drift where two regexes "look similar but disagree on edge cases" (1-char vs 2-char minimum).
 - **`UpsertFreeTierCredential` succeeds after the constraint swap (N3).** Integration test: run the migration, then call `UpsertFreeTierCredential` twice in succession — second call must hit the new arbiter `(owner_type, owner_id, slug)` and produce a clean upsert, not raise `there is no unique or exclusion constraint matching the ON CONFLICT specification`. This is the bootstrap path; without this, the API does not start after the migration deploys.
 - **`CreateCredential` succeeds when `provider` is omitted (N4).** Integration test: post a credential with `slug` and `kind` only, no `provider` field. The DAL INSERT must succeed (provider column either DROP NOT NULL'd per recommended option A, or compatibility-shimmed per option B/C — whichever is chosen, this test pins the behavior).
+- **`ListCredentials` and `GetCredential` return `slug` and `kind` after the migration (N6).** Integration test: insert a credential with slug=`x` and kind=`openai`; call `ListCredentials` and `GetCredential`; assert both fields appear in the returned `CredentialRow`. Without this, the wire-format change at `format.go:87` would silently use a stale projection for credentials read via these paths — the same class of silent mis-routing this epic was created to prevent.
+- **`UpdateCredential` can modify `slug` and `kind` (N6).** Integration test: insert a credential, call `UpdateCredential` to change slug or kind, assert the update is persisted. Catches the SET-clause gap that would leave the columns frozen.
 - **Reserved slug rejection.** API write rejects `slug='opencode-relay'` and `slug='opencode'` at the validator layer (Q4). A property test confirms the reservation list matches the system providers the relay injector emits.
 - **Wire format.** `agent-config.json` keyed by `slug`, not `provider`. New e2e test in `pod_bootstrap_e2e_test.go` covering a credential with slug ≠ kind.
 - **Wire-format slug-collision invariant.** A slug containing characters that are valid JSON object keys but collide with opencode's model-ID namespacing (e.g. slug containing `/`) — the regex forbids it, but an assertion test locks the invariant in case a future regex relaxation accidentally allows it.
