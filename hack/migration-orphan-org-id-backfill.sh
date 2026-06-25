@@ -96,10 +96,26 @@ ORG_CRED='d0000000-0000-0000-0000-000000000001'
 $PSQL -c "INSERT INTO provider_credentials (id, owner_type, owner_id, name, provider, ciphertext, key_version)
   VALUES ('$ORG_CRED', 'org', '$ORG_ID', 'org-shared', 'custom', '\x00', 1);"
 
+# Second org credential for the SAME org. Multi-credential orgs exercise
+# the JOIN provider_credentials across multiple rows; without this seed
+# a regression like an accidental LIMIT 1 / DISTINCT ON would not be
+# caught (review pass 1 finding).
+ORG_CRED_2='d0000000-0000-0000-0000-000000000002'
+$PSQL -c "INSERT INTO provider_credentials (id, owner_type, owner_id, name, provider, ciphertext, key_version)
+  VALUES ('$ORG_CRED_2', 'org', '$ORG_ID', 'org-shared-2', 'opencode-zen', '\x00', 1);"
+
 # Org cred is bound to the healthy ws but NOT to the orphan ws (the
 # downstream consequence of the org_id NULL state).
 $PSQL -c "INSERT INTO workspace_credential_bindings (credential_id, workspace_id, source_type, within_priority)
   VALUES ('$ORG_CRED', '$HEALTHY_WS', 'auto', 5);"
+
+# ORG_CRED_2 is also bound to the healthy ws (mirrors how the app
+# auto-binds every org credential at workspace-create) but NOT the
+# orphan. After the migration, BOTH org creds must end up bound to
+# the (formerly-)orphan workspace — that's the multi-credential
+# invariant.
+$PSQL -c "INSERT INTO workspace_credential_bindings (credential_id, workspace_id, source_type, within_priority)
+  VALUES ('$ORG_CRED_2', '$HEALTHY_WS', 'auto', 5);"
 
 echo "== verifying seed state matches the bug =="
 ORPHAN_NULL=$($PSQL -tAc "SELECT count(*) FROM workspaces WHERE id='$ORPHAN_WS' AND org_id IS NULL;")
@@ -171,6 +187,17 @@ if [ "$AFTER_ORPHAN_BINDING" != "1" ]; then
     exit 1
 fi
 echo "  OK: org credential bound to (formerly-)orphan workspace"
+
+# Orphan also receives the SECOND org credential's binding. Multi-
+# credential orgs need every org cred bound to every formerly-orphan
+# workspace — a regression like accidental LIMIT 1 / DISTINCT ON
+# would only land one of the two.
+AFTER_ORPHAN_BINDING_2=$($PSQL -tAc "SELECT count(*) FROM workspace_credential_bindings WHERE workspace_id='$ORPHAN_WS' AND credential_id='$ORG_CRED_2';")
+if [ "$AFTER_ORPHAN_BINDING_2" != "1" ]; then
+    echo "FAIL: second org credential not bound to orphan workspace (multi-credential org regression)"
+    exit 1
+fi
+echo "  OK: second org credential also bound to orphan workspace"
 
 # Healthy binding unchanged (no duplicate from idempotent re-run).
 AFTER_HEALTHY_BINDING=$($PSQL -tAc "SELECT count(*) FROM workspace_credential_bindings WHERE workspace_id='$HEALTHY_WS' AND credential_id='$ORG_CRED';")
