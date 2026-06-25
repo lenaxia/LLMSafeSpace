@@ -173,7 +173,7 @@ func setupSecretServiceWithTwoUsers(t *testing.T) (*SecretService, string, strin
 // d95b6751-8796-4ea5-addd-9f5af3053fac on 2026-06-24.
 //
 // The /internal/v1/pod-bootstrap handler (introduced by Epic 35) calls
-// PrepareSecretsForInjection with sessionID=="" because the init container
+// InjectSecrets with sessionID=="" because the init container
 // has no user session. The documented contract (godoc on the function) says
 // user-DEK-encrypted things must be skipped with an audit event when no
 // session is available — and the LLM-credential loop honors this. But
@@ -461,7 +461,7 @@ func TestSecretService_InjectSecrets_BootstrapPath_NoSession_LegacyAPIKey_Skippe
 }
 
 // TestSecretService_InjectSecrets_BootstrapPath_NoSession_AuditsSkippedUserDEKSecrets
-// proves Finding F6.1: the documented contract on PrepareSecretsForInjection
+// proves Finding F6.1: the documented contract on InjectSecrets
 // says user-DEK things "are skipped with an audit event". The LLM loop
 // honors this when sessionID is non-empty but DEK is missing. The fix must
 // emit an audit on user-DEK skip *at bootstrap time* (sessionID="") too,
@@ -524,7 +524,7 @@ func TestSecretService_InjectSecrets_BootstrapPath_NoSession_AuditsSkippedUserDE
 // TestSecretService_InjectSecrets_BootstrapPath_DeliversWorkspaceConfigDefaultModel
 // proves Finding A4.3: the fix transitively repairs default-model
 // selection. The bootstrap response carries `workspaceConfig.defaultModel`
-// from the workspaces table — but only when PrepareSecretsForInjection
+// from the workspaces table — but only when the injector method
 // itself succeeds (the handler bails before reaching the wsConfig branch
 // on a 500). Once the secret-prep stops failing, the wsConfig is
 // delivered and applyWorkspaceConfig() can resolve it to a fully-
@@ -587,6 +587,99 @@ func TestSecretService_InjectSecrets_BootstrapPath_DeliversWorkspaceConfigDefaul
 		// Empty payload is acceptable when no decryptable creds exist, but
 		// here we have an org cred — the payload MUST be non-empty.
 		t.Errorf("bootstrap payload must contain the org credential; got empty payload (this guarantees handler delivers wsConfig)")
+	}
+}
+
+// TestSecretService_InjectSessionlessSecrets_UserBindingDoesNotShadowServerKEK
+// proves the skip-then-fallback contract for the new sessionless path:
+// when a user binding (skipped because no DEK) appears in the precedence
+// list BEFORE an admin/org binding for the same provider, the user skip
+// must NOT set `seen[provider]`, so the lower-priority server-KEK binding
+// still materializes.
+//
+// The pre-fix LLM loop already had this property for *decrypt failures*
+// (LoadLLMCredentials does `continue` without setting seen). The new
+// loadServerKEKCredentials path explicitly skips user bindings before
+// reaching decryptBinding — this test verifies the explicit-skip path
+// also avoids poisoning `seen`. Without this guard, a workspace with a
+// user-bound `openai` cred and an admin-bound `openai` fallback would
+// silently boot with NO `openai` provider after Epic 35.
+//
+// This is the second missing test surfaced by PR #407 review.
+func TestSecretService_InjectSessionlessSecrets_UserBindingDoesNotShadowServerKEK(t *testing.T) {
+	keyStore := newMockKeyStore()
+	dekCache := newMockDEKCache()
+	keySvc := NewKeyService(keyStore, dekCache)
+	secretStore := newMockSecretStore()
+
+	ctx := context.Background()
+	if _, err := keySvc.InitializeUserKeys(ctx, "user-1", []byte("pw")); err != nil {
+		t.Fatalf("InitializeUserKeys: %v", err)
+	}
+
+	// User credential for "openai" — encrypted with user DEK. Without a
+	// session at sessionless-injection time, this binding is skipped.
+	userDEK := make([]byte, 32)
+	for i := range userDEK {
+		userDEK[i] = byte(i + 100)
+	}
+	userPlaintext, _ := json.Marshal(LLMProviderData{Provider: "openai", APIKey: "user-key"})
+	userCipher, err := EncryptSecret(userDEK, userPlaintext)
+	if err != nil {
+		t.Fatalf("EncryptSecret(user): %v", err)
+	}
+
+	// Admin credential for the SAME provider "openai" — server-KEK
+	// encrypted; this is the fallback that MUST still materialize.
+	adminKEK := make([]byte, 32)
+	for i := range adminKEK {
+		adminKEK[i] = byte(i + 1)
+	}
+	adminPlaintext, _ := json.Marshal(LLMProviderData{Provider: "openai", APIKey: "admin-key"})
+	adminCipher, err := EncryptSecret(adminKEK, adminPlaintext)
+	if err != nil {
+		t.Fatalf("EncryptSecret(admin): %v", err)
+	}
+
+	// Bindings ordered with user first — mirrors the production
+	// precedence sort that puts user creds ahead of admin (Epic 30).
+	mockCred := &mockCredentialStore{
+		bindings: []CredentialBinding{
+			{ID: "cred-user", OwnerType: "user", OwnerID: "user-1", Provider: "openai", Ciphertext: userCipher, SourceType: "explicit"},
+			{ID: "cred-admin", OwnerType: "admin", OwnerID: "_platform", Provider: "openai", Ciphertext: adminCipher, SourceType: "auto"},
+		},
+	}
+	combined := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCred}
+	svc := NewSecretService(keySvc, combined)
+	svc.SetAdminProvider(mustStaticProvider(t, adminKEK))
+
+	data, err := svc.InjectSessionlessSecrets(ctx, "user-1", "ws-1")
+	if err != nil {
+		t.Fatalf("InjectSessionlessSecrets: %v", err)
+	}
+
+	var injected []InjectedSecret
+	if err := json.Unmarshal(data, &injected); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+
+	var sawOpenAI bool
+	var apiKeyValue string
+	for _, item := range injected {
+		if item.Type == SecretTypeLLMProvider && item.Name == "openai" {
+			sawOpenAI = true
+			var pd LLMProviderData
+			if jerr := json.Unmarshal([]byte(item.Plaintext), &pd); jerr != nil {
+				t.Errorf("openai payload not valid LLMProviderData JSON: %v", jerr)
+			}
+			apiKeyValue = pd.APIKey
+		}
+	}
+	if !sawOpenAI {
+		t.Fatalf("admin openai credential MUST materialize as fallback when the user openai binding is skipped; got %d items: %+v", len(injected), injected)
+	}
+	if apiKeyValue != "admin-key" {
+		t.Errorf("expected the admin-key (fallback) since user binding is skipped without a session; got %q", apiKeyValue)
 	}
 }
 

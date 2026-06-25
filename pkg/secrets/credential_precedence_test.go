@@ -337,7 +337,8 @@ func (c *testDEKCache) GetDEK(_ context.Context, sessionID string) ([]byte, erro
 func (c *testDEKCache) EvictDEK(_ context.Context, _ string) error { return nil }
 
 // TestAsyncAuditLogger_ImplementsCredentialStore verifies that the type assertion
-// in PrepareSecretsForInjection succeeds when store is *AsyncAuditLogger.
+// in the injector methods (InjectSecrets / InjectSessionlessSecrets) succeeds
+// when store is *AsyncAuditLogger.
 func TestAsyncAuditLogger_ImplementsCredentialStore(t *testing.T) {
 	inner := newMockSecretStore()
 	logger := &asyncAuditTestLogger{}
@@ -349,9 +350,9 @@ func TestAsyncAuditLogger_ImplementsCredentialStore(t *testing.T) {
 	require.True(t, ok, "AsyncAuditLogger must implement CredentialStore for injection path to activate")
 }
 
-// TestPrepareSecretsForInjection_ViaAsyncAuditLogger ensures the new path
+// TestInjectSecrets_ViaAsyncAuditLogger ensures the new path
 // activates when store is wrapped in AsyncAuditLogger (production configuration).
-func TestPrepareSecretsForInjection_ViaAsyncAuditLogger(t *testing.T) {
+func TestInjectSecrets_ViaAsyncAuditLogger(t *testing.T) {
 	// Inner store implements both SecretStore and CredentialStore.
 	innerSecret := newMockSecretStore()
 	adminKEK := make([]byte, 32)

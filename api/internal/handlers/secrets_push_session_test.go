@@ -13,7 +13,6 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -148,7 +147,7 @@ func (s *pushPathSessionStore) QueryAudit(_ context.Context, _ string, _ secrets
 //   - Workspace already has a user-DEK env-secret bound (from a prior
 //     JWT-authenticated session).
 //   - User binds an org credential via API-key auth (no sessionID).
-//   - pushSecretsToAgent calls PrepareSecretsForInjection(ctx, userID, "", ws)
+//   - pushSecretsToAgent calls InjectSecrets(ctx, userID, "", ws)
 //   - buildNonLLMSecrets sees a relevant user secret → calls GetDEK("") →
 //     returns "DEK not available" error → entire prep fails → push silently
 //     dropped → agentd receives nothing.
@@ -262,10 +261,9 @@ func TestHandler_BindPushesOrgCredentialEvenWithAPIKeyAuth_NoSession(t *testing.
 		t.Fatalf("Bind: expected 204, got %d: %s", bw.Code, bw.Body.String())
 	}
 
-	// Wait briefly for the async push goroutine; pushSecretsToAgent runs
-	// inline today, but the test must not race the response.
-	time.Sleep(50 * time.Millisecond)
-
+	// pushSecretsToAgent runs inline (secrets.go:335 calls it before
+	// c.Status(204)) so the agentd mock has already been called by
+	// the time ServeHTTP returns. No sleep needed.
 	mu.Lock()
 	called := reloadCalled
 	body := reloadBody

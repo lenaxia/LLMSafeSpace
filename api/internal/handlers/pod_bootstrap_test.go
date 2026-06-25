@@ -207,7 +207,7 @@ func TestParseSAPrincipal(t *testing.T) {
 
 // TestPodBootstrap_LogsUnderlyingError_OnInjectorFailure proves the
 // observability gap surfaced by the 2026-06-24 production incident: when
-// PrepareSecretsForInjection fails (e.g. "DEK not available" for non-LLM
+// InjectSecrets fails (e.g. "DEK not available" for non-LLM
 // user secrets at boot), the handler returns a generic 500 "secret
 // preparation failed" with NO breadcrumb of the underlying cause. An
 // operator inspecting API logs sees only the request lifecycle and the

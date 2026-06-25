@@ -6,7 +6,7 @@ package main
 // reload_credentials_e2e_test.go exercises the LIVE credential reload path:
 //
 //	provider_credentials (DB row)
-//	  → SecretService.PrepareSecretsForInjection   (decrypt + dedupe by provider)
+//	  → SecretService.InjectSecrets   (decrypt + dedupe by provider)
 //	  → reloadSecretsHandler                        (HTTP POST /v1/reload-secrets)
 //	  → Materializer.Materialize → FlushProviders   (stages + writes agent-config.json)
 //	  → AgentConfigWriter.rebuild                   (atomic write)
@@ -199,7 +199,7 @@ func buildReloadSecretService(t *testing.T, bindings []reloadBinding, wireAdmin,
 }
 
 // runReloadE2E is the shared harness: builds the real SecretService, calls
-// PrepareSecretsForInjection to produce the decrypted secrets JSON, then POSTs
+// InjectSecrets to produce the decrypted secrets JSON, then POSTs
 // it to the real reloadSecretsHandler and returns the materialized
 // agent-config.json path + HTTP status + body.
 func runReloadE2E(t *testing.T, bindings []reloadBinding, wireAdmin, wireOrg bool) (agentCfgPath string, httpStatus int, httpBody string) {
@@ -220,7 +220,7 @@ func runReloadE2E(t *testing.T, bindings []reloadBinding, wireAdmin, wireOrg boo
 	// Real decrypt: the seam that broke for org credentials.
 	secretsJSON, err := svc.InjectSecrets(context.Background(), "user-e2e", "sess-e2e", "ws-e2e")
 	require.NoError(t, err)
-	require.NotEmpty(t, secretsJSON, "PrepareSecretsForInjection must return non-empty JSON for non-empty bindings")
+	require.NotEmpty(t, secretsJSON, "InjectSecrets must return non-empty JSON for non-empty bindings")
 
 	// Real reloadSecretsHandler: materialize → enrich → flush → writer rebuild.
 	writer := newAgentConfigWriter(agentCfgPath)
@@ -249,7 +249,7 @@ func readReloadAgentConfig(t *testing.T, path string) struct {
 
 // TestE2E_ReloadSecrets_AllOwnerTypesMaterialized is the reload-path twin of
 // TestE2E_BootstrapMaterialize_AllOwnerTypesMaterialized. It seeds org + admin
-// + user credentials, runs PrepareSecretsForInjection → reloadSecretsHandler,
+// + user credentials, runs InjectSecrets → reloadSecretsHandler,
 // and asserts all three providers appear in agent-config.json. A regression
 // where org credentials stop surviving the reload decrypt path fails here.
 func TestE2E_ReloadSecrets_AllOwnerTypesMaterialized(t *testing.T) {
@@ -275,7 +275,7 @@ func TestE2E_ReloadSecrets_AllOwnerTypesMaterialized(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(cfg.Provider["anthropic"], &anthropicEntry))
 	assert.Equal(t, "sk-org", anthropicEntry.Options.APIKey,
-		"org apiKey must round-trip through PrepareSecretsForInjection → reload → agent-config.json")
+		"org apiKey must round-trip through InjectSecrets → reload → agent-config.json")
 }
 
 // TestE2E_ReloadSecrets_OrgOnly pins that a sole org-scoped credential
@@ -319,7 +319,7 @@ func TestE2E_ReloadSecrets_OrgProviderUnwired_OrgAbsentButReloadSucceeds(t *test
 // degradation contract for the reload path: an empty decrypted batch must
 // return 200, not 500. This is the "user has no credentials yet" case.
 func TestE2E_ReloadSecrets_EmptyBindings_Returns200(t *testing.T) {
-	// PrepareSecretsForInjection on empty bindings returns "[]".
+	// InjectSecrets on empty bindings returns "[]".
 	svc := buildReloadSecretService(t, nil, true, true)
 	secretsJSON, err := svc.InjectSecrets(context.Background(), "user-e2e", "sess-e2e", "ws-e2e")
 	require.NoError(t, err)

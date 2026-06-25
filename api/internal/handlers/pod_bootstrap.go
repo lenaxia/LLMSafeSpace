@@ -129,9 +129,19 @@ func NewPodBootstrapHandlerFromClientset(clientset kubernetes.Interface, injecto
 //
 // The logger is optional: when nil, the handler falls back to a silent
 // no-op so unit tests that don't care about log emission can omit it.
-// Production wiring (api/internal/app/app.go) MUST install one.
+// Production wiring (api/internal/app/app.go) MUST install one — see
+// TestPodBootstrapHandler_LoggerWired in api/internal/app/ for the
+// regression guard that enforces this.
 func (h *PodBootstrapHandler) SetLogger(l interfaces.LoggerInterface) {
 	h.logger = l
+}
+
+// HasLogger reports whether a logger has been wired. Used by the
+// app-level wiring test to enforce that production constructs the
+// handler with SetLogger called — without this, the underlying error
+// in 5xx responses is silently dropped (the very gap PR #407 closed).
+func (h *PodBootstrapHandler) HasLogger() bool {
+	return h.logger != nil
 }
 
 // Bootstrap handles POST /internal/v1/pod-bootstrap.

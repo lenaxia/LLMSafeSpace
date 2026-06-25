@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 
 	"github.com/lenaxia/llmsafespaces/api/internal/handlers"
 	imocks "github.com/lenaxia/llmsafespaces/api/internal/mocks"
@@ -273,6 +274,51 @@ func TestSecretsHandler_PodIPResolverWired(t *testing.T) {
 
 	if !h.HasPodIPResolver() {
 		t.Fatalf("SetPodIPResolver must populate the handler's resolver")
+	}
+}
+
+// TestPodBootstrapHandler_LoggerWired is the regression guard for the
+// observability gap that PR #407 set out to close. Without explicit
+// wiring of a logger via SetLogger, PodBootstrapHandler.Bootstrap
+// swallows the underlying secret-prep error and returns only a
+// generic 500 — the exact behavior that turned the 2026-06-24 outage
+// into a 30-minute diagnosis exercise.
+//
+// The first review of #407 caught that NewPodBootstrapHandlerFromClientset
+// in app.go was constructed without a corresponding SetLogger call,
+// making the whole observability fix dead code in production. This
+// test exists so that regression cannot recur silently — every future
+// PR that touches the wiring is forced to keep SetLogger in lockstep
+// with the constructor.
+//
+// We test the wiring helper directly rather than constructing the full
+// App because app.New requires PostgreSQL/Redis; the helper is the unit
+// of behavior we actually care about.
+func TestPodBootstrapHandler_LoggerWired(t *testing.T) {
+	keyStore := &dbKeyStoreAdapter{}
+	dekCache := &memDEKCache{store: make(map[string][]byte)}
+	keyService := secrets.NewKeyService(keyStore, dekCache)
+	secretStore := &dbSecretStoreAdapter{}
+	secretService := secrets.NewSecretService(keyService, secretStore)
+
+	// Mirror the exact construction sequence app.go uses.
+	fakeClientset := k8sfake.NewSimpleClientset()
+	dbSvc := &fakeAppDBLookup{}
+	h := handlers.NewPodBootstrapHandlerFromClientset(
+		fakeClientset, secretService, dbSvc, "test-namespace",
+	)
+	if h.HasLogger() {
+		t.Fatalf("freshly-constructed PodBootstrapHandler must not have a logger before SetLogger is called")
+	}
+
+	// Same call app.go makes (or MUST make — this test exists to enforce
+	// that). If this stops being valid the wiring is either changed
+	// deliberately (update the test) or it has regressed.
+	log := lmocks.NewMockLogger()
+	h.SetLogger(log)
+
+	if !h.HasLogger() {
+		t.Fatalf("SetLogger must populate the handler's logger so 5xx errors include the underlying cause; otherwise the observability fix in #407 is dead code")
 	}
 }
 

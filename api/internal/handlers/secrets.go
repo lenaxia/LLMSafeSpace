@@ -431,17 +431,22 @@ func (h *SecretsHandler) pushSecretsToAgent(c *gin.Context, userID, workspaceID 
 	_, sessionID := extractAuth(c)
 	ctx := c.Request.Context()
 
-	var secretsJSON []byte
-	var err error
+	var (
+		secretsJSON []byte
+		err         error
+		injectPath  string // "session" | "sessionless" — for log correlation
+	)
 	if sessionID != "" {
+		injectPath = "session"
 		secretsJSON, err = h.svc.InjectSecrets(ctx, userID, sessionID, workspaceID)
 	} else {
 		// API-key authenticated path: no session, no user-DEK content.
+		injectPath = "sessionless"
 		secretsJSON, err = h.svc.InjectSessionlessSecrets(ctx, userID, workspaceID)
 	}
 	if err != nil {
-		h.warn("InjectSecrets failed",
-			"workspaceID", workspaceID, "error", err.Error())
+		h.warn("secret injection failed",
+			"workspaceID", workspaceID, "path", injectPath, "error", err.Error())
 		return
 	}
 

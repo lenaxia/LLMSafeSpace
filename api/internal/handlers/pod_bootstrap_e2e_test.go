@@ -7,7 +7,7 @@ package handlers
 // path that production runs at pod boot:
 //
 //	provider_credentials (DB row)
-//	  → SecretService.PrepareSecretsForInjection   (decrypt + dedupe by provider)
+//	  → SecretService.InjectSessionlessSecrets   (decrypt server-KEK creds; skip user-DEK)
 //	  → PodBootstrapHandler.Bootstrap              (HTTP /internal/v1/pod-bootstrap)
 //	  → workspace-agentd bootstrap                 (subprocess: fetch + write secrets.json)
 //	  → workspace-agentd materialize               (subprocess: write agent-config.json)
@@ -46,7 +46,7 @@ import (
 
 // --- minimal stubs that let us construct a REAL *secrets.SecretService ---
 //
-// SecretService.PrepareSecretsForInjection only touches:
+// SecretService.InjectSessionlessSecrets only touches:
 //   - the CredentialStore type assertion (H-3 path)
 //   - SecretStore.GetBindings (non-LLM path — empty in this test)
 //   - SecretStore.LogAudit (best-effort)
@@ -86,7 +86,7 @@ type e2eSecretStore struct {
 	bindings []secrets.CredentialBinding
 }
 
-// --- CredentialStore surface (the path PrepareSecretsForInjection uses) ---
+// --- CredentialStore surface (the path the injector methods use) ---
 
 func (s *e2eSecretStore) GetWorkspaceCredentials(_ context.Context, _ string) ([]secrets.CredentialBinding, error) {
 	return s.bindings, nil

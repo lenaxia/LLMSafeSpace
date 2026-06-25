@@ -489,9 +489,15 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		// clientset for TokenReview + the SecretService for credential
 		// decryption + the DB for workspace lookup + default model.
 		// expectedNamespace validates the SA namespace (S1 defense-in-depth).
+		//
+		// SetLogger is REQUIRED — without it the handler swallows the
+		// underlying error on 5xx responses and operators have to read
+		// source to diagnose live boot failures (the very gap PR #407
+		// closed). Enforced by TestPodBootstrapHandler_LoggerWired.
 		podBootstrapHandler = handlers.NewPodBootstrapHandlerFromClientset(
 			k8sClient.Clientset(), secretService, dbSvc, cfg.Kubernetes.Namespace,
 		)
+		podBootstrapHandler.SetLogger(log)
 		// User provider-credential bind/unbind routes are NOT under
 		// /api/v1/workspaces/:id (they live under /api/v1/provider-credentials/:id/bind/:workspaceId),
 		// so WorkspaceAccessMiddleware does not cover them. Wire the

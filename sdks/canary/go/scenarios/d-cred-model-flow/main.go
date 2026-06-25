@@ -48,15 +48,15 @@ func runCredModelFlow(ctx context.Context, run *canary.Runner, cfg canary.Config
 		return
 	}
 
-	// IMPORTANT: secret injection requires a DEK (Data Encryption Key) that is
-	// only unlocked when the request carries a JWT token. The DEK is keyed by
-	// the JWT's jti claim. API key auth has no jti, so SetBindings →
-	// pushSecretsToAgent → PrepareSecretsForInjection → GetDEK("") fails
-	// silently, and the credential never reaches the running agent.
-	//
-	// Therefore this scenario MUST use JWT login (email+password) not an API key.
-	// Without LLMSAFESPACES_EMAIL+PASSWORD, we skip the message tests and only
-	// verify the API surface (bind, set model) works.
+	// As of PR #407 (worklog 0547), API-key auth no longer drops admin/org
+	// credentials at bind time — pushSecretsToAgent branches between
+	// InjectSecrets (with session) and InjectSessionlessSecrets (no session)
+	// and delivers server-KEK content even without a JWT. User-DEK content
+	// (user provider creds, ssh-keys, env-secrets) still requires a JWT
+	// because the DEK is keyed by the JWT's jti claim — that part is
+	// unchanged. The scenario continues to prefer JWT auth when available
+	// to exercise the full surface; without JWT we test only what's
+	// reachable via API key.
 	jwtAvailable := cfg.Email != "" && cfg.Password != ""
 	if !jwtAvailable {
 		run.OK("cred-model-flow: JWT credentials not set — agent tests will be skipped (only API surface tested)")
@@ -107,10 +107,12 @@ func runCredModelFlow(ctx context.Context, run *canary.Runner, cfg canary.Config
 	err = c.Workspaces.SetModel(ctx, wsID, cfg.LLMModel)
 	run.AssertNoError(err, "set-model: no error")
 
-	// Steps 5–9 require JWT auth so the DEK is available for secret injection.
-	// With API key only, SetBindings' internal pushSecretsToAgent silently fails
-	// (no jti → no DEK → PrepareSecretsForInjection returns error), so the agent
-	// never receives the credential and SendMessage will fail.
+	// Steps 5–9 require JWT auth because user-owned credentials are
+	// user-DEK encrypted and the DEK is only unlocked from a JWT
+	// session. With API key only, the user credential's plaintext
+	// can't be decrypted at bind time and the agent never sees it.
+	// (Admin/org credentials would still flow via InjectSessionlessSecrets,
+	// but this scenario binds a user credential — see Step 2.)
 	if !jwtAvailable {
 		run.OK("agent-tests: skipped (JWT required for DEK-based secret injection)")
 		// Still delete the credential as cleanup
