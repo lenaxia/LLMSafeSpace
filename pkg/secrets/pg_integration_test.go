@@ -411,9 +411,9 @@ func TestPgE2E_FullSecretLifecycle(t *testing.T) {
 	}
 
 	// Inject
-	data, err := svc.PrepareSecretsForInjection(ctx, userID, "e2e-session", wsID)
+	data, err := svc.InjectSecrets(ctx, userID, "e2e-session", wsID)
 	if err != nil {
-		t.Fatalf("PrepareSecretsForInjection: %v", err)
+		t.Fatalf("InjectSecrets: %v", err)
 	}
 	var injected []InjectedSecret
 	json.Unmarshal(data, &injected)

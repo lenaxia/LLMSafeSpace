@@ -118,9 +118,9 @@ func TestE2E_FullSecretLifecycle(t *testing.T) {
 	}
 
 	// === Phase 6: Prepare injection (simulates workspace activation) ===
-	injectionData, err := svc.PrepareSecretsForInjection(ctx, userID, sessionID, workspaceID)
+	injectionData, err := svc.InjectSecrets(ctx, userID, sessionID, workspaceID)
 	if err != nil {
-		t.Fatalf("PrepareSecretsForInjection: %v", err)
+		t.Fatalf("InjectSecrets: %v", err)
 	}
 
 	var injected []InjectedSecret

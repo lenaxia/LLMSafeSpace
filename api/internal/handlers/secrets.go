@@ -365,7 +365,7 @@ func (h *SecretsHandler) ReloadSecrets(c *gin.Context) {
 	}
 
 	workspaceID := c.Param("id")
-	secretsJSON, err := h.svc.PrepareSecretsForInjection(c.Request.Context(), userID, sessionID, workspaceID)
+	secretsJSON, err := h.svc.InjectSecrets(c.Request.Context(), userID, sessionID, workspaceID)
 	if err != nil {
 		handleSecretError(c, err)
 		return
@@ -406,6 +406,19 @@ type reloadResult struct {
 // push to running pods. Credentials bound during suspend are picked up at the
 // next pod boot via the bootstrap endpoint.
 //
+// SOLID interface choice (this worklog): the push path branches on whether
+// the caller carries a session DEK. JWT-authenticated bind requests use
+// SecretInjector (full set, including user-DEK content). API-key
+// authenticated bind requests have no session — they use
+// SessionlessSecretInjector and deliver only server-KEK content; user-DEK
+// content is delivered later by a JWT-authenticated reload-secrets call.
+//
+// Without this branching, an API-key bind that touches a workspace with
+// any user-DEK secret triggers a "DEK not available" error, the push is
+// silently dropped, and admin/org credentials never reach the running
+// pod (canary scenario d-cred-model-flow:54-113 documents the historical
+// failure mode).
+//
 // The live push sends the payload even when it is the empty array '[]' — the
 // agent uses this to CLEAR its in-memory secret materialisations (validator
 // finding N8 in worklog 0094 pass-2 audit). Without this an unbind leaves the
@@ -418,9 +431,16 @@ func (h *SecretsHandler) pushSecretsToAgent(c *gin.Context, userID, workspaceID 
 	_, sessionID := extractAuth(c)
 	ctx := c.Request.Context()
 
-	secretsJSON, err := h.svc.PrepareSecretsForInjection(ctx, userID, sessionID, workspaceID)
+	var secretsJSON []byte
+	var err error
+	if sessionID != "" {
+		secretsJSON, err = h.svc.InjectSecrets(ctx, userID, sessionID, workspaceID)
+	} else {
+		// API-key authenticated path: no session, no user-DEK content.
+		secretsJSON, err = h.svc.InjectSessionlessSecrets(ctx, userID, workspaceID)
+	}
 	if err != nil {
-		h.warn("PrepareSecretsForInjection failed",
+		h.warn("InjectSecrets failed",
 			"workspaceID", workspaceID, "error", err.Error())
 		return
 	}
