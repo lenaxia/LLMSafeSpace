@@ -363,8 +363,14 @@ func (s *SecretService) decryptBinding(ctx context.Context, b CredentialBinding,
 // gracefully so a single code path covers every caller; the
 // SessionlessSecretInjector interface is kept for type-system
 // expressiveness (callers who semantically have no session declare
-// that intent at the API surface) but its implementation is now a
-// thin wrapper around InjectSecrets.
+// that intent at the API surface). InjectSessionlessSecrets is
+// functionally equivalent to calling InjectSecrets with an empty
+// sessionID — both flow through this graceful-degrade path — but
+// they differ in LLM-loop audit messaging: the sessionless path emits
+// "credential_skipped_no_session" via loadServerKEKCredentials,
+// whereas InjectSecrets emits "credential_decrypt_failed" with a
+// "DEK not available" error string. The user-visible outcome is the
+// same; the audit trail is cleaner for the explicit-no-session caller.
 func (s *SecretService) loadNonLLMSecrets(ctx context.Context, userID, sessionID, workspaceID string) ([]InjectedSecret, error) {
 	bound, err := s.store.GetBindings(ctx, workspaceID)
 	if err != nil {
