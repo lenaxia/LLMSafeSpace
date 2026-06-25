@@ -2,6 +2,7 @@
 
 **Status:** Planning
 **Created:** 2026-06-24
+**Last Revision:** 2026-06-24 (review pass 1: corrected backfill SQL ordering bug, added missing CHECK constraints, fixed session path to honor `XDG_DATA_HOME=/workspace/.local`, dropped misleading trigger-based rollback story, corrected `orgs.go` line citation, added Q4 covering the `opencode-relay` slug-reservation collision, added test cases for adversarial backfill inputs and reserved-slug rejection, added explicit FK-relationship statement)
 **Depends On:** none (foundation epics already shipped)
 **Blocks:** any future expansion of multi-credential-per-class use cases (multiple LiteLLM endpoints, multiple Bedrock accounts, per-region OpenAI-compatible gateways, etc.)
 **Priority:** Medium — latent design flaw; not currently breaking but will block growth and silently mis-route sessions when the second `provider="custom"` cred is added.
@@ -74,17 +75,36 @@ ALTER TABLE provider_credentials
   ADD COLUMN kind TEXT;
 
 -- Backfill: existing rows have provider doing all three jobs.
--- We canonicalize each role from the existing value:
+-- We canonicalize each role from the existing value.
+--
+-- Slug derivation MUST lowercase before stripping non-alphanumerics, then
+-- trim leading/trailing hyphens, otherwise uppercase characters in the
+-- original `provider` value would be replaced with `-` (the negated
+-- character class [^a-z0-9-] matches them) and produce strings that
+-- violate the CHECK regex below. BTRIM strips any leading/trailing
+-- hyphens left after the squeeze.
 UPDATE provider_credentials SET
-  slug = LOWER(REGEXP_REPLACE(provider, '[^a-z0-9-]+', '-', 'g')),  -- slug-safe identity
+  slug = BTRIM(REGEXP_REPLACE(LOWER(provider), '[^a-z0-9]+', '-', 'g'), '-'),  -- slug-safe identity
   kind = CASE
     WHEN provider IN ('openai', 'anthropic', 'google', 'opencode', 'bedrock', 'azure', 'cohere', 'mistral', 'perplexity', 'groq', 'xai', 'openrouter', 'together') THEN provider
     ELSE 'openai_compatible'  -- generic fallback for free-form names
   END;
 
+-- Cluster inventory has 4 rows; the migration is preceded by a manual
+-- review per the Risks table (the 'thekao cloud' free-form name might
+-- be misclassified as openai_compatible when it's actually anthropic-
+-- shaped). The post-backfill `slug IS NOT NULL` invariant holds for
+-- every row in the current inventory.
+
 ALTER TABLE provider_credentials
   ALTER COLUMN slug SET NOT NULL,
-  ALTER COLUMN kind SET NOT NULL;
+  ALTER COLUMN kind SET NOT NULL,
+  ADD CONSTRAINT provider_credentials_slug_check
+    CHECK (slug ~ '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$'),
+  ADD CONSTRAINT provider_credentials_kind_check
+    CHECK (kind IN ('openai', 'anthropic', 'google', 'opencode', 'bedrock',
+                    'azure_openai', 'vertex', 'cohere', 'mistral', 'perplexity',
+                    'groq', 'xai', 'openrouter', 'together', 'openai_compatible'));
 
 -- Replace the unique constraint to key on slug instead of provider.
 ALTER TABLE provider_credentials DROP CONSTRAINT provider_credentials_owner_type_owner_id_provider_key;
@@ -92,9 +112,18 @@ ALTER TABLE provider_credentials ADD CONSTRAINT provider_credentials_owner_slug_
   UNIQUE (owner_type, owner_id, slug);
 
 -- Keep `provider` for one release as the legacy compatibility column.
--- Drop in a follow-up migration after the wire-format change has rolled out
--- and all sessions have re-pinned (or been migrated; see "Session migration" below).
+-- Drop in a follow-up migration after the wire-format change has rolled
+-- out and all sessions have re-pinned (or been migrated; see
+-- "Session migration" below).
 ```
+
+Notes:
+
+- The two CHECK constraints (`slug_check`, `kind_check`) are part of the **same migration**, not a deferred DDL step. They run after `SET NOT NULL` so the post-backfill invariants are enforced atomically.
+- The slug regex permits 1–64 chars: the leading `[a-z0-9]` covers length 1; the optional `([a-z0-9-]{0,62}[a-z0-9])` group adds 1–63 more chars (with the trailing anchor disallowing a trailing hyphen). API-layer validation must use the same regex to keep the two layers in sync.
+- `kind` enum is hard-enforced at the DB layer (Q1 resolution: hard enum). Adding a new kind requires a coordinated migration + Go const update.
+
+**Foreign-key relationships are unaffected.** `model_allowlist` (TEXT[] column on the same table), `workspace_credential_bindings` (FK on `credential_id` UUID PK, migration 000015:36), and `credential_auto_apply` (same) all reference the credential by its UUID PK, not by `provider`. The split adds two columns and a new unique constraint without touching any FK.
 
 **Three columns, three jobs:**
 
@@ -123,7 +152,7 @@ This is the load-bearing piece. Live sessions in PVCs persist `model.providerID`
 
 Three options to handle pre-migration sessions:
 
-**A. Best-effort one-shot rewrite at deploy.** Workspace controller runs a post-deploy job that walks every running pod's PVC, reads `~/.opencode/sessions/*.json`, and rewrites `providerID` from old `provider` to new `slug` based on a lookup table from `provider_credentials`. Risk: imperfect (suspended workspaces aren't running; PVC walk needs careful coordination). Reward: zero user-visible breakage.
+**A. Best-effort one-shot rewrite at deploy.** Workspace controller runs a post-deploy job that walks every PVC, reads `/workspace/.local/opencode/storage/session/**/*.json` (the path opencode writes when `XDG_DATA_HOME=/workspace/.local` is set — confirmed at `runtimes/base/tools/entrypoints/entrypoint-opencode.sh:14`, `controller/internal/workspace/pod_builder.go:579`, README-LLM.md:460), and rewrites `model.providerID` from the old `provider` value to the new `slug` based on a lookup table from `provider_credentials`. Suspended workspaces have PVCs but no running pod — the rewrite must run as a Job with the PVC mounted, NOT as a kubectl-exec into running pods. **Path verification required during S55-0 spike** before this option is selected: confirm the exact session-file glob and JSON shape opencode writes in the running production version (`opencode 1.15.12` per workspace status). Risk: imperfect (timing across many workspaces, PVC walk needs careful coordination). Reward: zero user-visible breakage.
 
 **B. Lazy rewrite at session load.** opencode patch to fall back from `providerID` lookup to a kind-based reverse lookup if the providerID is unknown. Lives behind a deprecation window; eventually removed. Risk: opencode upstream patch (we don't own that fork; would need to submit + wait or carry).
 
@@ -147,8 +176,10 @@ Three options to handle pre-migration sessions:
 
 Two-release plan:
 
-- **Release N (this epic):** add `slug` and `kind`, backfill, change wire format. Keep `provider` column populated by a trigger that mirrors `slug → provider` for one release (rollback safety).
-- **Release N+1:** drop the `provider` column. Code that read it in N will be on N+1 and read `slug` / `kind` directly.
+- **Release N (this epic):** add `slug` and `kind`, backfill, change wire format.
+  - The legacy `provider` column is **kept and frozen** at its post-backfill value via the migration's `UPDATE` step. We do **not** install a trigger that mirrors `slug` or `kind` back into `provider` — neither would preserve the original semantics. Mirroring `slug` discards the SDK-class meaning; mirroring `kind` discards the identity meaning. The honest path is to leave `provider` as a snapshot of "what this row used to be" and let any rollback read it directly.
+  - Rollback semantics: if Release N must be rolled back to N-1 (which only knows `provider`), the snapshot value still maps the row to its pre-migration SDK class for the row's lifetime. New rows created in Release N would be missing from this snapshot, so a rollback is feasible but lossy for any newly-created credentials. This trade-off is documented in the migration's `down.sql`.
+- **Release N+1:** drop the `provider` column. Code that read it in N will be on N+1 and read `slug` / `kind` directly. Rollback from N+1 to N is no longer feasible — by N+1 the new wire format has been live for a release and existing sessions reference it.
 
 ---
 
@@ -166,7 +197,7 @@ Two-release plan:
 |---|---|---|
 | Backfill misclassifies a free-form `provider="thekao cloud"` as `kind="openai_compatible"` when it's actually anthropic-API-shaped | Low (we have 1 such row in production, manually classifiable) | Manual review of the 4-row inventory before migration; one-shot SQL update for misclassifications |
 | Session migration option B (opencode patch) blocked upstream | Medium | Fallback to A (PVC rewrite job) or C (user re-picks) |
-| Slug-uniqueness check at API write conflicts with race during concurrent creates | Low | Existing app-layer pre-check pattern (`orgs.go:125-137`) returns 409 before hitting the raw DB constraint |
+| Slug-uniqueness check at API write conflicts with race during concurrent creates | Low | Existing app-layer pre-check pattern (`orgs.go:146-158`, the "Pre-check for a clear 409" block) returns 409 before hitting the raw DB constraint |
 | Frontend ships before backend; users see slug field and back-end rejects | Medium during release | Standard backend-before-frontend deploy gate |
 | Existing `agent-config.json` files on running pods point at old keys when the wire format changes | High without mitigation | Tied to session-migration option chosen above; agent-config.json is rebuilt every reload-secrets push, so a forced reload after deploy resolves it for active workspaces |
 
@@ -214,8 +245,12 @@ If the codebase never branches on the SDK class except for the implicit `openai`
 - **Q2.** Should the slug-safe regex allow underscores? Helm and DNS conventions favor hyphens-only.
   *Tentative answer:* hyphens-only. Match the existing slug convention used elsewhere in the codebase (e.g. `org.slug`).
 
-- **Q3.** What's the maximum slug length? opencode's `provider.{...}` map has no documented limit, but DB best practice is to cap.
-  *Tentative answer:* 64 chars. Long enough for `myorg-litellm-prod-us-west` style; short enough to not be ridiculous.
+- **Q3.** Slug length bounds: minimum and maximum.
+  *Tentative answer:* 1–64 chars. Max 64 is long enough for `myorg-litellm-prod-us-west` style; short enough to not be ridiculous. Min 1 because rejecting single-char slugs adds no value. The CHECK regex `^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$` enforces both bounds at the DB. The API regex MUST be identical so a slug accepted by the validator is accepted by the DB.
+
+- **Q4.** Slug collision with the built-in `opencode-relay` provider key.
+  The relay injector (`cmd/workspace-agentd/relay_injector.go`) hardcodes `opencode-relay` as a provider key in `agent-config.json` to advertise free-tier models. Once user-supplied slugs reach the wire format, a user picking slug `opencode-relay` would either silently shadow the relay or fail registration depending on which writer runs last.
+  *Tentative answer:* reserve a small list of system slug values (`opencode-relay`, `opencode`) and reject them at the API layer. The reservation list lives next to the relay injector code so the two stay in lockstep. A future epic might generalize this to a `system_reserved_slugs` table; for now, a Go const slice is appropriate friction.
 
 ---
 
@@ -226,7 +261,11 @@ Per Rule 0 (TDD), every behavior change preceded by a failing test:
 - **Schema migration safety.** `migrations/000NN_credential_slug_kind.up.sql` + `.down.sql` round-trip cleanly. Backfill produces the expected `slug` and `kind` for every row.
 - **Slug uniqueness.** Two attempts to create `(owner, "openai")` returns 409.
 - **Slug regex enforcement.** Slugs with spaces, slashes, uppercase letters all rejected at API layer.
+- **Slug regex matches DB CHECK.** Property test: every value the API regex accepts also passes the DB CHECK; every value the API rejects also fails the CHECK. Closes the layer-disagreement risk for slug min/max.
+- **Backfill robustness against adversarial inputs.** Migration test fixture seeds rows with `provider` values `'OpenAI'`, `' my cred '`, `'--foo'`, `'X'`, `'thekao cloud'` — all must produce CHECK-valid slugs after backfill (this is the C1 regression test the original SQL would have failed).
+- **Reserved slug rejection.** API write rejects `slug='opencode-relay'` and `slug='opencode'` at the validator layer (Q4). A property test confirms the reservation list matches the system providers the relay injector emits.
 - **Wire format.** `agent-config.json` keyed by `slug`, not `provider`. New e2e test in `pod_bootstrap_e2e_test.go` covering a credential with slug ≠ kind.
+- **Wire-format slug-collision invariant.** A slug containing characters that are valid JSON object keys but collide with opencode's model-ID namespacing (e.g. slug containing `/`) — the regex forbids it, but an assertion test locks the invariant in case a future regex relaxation accidentally allows it.
 - **Session backward compat (whichever option chosen).** Pre-migration session JSON works post-migration via the chosen path.
 - **SDK compat.** Both Go and TS SDK fixtures handle the new `kind` field while accepting the legacy `provider` field for one release.
 
