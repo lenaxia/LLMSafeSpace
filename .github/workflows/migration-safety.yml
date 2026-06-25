@@ -213,3 +213,42 @@ jobs:
       # ups first).
       - name: Data cleanup (migration 000014)
         run: bash hack/migration-data-cleanup.sh
+
+  org-id-backfill:
+    name: Migration 000044 org_id orphan backfill
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: llmsafespaces
+          POSTGRES_PASSWORD: migration-test
+          POSTGRES_DB: llmsafespaces
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U llmsafespaces"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      PGHOST: localhost
+      PGUSER: llmsafespaces
+      PGPASSWORD: migration-test
+      PGDATABASE: llmsafespaces
+
+    steps:
+      - uses: actions/checkout@v6
+      - name: Wait for Postgres
+        run: |
+          for i in {1..20}; do
+            pg_isready -h localhost -U llmsafespaces && break
+            sleep 1
+          done
+
+      # Self-contained: resets schema, applies 000001-000043, seeds
+      # orphan rows reproducing the production bug, applies 000044,
+      # asserts backfill correctness + idempotency.
+      - name: Backfill orphan org_id (migration 000044)
+        run: bash hack/migration-orphan-org-id-backfill.sh
