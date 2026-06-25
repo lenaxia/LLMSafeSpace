@@ -313,6 +313,45 @@ func TestAcceptInvitationTx_MigratesPersonalWorkspaces(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestAddOrgMember_MigratesPersonalWorkspaces verifies M2: AddOrgMember
+// (the path used by admin direct-add via POST /orgs/:id/members and by
+// SSO JIT provisioning) MUST migrate the new member's personal
+// workspaces to the org, mirroring CreateOrgWithAdmin and
+// AcceptInvitationTx. Without this UPDATE, the user's NULL-org_id
+// workspaces stay orphaned and silently skip org-credential auto-
+// binding (the same class of bug fixed by migration 000044 — see
+// worklog 0548). Discovered while answering "do all workspaces get
+// updated when a user joins an org" — the answer was "yes, except
+// for these two paths".
+//
+// This test must FAIL today (AddOrgMember does not run the UPDATE)
+// and PASS once the AddOrgMember implementation is updated to match
+// the other two join paths.
+func TestAddOrgMember_MigratesPersonalWorkspaces(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	store := NewPgOrgStore(db)
+
+	mock.ExpectBegin()
+	// INSERT membership
+	mock.ExpectExec(`INSERT INTO org_memberships`).
+		WithArgs("org-1", "user-1", "member").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	// UPDATE workspaces — the migration (M2). Anchor the full WHERE
+	// clause so a regression that drops deleted_at/org_id/user_id
+	// scoping is caught.
+	mock.ExpectExec(`UPDATE workspaces SET org_id = .* WHERE user_id = .* AND org_id IS NULL AND deleted_at IS NULL`).
+		WithArgs("user-1", "org-1").
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectCommit()
+
+	err = store.AddOrgMember(context.Background(), "org-1", "user-1", types.OrgRoleMember)
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 // --- US-43.20: ListAllAudit ---
 
 func auditListRows(now time.Time) *sqlmock.Rows {
