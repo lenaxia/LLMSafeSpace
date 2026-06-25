@@ -673,7 +673,8 @@ func (l *AsyncAuditLogger) QueryAudit(ctx context.Context, userID string, query 
 
 // --- CredentialStore delegation (Epic 30) ---
 // AsyncAuditLogger must satisfy CredentialStore so the type assertion in
-// PrepareSecretsForInjection succeeds. All methods delegate to the inner store.
+// the injector methods (InjectSecrets / InjectSessionlessSecrets) succeeds.
+// All methods delegate to the inner store.
 
 func (l *AsyncAuditLogger) GetWorkspaceCredentials(ctx context.Context, workspaceID string) ([]CredentialBinding, error) {
 	if cs, ok := l.store.(CredentialStore); ok {

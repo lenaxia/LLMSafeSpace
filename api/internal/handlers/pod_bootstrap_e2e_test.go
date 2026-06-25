@@ -7,7 +7,7 @@ package handlers
 // path that production runs at pod boot:
 //
 //	provider_credentials (DB row)
-//	  → SecretService.PrepareSecretsForInjection   (decrypt + dedupe by provider)
+//	  → SecretService.InjectSessionlessSecrets   (decrypt server-KEK creds; skip user-DEK)
 //	  → PodBootstrapHandler.Bootstrap              (HTTP /internal/v1/pod-bootstrap)
 //	  → workspace-agentd bootstrap                 (subprocess: fetch + write secrets.json)
 //	  → workspace-agentd materialize               (subprocess: write agent-config.json)
@@ -46,7 +46,7 @@ import (
 
 // --- minimal stubs that let us construct a REAL *secrets.SecretService ---
 //
-// SecretService.PrepareSecretsForInjection only touches:
+// SecretService.InjectSessionlessSecrets only touches:
 //   - the CredentialStore type assertion (H-3 path)
 //   - SecretStore.GetBindings (non-LLM path — empty in this test)
 //   - SecretStore.LogAudit (best-effort)
@@ -86,7 +86,7 @@ type e2eSecretStore struct {
 	bindings []secrets.CredentialBinding
 }
 
-// --- CredentialStore surface (the path PrepareSecretsForInjection uses) ---
+// --- CredentialStore surface (the path the injector methods use) ---
 
 func (s *e2eSecretStore) GetWorkspaceCredentials(_ context.Context, _ string) ([]secrets.CredentialBinding, error) {
 	return s.bindings, nil
@@ -451,6 +451,25 @@ func readAgentConfig(t *testing.T, path string) struct {
 //   - bootstrap subcommand drops secrets.json → all providers missing
 //   - materialize writes to wrong path → empty config
 //   - decryptFnFor returns nil for a configured provider → that provider missing
+//
+// TestE2E_BootstrapMaterialize_AllOwnerTypesMaterialized exercises the
+// happy-path wiring of EVERY owner type (admin/org) end-to-end. User-owned
+// credentials are NOT materialized at boot — that is the documented Epic 35
+// contract (commit 4b48a4e7): "User-owned creds (DEK-encrypted) arrive via
+// live /v1/reload-secrets push (unchanged — never used the K8s Secret at
+// boot)". This worklog corrected this test (it previously asserted user-DEK
+// content materialized at boot, which was the buggy behavior that hid the
+// 2026-06-24 production incident behind it).
+//
+// What this test guards:
+//
+//   - SecretService not wired with SetOrgProvider → org provider missing
+//   - bootstrap subcommand drops secrets.json → all providers missing
+//   - materialize writes to wrong path → empty config
+//   - decryptFnFor returns nil for a configured provider → that provider missing
+//   - User-owned bindings are skipped at boot WITHOUT a hard error
+//     (this worklog: previously a single bound user secret would fail
+//     the entire prep)
 func TestE2E_BootstrapMaterialize_AllOwnerTypesMaterialized(t *testing.T) {
 	agentCfgPath, bootstrapExit, materializeExit, bootstrapStderr, materializeStderr :=
 		runBootstrapMaterializeE2E(t,
@@ -469,14 +488,17 @@ func TestE2E_BootstrapMaterialize_AllOwnerTypesMaterialized(t *testing.T) {
 	assert.Equal(t, "https://opencode.ai/config.json", cfg.Schema,
 		"$schema must be set so opencode treats the file as config")
 
-	// Every seeded provider must appear. This is the assertion that would
-	// have failed when org providers silently dropped.
+	// Server-KEK encrypted creds (admin/org) MUST materialize at boot.
 	assert.Contains(t, cfg.Provider, "anthropic",
 		"org-owned provider must materialize (the org-provider regression)")
 	assert.Contains(t, cfg.Provider, "opencode",
 		"admin-owned provider must materialize")
-	assert.Contains(t, cfg.Provider, "openai",
-		"user-owned provider must materialize")
+
+	// User-DEK encrypted creds MUST NOT materialize at boot — they
+	// arrive via the live reload-secrets push when the user opens the
+	// workspace (Epic 35 design contract).
+	assert.NotContains(t, cfg.Provider, "openai",
+		"user-owned provider must NOT materialize at boot — delivered via reload-secrets push (Epic 35)")
 
 	// Verify the org apiKey round-tripped end-to-end (decrypt → re-marshal).
 	var anthropicEntry struct {
@@ -629,21 +651,26 @@ func TestE2E_BootstrapMaterialize_WrongKEK_SkipsBinding(t *testing.T) {
 
 // TestE2E_BootstrapMaterialize_PartialFailure_DoesNotBlockGoodProviders
 // verifies that one undecryptable binding (org, unwired) does not prevent a
-// later binding (user) for a DIFFERENT provider from materializing. This is
-// the injection.go:81 "don't set seen — allow fallback" contract.
+// later binding (admin) for a DIFFERENT provider from materializing. This is
+// the injection.go "don't set seen — allow fallback" contract.
+//
+// Originally this test paired the undecryptable org binding with a
+// USER binding, but this worklog made user-DEK content non-deliverable
+// at boot. Pairing two server-KEK bindings is the correct test of the
+// fallback semantics post-Epic 35.
 func TestE2E_BootstrapMaterialize_PartialFailure_DoesNotBlockGoodProviders(t *testing.T) {
 	agentCfgPath, _, materializeExit, _, materializeStderr :=
 		runBootstrapMaterializeE2EWith(t, bootstrapE2EConfig{
 			bindings: []e2eProviderBinding{
 				{ownerType: "org", ownerID: "org-1", provider: "anthropic", apiKey: "sk-org"},
-				{ownerType: "user", ownerID: "user-e2e", provider: "openai", apiKey: "sk-user"},
+				{ownerType: "admin", ownerID: "_platform", provider: "opencode", apiKey: "sk-admin"},
 			},
 			wireOrg: boolPtr(false), // org binding will fail to decrypt
 		})
 	require.Equal(t, 0, materializeExit, "partial decrypt failure must not fail materialize; stderr=%s", materializeStderr)
 	cfg := readAgentConfig(t, agentCfgPath)
 	assert.NotContains(t, cfg.Provider, "anthropic", "failed org binding must be absent")
-	assert.Contains(t, cfg.Provider, "openai", "unrelated user provider must still materialize despite the org failure")
+	assert.Contains(t, cfg.Provider, "opencode", "unrelated admin provider must still materialize despite the org failure")
 }
 
 // --- Password reset erasure guarantee ---
@@ -723,9 +750,15 @@ func TestE2E_PasswordReset_PurgeThenBoot_NoResurrect(t *testing.T) {
 		return cfg.Provider
 	}
 
-	// Before reset: both providers materialize (proves the seed worked).
+	// Before reset: org provider materializes at boot (server-KEK).
+	// User provider does NOT materialize at boot regardless of purge state
+	// (Epic 35 + this worklog: user-DEK content is delivered via the
+	// reload-secrets push, not bootstrap). The "no resurrection" property
+	// this test guards remains meaningful for the reload path — see
+	// TestE2E_PurgedUserCredsDoNotResurrectInReload below.
 	before := runOneBoot("before")
-	assert.Contains(t, before, "openai", "before reset: user provider must be present")
+	assert.NotContains(t, before, "openai",
+		"before reset: user provider must NOT materialize at boot (this worklog)")
 	assert.Contains(t, before, "anthropic", "before reset: org provider must be present")
 
 	// RESET: purge the user-owned bindings (PurgeUserSecrets deletes

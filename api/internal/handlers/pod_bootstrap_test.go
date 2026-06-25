@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/lenaxia/llmsafespaces/api/internal/logger"
 	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
@@ -36,7 +38,7 @@ type fakeBootstrapInjector struct {
 	err     error
 }
 
-func (f *fakeBootstrapInjector) PrepareSecretsForInjection(_ context.Context, _, _, _ string) ([]byte, error) {
+func (f *fakeBootstrapInjector) InjectSessionlessSecrets(_ context.Context, _, _ string) ([]byte, error) {
 	return f.secrets, f.err
 }
 
@@ -201,6 +203,68 @@ func TestParseSAPrincipal(t *testing.T) {
 			assert.Equal(t, tt.wantID, id)
 		})
 	}
+}
+
+// TestPodBootstrap_LogsUnderlyingError_OnInjectorFailure proves the
+// observability gap surfaced by the 2026-06-24 production incident: when
+// InjectSecrets fails (e.g. "DEK not available" for non-LLM
+// user secrets at boot), the handler returns a generic 500 "secret
+// preparation failed" with NO breadcrumb of the underlying cause. An
+// operator inspecting API logs sees only the request lifecycle and the
+// status code; they cannot tell whether the failure is a missing KEK, a
+// DB error, a decrypt failure, or anything else without enabling debug.
+//
+// The handler MUST log the wrapped error at error level before returning.
+// This is independent of any behavioral fix — even after the SOLID
+// redesign in PR #2, the handler is the right place to emit diagnostics
+// for internal-API 5xx responses.
+func TestPodBootstrap_LogsUnderlyingError_OnInjectorFailure(t *testing.T) {
+	log, logs := logger.NewObserved()
+
+	reviewer := &fakeTokenReviewer{username: "system:serviceaccount:llmsafespace:workspace-ws-abc"}
+	sentinel := errors.New("get DEK for non-LLM secrets: DEK not available: session expired or not unlocked")
+	injector := &fakeBootstrapInjector{err: sentinel}
+	lookup := &fakeBootstrapLookup{ws: &types.WorkspaceMetadata{ID: "ws-abc", UserID: "user-1"}}
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	h := NewPodBootstrapHandler(reviewer, injector, lookup, testBootstrapNamespace)
+	h.SetLogger(log)
+	r.POST("/internal/v1/pod-bootstrap", h.Bootstrap)
+
+	w := doBootstrap(t, r, "token", `{"workspaceID":"ws-abc"}`)
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+
+	entries := logs.FilterMessageSnippet("secret preparation failed").All()
+	require.GreaterOrEqual(t, len(entries), 1, "handler must log the failure with the underlying error; got logs: %+v", logs.All())
+
+	entry := entries[0]
+	require.Equal(t, "error", entry.Level.String(), "log level must be ERROR for a 5xx-causing failure")
+
+	var sawWorkspaceID, sawErrorText bool
+	for _, f := range entry.Context {
+		if f.Key == "workspaceID" && f.String == "ws-abc" {
+			sawWorkspaceID = true
+		}
+		// The wrapped error must be present so operators can diagnose the
+		// underlying cause (here: DEK-not-available). zap's logger.Error
+		// puts the error value in Field.Interface (type ErrorType=26),
+		// not in Field.String. Match either, since the exact field
+		// shape depends on logger usage.
+		if f.String != "" && assertContains(f.String, "DEK not available") {
+			sawErrorText = true
+		}
+		if errVal, ok := f.Interface.(error); ok && errVal != nil &&
+			assertContains(errVal.Error(), "DEK not available") {
+			sawErrorText = true
+		}
+	}
+	assert.True(t, sawWorkspaceID, "log entry must include workspaceID for correlation; fields: %+v", entry.Context)
+	assert.True(t, sawErrorText, "log entry must include the underlying error text; fields: %+v", entry.Context)
+}
+
+func assertContains(haystack, needle string) bool {
+	return bytes.Contains([]byte(haystack), []byte(needle))
 }
 
 // TestPodBootstrap_AuthenticatedFalse_Returns401 (C1) — a token rejected by

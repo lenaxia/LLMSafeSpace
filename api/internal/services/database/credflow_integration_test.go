@@ -45,8 +45,9 @@ func TestCredflowIntegration_NoRowGetReturnsZeroTime(t *testing.T) {
 // Step 3 must flip pending_refresh to FALSE because no new credential was
 // staged during the dispose window (currentChangedAt == priorChangedAt).
 //
-// This test exists because Epic 30 rewrote PrepareSecretsForInjection and the
-// existing agent_reload_e2e_test.go mocks the DB entirely; the SQL transitions
+// This test exists because Epic 30 rewrote the secret-injection path
+// (later renamed to InjectSecrets in PR #407) and the existing
+// agent_reload_e2e_test.go mocks the DB entirely; the SQL transitions
 // had no regression protection (per worklog 170 item US-27a.9).
 func TestCredflowIntegration_BindThenReloadClearsPendingRefresh(t *testing.T) {
 	svc, mock, cleanup := setupMockDB(t)
