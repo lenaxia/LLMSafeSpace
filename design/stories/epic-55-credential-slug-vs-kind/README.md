@@ -186,7 +186,7 @@ Affected DAL queries (verified against `pkg/secrets/pg_credential_store.go` at H
 | `pg_credential_store.go:260–276` | `GetCredential` — `SELECT id, ..., provider, ...` | Same projection gap; used by credential-detail handlers and credential-edit flows |
 | `pg_credential_store.go:292–303` | `UpdateCredential` — `SET provider = COALESCE(NULLIF($5, ''), provider), ...` | Add `slug, kind` to the SET clause so credential updates can modify them |
 
-These five queries are exhaustive for `pg_credential_store.go`; `org_credential_store.go` uses no `ON CONFLICT` over `provider` and reads only via the views above. Tests in `pkg/secrets/credential_store_integration_test.go` and `pkg/secrets/pg_integration_test.go` exercise every path and must be updated in lockstep.
+These eight queries are exhaustive for `pg_credential_store.go`; `org_credential_store.go` uses no `ON CONFLICT` over `provider` and reads only via the views above. The `AsyncAuditLogger` wrapper (`pkg/secrets/pg_secret_store.go:678–711`) implements the same `CredentialStore` interface as a delegating production wrapper — a signature change to `HasUserProviderCredential` is compiler-enforced across both implementations. Tests in `pkg/secrets/credential_store_integration_test.go` and `pkg/secrets/pg_integration_test.go` exercise every path and must be updated in lockstep.
 
 **N4 — `provider TEXT NOT NULL` versus the optional API surface.**
 
