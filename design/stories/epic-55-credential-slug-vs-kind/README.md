@@ -2,7 +2,10 @@
 
 **Status:** Planning
 **Created:** 2026-06-24
-**Last Revision:** 2026-06-24 (review pass 1: corrected backfill SQL ordering bug, added missing CHECK constraints, fixed session path to honor `XDG_DATA_HOME=/workspace/.local`, dropped misleading trigger-based rollback story, corrected `orgs.go` line citation, added Q4 covering the `opencode-relay` slug-reservation collision, added test cases for adversarial backfill inputs and reserved-slug rejection, added explicit FK-relationship statement)
+**Last Revision:** 2026-06-25 (review pass 2: corrected slug regex inconsistency between SQL and constraints table (N1 — both now use `^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$`); fixed backfill CASE producing `kind='azure'` not in CHECK enum (N2 — now maps `provider='azure'` → `kind='azure_openai'` explicitly); added regression tests for both classes; added explicit "API and DB regex are byte-identical" property test). Earlier revisions preserved below.
+
+**Earlier Revisions:**
+- 2026-06-24 (review pass 1: corrected backfill SQL ordering bug, added missing CHECK constraints, fixed session path to honor `XDG_DATA_HOME=/workspace/.local`, dropped misleading trigger-based rollback story, corrected `orgs.go` line citation, added Q4 covering the `opencode-relay` slug-reservation collision, added test cases for adversarial backfill inputs and reserved-slug rejection, added explicit FK-relationship statement)
 **Depends On:** none (foundation epics already shipped)
 **Blocks:** any future expansion of multi-credential-per-class use cases (multiple LiteLLM endpoints, multiple Bedrock accounts, per-region OpenAI-compatible gateways, etc.)
 **Priority:** Medium — latent design flaw; not currently breaking but will block growth and silently mis-route sessions when the second `provider="custom"` cred is added.
@@ -86,7 +89,17 @@ ALTER TABLE provider_credentials
 UPDATE provider_credentials SET
   slug = BTRIM(REGEXP_REPLACE(LOWER(provider), '[^a-z0-9]+', '-', 'g'), '-'),  -- slug-safe identity
   kind = CASE
-    WHEN provider IN ('openai', 'anthropic', 'google', 'opencode', 'bedrock', 'azure', 'cohere', 'mistral', 'perplexity', 'groq', 'xai', 'openrouter', 'together') THEN provider
+    -- Direct passthrough for kinds whose name is a single token that
+    -- matches both the legacy `provider` value and the CHECK enum.
+    WHEN provider IN ('openai', 'anthropic', 'google', 'opencode', 'bedrock', 'cohere', 'mistral', 'perplexity', 'groq', 'xai', 'openrouter', 'together') THEN provider
+    -- Explicit remappings: legacy `provider` value differs from CHECK enum value.
+    -- 'azure' was historically used for what is now 'azure_openai'.
+    WHEN provider = 'azure' THEN 'azure_openai'
+    -- 'vertex' has the same value in the CHECK enum but was never produced
+    -- by the legacy provider column — listed here for symmetry so the CASE
+    -- and the CHECK enum stay aligned. If a future row ships with
+    -- provider='vertex' it maps cleanly.
+    WHEN provider = 'vertex' THEN 'vertex'
     ELSE 'openai_compatible'  -- generic fallback for free-form names
   END;
 
@@ -130,7 +143,7 @@ Notes:
 | Column | Role | Constraints |
 |---|---|---|
 | `kind` | SDK-class discriminator. Enum of known SDK adapters. | `CHECK (kind IN (...))` — `openai`, `anthropic`, `google`, `bedrock`, `openai_compatible`, `azure_openai`, `vertex`, ... |
-| `slug` | Unique-per-owner identity. Stable, slug-safe, user-supplied. | `UNIQUE(owner_type, owner_id, slug)`; `CHECK (slug ~ '^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$')` |
+| `slug` | Unique-per-owner identity. Stable, slug-safe, user-supplied. | `UNIQUE(owner_type, owner_id, slug)`; `CHECK (slug ~ '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$')` (1–64 chars; leading and trailing alphanumeric required; hyphens allowed internally) |
 | `name` | UX-only display label. Free-form. | Already exists; no change. |
 
 **Wire format change:**
@@ -263,6 +276,8 @@ Per Rule 0 (TDD), every behavior change preceded by a failing test:
 - **Slug regex enforcement.** Slugs with spaces, slashes, uppercase letters all rejected at API layer.
 - **Slug regex matches DB CHECK.** Property test: every value the API regex accepts also passes the DB CHECK; every value the API rejects also fails the CHECK. Closes the layer-disagreement risk for slug min/max.
 - **Backfill robustness against adversarial inputs.** Migration test fixture seeds rows with `provider` values `'OpenAI'`, `' my cred '`, `'--foo'`, `'X'`, `'thekao cloud'` — all must produce CHECK-valid slugs after backfill (this is the C1 regression test the original SQL would have failed).
+- **Backfill produces CHECK-valid `kind` for every legacy `provider` value.** Property test: every value the backfill CASE can output passes the kind CHECK constraint. Catches the N2-class defect where the CASE produces a value the CHECK rejects (e.g. legacy `'azure'` mapping to `kind='azure'` would fail because the enum has `'azure_openai'`).
+- **API and DB regex are byte-identical.** A code-level test asserts the API-layer slug regex string is equal to the DB CHECK regex string (both stored in a single Go const, used by both the validator and the migration generator). Catches N1-class drift where two regexes "look similar but disagree on edge cases" (1-char vs 2-char minimum).
 - **Reserved slug rejection.** API write rejects `slug='opencode-relay'` and `slug='opencode'` at the validator layer (Q4). A property test confirms the reservation list matches the system providers the relay injector emits.
 - **Wire format.** `agent-config.json` keyed by `slug`, not `provider`. New e2e test in `pod_bootstrap_e2e_test.go` covering a credential with slug ≠ kind.
 - **Wire-format slug-collision invariant.** A slug containing characters that are valid JSON object keys but collide with opencode's model-ID namespacing (e.g. slug containing `/`) — the regex forbids it, but an assertion test locks the invariant in case a future regex relaxation accidentally allows it.
