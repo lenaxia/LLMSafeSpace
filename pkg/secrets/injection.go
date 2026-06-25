@@ -131,10 +131,22 @@ func (s *SecretService) InjectSessionlessSecrets(ctx context.Context, userID, wo
 		return nil, fmt.Errorf("get workspace credentials: %w", err)
 	}
 
+	// LLM loop: loadServerKEKCredentials emits "credential_skipped_no_session"
+	// for each user binding (cleaner messaging than loadLLMCredentials's
+	// "credential_decrypt_failed" with error="DEK not available" — the
+	// latter is technically accurate but operator-confusing).
 	providerData := s.loadServerKEKCredentials(ctx, bindings, userID, workspaceID)
-	s.auditSkippedUserDEKSecrets(ctx, userID, workspaceID)
 
-	return buildSecretsJSON(providerData, nil)
+	// Non-LLM loop: loadNonLLMSecrets is called with sessionID="". The
+	// degrade path inside that function (post-PR-#407 review pass 2)
+	// emits a "secret_skipped_no_session" audit per relevant
+	// user_secret and returns nil. No separate audit pass needed.
+	nonLLM, err := s.loadNonLLMSecrets(ctx, userID, "", workspaceID)
+	if err != nil {
+		return nil, err
+	}
+
+	return buildSecretsJSON(providerData, nonLLM)
 }
 
 // requireCredentialStore casts the configured store to CredentialStore
@@ -325,14 +337,34 @@ func (s *SecretService) decryptBinding(ctx context.Context, b CredentialBinding,
 // and the legacy api-key (sunset 2026-12-19 but still loaded for
 // existing creds).
 //
-// All non-LLM user_secrets are user-DEK encrypted, so this method
-// requires a sessionID. Callers without a session must use the
-// sessionless path (SessionlessSecretInjector), which audits and skips
-// these entries via auditSkippedUserDEKSecrets.
+// All non-LLM user_secrets are user-DEK encrypted, so decryption
+// requires the caller's session DEK. Three cases the loop must
+// handle without propagating an error:
 //
-// Per-secret decrypt failures are audited via "secret_decrypt_failed"
-// and the loop continues — a single corrupted ciphertext does not
-// abort delivery of the others.
+//  1. No session at all (sessionID==""). Bootstrap path — every
+//     user-DEK entry is skipped with an audit and the LLM/server-KEK
+//     content is delivered.
+//
+//  2. Pseudo-session without a DEK (sessionID=="apikey:hash" or
+//     sessionID set to a JWT jti whose DEK has expired/evicted).
+//     API-key auth path and stale-JWT path. Same outcome as (1):
+//     skip-with-audit, deliver everything else.
+//
+//  3. Real session with a real DEK. JWT-authenticated path —
+//     decrypt and emit each entry; per-entry decrypt failures
+//     audit-and-continue so a single corrupted ciphertext does
+//     not poison delivery of the others.
+//
+// Pre-PR-#407 review-pass-2: the function used to hard-error in cases
+// (1) and (2), making `loadServerKEKCredentials` necessary as a
+// parallel implementation and forcing pushSecretsToAgent to branch on
+// sessionID — which was dead code because API-key auth sets a
+// non-empty pseudo-sessionID. The current implementation degrades
+// gracefully so a single code path covers every caller; the
+// SessionlessSecretInjector interface is kept for type-system
+// expressiveness (callers who semantically have no session declare
+// that intent at the API surface) but its implementation is now a
+// thin wrapper around InjectSecrets.
 func (s *SecretService) loadNonLLMSecrets(ctx context.Context, userID, sessionID, workspaceID string) ([]InjectedSecret, error) {
 	bound, err := s.store.GetBindings(ctx, workspaceID)
 	if err != nil {
@@ -349,7 +381,18 @@ func (s *SecretService) loadNonLLMSecrets(ctx context.Context, userID, sessionID
 	}
 	dek, err := s.keys.GetDEK(ctx, sessionID)
 	if err != nil {
-		return nil, fmt.Errorf("get DEK for non-LLM secrets: %w", err)
+		// No DEK available. Audit each user-DEK entry as skipped and
+		// return the empty slice without error — this is the case (1)
+		// and case (2) graceful degrade described in the godoc above.
+		// The next reload-secrets push from a JWT-authenticated session
+		// will retry decrypt and either succeed or fail loudly with
+		// per-entry audits in the case (3) path below.
+		for _, secret := range relevant {
+			sid := secret.ID
+			s.audit(ctx, userID, "secret_skipped_no_session", &sid, &workspaceID,
+				map[string]string{"name": secret.Name, "type": string(secret.Type), "reason": err.Error()})
+		}
+		return nil, nil
 	}
 	var out []InjectedSecret
 	for _, secret := range relevant {
@@ -368,31 +411,6 @@ func (s *SecretService) loadNonLLMSecrets(ctx context.Context, userID, sessionID
 		})
 	}
 	return out, nil
-}
-
-// auditSkippedUserDEKSecrets emits a "secret_skipped_no_session" audit
-// event for each user-DEK user_secret bound to the workspace. This
-// preserves the observability contract documented on InjectSecrets:
-// every user-DEK entry that won't be delivered MUST leave a breadcrumb
-// in the audit log.
-//
-// Errors loading the bindings are not surfaced — this is best-effort
-// observability and a transient DB hiccup must not break the bootstrap
-// path. The next reload-secrets push from a JWT session will succeed
-// or fail loudly via InjectSecrets's normal error path.
-func (s *SecretService) auditSkippedUserDEKSecrets(ctx context.Context, userID, workspaceID string) {
-	bound, err := s.store.GetBindings(ctx, workspaceID)
-	if err != nil {
-		return
-	}
-	for _, secret := range bound {
-		if secret.UserID != userID || secret.Type == SecretTypeLLMProvider {
-			continue
-		}
-		sid := secret.ID
-		s.audit(ctx, userID, "secret_skipped_no_session", &sid, &workspaceID,
-			map[string]string{"name": secret.Name, "type": string(secret.Type)})
-	}
 }
 
 func buildSecretsJSON(providerData []LLMProviderData, nonLLM []InjectedSecret) ([]byte, error) {

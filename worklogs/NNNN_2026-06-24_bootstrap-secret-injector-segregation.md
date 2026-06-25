@@ -354,3 +354,88 @@ Pass 2 (after writing the failing tests) caught:
 No findings from pass 2 invalidated pass 1's design. No findings from
 either pass invalidated the SOLID interface segregation as the right
 abstraction level.
+
+## Round-3 review findings (post-PR-#407 merge attempt)
+
+The first PR-#407 review (covered above) caught three things I'd missed.
+The second review caught a fourth that's worth documenting because it
+reveals a subtle assumption-validation gap in how I framed Finding A2.2.
+
+### What I claimed in pass 2
+
+> "pushSecretsToAgent is *also* a session-less caller (API-key auth path)."
+
+I treated "API-key auth has no session" as an established fact and built
+the branching logic around it. This was wrong.
+
+### What's actually true
+
+`AuthMiddleware` (`api/internal/services/auth/auth.go:1152`) sets
+`sessionID = "apikey:" + hash(token)` for *every* API-key request — JWT
+and API-key both produce non-empty `sessionID` values. The "no session"
+case (empty `sessionID`) only happens on the bootstrap path (init
+container) and in tests that bypass the middleware.
+
+So my "branch on `sessionID != ""`" was dead code in production: the
+`else` branch was unreachable for real API-key requests. The
+integration test passed only because it bypassed the auth middleware
+and *manually omitted* `sessionID` — testing an impossible scenario.
+
+### Why I missed it
+
+Pass 1 of the stress-test asked "what other call sites of
+PrepareSecretsForInjection exist?" and found `pushSecretsToAgent`. Pass 2
+asked "is the test for this scenario realistic?" and concluded yes. But
+neither pass asked **"what does production AuthMiddleware actually set
+in the gin context?"**. I assumed empty-sessionID was the API-key shape
+without grepping the auth code.
+
+The assumption-validation rule (Rule 7) requires every load-bearing
+claim to be traced to a verified code citation. I cited the canary
+scenario as evidence, but the canary itself contained the same
+unverified assumption (it skips API-key tests rather than exercising
+them, so its comment about "PrepareSecretsForInjection returns error"
+was also derived from theory, not observation).
+
+### Round-3 fix
+
+Replaced the dead-code branching with a graceful-degrade in
+`loadNonLLMSecrets`: when GetDEK fails, audit each user-DEK secret as
+`secret_skipped_no_session` and return the empty slice without error.
+This matches the LLM loop's existing behavior (audit-and-continue on
+per-binding decrypt failure) and makes the right thing happen for
+every auth mode in a single code path:
+
+- Bootstrap (sessionID=""): GetDEK fails → skip user-DEK things,
+  deliver server-KEK content. Same as before.
+- API-key (sessionID="apikey:hash"): GetDEK fails → skip user-DEK
+  things, deliver server-KEK content. **A2.2 actually fixed.**
+- JWT with valid session: GetDEK succeeds → deliver everything.
+- JWT with expired session: GetDEK fails → skip user-DEK things,
+  deliver server-KEK content. Pre-existing latent issue (would have
+  hard-errored before) is now a graceful degrade.
+
+`pushSecretsToAgent` no longer branches; both auth modes call
+`InjectSecrets`. The dead-code `else` branch is removed. The
+integration test now uses a realistic API-key sessionID
+(`"apikey:fake-hash-for-test"`) and would catch the dead-code bug if
+it returns.
+
+`InjectSessionlessSecrets` is kept — it's still semantically correct
+for the bootstrap path (the init container has no session and shouldn't
+be passing the empty string as a sessionID). The
+`auditSkippedUserDEKSecrets` helper was redundant after the
+`loadNonLLMSecrets` degrade and was deleted.
+
+### Lesson
+
+When refactoring around an asymmetric-behavior fix, the assumption
+"caller X does Y" must be traced into the actual code that implements
+caller X. The canary-as-evidence smell was: the canary documented the
+broken behavior but didn't *test* it. Documentation derived from theory
+and never validated against runtime is a Rule-7 violation regardless of
+which file it lives in.
+
+The corrected fix is also smaller and more idiomatic — degrade-with-audit
+is a single code path that handles every "no DEK available" case
+uniformly, instead of a branching hack at the call site.

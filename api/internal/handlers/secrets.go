@@ -406,18 +406,17 @@ type reloadResult struct {
 // push to running pods. Credentials bound during suspend are picked up at the
 // next pod boot via the bootstrap endpoint.
 //
-// SOLID interface choice (this worklog): the push path branches on whether
-// the caller carries a session DEK. JWT-authenticated bind requests use
-// SecretInjector (full set, including user-DEK content). API-key
-// authenticated bind requests have no session — they use
-// SessionlessSecretInjector and deliver only server-KEK content; user-DEK
-// content is delivered later by a JWT-authenticated reload-secrets call.
-//
-// Without this branching, an API-key bind that touches a workspace with
-// any user-DEK secret triggers a "DEK not available" error, the push is
-// silently dropped, and admin/org credentials never reach the running
-// pod (canary scenario d-cred-model-flow:54-113 documents the historical
-// failure mode).
+// SOLID note (PR #407 review pass 2): the push path always calls
+// InjectSecrets — there is no branch on sessionID. Both callers (JWT
+// auth and API-key auth) flow through the same method because
+// InjectSecrets internally degrades user-DEK lookups to skip-with-audit
+// when the DEK is unavailable (real session expired, API-key pseudo-
+// session, or no session at all). The original first-pass branching
+// was dead code — production AuthMiddleware sets sessionID to
+// "apikey:" + hash(token) for API-key auth so the empty-string branch
+// was unreachable. The graceful-degrade approach makes the right thing
+// happen for every auth mode without the call site having to know
+// which one it is.
 //
 // The live push sends the payload even when it is the empty array '[]' — the
 // agent uses this to CLEAR its in-memory secret materialisations (validator
@@ -431,22 +430,10 @@ func (h *SecretsHandler) pushSecretsToAgent(c *gin.Context, userID, workspaceID 
 	_, sessionID := extractAuth(c)
 	ctx := c.Request.Context()
 
-	var (
-		secretsJSON []byte
-		err         error
-		injectPath  string // "session" | "sessionless" — for log correlation
-	)
-	if sessionID != "" {
-		injectPath = "session"
-		secretsJSON, err = h.svc.InjectSecrets(ctx, userID, sessionID, workspaceID)
-	} else {
-		// API-key authenticated path: no session, no user-DEK content.
-		injectPath = "sessionless"
-		secretsJSON, err = h.svc.InjectSessionlessSecrets(ctx, userID, workspaceID)
-	}
+	secretsJSON, err := h.svc.InjectSecrets(ctx, userID, sessionID, workspaceID)
 	if err != nil {
 		h.warn("secret injection failed",
-			"workspaceID", workspaceID, "path", injectPath, "error", err.Error())
+			"workspaceID", workspaceID, "error", err.Error())
 		return
 	}
 

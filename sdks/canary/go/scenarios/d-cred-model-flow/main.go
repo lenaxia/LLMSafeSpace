@@ -48,15 +48,18 @@ func runCredModelFlow(ctx context.Context, run *canary.Runner, cfg canary.Config
 		return
 	}
 
-	// As of PR #407 (worklog 0547), API-key auth no longer drops admin/org
-	// credentials at bind time — pushSecretsToAgent branches between
-	// InjectSecrets (with session) and InjectSessionlessSecrets (no session)
-	// and delivers server-KEK content even without a JWT. User-DEK content
-	// (user provider creds, ssh-keys, env-secrets) still requires a JWT
-	// because the DEK is keyed by the JWT's jti claim — that part is
+	// As of PR #407, API-key auth no longer drops admin/org credentials
+	// at bind time. The fix isn't a sessionID branch (review pass 2
+	// uncovered that the original branching was dead code because
+	// AuthMiddleware sets sessionID="apikey:"+hash for API keys) — it's
+	// a graceful-degrade in loadNonLLMSecrets: when the DEK lookup fails
+	// (no session, expired JWT, or API-key pseudo-session), user-DEK
+	// entries are skipped with a per-secret audit and server-KEK content
+	// continues to flow. User-DEK content (user provider creds, ssh-keys,
+	// env-secrets) still requires a real JWT-cached DEK; that part is
 	// unchanged. The scenario continues to prefer JWT auth when available
 	// to exercise the full surface; without JWT we test only what's
-	// reachable via API key.
+	// reachable via API key (server-KEK content + the API surface).
 	jwtAvailable := cfg.Email != "" && cfg.Password != ""
 	if !jwtAvailable {
 		run.OK("cred-model-flow: JWT credentials not set — agent tests will be skipped (only API surface tested)")

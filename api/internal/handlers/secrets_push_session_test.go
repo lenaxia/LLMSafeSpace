@@ -133,32 +133,37 @@ func (s *pushPathSessionStore) QueryAudit(_ context.Context, _ string, _ secrets
 	return nil, nil
 }
 
-// TestHandler_BindPushesOrgCredentialEvenWithAPIKeyAuth_NoSession proves
-// Finding A2.2 from the stress-test pass: when a user binds a workspace
-// via API-key auth (userID present, sessionID absent) AND that workspace
-// has any user-DEK secret already bound (e.g. an env-secret from a prior
-// JWT session), the auto-push to agentd silently drops the entire payload
-// today — the org credential never reaches the running pod even though
-// it is server-KEK encrypted and decryptable without a session.
+// TestHandler_BindPushesOrgCredentialEvenWithAPIKeyAuth proves Finding
+// A2.2 (corrected after second-pass review): when a user binds a
+// workspace via API-key auth AND that workspace has any user-DEK
+// secret already bound (e.g. an env-secret from a prior JWT session),
+// the auto-push to agentd MUST still deliver server-KEK content
+// (admin/org credentials).
 //
-// Reproduction recipe (mirrors the canary d-cred-model-flow scenario at
-// lines 110-113):
+// Production reality (uncovered in second-pass review): API-key auth
+// sets `sessionID = "apikey:" + hash(token)` (auth.go:1152), NOT empty
+// string. The first-pass fix branched on `sessionID != ""` and was
+// dead code as a result. The corrected fix degrades the GetDEK
+// failure inside loadNonLLMSecrets to skip-with-audit (matching the
+// LLM loop's existing behavior for user bindings), so any caller
+// without a real DEK — bootstrap, API-key, or expired-JWT — gracefully
+// drops user-DEK content instead of hard-erroring.
 //
-//   - Workspace already has a user-DEK env-secret bound (from a prior
-//     JWT-authenticated session).
-//   - User binds an org credential via API-key auth (no sessionID).
-//   - pushSecretsToAgent calls InjectSecrets(ctx, userID, "", ws)
-//   - buildNonLLMSecrets sees a relevant user secret → calls GetDEK("") →
-//     returns "DEK not available" error → entire prep fails → push silently
-//     dropped → agentd receives nothing.
+// Reproduction recipe:
 //
-// Expected after PR #2: the push branches on sessionID. Empty session →
-// BootstrapSecretPreparer (server-KEK only). Org credential delivered;
-// user-DEK env-secret skipped (it will arrive via a later JWT-auth reload).
+//   - Workspace has a user-DEK env-secret bound (from a prior JWT
+//     session that successfully cached its DEK).
+//   - User binds via API-key auth: sessionID = "apikey:fake-hash",
+//     no DEK in cache for that pseudo-session.
+//   - pushSecretsToAgent calls InjectSecrets(ctx, userID, sessionID, ws)
+//   - loadNonLLMSecrets calls GetDEK("apikey:...") → "DEK not available"
+//   - With the fix: skip the user-DEK env-secret with audit, keep going,
+//     deliver the server-KEK org credential.
+//   - Without the fix: hard error, entire push silently dropped.
 //
 // This test must FAIL today (agentd not called, or called without the
-// org credential) and PASS after PR #2.
-func TestHandler_BindPushesOrgCredentialEvenWithAPIKeyAuth_NoSession(t *testing.T) {
+// org credential) and PASS after the loadNonLLMSecrets degrade fix.
+func TestHandler_BindPushesOrgCredentialEvenWithAPIKeyAuth(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	// Arrange: agentd mock that captures the reload-secrets payload.
@@ -236,11 +241,17 @@ func TestHandler_BindPushesOrgCredentialEvenWithAPIKeyAuth_NoSession(t *testing.
 	handler.SetLogger(logger)
 
 	router := gin.New()
-	// API-key auth: userID set, NO sessionID. This is the path where
-	// the bug bites today.
+	// API-key auth: userID set, sessionID set to "apikey:<hash>" — this
+	// matches the production AuthMiddleware behavior at
+	// api/internal/services/auth/auth.go:1152. The pseudo-sessionID is
+	// non-empty but no DEK is ever cached for it (regular API keys have
+	// no decrypt_access scope). Without the loadNonLLMSecrets degrade-
+	// to-skip-with-audit fix, this configuration triggers a hard
+	// "DEK not available" error and the entire push is silently
+	// dropped — the second-pass-review finding that A2.2 was dead code.
 	router.Use(func(c *gin.Context) {
 		c.Set("userID", "user-1")
-		// Deliberately NOT setting sessionID — replicates API-key auth.
+		c.Set("sessionID", "apikey:fake-hash-for-test")
 		c.Next()
 	})
 	wsGroup := router.Group("/api/v1/workspaces")
