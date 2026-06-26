@@ -259,4 +259,4 @@ After this PR merges and deploys:
 
 ### This worklog
 
-- `worklogs/NNNN_2026-06-26_epic-56-impl-complete.md` (this file) — assigned a sequential number by the post-merge bot on PR merge
+- `worklogs/0556_2026-06-26_epic-56-impl-complete.md` (this file) — assigned a sequential number by the post-merge bot on PR merge
