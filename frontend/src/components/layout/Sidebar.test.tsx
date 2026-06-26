@@ -304,7 +304,7 @@ describe("Sidebar — activity spinner and unread pulsation (US-37.5/37.6)", () 
     await collapseButton.click();
 
     const workspaceButton = screen.getByText("alpha").closest("button")!;
-    const blueSpinners = workspaceButton.querySelectorAll(".animate-spin.text-blue-500");
+    const blueSpinners = workspaceButton.querySelectorAll("[data-busy]");
     expect(blueSpinners.length).toBe(1);
   });
 
@@ -356,7 +356,7 @@ describe("Sidebar — activity spinner and unread pulsation (US-37.5/37.6)", () 
 
     // The child row should contain a blue spinner.
     const childRow = screen.getByText("Child task").closest("div")!;
-    const blueSpinners = childRow.querySelectorAll(".animate-spin.text-blue-500");
+    const blueSpinners = childRow.querySelectorAll("[data-busy]");
     expect(blueSpinners.length).toBe(1);
   });
 });
@@ -449,8 +449,8 @@ describe("Sidebar — pending action indicator", () => {
     const row = screen.getByText("Busy Pending").closest("button")!;
     // HelpCircle (amber) should be present
     expect(row.querySelector(".text-amber-500")).toBeTruthy();
-    // Loader2 (blue spinner) should NOT be present
-    expect(row.querySelector(".animate-spin.text-blue-500")).toBeFalsy();
+    // BusyIndicator (blue spinner) should NOT be present
+    expect(row.querySelector("[data-busy]")).toBeFalsy();
   });
 
   it("parent shows indicator when child has pending action (bubble-up)", async () => {

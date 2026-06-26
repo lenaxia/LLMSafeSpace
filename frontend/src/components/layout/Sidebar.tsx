@@ -24,9 +24,10 @@ import {
   ChevronRight,
   ChevronDown,
   Play,
-  Loader2,
   Shield,
 } from "lucide-react";
+import { Spinner } from "../ui/Spinner";
+import { BusyIndicator } from "../ui/BusyIndicator";
 import type { WorkspaceListItem } from "../../api/types";
 import { sessionDisplayTitle, generateWorkspaceName } from "../../lib/names";
 import { formatRelativeTime } from "../../lib/time";
@@ -171,7 +172,7 @@ export function Sidebar({ onNavigate }: Props) {
           className="rounded p-1 hover:bg-accent disabled:opacity-50"
           aria-label="New workspace"
         >
-          {createMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+          {createMutation.isPending ? <Spinner size="sm" /> : <Plus className="h-4 w-4" />}
         </button>
       </div>
 
@@ -386,12 +387,12 @@ function WorkspaceGroup({
               )}
             />
             <span className="flex-1 truncate">{workspace.name}</span>
-            {activating && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+            {activating && <Spinner size="sm" />}
             {!activating && workspace.phase && !isActive && !isSuspended && (
               <span className="text-xs text-muted-foreground">{workspace.phase}</span>
             )}
             {!expanded && busyCount > 0 && (
-              <Loader2 className="h-3 w-3 animate-spin text-blue-500 flex-shrink-0" />
+              <BusyIndicator size="sm" />
             )}
           </button>
           {isSuspended && !activating && (
@@ -412,7 +413,7 @@ function WorkspaceGroup({
               aria-label="New chat"
               title="New chat"
             >
-              {creatingSession ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+              {creatingSession ? <Spinner size="sm" /> : <Plus className="h-3 w-3" />}
             </button>
           )}
           <div className="mr-1">
@@ -815,7 +816,7 @@ function SessionTreeRow({
           {rowStatus === "pending_input" ? (
             <HelpCircle className="h-3.5 w-3.5 flex-shrink-0 animate-unread-pulse text-amber-500" />
           ) : rowStatus === "busy" ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500 flex-shrink-0" />
+            <BusyIndicator />
           ) : rowStatus === "unread" ? (
             <MessageSquareText className="h-3.5 w-3.5 flex-shrink-0 animate-unread-pulse" />
           ) : (
