@@ -228,7 +228,7 @@ func TestPodBootstrap_LogsUnderlyingError_OnInjectorFailure(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	h := NewPodBootstrapHandler(reviewer, injector, lookup, testBootstrapNamespace)
+	h := NewPodBootstrapHandler(reviewer, injector, lookup, nil, testBootstrapNamespace)
 	h.SetLogger(log)
 	r.POST("/internal/v1/pod-bootstrap", h.Bootstrap)
 

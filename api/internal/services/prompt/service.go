@@ -14,10 +14,9 @@ import (
 )
 
 const (
-	cacheTTL          = 5 * time.Minute
-	cacheKeyPref      = "ws:prompt:"
-	platformCacheKey  = "platform:prompt:sys_prompt_platform"
-	maxPromptPerLevel = 10_000
+	cacheTTL         = 5 * time.Minute
+	cacheKeyPref     = "ws:prompt:"
+	platformCacheKey = "platform:prompt:sys_prompt_platform"
 )
 
 // promptStore is the data-access surface for the PromptService.
@@ -110,11 +109,12 @@ func (s *Service) resolveUncached(ctx context.Context, workspaceID string) (*typ
 		}
 		if wsPrompt != nil {
 			result.UserPrompt = wsPrompt.Prompt
-			// Resolve the workspace's agent role system prompt
+			// Resolve the workspace's agent role system prompt. Walk the extends
+			// chain so an inherited system prompt (leaf's System nil, parent's
+			// set) is delivered — matches what GetEffectiveWorkspaceRole shows.
 			if wsPrompt.AgentRoleID != nil && *wsPrompt.AgentRoleID != "" {
-				role, err := s.store.GetAgentRole(ctx, *wsPrompt.AgentRoleID)
-				if err == nil && role != nil && role.Config.System != nil {
-					result.RolePrompt = *role.Config.System
+				if sys, ok := s.resolveRoleSystemPrompt(ctx, *wsPrompt.AgentRoleID); ok {
+					result.RolePrompt = sys
 				}
 			}
 		}
@@ -122,6 +122,35 @@ func (s *Service) resolveUncached(ctx context.Context, workspaceID string) (*typ
 
 	result.Resolved = mergePromptParts(result)
 	return result, nil
+}
+
+// resolveRoleSystemPrompt walks the agent-role extends chain to find the
+// effective system prompt: the leaf's System if set, otherwise the nearest
+// ancestor's. This keeps prompt delivery consistent with the
+// GetEffectiveWorkspaceRole endpoint (role.Service.ResolveEffective), which
+// resolves the full chain. Bounded to maxChainDepth to prevent runaway walks.
+func (s *Service) resolveRoleSystemPrompt(ctx context.Context, roleID string) (string, bool) {
+	const maxChainDepth = 10
+	visited := make(map[string]bool)
+	current := roleID
+	for current != "" {
+		if visited[current] || len(visited) >= maxChainDepth {
+			break
+		}
+		visited[current] = true
+		r, err := s.store.GetAgentRole(ctx, current)
+		if err != nil || r == nil {
+			return "", false
+		}
+		if r.Config.System != nil && strings.TrimSpace(*r.Config.System) != "" {
+			return *r.Config.System, true
+		}
+		if r.Extends == nil || *r.Extends == "" {
+			break
+		}
+		current = *r.Extends
+	}
+	return "", false
 }
 
 func mergePromptParts(p *types.EffectivePrompt) string {

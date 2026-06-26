@@ -387,7 +387,7 @@ func runBootstrapMaterializeE2EWith(t *testing.T, cfg bootstrapE2EConfig) (agent
 	if cfg.workspaceNil {
 		lookup = &wsMetaLookup{ws: nil}
 	}
-	h := NewPodBootstrapHandler(reviewer, svc, lookup, testNS)
+	h := NewPodBootstrapHandler(reviewer, svc, lookup, nil, testNS)
 	router.POST("/internal/v1/pod-bootstrap", h.Bootstrap)
 	apiSrv := httptest.NewServer(router)
 	t.Cleanup(apiSrv.Close)
@@ -713,7 +713,7 @@ func TestE2E_PasswordReset_PurgeThenBoot_NoResurrect(t *testing.T) {
 	const wsID = "ws-reset"
 	reviewer := &staticTokenReviewer{username: "system:serviceaccount:" + testNS + ":workspace-" + wsID}
 	lookup := &wsMetaLookup{ws: &types.WorkspaceMetadata{ID: wsID, UserID: "user-e2e"}}
-	h := NewPodBootstrapHandler(reviewer, svc, lookup, testNS)
+	h := NewPodBootstrapHandler(reviewer, svc, lookup, nil, testNS)
 	router.POST("/internal/v1/pod-bootstrap", h.Bootstrap)
 	apiSrv := httptest.NewServer(router)
 	t.Cleanup(apiSrv.Close)
@@ -797,7 +797,7 @@ func TestE2E_PasswordReset_FullPurgeThenBoot_NoProviders(t *testing.T) {
 	const wsID = "ws-fullpurge"
 	reviewer := &staticTokenReviewer{username: "system:serviceaccount:" + testNS + ":workspace-" + wsID}
 	lookup := &wsMetaLookup{ws: &types.WorkspaceMetadata{ID: wsID, UserID: "user-e2e"}}
-	h := NewPodBootstrapHandler(reviewer, svc, lookup, testNS)
+	h := NewPodBootstrapHandler(reviewer, svc, lookup, nil, testNS)
 	router.POST("/internal/v1/pod-bootstrap", h.Bootstrap)
 	apiSrv := httptest.NewServer(router)
 	t.Cleanup(apiSrv.Close)

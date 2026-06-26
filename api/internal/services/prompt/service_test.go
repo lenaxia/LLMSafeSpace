@@ -195,10 +195,10 @@ func mustMarshalBool(b *bool) []byte {
 // prompt without ever consulting the store.
 type missCache struct{}
 
-func (missCache) GetObject(context.Context, string, interface{}) error          { return nil }
+func (missCache) GetObject(context.Context, string, interface{}) error                { return nil }
 func (missCache) SetObject(context.Context, string, interface{}, time.Duration) error { return nil }
-func (missCache) Delete(context.Context, string) error                          { return nil }
-func (missCache) DeleteByPrefix(context.Context, string) error                  { return nil }
+func (missCache) Delete(context.Context, string) error                                { return nil }
+func (missCache) DeleteByPrefix(context.Context, string) error                        { return nil }
 
 // hitCache simulates a cache hit: GetObject populates the caller's value
 // pointer with the stored object.
@@ -209,8 +209,8 @@ func (h hitCache) GetObject(_ context.Context, _ string, value interface{}) erro
 	return nil
 }
 func (hitCache) SetObject(context.Context, string, interface{}, time.Duration) error { return nil }
-func (hitCache) Delete(context.Context, string) error                               { return nil }
-func (hitCache) DeleteByPrefix(context.Context, string) error                       { return nil }
+func (hitCache) Delete(context.Context, string) error                                { return nil }
+func (hitCache) DeleteByPrefix(context.Context, string) error                        { return nil }
 
 // TestResolveEffective_CacheMiss_ConsultsStore is the regression test for the
 // critical cache bug: a miss (nil error, value untouched) MUST fall through to
@@ -264,3 +264,24 @@ func TestGetPlatformPrompt_CacheMiss_ConsultsStore(t *testing.T) {
 	assert.Equal(t, "Platform rules", prompt)
 	store.AssertCalled(t, "GetPlatformSetting", mock.Anything, types.SettingSysPromptPlatform)
 }
+
+// TestResolveRoleSystemPrompt_InheritsFromParent: when the leaf role has no
+// system prompt but a parent it extends does, the parent's prompt is delivered
+// (the extends chain is walked, not just the leaf).
+func TestResolveRoleSystemPrompt_InheritsFromParent(t *testing.T) {
+	store := new(mockPromptStore)
+	parentSys := "Parent system prompt."
+	store.On("GetAgentRole", mock.Anything, "leaf").Return(&types.AgentRole{
+		ID: "leaf", Extends: roleStrPtr("parent"),
+	}, nil)
+	store.On("GetAgentRole", mock.Anything, "parent").Return(&types.AgentRole{
+		ID: "parent", Config: types.RoleConfig{System: &parentSys},
+	}, nil)
+
+	svc := New(store, nil)
+	got, ok := svc.resolveRoleSystemPrompt(context.Background(), "leaf")
+	assert.True(t, ok)
+	assert.Equal(t, parentSys, got)
+}
+
+func roleStrPtr(s string) *string { return &s }

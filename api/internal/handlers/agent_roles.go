@@ -5,7 +5,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -122,16 +121,30 @@ func (h *AgentRoleHandler) GetPlatform(c *gin.Context) {
 }
 
 func (h *AgentRoleHandler) GetOrg(c *gin.Context) {
-	roleID := c.Param("roleId")
-	if roleID == "" {
-		roleID = c.Param("id")
-	}
-	r, err := h.store.GetAgentRole(c.Request.Context(), roleID)
+	orgID := c.Param("id")
+	r, err := h.store.GetAgentRole(c.Request.Context(), c.Param("roleId"))
 	if err != nil || r == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "role not found"})
 		return
 	}
+	if !h.assertOrgRole(c, orgID, r) {
+		return
+	}
 	c.JSON(http.StatusOK, r)
+}
+
+// assertOrgRole verifies the fetched role belongs to the org in the route and
+// is org-scoped. This closes the cross-tenant authorization gap: without it,
+// an org admin of org A could operate on platform or other-org roles via the
+// org-scoped routes (the OrgAdminGuard only proves adminship of :id, it does
+// not constrain :roleId). On mismatch it writes a 404 (not 403, to avoid
+// leaking role existence across tenants) and returns false.
+func (h *AgentRoleHandler) assertOrgRole(c *gin.Context, orgID string, role *types.AgentRole) bool {
+	if role.Scope != "org" || role.OrgID == nil || *role.OrgID != orgID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "role not found"})
+		return false
+	}
+	return true
 }
 
 func (h *AgentRoleHandler) UpdatePlatform(c *gin.Context) {
@@ -239,7 +252,9 @@ func (h *AgentRoleHandler) CreateOrg(c *gin.Context) {
 		Slug:        req.Slug,
 		Description: req.Description,
 		Extends:     req.Extends,
-		IsDefault:   req.IsDefault,
+		// is_default is always false on INSERT; SetOrgDefaultRole performs the
+		// atomic swap below, avoiding a violation of idx_agent_roles_org_default.
+		IsDefault: false,
 	}, configJSON)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create org role"})
@@ -272,6 +287,9 @@ func (h *AgentRoleHandler) UpdateOrg(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "role not found"})
 		return
 	}
+	if !h.assertOrgRole(c, orgID, existing) {
+		return
+	}
 
 	if req.Extends != nil && *req.Extends != "" {
 		if err := h.svc.ValidateExtends(c.Request.Context(), "org", orgID, *req.Extends); err != nil {
@@ -281,6 +299,12 @@ func (h *AgentRoleHandler) UpdateOrg(c *gin.Context) {
 	}
 
 	updated := applyUpdates(existing, &req)
+	// Defer default management to SetOrgDefaultRole (atomic swap) so the UPDATE
+	// never sets a second is_default=true row, which would violate the partial
+	// unique index idx_agent_roles_org_default.
+	if req.IsDefault != nil && *req.IsDefault {
+		updated.IsDefault = false
+	}
 	configJSON, err := types.MarshalRoleConfig(&updated.Config)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid role config"})
@@ -308,6 +332,15 @@ func (h *AgentRoleHandler) DeleteOrg(c *gin.Context) {
 	orgID := c.Param("id")
 	roleID := c.Param("roleId")
 	actorID := h.authSvc.GetUserID(c)
+
+	existing, err := h.store.GetAgentRole(c.Request.Context(), roleID)
+	if err != nil || existing == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "role not found"})
+		return
+	}
+	if !h.assertOrgRole(c, orgID, existing) {
+		return
+	}
 
 	if err := h.svc.CheckDelete(c.Request.Context(), roleID); err != nil {
 		var dre *role.DependentRolesError
@@ -370,21 +403,16 @@ func (h *AgentRoleHandler) SetWorkspaceRole(c *gin.Context) {
 		return
 	}
 
-	// Enforce allow_user_prompt toggle (same as SetWorkspacePrompt)
+	// Enforce allow_user_prompt toggle (default-locked, same as SetWorkspacePrompt)
 	if orgID != "" {
 		policies, err := h.store.GetOrgPolicies(c.Request.Context(), orgID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check org policy"})
 			return
 		}
-		for _, p := range policies {
-			if p.Key == types.PolicyAllowUserPrompt {
-				var allowed bool
-				if json.Unmarshal(p.Value, &allowed) == nil && !allowed {
-					c.JSON(http.StatusForbidden, gin.H{"error": "org admin has disabled member role customization"})
-					return
-				}
-			}
+		if !userPromptAllowedFromPolicies(policies) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "org admin has disabled member role customization"})
+			return
 		}
 	}
 
@@ -423,14 +451,9 @@ func (h *AgentRoleHandler) ClearWorkspaceRole(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check org policy"})
 			return
 		}
-		for _, p := range policies {
-			if p.Key == types.PolicyAllowUserPrompt {
-				var allowed bool
-				if json.Unmarshal(p.Value, &allowed) == nil && !allowed {
-					c.JSON(http.StatusForbidden, gin.H{"error": "org admin has disabled member role customization"})
-					return
-				}
-			}
+		if !userPromptAllowedFromPolicies(policies) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "org admin has disabled member role customization"})
+			return
 		}
 	}
 

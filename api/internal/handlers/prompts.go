@@ -87,8 +87,8 @@ func (h *PromptHandler) SetPlatform(c *gin.Context) {
 }
 
 type orgPromptResponse struct {
-	Prompt           string `json:"prompt"`
-	AllowUserPrompt  bool   `json:"allowUserPrompt"`
+	Prompt          string `json:"prompt"`
+	AllowUserPrompt bool   `json:"allowUserPrompt"`
 }
 
 // GetOrg handles GET /api/v1/orgs/:id/prompt.
@@ -182,6 +182,24 @@ type setWorkspacePromptRequest struct {
 	Prompt string `json:"prompt" binding:"max=10000"`
 }
 
+// userPromptAllowedFromPolicies reports whether member-level prompt/role
+// customization is permitted for an org. Defaults to LOCKED (false) when the
+// policy is unset — matching the resolution path
+// (types.OrgPolicyValues.IsUserPromptAllowed) so a value accepted on write is
+// never silently discarded at read. Shared by the prompt and role handlers so
+// the default-locked semantics cannot diverge across copies.
+func userPromptAllowedFromPolicies(policies []*types.OrgPolicy) bool {
+	for _, p := range policies {
+		if p.Key == types.PolicyAllowUserPrompt {
+			var allowed bool
+			if json.Unmarshal(p.Value, &allowed) == nil {
+				return allowed
+			}
+		}
+	}
+	return false
+}
+
 // SetWorkspacePrompt handles PUT /api/v1/workspaces/:id/prompt.
 // Respects the org's allow_user_prompt toggle — returns 403 when locked.
 func (h *PromptHandler) SetWorkspacePrompt(c *gin.Context) {
@@ -206,14 +224,9 @@ func (h *PromptHandler) SetWorkspacePrompt(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check org policy"})
 			return
 		}
-		for _, p := range policies {
-			if p.Key == types.PolicyAllowUserPrompt {
-				var allowed bool
-				if err := json.Unmarshal(p.Value, &allowed); err == nil && !allowed {
-					c.JSON(http.StatusForbidden, gin.H{"error": "org admin has disabled member prompt customization"})
-					return
-				}
-			}
+		if !userPromptAllowedFromPolicies(policies) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "org admin has disabled member prompt customization"})
+			return
 		}
 	}
 
