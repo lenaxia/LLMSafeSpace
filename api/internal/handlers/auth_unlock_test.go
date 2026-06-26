@@ -45,6 +45,13 @@ func (c *captureUnlocker) UnlockDEKWithSigningKey(_ context.Context, userID stri
 
 func setupUnlockRouter(t *testing.T, unlocker DEKUnlocker, userID, sessionID string, matchedKey []byte) *gin.Engine {
 	t.Helper()
+	return setupUnlockRouterWithExp(t, unlocker, userID, sessionID, matchedKey, 0)
+}
+
+// setupUnlockRouterWithExp lets tests set the jwt_exp_unix gin context
+// value to drive remainingTokenTTL.
+func setupUnlockRouterWithExp(t *testing.T, unlocker DEKUnlocker, userID, sessionID string, matchedKey []byte, expUnix int64) *gin.Engine {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	h := NewUnlockDEKHandler(unlocker)
@@ -57,6 +64,9 @@ func setupUnlockRouter(t *testing.T, unlocker DEKUnlocker, userID, sessionID str
 		}
 		if matchedKey != nil {
 			c.Set("jwt_signing_key", matchedKey)
+		}
+		if expUnix > 0 {
+			c.Set("jwt_exp_unix", expUnix)
 		}
 	}, h.Unlock)
 	return r
@@ -192,4 +202,60 @@ func TestUnlockDEK_RegressionForRotatedJWT_WrapsUnderMatchedKey(t *testing.T) {
 
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 	assert.Equal(t, keyA, unlocker.lastSigningKey, "regression: soft-unlock must wrap under matched key A, not the (test) active key")
+}
+
+func TestUnlockDEK_DurableRowTTLMatchesJWTRemaining(t *testing.T) {
+	// soft-unlock at hour 1 of a 24h JWT should produce a durable row
+	// with ~23h TTL — NOT a hardcoded 1h. Pin the contract: TTL must
+	// equal time.Until(exp) within a small skew.
+	unlocker := &captureUnlocker{}
+	expIn4h := time.Now().Add(4 * time.Hour).Unix()
+	r := setupUnlockRouterWithExp(t, unlocker, "u-ttl", "11111111-2222-3333-4444-555555555555", []byte("sk"), expIn4h)
+
+	rec := doUnlockRequest(t, r, map[string]string{"password": "pw"})
+
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	// Allow a 5s slack window for test scheduling jitter.
+	assert.Greater(t, unlocker.lastTTL, 4*time.Hour-5*time.Second, "TTL should track JWT exp")
+	assert.LessOrEqual(t, unlocker.lastTTL, 4*time.Hour, "TTL should not exceed JWT exp")
+}
+
+func TestUnlockDEK_NoJWTExp_FallsBackToOneHour(t *testing.T) {
+	// API-key-like sessions or tests without exp on context: fall back to
+	// 1h (the previous default). Documented in remainingTokenTTL.
+	unlocker := &captureUnlocker{}
+	r := setupUnlockRouterWithExp(t, unlocker, "u-noexp", "11111111-2222-3333-4444-555555555555", []byte("sk"), 0)
+
+	rec := doUnlockRequest(t, r, map[string]string{"password": "pw"})
+
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	assert.Equal(t, time.Hour, unlocker.lastTTL, "no exp on context → 1h fallback")
+}
+
+func TestUnlockDEK_TokenAlreadyExpired_Returns401(t *testing.T) {
+	// Race: token validated by AuthMiddleware nanoseconds before exp
+	// passes, by the time the handler reads exp it's already past.
+	// Return 401 rather than write a row that expires immediately.
+	unlocker := &captureUnlocker{}
+	expInPast := time.Now().Add(-time.Minute).Unix()
+	r := setupUnlockRouterWithExp(t, unlocker, "u-exp", "11111111-2222-3333-4444-555555555555", []byte("sk"), expInPast)
+
+	rec := doUnlockRequest(t, r, map[string]string{"password": "pw"})
+
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Equal(t, 0, unlocker.calls)
+}
+
+func TestUnlockDEK_TTLCappedAt30Days(t *testing.T) {
+	// Defensive: even a forged JWT with exp = NOW + 100 years should
+	// not produce a 100-year-long durable row. 30d is the longest
+	// legitimate JWT lifetime (RememberMe ceiling).
+	unlocker := &captureUnlocker{}
+	expWayOut := time.Now().Add(100 * 365 * 24 * time.Hour).Unix()
+	r := setupUnlockRouterWithExp(t, unlocker, "u-huge", "11111111-2222-3333-4444-555555555555", []byte("sk"), expWayOut)
+
+	rec := doUnlockRequest(t, r, map[string]string{"password": "pw"})
+
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	assert.Equal(t, 30*24*time.Hour, unlocker.lastTTL)
 }

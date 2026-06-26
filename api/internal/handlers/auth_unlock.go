@@ -123,27 +123,38 @@ func isAPIKeySessionID(sessionID string) bool {
 	return len(sessionID) > 7 && sessionID[:7] == "apikey:"
 }
 
-// remainingTokenTTL extracts the JWT's remaining lifetime from the gin
-// context. AuthMiddleware doesn't expose the exp claim today, so we
-// fall back to a conservative 1h ceiling — enough for the cache to
-// outlive a typical request burst without exceeding any reasonable
-// JWT lifetime. The durable row inherits this ttl as expires_at, so
-// the janitor prunes it on the same schedule as the JWT itself.
+// remainingTokenTTL returns the JWT's remaining lifetime, derived from
+// the "jwt_exp_unix" gin context value set by AuthMiddleware. Falls
+// back to a 1h ceiling when the exp is missing (e.g. an API-key
+// session, an extremely malformed token that somehow validated, or a
+// test that didn't stash exp on the context). Returns 0 only when the
+// token is already past its exp — the handler treats 0 as "session
+// expired" and aborts.
 //
-// A future refinement is to have AuthMiddleware stash exp on the
-// context (gated on jti != "") so the handler can use the exact
-// remaining lifetime. For now the 1h ceiling is acceptable because:
-//
-//	(1) The Redis cache uses ttl = min(exp - now, 1h) anyway in
-//	    ValidateTokenWithClientIP, so the durable TTL mirrors the
-//	    cache TTL contract callers already see.
-//	(2) On the next Valkey restart, the durable rehydrate will hit
-//	    or miss based on whether the row's expires_at is still in
-//	    the future — a 1h TTL means a soft-unlock close to the JWT's
-//	    natural expiry produces a 1h durable row that may outlive
-//	    the JWT. Harmless: the rehydrate path requires the JWT to
-//	    validate before it even reaches GetDEK.
+// The durable row inherits this ttl as expires_at, so the janitor
+// prunes it on the same schedule as the JWT itself. Cap at 30 days
+// (the longest legitimate JWT lifetime in the codebase: RememberMe).
 func remainingTokenTTL(c *gin.Context) time.Duration {
-	// Conservative default. See doc above for why.
-	return time.Hour
+	const maxTTL = 30 * 24 * time.Hour
+	const fallbackTTL = time.Hour
+
+	v, ok := c.Get("jwt_exp_unix")
+	if !ok {
+		return fallbackTTL
+	}
+	exp, ok := v.(int64)
+	if !ok || exp <= 0 {
+		return fallbackTTL
+	}
+	remaining := time.Until(time.Unix(exp, 0))
+	if remaining <= 0 {
+		// Token expired between AuthMiddleware accepting it (millisecond
+		// race) and us reading exp. Surface 0 so the handler can return
+		// 401 instead of writing a row that expires immediately.
+		return 0
+	}
+	if remaining > maxTTL {
+		return maxTTL
+	}
+	return remaining
 }

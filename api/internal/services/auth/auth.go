@@ -1306,6 +1306,15 @@ func (s *Service) AuthMiddleware() gin.HandlerFunc {
 		// Set session ID for DEK cache lookup in secret management.
 		if jti := utilities.ExtractJTI(tokenString); jti != "" {
 			c.Set("sessionID", jti)
+			// Epic 56: stash the JWT's exp (unix timestamp) so soft-unlock
+			// can size the durable row's TTL to actual remaining lifetime.
+			// 0 ⇒ extraction failed (malformed token, somehow validated
+			// without an exp claim — extremely unlikely); the handler
+			// falls back to a 1h default. Set even on the AuthMiddleware
+			// path because soft-unlock is the primary consumer.
+			if exp := utilities.ExtractExp(tokenString); exp > 0 {
+				c.Set("jwt_exp_unix", exp)
+			}
 		} else if utilities.IsAPIKey(tokenString, s.config.Auth.APIKeyPrefix) {
 			c.Set("sessionID", "apikey:"+pkgutil.HashString(tokenString))
 		}
