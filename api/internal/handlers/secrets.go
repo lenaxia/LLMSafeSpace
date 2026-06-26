@@ -365,7 +365,7 @@ func (h *SecretsHandler) ReloadSecrets(c *gin.Context) {
 	}
 
 	workspaceID := c.Param("id")
-	secretsJSON, err := h.svc.PrepareSecretsForInjection(c.Request.Context(), userID, sessionID, workspaceID)
+	secretsJSON, err := h.svc.InjectSecrets(c.Request.Context(), userID, sessionID, workspaceID)
 	if err != nil {
 		handleSecretError(c, err)
 		return
@@ -406,6 +406,18 @@ type reloadResult struct {
 // push to running pods. Credentials bound during suspend are picked up at the
 // next pod boot via the bootstrap endpoint.
 //
+// SOLID note (PR #407 review pass 2): the push path always calls
+// InjectSecrets — there is no branch on sessionID. Both callers (JWT
+// auth and API-key auth) flow through the same method because
+// InjectSecrets internally degrades user-DEK lookups to skip-with-audit
+// when the DEK is unavailable (real session expired, API-key pseudo-
+// session, or no session at all). The original first-pass branching
+// was dead code — production AuthMiddleware sets sessionID to
+// "apikey:" + hash(token) for API-key auth so the empty-string branch
+// was unreachable. The graceful-degrade approach makes the right thing
+// happen for every auth mode without the call site having to know
+// which one it is.
+//
 // The live push sends the payload even when it is the empty array '[]' — the
 // agent uses this to CLEAR its in-memory secret materialisations (validator
 // finding N8 in worklog 0094 pass-2 audit). Without this an unbind leaves the
@@ -418,9 +430,9 @@ func (h *SecretsHandler) pushSecretsToAgent(c *gin.Context, userID, workspaceID 
 	_, sessionID := extractAuth(c)
 	ctx := c.Request.Context()
 
-	secretsJSON, err := h.svc.PrepareSecretsForInjection(ctx, userID, sessionID, workspaceID)
+	secretsJSON, err := h.svc.InjectSecrets(ctx, userID, sessionID, workspaceID)
 	if err != nil {
-		h.warn("PrepareSecretsForInjection failed",
+		h.warn("secret injection failed",
 			"workspaceID", workspaceID, "error", err.Error())
 		return
 	}

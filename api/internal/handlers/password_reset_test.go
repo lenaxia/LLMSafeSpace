@@ -124,7 +124,7 @@ type memSessionRevoker struct {
 	lastID string
 }
 
-func (m *memSessionRevoker) RevokeAllUserSessions(userID string) error {
+func (m *memSessionRevoker) RevokeAllUserSessions(_ context.Context, userID string) error {
 	m.calls++
 	m.lastID = userID
 	return nil

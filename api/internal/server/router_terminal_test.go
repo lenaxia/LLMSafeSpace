@@ -58,16 +58,12 @@ type terminalMockWSGetter struct {
 	workspaces map[string]*v1.Workspace
 }
 
-func (m *terminalMockWSGetter) GetWorkspace(id string) (*v1.Workspace, error) {
+func (m *terminalMockWSGetter) GetWorkspace(_ context.Context, id string) (*v1.Workspace, error) {
 	ws, ok := m.workspaces[id]
 	if !ok {
 		return nil, fmt.Errorf("not found")
 	}
 	return ws, nil
-}
-
-func (m *terminalMockWSGetter) GetWorkspacePassword(_ string) (string, error) {
-	return "", fmt.Errorf("not implemented")
 }
 
 func newTerminalTestRouter(t *testing.T) (*gin.Engine, *terminalMockCache) {

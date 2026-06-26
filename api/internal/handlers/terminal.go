@@ -74,10 +74,7 @@ type TerminalCache interface {
 
 // WorkspaceGetter resolves workspace CRDs.
 type WorkspaceGetter interface {
-	GetWorkspace(id string) (*v1.Workspace, error)
-	// GetWorkspacePassword returns the workspace's password from its K8s Secret.
-	// Used for workspace-level authentication (e.g. terminal proxy).
-	GetWorkspacePassword(id string) (string, error)
+	GetWorkspace(ctx context.Context, id string) (*v1.Workspace, error)
 }
 
 // k8sWorkspaceGetter once lived here as a local adapter from the K8s
@@ -144,7 +141,7 @@ func (h *TerminalHandler) HandleTicket(c *gin.Context) {
 
 	workspaceID := c.Param("id")
 
-	ws, err := h.wsGetter.GetWorkspace(workspaceID)
+	ws, err := h.wsGetter.GetWorkspace(c.Request.Context(), workspaceID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
 		return
@@ -218,7 +215,7 @@ func (h *TerminalHandler) HandleTerminal(c *gin.Context) {
 	defer h.releaseConnection(workspaceID)
 
 	// Resolve pod
-	ws, err := h.wsGetter.GetWorkspace(workspaceID)
+	ws, err := h.wsGetter.GetWorkspace(c.Request.Context(), workspaceID)
 	if err != nil || ws.Status.Phase != v1.WorkspacePhaseActive || ws.Status.PodName == "" {
 		c.JSON(http.StatusConflict, gin.H{"error": "workspace not active"})
 		return

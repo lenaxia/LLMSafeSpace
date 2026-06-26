@@ -322,16 +322,59 @@ func (s *PgOrgStore) SoftDeleteOrg(ctx context.Context, orgID string) error {
 	return nil
 }
 
+// AddOrgMember inserts an org_memberships row AND migrates the new
+// member's personal (NULL-org_id, non-deleted) workspaces to the org —
+// mirroring CreateOrgWithAdmin (M1/D4) and AcceptInvitationTx (D4).
+// Both operations run in a single transaction so the membership and
+// the workspace migration commit atomically.
+//
+// Callers (audited 2026-06-25):
+//   - admin "Add member" UI → POST /orgs/:id/members → orgs.go handler
+//   - SSO JIT provisioning during first login (sso.go)
+//
+// Pre-fix: this function only INSERTed the membership row. The new
+// member's existing workspaces stayed with org_id IS NULL forever,
+// silently skipping org-credential auto-binding via
+// BindCredentialToAllOrgWorkspaces (which filters w.org_id = $orgID).
+// That produced the same orphan state migration 000044 was created
+// to backfill. See the worklog `add-org-member-migrates-workspaces`
+// for the discovery trail.
 func (s *PgOrgStore) AddOrgMember(ctx context.Context, orgID, userID string, role types.OrgRole) error {
-	_, err := s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO org_memberships (org_id, user_id, role, created_at)
 		 VALUES ($1, $2, $3, NOW())`,
 		orgID, userID, role,
-	)
-	if err != nil {
+	); err != nil {
 		return fmt.Errorf("add org member: %w", err)
 	}
-	return nil
+
+	// M2: migrate the new member's personal workspaces to the org.
+	// Identical UPDATE to the D4 block in CreateOrgWithAdmin and
+	// AcceptInvitationTx so the three join paths are behaviorally
+	// identical from the workspace's point of view. Search the file
+	// for "UPDATE workspaces SET org_id" to find the other two —
+	// line numbers drift; structural search is reliable.
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE workspaces SET org_id = $2, updated_at = NOW()
+		 WHERE user_id = $1 AND org_id IS NULL AND deleted_at IS NULL`,
+		userID, orgID,
+	); err != nil {
+		return fmt.Errorf("migrate new member's personal workspaces to org: %w", err)
+	}
+
+	committed = true
+	return tx.Commit()
 }
 
 func (s *PgOrgStore) GetOrgMember(ctx context.Context, orgID, userID string) (*types.OrgMember, error) {

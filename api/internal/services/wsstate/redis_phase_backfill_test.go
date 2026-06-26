@@ -4,6 +4,7 @@
 package wsstate
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -32,15 +33,15 @@ func priorPhaseKey(workspaceID string) string {
 func TestRedisStore_GetPriorPhase_NoEntry_ReturnsFalse(t *testing.T) {
 	store, _, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	_, ok := store.GetPriorPhase("ws-1")
+	_, ok := store.GetPriorPhase(context.Background(), "ws-1")
 	assert.False(t, ok)
 }
 
 func TestRedisStore_SetThenGetPriorPhase_RoundTrips(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	store.SetPriorPhase("ws-1", "Active")
-	phase, ok := store.GetPriorPhase("ws-1")
+	store.SetPriorPhase(context.Background(), "ws-1", "Active")
+	phase, ok := store.GetPriorPhase(context.Background(), "ws-1")
 	require.True(t, ok)
 	assert.Equal(t, "Active", phase)
 	assert.True(t, mr.Exists(priorPhaseKey("ws-1")))
@@ -49,9 +50,9 @@ func TestRedisStore_SetThenGetPriorPhase_RoundTrips(t *testing.T) {
 func TestRedisStore_SetPriorPhase_Overwrites(t *testing.T) {
 	store, _, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	store.SetPriorPhase("ws-1", "Creating")
-	store.SetPriorPhase("ws-1", "Active")
-	phase, ok := store.GetPriorPhase("ws-1")
+	store.SetPriorPhase(context.Background(), "ws-1", "Creating")
+	store.SetPriorPhase(context.Background(), "ws-1", "Active")
+	phase, ok := store.GetPriorPhase(context.Background(), "ws-1")
 	require.True(t, ok)
 	assert.Equal(t, "Active", phase)
 }
@@ -59,9 +60,9 @@ func TestRedisStore_SetPriorPhase_Overwrites(t *testing.T) {
 func TestRedisStore_DeletePriorPhase_RemovesEntry(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	store.SetPriorPhase("ws-1", "Active")
-	store.DeletePriorPhase("ws-1")
-	_, ok := store.GetPriorPhase("ws-1")
+	store.SetPriorPhase(context.Background(), "ws-1", "Active")
+	store.DeletePriorPhase(context.Background(), "ws-1")
+	_, ok := store.GetPriorPhase(context.Background(), "ws-1")
 	assert.False(t, ok)
 	assert.False(t, mr.Exists(priorPhaseKey("ws-1")))
 }
@@ -69,7 +70,7 @@ func TestRedisStore_DeletePriorPhase_RemovesEntry(t *testing.T) {
 func TestRedisStore_PriorPhase_TTL24Hours(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	store.SetPriorPhase("ws-1", "Active")
+	store.SetPriorPhase(context.Background(), "ws-1", "Active")
 	ttl := mr.TTL(priorPhaseKey("ws-1"))
 	assert.Greater(t, ttl, 23*time.Hour, "priorPhase TTL must be ~24 hours")
 }
@@ -85,9 +86,9 @@ func TestRedisStore_GetPriorPhase_RedisDown_AssumesActiveToAvoidCacheWipe(t *tes
 	require.NoError(t, err)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	store := NewRedisStore(client, testActiveSessTTL)
-	store.SetPriorPhase("ws-1", "Active")
+	store.SetPriorPhase(context.Background(), "ws-1", "Active")
 	mr.Close()
-	phase, ok := store.GetPriorPhase("ws-1")
+	phase, ok := store.GetPriorPhase(context.Background(), "ws-1")
 	assert.True(t, ok, "Redis-down must assume hadPrior=true (Active→Active) to avoid mass cache wipe")
 	assert.Equal(t, "Active", phase, "Redis-down must assume prior phase is Active (the common case)")
 	_ = client.Close()
@@ -99,7 +100,7 @@ func TestRedisStore_SetPriorPhase_RedisDown_NoPanic(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	store := NewRedisStore(client, testActiveSessTTL)
 	mr.Close()
-	assert.NotPanics(t, func() { store.SetPriorPhase("ws-1", "Active") })
+	assert.NotPanics(t, func() { store.SetPriorPhase(context.Background(), "ws-1", "Active") })
 	_ = client.Close()
 }
 
@@ -114,31 +115,31 @@ func backfilledKey(workspaceID string) string {
 func TestRedisStore_GetParentBackfilled_DefaultFalse(t *testing.T) {
 	store, _, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	assert.False(t, store.GetParentBackfilled("ws-1"))
+	assert.False(t, store.GetParentBackfilled(context.Background(), "ws-1"))
 }
 
 func TestRedisStore_SetParentBackfilled_ThenGet_ReturnsTrue(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	store.SetParentBackfilled("ws-1")
-	assert.True(t, store.GetParentBackfilled("ws-1"))
+	store.SetParentBackfilled(context.Background(), "ws-1")
+	assert.True(t, store.GetParentBackfilled(context.Background(), "ws-1"))
 	assert.True(t, mr.Exists(backfilledKey("ws-1")))
-	assert.False(t, store.GetParentBackfilled("ws-2"))
+	assert.False(t, store.GetParentBackfilled(context.Background(), "ws-2"))
 }
 
 func TestRedisStore_DeleteParentBackfilled_RemovesMarker(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	store.SetParentBackfilled("ws-1")
-	store.DeleteParentBackfilled("ws-1")
-	assert.False(t, store.GetParentBackfilled("ws-1"))
+	store.SetParentBackfilled(context.Background(), "ws-1")
+	store.DeleteParentBackfilled(context.Background(), "ws-1")
+	assert.False(t, store.GetParentBackfilled(context.Background(), "ws-1"))
 	assert.False(t, mr.Exists(backfilledKey("ws-1")))
 }
 
 func TestRedisStore_ParentBackfilled_TTL24Hours(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	store.SetParentBackfilled("ws-1")
+	store.SetParentBackfilled(context.Background(), "ws-1")
 	ttl := mr.TTL(backfilledKey("ws-1"))
 	assert.Greater(t, ttl, 23*time.Hour, "backfilled TTL must be ~24 hours")
 }
@@ -148,9 +149,9 @@ func TestRedisStore_GetParentBackfilled_RedisDown_ReturnsFalse(t *testing.T) {
 	require.NoError(t, err)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	store := NewRedisStore(client, testActiveSessTTL)
-	store.SetParentBackfilled("ws-1")
+	store.SetParentBackfilled(context.Background(), "ws-1")
 	mr.Close()
-	assert.False(t, store.GetParentBackfilled("ws-1"),
+	assert.False(t, store.GetParentBackfilled(context.Background(), "ws-1"),
 		"Redis-down returns false — allows backfill to retry")
 	_ = client.Close()
 }
@@ -161,7 +162,7 @@ func TestRedisStore_SetParentBackfilled_RedisDown_NoPanic(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	store := NewRedisStore(client, testActiveSessTTL)
 	mr.Close()
-	assert.NotPanics(t, func() { store.SetParentBackfilled("ws-1") })
+	assert.NotPanics(t, func() { store.SetParentBackfilled(context.Background(), "ws-1") })
 	_ = client.Close()
 }
 
@@ -172,10 +173,10 @@ func TestRedisStore_SetParentBackfilled_RedisDown_NoPanic(t *testing.T) {
 func TestRedisStore_InvalidateAll_ClearsRedisPriorPhase(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	store.SetPriorPhase("ws-1", "Active")
-	store.InvalidateAll("ws-1")
+	store.SetPriorPhase(context.Background(), "ws-1", "Active")
+	store.InvalidateAll(context.Background(), "ws-1")
 	// priorPhase SURVIVES InvalidateAll per US-45.1 contract.
-	phase, ok := store.GetPriorPhase("ws-1")
+	phase, ok := store.GetPriorPhase(context.Background(), "ws-1")
 	assert.True(t, ok, "priorPhase must survive InvalidateAll")
 	assert.Equal(t, "Active", phase)
 	assert.True(t, mr.Exists(priorPhaseKey("ws-1")))
@@ -184,9 +185,9 @@ func TestRedisStore_InvalidateAll_ClearsRedisPriorPhase(t *testing.T) {
 func TestRedisStore_InvalidateAll_ClearsRedisParentBackfilled(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
-	store.SetParentBackfilled("ws-1")
+	store.SetParentBackfilled(context.Background(), "ws-1")
 	require.True(t, mr.Exists(backfilledKey("ws-1")))
-	store.InvalidateAll("ws-1")
-	assert.False(t, store.GetParentBackfilled("ws-1"))
+	store.InvalidateAll(context.Background(), "ws-1")
+	assert.False(t, store.GetParentBackfilled(context.Background(), "ws-1"))
 	assert.False(t, mr.Exists(backfilledKey("ws-1")))
 }

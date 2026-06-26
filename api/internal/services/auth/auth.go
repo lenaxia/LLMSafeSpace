@@ -305,9 +305,11 @@ func (s *Service) isUserSuspendedCached(ctx context.Context, userID string) bool
 	return err == nil && v != ""
 }
 
-// RevokeToken revokes a JWT token
-func (s *Service) RevokeToken(token string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// RevokeToken revokes a JWT token. ctx propagates the caller's
+// deadline/cancellation into the cache calls (US-46.5 / #224 P2); the 5s cap
+// is retained as a per-call safety bound derived from ctx.
+func (s *Service) RevokeToken(ctx context.Context, token string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	// Parse token (accepts active key or any previous key for F1.7.5)
@@ -375,8 +377,11 @@ func (s *Service) RevokeToken(token string) error {
 
 // CheckResourceAccess checks if a user has access to a resource
 func (s *Service) CheckResourceAccess(userID, resourceType, resourceID, action string) bool {
-	// Check resource ownership
-	isOwner, err := s.dbService.CheckResourceOwnership(userID, resourceType, resourceID)
+	// CheckResourceAccess has no production callers (interface-satisfying only);
+	// it uses context.Background() here pending either deletion or a future
+	// ctx-propagating signature. The live CheckResourceOwnership caller in
+	// handlers/usage.go uses the request ctx.
+	isOwner, err := s.dbService.CheckResourceOwnership(context.Background(), userID, resourceType, resourceID)
 	if err != nil {
 		s.logger.Error("Failed to check resource ownership", err,
 			"user_id", userID,
@@ -391,7 +396,7 @@ func (s *Service) CheckResourceAccess(userID, resourceType, resourceID, action s
 	}
 
 	// Check RBAC permissions
-	hasPermission, err := s.dbService.CheckPermission(userID, resourceType, resourceID, action)
+	hasPermission, err := s.dbService.CheckPermission(context.Background(), userID, resourceType, resourceID, action)
 	if err != nil {
 		s.logger.Error("Failed to check permission", err,
 			"user_id", userID,
@@ -431,20 +436,22 @@ func (s *Service) GenerateTokenWithDuration(userID string, duration time.Duratio
 	return tokenString, nil
 }
 
-// ValidateToken validates a JWT token or API key
-func (s *Service) ValidateToken(tokenString string) (string, error) {
-	return s.ValidateTokenWithClientIP(tokenString, "")
+// ValidateToken validates a JWT token or API key.
+func (s *Service) ValidateToken(ctx context.Context, tokenString string) (string, error) {
+	return s.ValidateTokenWithClientIP(ctx, tokenString, "")
 }
 
 // ValidateTokenWithClientIP validates a JWT token or API key, enforcing
-// allowed_cidrs when clientIP is non-empty.
-func (s *Service) ValidateTokenWithClientIP(tokenString, clientIP string) (string, error) {
+// allowed_cidrs when clientIP is non-empty. ctx propagates the caller's
+// deadline/cancellation into the cache + DB calls (US-46.5 / issue #224);
+// the 5s cap is retained as a per-call safety bound derived from ctx.
+func (s *Service) ValidateTokenWithClientIP(ctx context.Context, tokenString, clientIP string) (string, error) {
 	if utilities.IsAPIKey(tokenString, s.config.Auth.APIKeyPrefix) {
-		return s.validateAPIKey(tokenString, clientIP)
+		return s.validateAPIKey(ctx, tokenString, clientIP)
 	}
 
 	// Check if token is cached
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	cacheKey := fmt.Sprintf("token:%s", pkgutil.HashString(tokenString))
 
@@ -520,9 +527,10 @@ func (s *Service) ValidateTokenWithClientIP(tokenString, clientIP string) (strin
 }
 
 // validateAPIKey validates an API key (internal method).
-// clientIP is optional; when provided, allowed_cidrs is enforced.
-func (s *Service) validateAPIKey(apiKey, clientIP string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// clientIP is optional; when provided, allowed_cidrs is enforced. ctx
+// propagates the caller's deadline/cancellation (US-46.5 / issue #224).
+func (s *Service) validateAPIKey(ctx context.Context, apiKey, clientIP string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	cacheKey := fmt.Sprintf("apikey:%s", pkgutil.HashString(apiKey))
 
@@ -941,8 +949,8 @@ func (s *Service) maxSessionRevocationTTL() time.Duration {
 // "revoked" under each tracked jti key AND hash key (both paths that
 // ValidateToken checks). Used by password-reset confirm (US-49.5) so a
 // stolen JWT stops working after the victim resets their password.
-func (s *Service) RevokeAllUserSessions(userID string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func (s *Service) RevokeAllUserSessions(ctx context.Context, userID string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	key := "user-sessions:" + userID
@@ -1127,7 +1135,7 @@ func (s *Service) AuthMiddleware() gin.HandlerFunc {
 		}
 
 		// Validate token
-		userID, err := s.ValidateTokenWithClientIP(tokenString, c.ClientIP())
+		userID, err := s.ValidateTokenWithClientIP(c.Request.Context(), tokenString, c.ClientIP())
 		if err != nil {
 			c.JSON(401, gin.H{"error": "Invalid or expired token"})
 			c.Abort()
@@ -1212,7 +1220,7 @@ func (s *Service) OptionalAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tokenString := s.extractToken(c)
 		if tokenString != "" {
-			userID, err := s.ValidateTokenWithClientIP(tokenString, c.ClientIP())
+			userID, err := s.ValidateTokenWithClientIP(c.Request.Context(), tokenString, c.ClientIP())
 			if err == nil && userID != "" {
 				suspended := false
 				// OptionalAuthMiddleware never aborts; it excludes a suspended

@@ -36,6 +36,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
 )
 
 // relaySource holds the relay URL and free model list that the relay
@@ -94,6 +96,29 @@ func (w *AgentConfigWriter) loadExisting() {
 	w.providerRaw = cfg.Provider
 	w.model = cfg.Model
 	w.agentsRaw = cfg.Agents
+
+	// 2026-06-23 cold-start optimization (item #1a, Phase D): detect
+	// a pre-boot-injected relay block and set the writer's relay
+	// source so hasRelay() returns true. Without this, the legacy
+	// in-pod startRelayInjector goroutine would think no relay is
+	// configured (writer.relay == nil) and run its full
+	// fetch+kill+restart cycle redundantly, defeating the entire
+	// point of Phase C.
+	//
+	// We extract just enough info to satisfy hasRelay() — the actual
+	// relay config is already on disk, so we don't need to round-trip
+	// the full URL or model list back into the writer's source. A
+	// sentinel non-nil relaySource is sufficient, but we populate
+	// fields where we can so any future caller that introspects the
+	// writer sees consistent state.
+	if len(cfg.Provider) > 0 {
+		var providers map[string]json.RawMessage
+		if err := json.Unmarshal(cfg.Provider, &providers); err == nil {
+			if relayRaw, ok := providers["opencode-relay"]; ok {
+				w.relay = parseRelayFromExisting(relayRaw)
+			}
+		}
+	}
 }
 
 // loadAdminPrompt reads the admin-configured system prompt written by the
@@ -106,6 +131,46 @@ func (w *AgentConfigWriter) loadAdminPrompt() {
 		return
 	}
 	w.adminPrompt = string(data)
+}
+
+// parseRelayFromExisting extracts URL + models from a pre-injected
+// opencode-relay provider block. Used by loadExisting to make the
+// writer aware of a relay block written by the materialize subcommand
+// (Phase C) before agentd started.
+//
+// Returns a populated *relaySource on success, or a sentinel
+// non-nil source with empty fields if extraction fails — the
+// non-nil-ness is what matters for hasRelay().
+func parseRelayFromExisting(relayRaw json.RawMessage) *relaySource {
+	var entry struct {
+		Options struct {
+			BaseURL string `json:"baseURL"`
+		} `json:"options"`
+		Models map[string]struct {
+			Name  string `json:"name"`
+			Limit struct {
+				Context int `json:"context"`
+				Output  int `json:"output"`
+			} `json:"limit"`
+		} `json:"models"`
+	}
+	src := &relaySource{}
+	if err := json.Unmarshal(relayRaw, &entry); err != nil {
+		// Block exists but isn't parseable — still set non-nil
+		// sentinel so hasRelay() reports true. Rebuild() will
+		// regenerate the block from defaults if anyone calls it.
+		return src
+	}
+	src.url = entry.Options.BaseURL
+	for id, m := range entry.Models {
+		src.models = append(src.models, relayModel{
+			ID:           id,
+			Name:         m.Name,
+			ContextLimit: m.Limit.Context,
+			OutputLimit:  m.Limit.Output,
+		})
+	}
+	return src
 }
 
 // setProviders updates the provider source from a FormatOpenCodeConfig

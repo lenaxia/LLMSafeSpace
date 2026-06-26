@@ -9,6 +9,52 @@ import (
 	"fmt"
 )
 
+// SecretInjector decrypts and serializes the secrets bound to a workspace,
+// using the calling user's session DEK to decrypt user-owned credentials
+// and user_secrets entries (ssh-key, env-secret, secret-file, etc.).
+//
+// Used by handlers authenticated via JWT — the bind-time live-push and
+// the explicit POST /api/v1/workspaces/:id/reload-secrets endpoint. The
+// sessionID is mandatory for these handlers; without it user-DEK content
+// cannot be decrypted.
+//
+// Implementations: *SecretService.
+type SecretInjector interface {
+	InjectSecrets(ctx context.Context, userID, sessionID, workspaceID string) ([]byte, error)
+}
+
+// SessionlessSecretInjector returns the subset of workspace secrets that
+// can be decrypted without a user session — admin and org provider
+// credentials, encrypted with server-KEK material (US-50.2 RootKeyProvider).
+//
+// Used by callers without a user session:
+//
+//   - Pod bootstrap (Epic 35 US-35.3): the init container POSTs the API
+//     with a projected SA token; there is no JWT and no DEK in flight.
+//
+//   - API-key authenticated handlers (e.g. SDK calls without a JWT): the
+//     handler cannot decrypt user-DEK content, so the SessionlessSecretInjector
+//     gives it the server-KEK subset only. The user-DEK content is delivered
+//     later by a JWT-authenticated reload (the existing two-phase pattern
+//     documented in commit 4b48a4e7).
+//
+// User-owned credentials and user_secrets entries are intentionally
+// omitted; they are emitted as audit events ("secret_skipped_no_session")
+// so operators have observability into what was deferred. Implementations
+// MUST audit every skipped binding to preserve the existing observability
+// contract documented in pkg/secrets/secret_service.go (M-5 fix).
+//
+// Implementations: *SecretService.
+type SessionlessSecretInjector interface {
+	InjectSessionlessSecrets(ctx context.Context, userID, workspaceID string) ([]byte, error)
+}
+
+// Compile-time assertions that *SecretService satisfies both interfaces.
+var (
+	_ SecretInjector            = (*SecretService)(nil)
+	_ SessionlessSecretInjector = (*SecretService)(nil)
+)
+
 // InjectedSecret is a single secret entry in the secrets.json file
 // that the init container reads to materialize secrets.
 type InjectedSecret struct {
@@ -18,123 +64,218 @@ type InjectedSecret struct {
 	Plaintext string          `json:"plaintext"`
 }
 
-// PrepareSecretsForInjection decrypts all secrets bound to a workspace
-// and returns the JSON payload for the ephemeral K8s Secret.
+// InjectSecrets implements SecretInjector. See interface godoc.
 //
-// Uses the multi-source path that queries workspace_credential_bindings
-// and merges by provider priority. Workspace ownership is enforced by
-// WorkspaceAccessMiddleware on POST /:id/reload-secrets (design 0041 D5)
-// and is inherently true for the create/restart/activate call paths
-// inside workspace.Service (the caller is the workspace creator).
+// Workspace ownership is enforced by WorkspaceAccessMiddleware on
+// POST /:id/reload-secrets (design 0041 D5) and is inherently true for
+// the bind-time push path inside the SecretsHandler (the caller is the
+// workspace owner). This method does not re-check ownership — the
+// HTTP layer must.
 //
-// ARCHITECTURAL NOTE — user credential injection in non-interactive contexts (C-1):
+// ARCHITECTURAL NOTE — credential-class delivery semantics:
 //
-// Admin credentials (owner_type='admin') use a server-side KEK derived from
-// LLMSAFESPACES_MASTER_SECRET and can always be decrypted regardless of session.
+// Admin (owner_type='admin') and org (owner_type='org') credentials use
+// server-side KEKs derived in pkg/secrets/root_key.go. They can be
+// decrypted regardless of session, and are always included.
 //
-// User credentials (owner_type='user') are encrypted with the user's DEK, which
-// requires an active authenticated session. When called without a session (e.g.
-// controller-initiated restart, resume after browser close), DEK retrieval fails
-// and the user credential is skipped with an audit event. The workspace falls
-// back to any lower-priority admin credential, or boots with no LLM access.
+// User credentials (owner_type='user') and user_secrets entries (ssh-key,
+// env-secret, etc.) are encrypted with the user's DEK, which requires
+// an active authenticated session. When sessionID identifies a session
+// without a cached DEK (expired, evicted, or never unlocked), the
+// affected entries are skipped with an audit event and the workspace
+// falls back to lower-priority server-KEK entries.
 //
-// This is intentional: zero-knowledge design means the server cannot decrypt
-// user credentials without the user's session. The reload banner (Epic 27a)
-// prompts the user to refresh credentials when they next open the workspace.
-func (s *SecretService) PrepareSecretsForInjection(ctx context.Context, userID, sessionID, workspaceID string) ([]byte, error) {
-	// Cast store to CredentialStore. All production store types implement this.
-	// If the cast fails, a store wrapper was added without implementing CredentialStore —
-	// return an explicit error rather than silently falling back to the legacy path
-	// (which omits all admin credentials entirely). (H-3 fix)
-	credStore, ok := s.store.(CredentialStore)
-	if !ok {
-		return nil, fmt.Errorf("store does not implement CredentialStore: Epic 30 credential injection unavailable; ensure all store wrappers implement CredentialStore")
+// Callers without any session at all (init container, API-key auth)
+// MUST use SessionlessSecretInjector instead of passing an empty
+// sessionID here — that path was previously the source of bug class
+// "buildNonLLMSecrets propagates GetDEK error" (this worklog,
+// 2026-06-24 production incident).
+func (s *SecretService) InjectSecrets(ctx context.Context, userID, sessionID, workspaceID string) ([]byte, error) {
+	credStore, err := s.requireCredentialStore()
+	if err != nil {
+		return nil, err
 	}
 
-	// Load all bound credentials, ordered by priority.
 	bindings, err := credStore.GetWorkspaceCredentials(ctx, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("get workspace credentials: %w", err)
 	}
 
-	// Admin and org credentials decrypt through their per-purpose RootKeyProvider
-	// (US-50.2). User credentials use the session DEK. Providers may be nil when
-	// the corresponding credential class is not configured; nil-provider bindings
-	// are skipped with an audit event rather than panicking (failure mode 3).
+	providerData := s.loadLLMCredentials(ctx, bindings, userID, workspaceID, sessionID)
+
+	nonLLM, err := s.loadNonLLMSecrets(ctx, userID, sessionID, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+
+	return buildSecretsJSON(providerData, nonLLM)
+}
+
+// InjectSessionlessSecrets implements SessionlessSecretInjector. See
+// interface godoc.
+//
+// Returns server-KEK-decryptable credentials only. User-DEK bindings are
+// not just skipped — they are audited via "secret_skipped_no_session"
+// events so operators have signal that a workspace's user-owned content
+// is awaiting a JWT-authenticated delivery via reload-secrets. Without
+// auditing, an operator inspecting "why is the agent not seeing my SSH
+// key after a pod restart" has no breadcrumb at all.
+func (s *SecretService) InjectSessionlessSecrets(ctx context.Context, userID, workspaceID string) ([]byte, error) {
+	credStore, err := s.requireCredentialStore()
+	if err != nil {
+		return nil, err
+	}
+
+	bindings, err := credStore.GetWorkspaceCredentials(ctx, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("get workspace credentials: %w", err)
+	}
+
+	// LLM loop: loadServerKEKCredentials emits "credential_skipped_no_session"
+	// for each user binding (cleaner messaging than loadLLMCredentials's
+	// "credential_decrypt_failed" with error="DEK not available" — the
+	// latter is technically accurate but operator-confusing).
+	providerData := s.loadServerKEKCredentials(ctx, bindings, userID, workspaceID)
+
+	// Non-LLM loop: loadNonLLMSecrets is called with sessionID="". The
+	// degrade path inside that function (post-PR-#407 review pass 2)
+	// emits a "secret_skipped_no_session" audit per relevant
+	// user_secret and returns nil. No separate audit pass needed.
+	nonLLM, err := s.loadNonLLMSecrets(ctx, userID, "", workspaceID)
+	if err != nil {
+		return nil, err
+	}
+
+	return buildSecretsJSON(providerData, nonLLM)
+}
+
+// requireCredentialStore casts the configured store to CredentialStore
+// (the interface the multi-source credential path needs). All production
+// store types implement this; if the cast fails, a wrapper was added
+// without implementing it and we want to return an explicit error rather
+// than silently fall through to a partial path (H-3 fix).
+func (s *SecretService) requireCredentialStore() (CredentialStore, error) {
+	credStore, ok := s.store.(CredentialStore)
+	if !ok {
+		return nil, fmt.Errorf("store does not implement CredentialStore: ensure all store wrappers implement CredentialStore")
+	}
+	return credStore, nil
+}
+
+// loadLLMCredentials runs the multi-source LLM-credential loop. Each
+// binding is decrypted using the appropriate KEK (admin/org via
+// RootKeyProvider, user via session DEK). Failures are audited with
+// "credential_decrypt_failed" and the loop continues so a lower-priority
+// binding can take over (e.g. the admin free-tier covers a user whose
+// session DEK is missing).
+//
+// The (admin/org/user) decryption matrix is identical across the
+// session and sessionless paths; what differs is whether sessionID is
+// non-empty. When empty, every user-bound binding fails the GetDEK call,
+// audits, and continues — no error propagates.
+func (s *SecretService) loadLLMCredentials(ctx context.Context, bindings []CredentialBinding, userID, workspaceID, sessionID string) []LLMProviderData {
 	adminDecrypt := decryptFnFor(s.adminProvider)
 	orgDecrypt := decryptFnFor(s.orgProvider)
 
-	// Decrypt and deduplicate by provider (first wins per priority order).
 	seen := make(map[string]bool)
-	var providerData []LLMProviderData
+	var out []LLMProviderData
 	for _, b := range bindings {
 		if seen[b.Provider] {
 			continue
 		}
 		pd, err := s.decryptBinding(ctx, b, sessionID, adminDecrypt, orgDecrypt)
 		if err != nil {
-			// Log the failure for operator visibility. Without this, a corrupted
-			// ciphertext or expired DEK silently falls through to a lower-priority
-			// credential with no signal (reviewer finding: observability gap).
+			// Don't set seen — allow fallback to lower-priority binding.
 			s.audit(ctx, userID, "credential_decrypt_failed", nil, &workspaceID,
 				map[string]string{"credentialID": b.ID, "provider": b.Provider, "ownerType": b.OwnerType, "error": err.Error()})
-			continue // don't set seen — allow fallback to lower-priority credential
+			continue
 		}
-		if len(b.ModelAllowlist) > 0 {
-			allowed := make(map[string]bool, len(b.ModelAllowlist))
-			for _, id := range b.ModelAllowlist {
-				// Skip obviously invalid model IDs. The allowlist is stored
-				// as a DB array and can accumulate stale entries (e.g. the
-				// literal string "default" from a mis-formed create request).
-				// An invalid ID passed to FormatOpenCodeConfig produces a
-				// provider entry with no valid models, causing opencode to
-				// treat the provider as unconfigured and return 0 providers.
-				if id == "" || id == "default" {
-					continue
-				}
-				allowed[id] = true
-			}
-			var filtered []LLMModelConfig
-			for _, m := range pd.Models {
-				if allowed[m.ID] {
-					// Apply user-configured context limit if present and the
-					// model entry doesn't already have one from the credential blob.
-					if m.ContextLimit == 0 {
-						m.ContextLimit = b.ModelContextLimits[m.ID]
-					}
-					filtered = append(filtered, m)
-				}
-			}
-			// If pd.Models is empty (credentials don't carry a model list) but
-			// the allowlist has valid IDs, synthesize LLMModelConfig entries so
-			// the provider is rendered with an explicit model allowlist.
-			if len(filtered) == 0 && len(allowed) > 0 {
-				filtered = make([]LLMModelConfig, 0, len(allowed))
-				for _, id := range b.ModelAllowlist {
-					if allowed[id] { // only valid IDs
-						filtered = append(filtered, LLMModelConfig{
-							ID:           id,
-							ContextLimit: b.ModelContextLimits[id],
-						})
-					}
-				}
-			}
-			// If the allowlist contained only invalid IDs (e.g. all "default"),
-			// leave pd.Models empty — the provider will still be registered
-			// but with no model filtering, which is the safe fallback.
-			pd.Models = filtered
-		}
+		s.applyModelAllowlist(&pd, b)
 		seen[b.Provider] = true
-		providerData = append(providerData, pd)
+		out = append(out, pd)
 	}
+	return out
+}
 
-	// Non-LLM secrets from user_secrets (unchanged path).
-	nonLLM, err := s.buildNonLLMSecrets(ctx, userID, sessionID, workspaceID)
-	if err != nil {
-		return nil, err
+// loadServerKEKCredentials is loadLLMCredentials with all user-owned
+// bindings audited and skipped explicitly. It emits "credential_skipped_no_session"
+// rather than calling decryptBinding (which would emit
+// "credential_decrypt_failed" for every user binding — semantically
+// misleading because there is no decrypt failure, just no session).
+func (s *SecretService) loadServerKEKCredentials(ctx context.Context, bindings []CredentialBinding, userID, workspaceID string) []LLMProviderData {
+	adminDecrypt := decryptFnFor(s.adminProvider)
+	orgDecrypt := decryptFnFor(s.orgProvider)
+
+	seen := make(map[string]bool)
+	var out []LLMProviderData
+	for _, b := range bindings {
+		if seen[b.Provider] {
+			continue
+		}
+		if b.OwnerType == "user" {
+			s.audit(ctx, userID, "credential_skipped_no_session", nil, &workspaceID,
+				map[string]string{"credentialID": b.ID, "provider": b.Provider, "ownerType": b.OwnerType})
+			continue
+		}
+		// Sessionless decryption: admin/org only. Pass empty sessionID;
+		// decryptBinding never reaches the user branch for these owner_types.
+		pd, err := s.decryptBinding(ctx, b, "", adminDecrypt, orgDecrypt)
+		if err != nil {
+			s.audit(ctx, userID, "credential_decrypt_failed", nil, &workspaceID,
+				map[string]string{"credentialID": b.ID, "provider": b.Provider, "ownerType": b.OwnerType, "error": err.Error()})
+			continue
+		}
+		s.applyModelAllowlist(&pd, b)
+		seen[b.Provider] = true
+		out = append(out, pd)
 	}
+	return out
+}
 
-	return buildSecretsJSON(providerData, nonLLM)
+// applyModelAllowlist filters pd.Models against the credential's
+// per-binding allowlist. Extracted from the original loop verbatim
+// (no behavior change) so the two LLM loops can share it.
+func (s *SecretService) applyModelAllowlist(pd *LLMProviderData, b CredentialBinding) {
+	if len(b.ModelAllowlist) == 0 {
+		return
+	}
+	allowed := make(map[string]bool, len(b.ModelAllowlist))
+	for _, id := range b.ModelAllowlist {
+		// Skip obviously invalid model IDs. The allowlist is stored as
+		// a DB array and can accumulate stale entries (e.g. the literal
+		// "default" from a mis-formed create request). An invalid ID
+		// passed to FormatOpenCodeConfig produces a provider entry
+		// with no valid models, causing opencode to treat the provider
+		// as unconfigured and return 0 providers.
+		if id == "" || id == "default" {
+			continue
+		}
+		allowed[id] = true
+	}
+	var filtered []LLMModelConfig
+	for _, m := range pd.Models {
+		if allowed[m.ID] {
+			if m.ContextLimit == 0 {
+				m.ContextLimit = b.ModelContextLimits[m.ID]
+			}
+			filtered = append(filtered, m)
+		}
+	}
+	// If pd.Models is empty (credentials don't carry a model list) but
+	// the allowlist has valid IDs, synthesize LLMModelConfig entries so
+	// the provider is rendered with an explicit model allowlist.
+	if len(filtered) == 0 && len(allowed) > 0 {
+		filtered = make([]LLMModelConfig, 0, len(allowed))
+		for _, id := range b.ModelAllowlist {
+			if allowed[id] {
+				filtered = append(filtered, LLMModelConfig{
+					ID:           id,
+					ContextLimit: b.ModelContextLimits[id],
+				})
+			}
+		}
+	}
+	pd.Models = filtered
 }
 
 // decryptFn is a provider-bound decryption closure (US-50.2). It is nil when
@@ -191,7 +332,46 @@ func (s *SecretService) decryptBinding(ctx context.Context, b CredentialBinding,
 	return pd, nil
 }
 
-func (s *SecretService) buildNonLLMSecrets(ctx context.Context, userID, sessionID, workspaceID string) ([]InjectedSecret, error) {
+// loadNonLLMSecrets returns user_secrets entries that are NOT
+// llm-provider type — ssh-key, env-secret, secret-file, git-credential,
+// and the legacy api-key (sunset 2026-12-19 but still loaded for
+// existing creds).
+//
+// All non-LLM user_secrets are user-DEK encrypted, so decryption
+// requires the caller's session DEK. Three cases the loop must
+// handle without propagating an error:
+//
+//  1. No session at all (sessionID==""). Bootstrap path — every
+//     user-DEK entry is skipped with an audit and the LLM/server-KEK
+//     content is delivered.
+//
+//  2. Pseudo-session without a DEK (sessionID=="apikey:hash" or
+//     sessionID set to a JWT jti whose DEK has expired/evicted).
+//     API-key auth path and stale-JWT path. Same outcome as (1):
+//     skip-with-audit, deliver everything else.
+//
+//  3. Real session with a real DEK. JWT-authenticated path —
+//     decrypt and emit each entry; per-entry decrypt failures
+//     audit-and-continue so a single corrupted ciphertext does
+//     not poison delivery of the others.
+//
+// Pre-PR-#407 review-pass-2: the function used to hard-error in cases
+// (1) and (2), making `loadServerKEKCredentials` necessary as a
+// parallel implementation and forcing pushSecretsToAgent to branch on
+// sessionID — which was dead code because API-key auth sets a
+// non-empty pseudo-sessionID. The current implementation degrades
+// gracefully so a single code path covers every caller; the
+// SessionlessSecretInjector interface is kept for type-system
+// expressiveness (callers who semantically have no session declare
+// that intent at the API surface). InjectSessionlessSecrets is
+// functionally equivalent to calling InjectSecrets with an empty
+// sessionID — both flow through this graceful-degrade path — but
+// they differ in LLM-loop audit messaging: the sessionless path emits
+// "credential_skipped_no_session" via loadServerKEKCredentials,
+// whereas InjectSecrets emits "credential_decrypt_failed" with a
+// "DEK not available" error string. The user-visible outcome is the
+// same; the audit trail is cleaner for the explicit-no-session caller.
+func (s *SecretService) loadNonLLMSecrets(ctx context.Context, userID, sessionID, workspaceID string) ([]InjectedSecret, error) {
 	bound, err := s.store.GetBindings(ctx, workspaceID)
 	if err != nil {
 		return nil, err
@@ -207,13 +387,23 @@ func (s *SecretService) buildNonLLMSecrets(ctx context.Context, userID, sessionI
 	}
 	dek, err := s.keys.GetDEK(ctx, sessionID)
 	if err != nil {
-		return nil, fmt.Errorf("get DEK for non-LLM secrets: %w", err)
+		// No DEK available. Audit each user-DEK entry as skipped and
+		// return the empty slice without error — this is the case (1)
+		// and case (2) graceful degrade described in the godoc above.
+		// The next reload-secrets push from a JWT-authenticated session
+		// will retry decrypt and either succeed or fail loudly with
+		// per-entry audits in the case (3) path below.
+		for _, secret := range relevant {
+			sid := secret.ID
+			s.audit(ctx, userID, "secret_skipped_no_session", &sid, &workspaceID,
+				map[string]string{"name": secret.Name, "type": string(secret.Type), "reason": err.Error()})
+		}
+		return nil, nil
 	}
 	var out []InjectedSecret
 	for _, secret := range relevant {
 		plaintext, err := DecryptSecret(dek, secret.Ciphertext)
 		if err != nil {
-			// Audit non-LLM decrypt failures so operators have signal (M-5 fix).
 			sid := secret.ID
 			s.audit(ctx, userID, "secret_decrypt_failed", &sid, &workspaceID,
 				map[string]string{"name": secret.Name, "type": string(secret.Type), "error": err.Error()})

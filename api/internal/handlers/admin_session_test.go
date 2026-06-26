@@ -4,6 +4,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -72,7 +73,7 @@ func TestAdminSession_ForceAbort_StuckSession_ClearedAnd200(t *testing.T) {
 	r := setupAdminSessionRouter(t, h, "admin")
 
 	proxy.SetActiveSessionsForTest("ws-1", []string{"sess-stuck"})
-	require.True(t, proxy.isSessionActive("ws-1", "sess-stuck"))
+	require.True(t, proxy.isSessionActive(context.Background(), "ws-1", "sess-stuck"))
 
 	w := doAdminForceAbort(r, "ws-1", "sess-stuck")
 
@@ -84,7 +85,7 @@ func TestAdminSession_ForceAbort_StuckSession_ClearedAnd200(t *testing.T) {
 	assert.Equal(t, "ws-1", body["workspaceId"])
 
 	assert.False(t, proxy.HasActiveWorkspaceForTest("ws-1"), "stuck session must be removed from activeSess")
-	assert.False(t, proxy.isSessionActive("ws-1", "sess-stuck"))
+	assert.False(t, proxy.isSessionActive(context.Background(), "ws-1", "sess-stuck"))
 }
 
 func TestAdminSession_ForceAbort_NotActive_Returns404(t *testing.T) {
@@ -142,7 +143,7 @@ func TestAdminSession_ForceAbort_NonAdmin_Gets404(t *testing.T) {
 	// AdminGuard returns 404 (not 403) to avoid revealing route existence.
 	assert.Equal(t, http.StatusNotFound, w.Code)
 	// Stuck session must NOT be cleared when the caller is rejected.
-	assert.True(t, proxy.isSessionActive("ws-1", "sess-stuck"),
+	assert.True(t, proxy.isSessionActive(context.Background(), "ws-1", "sess-stuck"),
 		"non-admin must not mutate state")
 }
 
@@ -217,7 +218,7 @@ func TestAdminSession_ForceAbort_AuditLogFailure_DoesNotFailRequest(t *testing.T
 	// Audit failure is logged but must not fail the recovery operation —
 	// the stuck session is still cleared and the caller still gets 200.
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.False(t, proxy.isSessionActive("ws-1", "sess-stuck"))
+	assert.False(t, proxy.isSessionActive(context.Background(), "ws-1", "sess-stuck"))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -232,7 +233,7 @@ func TestAdminSession_ForceAbort_NilDB_DoesNotPanic(t *testing.T) {
 		w := doAdminForceAbort(r, "ws-1", "sess-stuck")
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
-	assert.False(t, proxy.isSessionActive("ws-1", "sess-stuck"))
+	assert.False(t, proxy.isSessionActive(context.Background(), "ws-1", "sess-stuck"))
 }
 
 func TestAdminSession_ForceAbort_NoBroker_DoesNotPanic(t *testing.T) {
@@ -250,5 +251,5 @@ func TestAdminSession_ForceAbort_NoBroker_DoesNotPanic(t *testing.T) {
 		w := doAdminForceAbort(r, "ws-1", "sess-stuck")
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
-	assert.False(t, proxy.isSessionActive("ws-1", "sess-stuck"))
+	assert.False(t, proxy.isSessionActive(context.Background(), "ws-1", "sess-stuck"))
 }

@@ -21,7 +21,6 @@ import (
 	"github.com/lenaxia/llmsafespaces/api/internal/services/msgqueue"
 	apitypes "github.com/lenaxia/llmsafespaces/api/internal/types"
 	"github.com/lenaxia/llmsafespaces/pkg/agentd"
-	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 func (h *ProxyHandler) CreateSession(c *gin.Context) {
@@ -75,7 +74,7 @@ func (h *ProxyHandler) SendPromptAsync(c *gin.Context) {
 		return
 	}
 	wid := c.Param("id")
-	if h.isSessionActive(wid, sid) {
+	if h.isSessionActive(c.Request.Context(), wid, sid) {
 		c.Header("Retry-After", "1")
 		c.JSON(http.StatusConflict, gin.H{
 			"error":      "session is busy; retry after idle",
@@ -244,7 +243,11 @@ func (h *ProxyHandler) DeleteSession(c *gin.Context) {
 		return
 	}
 
-	h.state().MarkSessionDeleted(workspaceID, sid)
+	// Detached ctx (not c.Request.Context()): the tombstone suppresses late
+	// SSE events arriving after deletion, so it MUST be written even if the
+	// client disconnects mid-request. Matches the sibling session-index
+	// delete below (which uses context.Background() for the same reason).
+	h.state().MarkSessionDeleted(context.Background(), workspaceID, sid) //nolint:contextcheck // G118: tombstone must survive client disconnect
 
 	if h.sessionIndex != nil {
 		// Use context.Background() so a client disconnect after the agent
@@ -256,7 +259,10 @@ func (h *ProxyHandler) DeleteSession(c *gin.Context) {
 	}
 
 	go func() {
-		h.removeActiveSession(workspaceID, sid)
+		// Background ctx (not c.Request.Context()): this outlives the request
+		// (fire-and-forget, must survive client disconnect) and capturing c
+		// here would race with gin reusing the Context on the next ServeHTTP.
+		h.removeActiveSession(context.Background(), workspaceID, sid)
 		if h.sessionParents != nil {
 			h.sessionParents.invalidate(workspaceID)
 		}
@@ -276,15 +282,7 @@ func (h *ProxyHandler) DeleteSession(c *gin.Context) {
 // behavior exactly; a future Redis-backed implementation will move
 // tombstones to a shared key so the suppression is cluster-wide.
 func (h *ProxyHandler) isSessionDeleted(workspaceID, sessionID string) bool {
-	return h.state().IsSessionDeleted(workspaceID, sessionID)
-}
-
-func (h *ProxyHandler) GetWorkspaceCRD(workspaceID string) (*v1.Workspace, error) {
-	v1Client, err := h.k8sClient.LlmsafespacesV1()
-	if err != nil {
-		return nil, fmt.Errorf("initialize LLMSafespacesV1 client: %w", err)
-	}
-	return v1Client.Workspaces(h.namespace).Get(context.Background(), workspaceID, metav1.GetOptions{})
+	return h.state().IsSessionDeleted(context.Background(), workspaceID, sessionID)
 }
 
 // RenameSessionInAgent sends a title update to the opencode agent running on

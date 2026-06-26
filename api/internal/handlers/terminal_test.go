@@ -63,16 +63,12 @@ type mockWorkspaceGetter struct {
 	workspaces map[string]*v1.Workspace
 }
 
-func (m *mockWorkspaceGetter) GetWorkspace(id string) (*v1.Workspace, error) {
+func (m *mockWorkspaceGetter) GetWorkspace(_ context.Context, id string) (*v1.Workspace, error) {
 	ws, ok := m.workspaces[id]
 	if !ok {
 		return nil, fmt.Errorf("not found")
 	}
 	return ws, nil
-}
-
-func (m *mockWorkspaceGetter) GetWorkspacePassword(_ string) (string, error) {
-	return "", fmt.Errorf("not implemented")
 }
 
 // --- Tests ---

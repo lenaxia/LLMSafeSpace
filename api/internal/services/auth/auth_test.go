@@ -136,7 +136,7 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	// Configure the service to recognize API keys
 	service.config.Auth.APIKeyPrefix = "api_"
 
-	userID, err = service.ValidateToken(apiKey)
+	userID, err = service.ValidateToken(context.Background(), apiKey)
 	assert.NoError(t, err)
 	assert.Equal(t, "api_user", userID)
 
@@ -206,14 +206,14 @@ func TestValidateToken(t *testing.T) {
 	require.NoError(t, err)
 
 	// Valid token round-trip.
-	got, err := service.ValidateToken(token)
+	got, err := service.ValidateToken(context.Background(), token)
 	require.NoError(t, err)
 	require.Equal(t, userID, got)
 
 	// Invalid token format (treated as JWT but parses fail; not API key).
 	mockDB.On("GetUserByAPIKey", mock.Anything, "invalid-token").
 		Return((*types.User)(nil), errors.New("invalid API key")).Maybe()
-	got, err = service.ValidateToken("invalid-token")
+	got, err = service.ValidateToken(context.Background(), "invalid-token")
 	require.Error(t, err)
 	require.Empty(t, got)
 
@@ -226,10 +226,102 @@ func TestValidateToken(t *testing.T) {
 	expiredString, _ := expired.SignedString(service.jwtSecret)
 	mockDB.On("GetUserByAPIKey", mock.Anything, expiredString).
 		Return((*types.User)(nil), errors.New("invalid API key")).Maybe()
-	got, err = service.ValidateToken(expiredString)
+	got, err = service.ValidateToken(context.Background(), expiredString)
 	require.Error(t, err)
 	require.Empty(t, got)
 	require.Contains(t, err.Error(), "token is expired")
+}
+
+// ctxPropKey is a sentinel used to prove ValidateTokenWithClientIP propagates
+// the caller's context.Context down to the cache service (US-46.5 / issue #224).
+// A derived ctx (context.WithTimeout(parent, …)) preserves the parent's values,
+// so the matcher seeing the sentinel proves propagation; context.Background()
+// would leave it absent and the matcher would fail.
+type ctxPropKey struct{}
+
+func TestValidateTokenWithClientIP_PropagatesContext(t *testing.T) {
+	log, _ := logger.New(true, "debug", "console")
+	cfg := &config.Config{}
+	cfg.Auth.JWTSecret = "test-secret"
+	cfg.Auth.TokenDuration = 24 * time.Hour
+	cfg.Auth.APIKeyPrefix = "api_"
+
+	mockDB := new(mocks.MockDatabaseService)
+	cache := new(mocks.MockCacheService)
+	service, err := New(cfg, log, mockDB, cache)
+	require.NoError(t, err)
+
+	userID := "user123"
+	token, err := service.GenerateToken(userID)
+	require.NoError(t, err)
+
+	ctx := context.WithValue(context.Background(), ctxPropKey{}, "present")
+	cacheKey := "token:" + pkgutil.HashString(token)
+	matchesPropagated := func(c context.Context) bool { return c.Value(ctxPropKey{}) == "present" }
+	// Cache hit: the call returns userID immediately (no jti/Set follow-up),
+	// so the single Get is the only cache interaction — and its ctx matcher is
+	// the load-bearing propagation assertion.
+	cache.On("Get", mock.MatchedBy(matchesPropagated), cacheKey).Return(userID, nil).Once()
+
+	got, err := service.ValidateTokenWithClientIP(ctx, token, "")
+	require.NoError(t, err)
+	require.Equal(t, userID, got)
+	cache.AssertExpectations(t)
+}
+
+// TestValidateAPIKey_PropagatesContext is the API-key-path companion to the
+// JWT test above. validateAPIKey has its OWN independent context.WithTimeout
+// derivation (auth.go), so a regression reverting only that line would not be
+// caught by the JWT test. The sentinel matcher closes that gap.
+func TestValidateAPIKey_PropagatesContext(t *testing.T) {
+	log, _ := logger.New(true, "debug", "console")
+	cfg := &config.Config{}
+	cfg.Auth.JWTSecret = "test-secret"
+	cfg.Auth.TokenDuration = 24 * time.Hour
+	cfg.Auth.APIKeyPrefix = "api_"
+
+	mockDB := new(mocks.MockDatabaseService)
+	cache := new(mocks.MockCacheService)
+	service, err := New(cfg, log, mockDB, cache)
+	require.NoError(t, err)
+
+	apiKey := "api_propagated"
+	userID := "user789"
+	ctx := context.WithValue(context.Background(), ctxPropKey{}, "present")
+	matchesPropagated := func(c context.Context) bool { return c.Value(ctxPropKey{}) == "present" }
+	// Cache hit on the apikey: key — the only cache interaction, so its ctx
+	// matcher is the load-bearing propagation assertion.
+	cache.On("Get", mock.MatchedBy(matchesPropagated), "apikey:"+pkgutil.HashString(apiKey)).Return(userID, nil).Once()
+
+	got, err := service.validateAPIKey(ctx, apiKey, "")
+	require.NoError(t, err)
+	require.Equal(t, userID, got)
+	cache.AssertExpectations(t)
+}
+
+func TestRevokeToken_PropagatesContext(t *testing.T) {
+	log, _ := logger.New(true, "debug", "console")
+	cfg := &config.Config{}
+	cfg.Auth.JWTSecret = "test-secret"
+	cfg.Auth.TokenDuration = 24 * time.Hour
+	cfg.Auth.APIKeyPrefix = "api_"
+	mockDB := new(mocks.MockDatabaseService)
+	cache := new(mocks.MockCacheService)
+	service, err := New(cfg, log, mockDB, cache)
+	require.NoError(t, err)
+
+	token, err := service.GenerateToken("user-p2")
+	require.NoError(t, err)
+
+	// RevokeToken writes both token:<hash> and token:<jti> via Set. The ctx
+	// matcher is load-bearing: a context.Background() regression leaves the
+	// sentinel absent, the Sets become unexpected, and the mock fails.
+	ctx := context.WithValue(context.Background(), ctxPropKey{}, "present")
+	matchesPropagated := func(c context.Context) bool { return c.Value(ctxPropKey{}) == "present" }
+	cache.On("Set", mock.MatchedBy(matchesPropagated), mock.Anything, "revoked", mock.Anything).Return(nil).Twice()
+
+	require.NoError(t, service.RevokeToken(ctx, token))
+	cache.AssertExpectations(t)
 }
 
 func TestRevokeToken(t *testing.T) {
@@ -273,10 +365,37 @@ func TestRevokeToken(t *testing.T) {
 		mock.MatchedBy(func(key string) bool { return len(key) > 6 && key[:6] == "token:" }),
 		"revoked", mock.Anything).Return(nil).Twice()
 
-	err = service.RevokeToken(token)
+	err = service.RevokeToken(context.Background(), token)
 	assert.NoError(t, err)
 
 	mockCacheService.AssertExpectations(t)
+}
+
+// TestRevokeAllUserSessions_PropagatesContext mirrors the RevokeToken test for
+// its sibling: RevokeAllUserSessions has its OWN independent ctx derivation
+// (auth.go:953), so a single-line regression there would not be caught by the
+// RevokeToken test. The sentinel matcher on GetObject/Set/Delete is load-bearing.
+func TestRevokeAllUserSessions_PropagatesContext(t *testing.T) {
+	log, _ := logger.New(true, "debug", "console")
+	cfg := &config.Config{}
+	cfg.Auth.JWTSecret = "test-secret"
+	cfg.Auth.TokenDuration = 24 * time.Hour
+	mockDB := new(mocks.MockDatabaseService)
+	cache := new(mocks.MockCacheService)
+	service, err := New(cfg, log, mockDB, cache)
+	require.NoError(t, err)
+
+	userID := "user-prop2"
+	ctx := context.WithValue(context.Background(), ctxPropKey{}, "present")
+	matchesPropagated := func(c context.Context) bool { return c.Value(ctxPropKey{}) == "present" }
+	entries := []string{"jti-x|token:hashx"} // one entry -> 2 Sets (jti + hash) + 1 Delete
+	cache.On("GetObject", mock.MatchedBy(matchesPropagated), "user-sessions:"+userID, mock.Anything).
+		Run(func(args mock.Arguments) { *args.Get(2).(*[]string) = entries }).Return(nil).Once()
+	cache.On("Set", mock.MatchedBy(matchesPropagated), mock.Anything, "revoked", mock.Anything).Return(nil).Twice()
+	cache.On("Delete", mock.MatchedBy(matchesPropagated), "user-sessions:"+userID).Return(nil).Once()
+
+	require.NoError(t, service.RevokeAllUserSessions(ctx, userID))
+	cache.AssertExpectations(t)
 }
 
 // TestRevokeAllUserSessions_RevokesAllTrackedSessions verifies that
@@ -311,7 +430,7 @@ func TestRevokeAllUserSessions_RevokesAllTrackedSessions(t *testing.T) {
 	mockCacheService.On("Set", mock.Anything, "token:hashbbb", "revoked", mock.Anything).Return(nil)
 	mockCacheService.On("Delete", mock.Anything, "user-sessions:"+userID).Return(nil)
 
-	err = service.RevokeAllUserSessions(userID)
+	err = service.RevokeAllUserSessions(context.Background(), userID)
 	require.NoError(t, err)
 	mockCacheService.AssertExpectations(t)
 }
@@ -334,7 +453,7 @@ func TestRevokeAllUserSessions_NoTrackedSessions_Noop(t *testing.T) {
 	mockCacheService.On("GetObject", mock.Anything, "user-sessions:ghost", mock.Anything).
 		Return(errors.New("redis: nil"))
 
-	err = service.RevokeAllUserSessions("ghost")
+	err = service.RevokeAllUserSessions(context.Background(), "ghost")
 	require.NoError(t, err, "must be nil-safe when no sessions tracked")
 	// No Set/Delete calls expected
 	mockCacheService.AssertNotCalled(t, "Set", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
@@ -372,7 +491,7 @@ func TestRevokeAllUserSessions_UsesMaxTTL(t *testing.T) {
 	})).Return(nil)
 	mockCacheService.On("Delete", mock.Anything, "user-sessions:"+userID).Return(nil)
 
-	err = service.RevokeAllUserSessions(userID)
+	err = service.RevokeAllUserSessions(context.Background(), userID)
 	require.NoError(t, err)
 	mockCacheService.AssertExpectations(t)
 }
@@ -483,7 +602,7 @@ func TestValidateAPIKey(t *testing.T) {
 	// Test case: Valid API key (cached) — cache hit before hash lookup
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:"+pkgutil.HashString("api_valid")).Return("user123", nil).Once()
 
-	userID, err := service.validateAPIKey("api_valid", "")
+	userID, err := service.validateAPIKey(context.Background(), "api_valid", "")
 	assert.NoError(t, err)
 	assert.Equal(t, "user123", userID)
 
@@ -499,7 +618,7 @@ func TestValidateAPIKey(t *testing.T) {
 	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), "api_new").Return(user, nil).Once()
 	mockCacheService.On("Set", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:"+pkgutil.HashString("api_new"), "user456", mock.Anything).Return(nil).Once()
 
-	userID, err = service.validateAPIKey("api_new", "")
+	userID, err = service.validateAPIKey(context.Background(), "api_new", "")
 	assert.NoError(t, err)
 	assert.Equal(t, "user456", userID)
 
@@ -509,7 +628,7 @@ func TestValidateAPIKey(t *testing.T) {
 	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), apiInvalidHash).Return((*types.User)(nil), nil).Once()
 	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), "api_invalid").Return((*types.User)(nil), nil).Once()
 
-	userID, err = service.validateAPIKey("api_invalid", "")
+	userID, err = service.validateAPIKey(context.Background(), "api_invalid", "")
 	assert.Error(t, err)
 	assert.Equal(t, "", userID)
 	assert.Contains(t, err.Error(), "invalid API key")
@@ -519,7 +638,7 @@ func TestValidateAPIKey(t *testing.T) {
 	mockCacheService.On("Get", mock.MatchedBy(func(ctx context.Context) bool { return true }), "apikey:"+pkgutil.HashString("api_error")).Return("", errors.New("not found")).Once()
 	mockDbService.On("GetUserByAPIKey", mock.MatchedBy(func(ctx context.Context) bool { return true }), apiErrorHash).Return((*types.User)(nil), errors.New("database error")).Once()
 
-	userID, err = service.validateAPIKey("api_error", "")
+	userID, err = service.validateAPIKey(context.Background(), "api_error", "")
 	assert.Error(t, err)
 	assert.Equal(t, "", userID)
 	assert.Contains(t, err.Error(), "database error")
@@ -1433,7 +1552,7 @@ func TestF175_TokenSignedWithPreviousKeyValidates(t *testing.T) {
 	signed, err := tok.SignedString(oldSecret)
 	require.NoError(t, err)
 
-	userID, err := svc.ValidateToken(signed)
+	userID, err := svc.ValidateToken(context.Background(), signed)
 	require.NoError(t, err, "token signed with previous key must validate")
 	assert.Equal(t, "user-id-123", userID)
 }
@@ -1452,7 +1571,7 @@ func TestF175_TokenSignedWithUnknownKeyRejected(t *testing.T) {
 	signed, err := tok.SignedString([]byte("attacker-supplied-secret"))
 	require.NoError(t, err)
 
-	_, err = svc.ValidateToken(signed)
+	_, err = svc.ValidateToken(context.Background(), signed)
 	require.Error(t, err, "token signed with unknown key must be rejected")
 }
 

@@ -88,7 +88,7 @@ func AuthMiddleware(authService apiinterfaces.AuthService, log pkginterfaces.Log
 		}
 
 		// Validate token
-		userID, err := authService.ValidateToken(token)
+		userID, err := authService.ValidateToken(c.Request.Context(), token)
 		if err != nil {
 			if log != nil {
 				log.Warn("Authentication failed: invalid token",

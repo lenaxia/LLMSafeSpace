@@ -36,7 +36,7 @@
 
 - Every sandbox runs an AI agent (`opencode serve`) — no bare code execution
 - Every sandbox is workspace-backed — PVC-mounted persistent filesystem at `/workspace`
-- Workspaces can be suspended (pod deleted, PVC retained) and resumed (~3s)
+- Workspaces can be suspended (pod deleted, PVC retained) and resumed (~22s measured post-optimization; design target is faster — see worklog 0541 + the post-optimization benchmark)
 - Credentials stored exclusively in K8s Secrets — never in PostgreSQL, Redis, or logs
 - LLMSafeSpaces is an MCP server — any MCP-compatible client can connect
 - Stateless API server — horizontally scalable, no sticky sessions required
@@ -371,7 +371,7 @@ Pending → Creating → Active → Suspending → Suspended → Resuming → Ac
 
 Nine phases: `Pending`, `Creating`, `Active`, `Suspending`, `Suspended`, `Resuming`, `Terminating`, `Terminated`, `Failed`.
 
-Suspend deletes the pod but retains the PVC. Activating a suspended workspace re-creates the pod (~3s). Session history in the PVC survives.
+Suspend deletes the pod but retains the PVC. Activating a suspended workspace re-creates the pod (~22s measured post-optimization; PVC re-attach + opencode boot dominate the remaining cost — the original ~3s figure was an unvalidated design target). Session history in the PVC survives.
 
 ### State management: K8s CRD vs PostgreSQL
 
@@ -403,7 +403,7 @@ Shutdown reverses this order.
 
 The master KEK is the root of trust for at-rest encryption: it wraps API-key DEKs, org SSO client secrets, and (via the `AdminKeyDeriver` callback) every admin/org LLM provider credential. Two crypto layers consume it today (Layer 1 `RootKeyProvider` for `api_keys` + `org_sso_configs`; Layer 2 `AdminKeyDeriver` for `provider_credentials`); Epic 50 US-50.2 will unify them under `RootKeyProvider`.
 
-**Delivery (US-50.1, shipped):** projected as a read-only file mount at `/etc/llmsafespaces/master-secret` (Helm `masterSecret.deliveryMethod=file`, the default), read via `LLMSAFESPACES_MASTER_SECRET_FILE`. This eliminates `/proc/1/environ` exposure — the previous env-var delivery (`LLMSAFESPACES_MASTER_SECRET`) remains as a deprecated opt-in (`deliveryMethod=env`) for non-Helm deploys. Multi-file colon-separated paths support the future US-50.4 rotation window (active = last ≥32-byte file). See `design/stories/epic-50-master-kek-hardening/README.md`.
+**Delivery (US-50.1, shipped):** projected as a read-only file mount at `/var/run/secrets/llmsafespaces/master-secret` (Helm `masterSecret.deliveryMethod=file`, the default), read via `LLMSAFESPACES_MASTER_SECRET_FILE`. This eliminates `/proc/1/environ` exposure — the previous env-var delivery (`LLMSAFESPACES_MASTER_SECRET`) remains as a deprecated opt-in (`deliveryMethod=env`) for non-Helm deploys. Multi-file colon-separated paths support the future US-50.4 rotation window (active = last ≥32-byte file). See `design/stories/epic-50-master-kek-hardening/README.md`.
 
 ### Tenant isolation
 
@@ -433,18 +433,20 @@ The relay config subsystem manages how `agent-config.json` — the file opencode
 |---|---|---|---|
 | `/workspace` | Longhorn PVC (`subPath: workspace`) | Yes | User workspace data, opencode.db, auth.json |
 | `/home/sandbox` | Longhorn PVC (`subPath: home`) | Yes | SSH keys, secrets base dir, enricher cache, tool caches |
-| `/tmp` | Longhorn PVC (`subPath: tmp`) | Yes — agentd rewrites `agent-config.json` and `secrets-env` on each credential cycle; other files persist | agent-config.json, secrets-env |
-| `/sandbox-cfg` | emptyDir (memory, ro) | No — ephemeral per pod, read-only | Secrets mounted by controller at pod start |
+| `/tmp` | Longhorn PVC (`subPath: tmp`) | Yes — init scripts, package caches; NOT credentials (US-35.7 moved them to tmpfs) | init-script.sh |
+| `/sandbox-cfg` | emptyDir (memory, 32Mi) | No — ephemeral per pod, read-only on main container | secrets.json, workspace-config.json, password (from bootstrap) |
+| `/sandbox-runtime` | emptyDir (memory, 96Mi, RW) | No — ephemeral per pod, wiped on death | agent-config.json, secrets-env, symlink targets for SSH/git/secrets/auth.json |
 
 **Key path constants** (`pkg/agentd/types.go`):
 
 ```
-AgentConfigPath  = "/tmp/agent-config.json"
-SecretsBasePath  = "/home/sandbox/.secrets"   ← deleted by reset() on every reload
-SecretsEnvPath   = "/tmp/secrets-env"
+AgentConfigPath  = "/sandbox-runtime/agent-config.json"
+SecretsBasePath  = "/sandbox-runtime/rt/secrets"   ← deleted by reset() on every reload; tmpfs
+SecretsEnvPath   = "/sandbox-runtime/secrets-env"
 ```
 
-Note: `/tmp` is now a PVC subPath (`subPath: tmp`), not an emptyDir. The `workspace-dirs` init container unconditionally creates this directory on every pod start. The agentd `Materializer.reset()` deletes and rewrites `agent-config.json` and `secrets-env` on each credential cycle, so those specific files are always freshly written. Other files written to `/tmp` by packages or agent processes persist across pod restarts.
+
+Note: `/tmp` is a PVC subPath (`subPath: tmp`). US-35.7 moved `agent-config.json` and `secrets-env` off `/tmp` to `/sandbox-runtime` (tmpfs/RAM). `$HOME`-relative credential paths (`.ssh`, `.secrets`, `.git-credentials`, `auth.json`) are symlinks created by the init container pointing into `/sandbox-runtime/rt/*`. On pod death, tmpfs is wiped — the PVC retains only dangling symlinks, no plaintext bytes.
 
 **opencode config loading order** (validated from opencode 1.15.12 binary):
 
@@ -453,9 +455,9 @@ opencode merges config files via recursive deep-merge, last writer wins:
 2. Project config: `findUp(["opencode.json","opencode.jsonc"], cwd, {rootFirst:true})`
 3. `OPENCODE_CONFIG` env var path — **always appended last, always wins**
 
-`OPENCODE_CONFIG=/tmp/agent-config.json` is set by `entrypoint-opencode.sh`. Therefore `agent-config.json` overrides all other config for any key it sets. opencode does **not** hot-reload this file — it is only read at process startup.
+`OPENCODE_CONFIG=/sandbox-runtime/agent-config.json` is set by `entrypoint-opencode.sh`. Therefore `agent-config.json` overrides all other config for any key it sets. opencode does **not** hot-reload this file — it is only read at process startup.
 
-**auth.json location** (validated): `XDG_DATA_HOME=/workspace/.local` is set before `exec workspace-agentd`, so agentd inherits it. `authJSONPath = /workspace/.local/opencode/auth.json` — on the PVC, persistent across pod restarts.
+**auth.json location** (validated): `XDG_DATA_HOME=/workspace/.local` is set before `exec workspace-agentd`, so agentd inherits it. `authJSONPath = /workspace/.local/opencode/auth.json` — US-35.7: this path is a symlink to `/sandbox-runtime/rt/auth.json` (tmpfs), created by the init container. Wiped on pod death; no plaintext on PVC at rest.
 
 ---
 
@@ -1459,7 +1461,7 @@ One row per org in `org_sso_configs` (`api/migrations/000038_org_sso_configs.up.
 | `auto_provision` | `BOOLEAN` | Create a new user on first SSO login if none exists for the email |
 | `group_role_mapping` | `JSONB` | `{groupId: "admin"|"member"}`; applied on every login |
 
-Go types in `pkg/types/orgs.go:174-215`:
+Go types in `pkg/types/orgs.go:203-242`:
 - `OrgSSOConfig` — DB shape (`ClientSecret []byte`, `json:"-"`)
 - `OrgSSOConfigResponse` — API shape (`HasSecret bool` replaces the secret)
 - `UpsertSSOConfigRequest` — `PUT` body (empty `ClientSecret` = "leave existing unchanged")
@@ -1478,7 +1480,7 @@ Go types in `pkg/types/orgs.go:174-215`:
 | `GET` | `/api/v1/auth/sso/:orgSlug/start` | Public | Begin PKCE flow; 302 to IdP, sets signed state cookie |
 | `GET` | `/api/v1/auth/sso/:orgSlug/callback` | Public | Complete flow; sets `lsp_session` JWT cookie, 302 to frontend |
 
-The CRUD routes are registered in `registerOrgRoutes` behind `OrgAdminGuard` (`api/internal/server/router.go:1192-1194`). The public login routes sit under the auth group (`router.go:599-601`). `/auth/config` advertises `oidcEnabled = (CountSSOConfigs > 0)` so the frontend can hide SSO UI when no org has configured it.
+The CRUD routes are registered in `registerOrgRoutes` behind `OrgAdminGuard` (`api/internal/server/router.go:1234-1238`). The public login routes sit under the auth group (`router.go:633-635`). `/auth/config` advertises `oidcEnabled = (CountSSOConfigs > 0)` so the frontend can hide SSO UI when no org has configured it.
 
 ### Login flow (PKCE)
 
@@ -1518,9 +1520,9 @@ The state cookie carries `{state, verifier, orgID, exp}` because the API is stat
 
 ### Org admin config flow
 
-`PUT /api/v1/orgs/:id/sso` (`api/internal/handlers/org_sso.go:101`):
+`PUT /api/v1/orgs/:id/sso` (`api/internal/handlers/org_sso.go:111`):
 1. Handler loads any existing config to capture the current encrypted secret (for the partial-update path).
-2. `sso.Service.ApplyConfigMutation` (`services/sso/sso.go:194`):
+2. `sso.Service.ApplyConfigMutation` (`services/sso/sso.go:246`):
    - Validates role values (`admin`/`member` only).
    - If `ClientSecret` present → `EncryptClientSecret` with server KEK; if empty → reuse existing blob; if empty and no existing → `400 client secret is required`.
    - `NormalizeDomains` lowercases, strips leading `@`, dedups.
@@ -1529,27 +1531,27 @@ The state cookie carries `{state, verifier, orgID, exp}` because the API is stat
 
 ### Auto-provisioning and role mapping
 
-- **`resolveUser`** (`services/sso/sso.go:436`): lookup by lowercased email; if not found and `auto_provision=true`, create a user with a random unusable bcrypt hash (`$2a$12$<random>`) so password login is permanently blocked — the user has no password to derive a DEK from. Personal credential operations stay unavailable until they set a password; org workspaces still work via server-side injection.
-- **`resolveRole`** (`services/sso/sso.go:606`): walk IdP groups (OIDC `groups` ∪ Azure AD `memberOf`); the highest-privilege match wins; `admin` outranks `member`; unmapped/empty → `member` (safe default).
-- **`ensureMembership`** (`services/sso/sso.go:475`): create or update the membership row so IdP-driven role changes propagate on every re-login. A demotion `admin→member` is skipped when the user is the sole admin (last-admin protection; logged at WARN).
+- **`resolveUser`** (`services/sso/sso.go:606`): lookup by lowercased email; if not found and `auto_provision=true`, create a user with a random unusable bcrypt hash (`$2a$12$<random>`) so password login is permanently blocked — the user has no password to derive a DEK from. Personal credential operations stay unavailable until they set a password; org workspaces still work via server-side injection.
+- **`resolveRole`** (`services/sso/sso.go:777`): walk IdP groups (OIDC `groups` ∪ Azure AD `memberOf`); the highest-privilege match wins; `admin` outranks `member`; unmapped/empty → `member` (safe default).
+- **`ensureMembership`** (`services/sso/sso.go:645`): create or update the membership row so IdP-driven role changes propagate on every re-login. A demotion `admin→member` is skipped when the user is the sole admin (last-admin protection; logged at WARN).
 
 ### Security controls
 
 | Control | Implementation | Reference |
 |---------|----------------|-----------|
-| Client secret encryption at rest | Server KEK (`RootKeyProvider.Encrypt`), `BYTEA` column | D17-S4, `sso.go:163` |
-| PKCE S256 | `code_challenge` derived from random verifier, verifier carried in signed cookie | `sso.go:294,622` |
-| State cookie integrity | HMAC-SHA256 over `{state, verifier, orgID, exp}`; constant-time compare | `sso.go:534,553` |
-| State cookie expiry | 10-minute TTL (`DefaultStateTTL`) | `sso.go:111` |
-| Callback bound to start org | `org.ID == payload.OrgID` check on callback | `sso.go:346` |
-| `email_verified` enforcement (F8) | Absent/false → `ErrEmailUnverified` (403) | `sso.go:401` |
-| Email-claim trust | `email` only used for account binding when IdP-verified | `sso.go:395-403` |
-| Suspended-user block | `user.Status == suspended` → `ErrUserSuspended` | `sso.go:409` |
-| Last-admin protection | IdP demotion refused if user is sole org admin | `sso.go:491` |
-| Secret never in responses | `OrgSSOConfigResponse.HasSecret` replaces the blob | `orgs.go:189`, `org_sso.go:60` |
-| SameSite=Lax state cookie | Survives top-level IdP→callback redirect, blocked on cross-site POST | `org_sso.go:268` |
+| Client secret encryption at rest | Server KEK (`RootKeyProvider.Encrypt`), `BYTEA` column | D17-S4, `sso.go:212` |
+| PKCE S256 | `code_challenge` derived from random verifier, verifier carried in signed cookie | `sso.go:475,792` |
+| State cookie integrity | HMAC-SHA256 over `{state, verifier, orgID, exp}`; constant-time compare | `sso.go:713,730` |
+| State cookie expiry | 10-minute TTL (`DefaultStateTTL`) | `sso.go:150` |
+| Callback bound to start org | `org.ID == payload.OrgID` check on callback | `sso.go:516` |
+| `email_verified` enforcement (F8) | Absent/false → `ErrEmailUnverified` (403) | `sso.go:571` |
+| Email-claim trust | `email` only used for account binding when IdP-verified | `sso.go:562-571` |
+| Suspended-user block | `user.Status == suspended` → `ErrUserSuspended` | `sso.go:579` |
+| Last-admin protection | IdP demotion refused if user is sole org admin | `sso.go:671` |
+| Secret never in responses | `OrgSSOConfigResponse.HasSecret` replaces the blob | `orgs.go:222`, `org_sso.go:65` |
+| SameSite=Lax state cookie | Survives top-level IdP→callback redirect, blocked on cross-site POST | `org_sso.go:346` |
 | IdP-registered redirect URI | Defense-in-depth: the IdP only redirects to registered URIs. `redirectBaseUrl` is now **required** for SSO (fail-loud, F11) — header derivation removed | `org_sso.go:319` |
-| Auto-provision off → 403 | `ErrAutoProvisionOff` mapped to `provisioning_disabled` | `sso.go:45`, `org_sso.go:300` |
+| Auto-provision off → 403 | `ErrAutoProvisionOff` mapped to `provisioning_disabled` | `sso.go:46`, `org_sso.go:378` |
 
 ### Configuration
 
@@ -1566,7 +1568,7 @@ The state cookie carries `{state, verifier, orgID, exp}` because the API is stat
 | `oidc.frontendRedirectUrl` | `LLMSAFESPACES_OIDC_FRONTENDREDIRECTURL` | `""` | Browser landing URL after SSO callback (e.g. `https://app.example.com`). Empty → `/`. |
 | `oidc.stateCookieName` | `LLMSAFESPACES_OIDC_STATECOOKIENAME` | `""` (→ `lsp_sso_state` in Go) | PKCE/state cookie name. Override only on collision. |
 
-The state-cookie signing key is `deriveServerKey("oidc-state-cookie")` (`api/internal/app/app.go:396`), derived from the same master secret as the KEK. When unset, the SSO service constructs but rejects config mutation and login at runtime (`sso.go:259,329`).
+The state-cookie signing key is `deriveServerKey("oidc-state-cookie")` (`api/internal/app/app.go:445`), derived from the same master secret as the KEK. When unset, the SSO service constructs but rejects config mutation and login at runtime (`sso.go:429,499`).
 
 **Per-org IdP config** is not in `config.yaml`, `values.yaml`, or the settings system — it is entered by the org admin through the API and stored in `org_sso_configs`.
 
@@ -1591,12 +1593,12 @@ The state-cookie signing key is `deriveServerKey("oidc-state-cookie")` (`api/int
 | OIDC unit tests (fake IdP with JWKS) | `api/internal/services/sso/sso_test.go` |
 | HTTP handler (CRUD + login + discovery) | `api/internal/handlers/org_sso.go` |
 | Handler integration tests + fake IdP helpers | `api/internal/handlers/org_sso_test.go`, `org_sso_idp_helpers_test.go` |
-| Store interface + Postgres impl | `api/internal/services/database/pg_org_store.go` (interface `OrgStore:116-133`, SSO impl `1571-1680`) |
+| Store interface + Postgres impl | `api/internal/services/database/pg_org_store.go` (interface `OrgStore:32`, SSO impl `1660-1830`) |
 | Store tests | `api/internal/services/database/pg_org_store_sso_test.go` |
 | Schema migration | `api/migrations/000038_org_sso_configs.up.sql` |
-| API DTOs | `pkg/types/orgs.go:174-215` |
-| Router registration | `api/internal/server/router.go:599-601, 1192-1194` |
-| Service wiring (KEK, state key) | `api/internal/app/app.go:395-413` |
+| API DTOs | `pkg/types/orgs.go:203-242` |
+| Router registration | `api/internal/server/router.go:633-635, 1234-1238` |
+| Service wiring (KEK, state key) | `api/internal/app/app.go:445-459` |
 | Frontend admin UI | `frontend/src/components/org-admin/OrgSSOTab.tsx` |
 | Frontend login integration | `frontend/src/pages/LoginPage.tsx`, `frontend/src/api/sso.ts` |
 | Design doc (D17 decisions) | `design/stories/epic-43-organization-management/README.md` (Q-S1..Q-S4) |

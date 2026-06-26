@@ -134,6 +134,16 @@ func (r *WorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Pod{}).
 		Owns(&corev1.Secret{}).
 		Owns(&corev1.ServiceAccount{}).
+		// Owning the workspace's PVC means the reconciler is woken
+		// immediately on PVC events (Bound, Lost, Pending → Bound).
+		// Without this, the Pending phase relies on the reconcile-loop
+		// poll interval (requeueCreating) to notice the PVC has bound,
+		// adding up to ~5s of dead time on every cold start. With it,
+		// the Bound transition triggers a reconcile within milliseconds.
+		// Workspace owns its PVC via SetControllerReference at PVC
+		// creation in handlePending, so the watch is exact (no
+		// cross-workspace fan-out).
+		Owns(&corev1.PersistentVolumeClaim{}).
 		Complete(r)
 }
 

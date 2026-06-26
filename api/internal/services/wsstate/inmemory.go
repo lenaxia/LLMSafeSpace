@@ -4,6 +4,7 @@
 package wsstate
 
 import (
+	"context"
 	"strings"
 	"sync"
 )
@@ -72,7 +73,7 @@ func NewInMemoryStore() *InMemoryStore {
 
 // --- Active session tracking ---
 
-func (s *InMemoryStore) CheckAndAddActiveSession(workspaceID, sessionID string, maxSessions int) bool {
+func (s *InMemoryStore) CheckAndAddActiveSession(ctx context.Context, workspaceID, sessionID string, maxSessions int) bool {
 	s.activeSessMu.Lock()
 	defer s.activeSessMu.Unlock()
 
@@ -92,7 +93,7 @@ func (s *InMemoryStore) CheckAndAddActiveSession(workspaceID, sessionID string, 
 	return true
 }
 
-func (s *InMemoryStore) RemoveActiveSession(workspaceID, sessionID string) {
+func (s *InMemoryStore) RemoveActiveSession(ctx context.Context, workspaceID, sessionID string) {
 	s.activeSessMu.Lock()
 	defer s.activeSessMu.Unlock()
 	sessions, ok := s.activeSess[workspaceID]
@@ -105,7 +106,7 @@ func (s *InMemoryStore) RemoveActiveSession(workspaceID, sessionID string) {
 	}
 }
 
-func (s *InMemoryStore) IsSessionActive(workspaceID, sessionID string) bool {
+func (s *InMemoryStore) IsSessionActive(ctx context.Context, workspaceID, sessionID string) bool {
 	s.activeSessMu.RLock()
 	defer s.activeSessMu.RUnlock()
 	sessions, ok := s.activeSess[workspaceID]
@@ -115,13 +116,13 @@ func (s *InMemoryStore) IsSessionActive(workspaceID, sessionID string) bool {
 	return sessions[sessionID]
 }
 
-func (s *InMemoryStore) ActiveSessionCount(workspaceID string) int {
+func (s *InMemoryStore) ActiveSessionCount(ctx context.Context, workspaceID string) int {
 	s.activeSessMu.RLock()
 	defer s.activeSessMu.RUnlock()
 	return len(s.activeSess[workspaceID])
 }
 
-func (s *InMemoryStore) GetActiveSessions(workspaceID string) []string {
+func (s *InMemoryStore) GetActiveSessions(ctx context.Context, workspaceID string) []string {
 	s.activeSessMu.RLock()
 	defer s.activeSessMu.RUnlock()
 	sessions := s.activeSess[workspaceID]
@@ -135,7 +136,7 @@ func (s *InMemoryStore) GetActiveSessions(workspaceID string) []string {
 	return result
 }
 
-func (s *InMemoryStore) ClearActiveSessions(workspaceID string) {
+func (s *InMemoryStore) ClearActiveSessions(ctx context.Context, workspaceID string) {
 	s.activeSessMu.Lock()
 	defer s.activeSessMu.Unlock()
 	delete(s.activeSess, workspaceID)
@@ -144,13 +145,13 @@ func (s *InMemoryStore) ClearActiveSessions(workspaceID string) {
 // TouchActiveSessions is a no-op for the InMemoryStore: in-memory entries
 // have no TTL (they persist until explicitly removed). The Redis
 // implementation refreshes the key TTL; see redis.go TouchActiveSessions.
-func (s *InMemoryStore) TouchActiveSessions(workspaceID string) {
+func (s *InMemoryStore) TouchActiveSessions(ctx context.Context, workspaceID string) {
 	// Intentionally empty — no TTL to refresh.
 }
 
 // --- Deleted-session tombstones ---
 
-func (s *InMemoryStore) MarkSessionDeleted(workspaceID, sessionID string) {
+func (s *InMemoryStore) MarkSessionDeleted(ctx context.Context, workspaceID, sessionID string) {
 	s.deletedSessionsMu.Lock()
 	defer s.deletedSessionsMu.Unlock()
 	s.deletedSessions[workspaceID+"/"+sessionID] = struct{}{}
@@ -171,14 +172,14 @@ func (s *InMemoryStore) MarkSessionDeleted(workspaceID, sessionID string) {
 	}
 }
 
-func (s *InMemoryStore) IsSessionDeleted(workspaceID, sessionID string) bool {
+func (s *InMemoryStore) IsSessionDeleted(ctx context.Context, workspaceID, sessionID string) bool {
 	s.deletedSessionsMu.RLock()
 	defer s.deletedSessionsMu.RUnlock()
 	_, ok := s.deletedSessions[workspaceID+"/"+sessionID]
 	return ok
 }
 
-func (s *InMemoryStore) ClearDeletedSessions(workspaceID string) {
+func (s *InMemoryStore) ClearDeletedSessions(ctx context.Context, workspaceID string) {
 	s.deletedSessionsMu.Lock()
 	defer s.deletedSessionsMu.Unlock()
 	prefix := workspaceID + "/"
@@ -191,20 +192,20 @@ func (s *InMemoryStore) ClearDeletedSessions(workspaceID string) {
 
 // --- Workspace password cache ---
 
-func (s *InMemoryStore) GetCachedPassword(workspaceID string) (string, bool) {
+func (s *InMemoryStore) GetCachedPassword(ctx context.Context, workspaceID string) (string, bool) {
 	s.pwCacheMu.RLock()
 	defer s.pwCacheMu.RUnlock()
 	pw, ok := s.pwCache[workspaceID]
 	return pw, ok
 }
 
-func (s *InMemoryStore) SetCachedPassword(workspaceID, password string) {
+func (s *InMemoryStore) SetCachedPassword(ctx context.Context, workspaceID, password string) {
 	s.pwCacheMu.Lock()
 	defer s.pwCacheMu.Unlock()
 	s.pwCache[workspaceID] = password
 }
 
-func (s *InMemoryStore) InvalidatePassword(workspaceID string) {
+func (s *InMemoryStore) InvalidatePassword(ctx context.Context, workspaceID string) {
 	s.pwCacheMu.Lock()
 	defer s.pwCacheMu.Unlock()
 	delete(s.pwCache, workspaceID)
@@ -212,20 +213,20 @@ func (s *InMemoryStore) InvalidatePassword(workspaceID string) {
 
 // --- Workspace config cache ---
 
-func (s *InMemoryStore) GetWorkspaceConfig(workspaceID string) (Config, bool) {
+func (s *InMemoryStore) GetWorkspaceConfig(ctx context.Context, workspaceID string) (Config, bool) {
 	s.wsConfigMu.RLock()
 	defer s.wsConfigMu.RUnlock()
 	cfg, ok := s.wsConfig[workspaceID]
 	return cfg, ok
 }
 
-func (s *InMemoryStore) SetWorkspaceConfig(workspaceID string, cfg Config) {
+func (s *InMemoryStore) SetWorkspaceConfig(ctx context.Context, workspaceID string, cfg Config) {
 	s.wsConfigMu.Lock()
 	defer s.wsConfigMu.Unlock()
 	s.wsConfig[workspaceID] = cfg
 }
 
-func (s *InMemoryStore) InvalidateWorkspaceConfig(workspaceID string) {
+func (s *InMemoryStore) InvalidateWorkspaceConfig(ctx context.Context, workspaceID string) {
 	s.wsConfigMu.Lock()
 	defer s.wsConfigMu.Unlock()
 	delete(s.wsConfig, workspaceID)
@@ -233,20 +234,20 @@ func (s *InMemoryStore) InvalidateWorkspaceConfig(workspaceID string) {
 
 // --- Prior phase tracking ---
 
-func (s *InMemoryStore) GetPriorPhase(workspaceID string) (string, bool) {
+func (s *InMemoryStore) GetPriorPhase(ctx context.Context, workspaceID string) (string, bool) {
 	s.priorPhaseMu.RLock()
 	defer s.priorPhaseMu.RUnlock()
 	phase, ok := s.priorPhase[workspaceID]
 	return phase, ok
 }
 
-func (s *InMemoryStore) SetPriorPhase(workspaceID, phase string) {
+func (s *InMemoryStore) SetPriorPhase(ctx context.Context, workspaceID, phase string) {
 	s.priorPhaseMu.Lock()
 	defer s.priorPhaseMu.Unlock()
 	s.priorPhase[workspaceID] = phase
 }
 
-func (s *InMemoryStore) DeletePriorPhase(workspaceID string) {
+func (s *InMemoryStore) DeletePriorPhase(ctx context.Context, workspaceID string) {
 	s.priorPhaseMu.Lock()
 	defer s.priorPhaseMu.Unlock()
 	delete(s.priorPhase, workspaceID)
@@ -254,20 +255,20 @@ func (s *InMemoryStore) DeletePriorPhase(workspaceID string) {
 
 // --- Parent-backfill marker ---
 
-func (s *InMemoryStore) GetParentBackfilled(workspaceID string) bool {
+func (s *InMemoryStore) GetParentBackfilled(ctx context.Context, workspaceID string) bool {
 	s.parentBackfilledMu.RLock()
 	defer s.parentBackfilledMu.RUnlock()
 	_, ok := s.parentBackfilled[workspaceID]
 	return ok
 }
 
-func (s *InMemoryStore) SetParentBackfilled(workspaceID string) {
+func (s *InMemoryStore) SetParentBackfilled(ctx context.Context, workspaceID string) {
 	s.parentBackfilledMu.Lock()
 	defer s.parentBackfilledMu.Unlock()
 	s.parentBackfilled[workspaceID] = struct{}{}
 }
 
-func (s *InMemoryStore) DeleteParentBackfilled(workspaceID string) {
+func (s *InMemoryStore) DeleteParentBackfilled(ctx context.Context, workspaceID string) {
 	s.parentBackfilledMu.Lock()
 	defer s.parentBackfilledMu.Unlock()
 	delete(s.parentBackfilled, workspaceID)
@@ -275,7 +276,7 @@ func (s *InMemoryStore) DeleteParentBackfilled(workspaceID string) {
 
 // --- Bulk invalidation ---
 
-func (s *InMemoryStore) InvalidateAll(workspaceID string) {
+func (s *InMemoryStore) InvalidateAll(ctx context.Context, workspaceID string) {
 	// Order matters for clarity, not correctness — each operation takes
 	// its own lock and they are independent. Documenting the order so a
 	// future reader can correlate with the original invalidateCaches().
@@ -290,9 +291,9 @@ func (s *InMemoryStore) InvalidateAll(workspaceID string) {
 	// watch event to wipe active sessions, deleted tombstones, and
 	// password cache, breaking 429 enforcement and resurrecting
 	// zombie sessions.
-	s.ClearActiveSessions(workspaceID)
-	s.ClearDeletedSessions(workspaceID)
-	s.InvalidatePassword(workspaceID)
-	s.InvalidateWorkspaceConfig(workspaceID)
-	s.DeleteParentBackfilled(workspaceID)
+	s.ClearActiveSessions(ctx, workspaceID)
+	s.ClearDeletedSessions(ctx, workspaceID)
+	s.InvalidatePassword(ctx, workspaceID)
+	s.InvalidateWorkspaceConfig(ctx, workspaceID)
+	s.DeleteParentBackfilled(ctx, workspaceID)
 }

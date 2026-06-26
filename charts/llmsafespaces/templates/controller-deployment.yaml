@@ -115,6 +115,21 @@ spec:
             - --relay-artifact-sha256-arm64={{ .Values.controller.inferenceRelay.artifact.sha256Arm64 | required "controller.inferenceRelay.artifact.sha256Arm64 is required when inferenceRelay.enabled (the arm64 relay-proxy binary checksum — see Makefile relay-bin target)" }}
             - --relay-artifact-sha256-amd64={{ .Values.controller.inferenceRelay.artifact.sha256Amd64 | required "controller.inferenceRelay.artifact.sha256Amd64 is required when inferenceRelay.enabled (the amd64 relay-proxy binary checksum — see Makefile relay-bin target)" }}
             {{- end }}
+            {{- /* 2026-06-23 cold-start optimization (item #1a): publish the
+                    free-models catalog as a ConfigMap so workspace pods can
+                    pre-render their relay agent-config.json before opencode
+                    boots. Defaults to enabled. */}}
+            {{- if hasKey .Values.controller "freeModelsRefresher" }}
+            {{- if not .Values.controller.freeModelsRefresher.enabled }}
+            - --enable-free-models-refresher=false
+            {{- end }}
+            {{- with .Values.controller.freeModelsRefresher.refreshInterval }}
+            - --free-models-refresh-interval={{ . }}
+            {{- end }}
+            {{- with .Values.controller.freeModelsRefresher.apiURL }}
+            - --free-models-api-url={{ . }}
+            {{- end }}
+            {{- end }}
             {{/* F1 (worklog 0372): wire --api-service-url so org-suspension is
                   functional in Helm deployments. The internal-token env below
                   authenticates the controller→API call (the endpoint fails

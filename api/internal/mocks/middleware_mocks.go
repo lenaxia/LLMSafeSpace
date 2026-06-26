@@ -27,7 +27,7 @@ func (m *MockAuthMiddlewareService) Stop() error {
 	return args.Error(0)
 }
 
-func (m *MockAuthMiddlewareService) ValidateToken(token string) (string, error) {
+func (m *MockAuthMiddlewareService) ValidateToken(ctx context.Context, token string) (string, error) {
 	args := m.Called(token)
 	return args.String(0), args.Error(1)
 }
@@ -36,7 +36,7 @@ func (m *MockAuthMiddlewareService) ValidateToken(token string) (string, error) 
 // /auth/logout (G18, Epic 17). Tests that don't care about revocation
 // can omit `On("RevokeToken", ...)` — the mock returns nil by default
 // when called via the testify framework.
-func (m *MockAuthMiddlewareService) RevokeToken(token string) error {
+func (m *MockAuthMiddlewareService) RevokeToken(_ context.Context, token string) error {
 	args := m.Called(token)
 	return args.Error(0)
 }

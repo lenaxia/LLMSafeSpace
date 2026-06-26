@@ -269,7 +269,7 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 			}
 			workspaceID := c.Param("id")
 			// Get active sessions keyed by workspace ID directly.
-			active := proxyHandler.GetActiveSessions(workspaceID)
+			active := proxyHandler.GetActiveSessions(c.Request.Context(), workspaceID)
 			if active == nil {
 				active = []string{}
 			}
@@ -730,7 +730,7 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, insta
 			CookieName: cookieName,
 		})
 		if token != "" && !utilities.IsAPIKey(token, "lsp_") {
-			if err := authSvc.RevokeToken(token); err != nil {
+			if err := authSvc.RevokeToken(c.Request.Context(), token); err != nil {
 				logger.Warn("auth.logout: RevokeToken failed (proceeding with cookie clear)",
 					"error", err.Error())
 			}
@@ -1031,8 +1031,8 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, idGroup *gin.RouterGroup, serv
 		// sessions that pre-date the parent_session_id migration.
 		// Skipped when proxyHandler is nil (router built without proxy).
 		if proxyHandler != nil {
-			proxyHandler.BackfillSessionParents(workspaceID)
-			activeIDs := proxyHandler.GetActiveSessions(workspaceID)
+			proxyHandler.BackfillSessionParents(c.Request.Context(), workspaceID)
+			activeIDs := proxyHandler.GetActiveSessions(c.Request.Context(), workspaceID)
 			if len(activeIDs) > 0 {
 				activeSet := make(map[string]struct{}, len(activeIDs))
 				for _, id := range activeIDs {

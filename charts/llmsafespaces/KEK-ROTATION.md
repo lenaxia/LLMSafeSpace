@@ -7,8 +7,8 @@ suspected compromise).
 ## Prerequisites
 
 1. **Access to the old + new master KEK files.** The old file is the one
-   currently mounted at `/etc/llmsafespaces/master-secret`. The new file is
-   a freshly generated key (e.g. `openssl rand -hex 32`).
+   currently mounted at `/var/run/secrets/llmsafespaces/master-secret`. The
+   new file is a freshly generated key (e.g. `openssl rand -hex 32`).
 2. **Network access to PostgreSQL and Redis** from the machine running the CLI.
 3. **The API pod is running** with the old key (the rotation is zero-downtime —
    the multi-key provider decrypts both old + new ciphertexts during the
@@ -27,7 +27,7 @@ chmod 0400 /tmp/new-master-key
 
 ```bash
 rotate-kek \
-  --old-master-file /etc/llmsafespaces/master-secret \
+  --old-master-file /var/run/secrets/llmsafespaces/master-secret \
   --new-master-file /tmp/new-master-key \
   --database-url "postgres://user:pass@host:5432/dbname?sslmode=require" \
   --redis-url "redis://host:6379" \
@@ -44,11 +44,11 @@ Update the Helm chart to mount BOTH keys (colon-separated path):
 ```yaml
 masterSecret:
   deliveryMethod: file
-  fileMountPath: /etc/llmsafespaces/master-secret
+  fileMountPath: /var/run/secrets/llmsafespaces/master-secret
 ```
 
 Set the env var `LLMSAFESPACES_MASTER_SECRET_FILE` to
-`/etc/llmsafespaces/master-secret-old:/etc/llmsafespaces/master-secret-new`.
+`/var/run/secrets/llmsafespaces/master-secret-old:/var/run/secrets/llmsafespaces/master-secret-new`.
 
 Deploy the updated chart. The API pod restarts with the multi-key provider;
 all existing ciphertexts decrypt via the old key, new encrypts use the new key.
@@ -57,8 +57,8 @@ all existing ciphertexts decrypt via the old key, new encrypts use the new key.
 
 ```bash
 rotate-kek \
-  --old-master-file /etc/llmsafespaces/master-secret-old \
-  --new-master-file /etc/llmsafespaces/master-secret-new \
+  --old-master-file /var/run/secrets/llmsafespaces/master-secret-old \
+  --new-master-file /var/run/secrets/llmsafespaces/master-secret-new \
   --database-url "postgres://..." \
   --redis-url "redis://..." \
   --target-version 2

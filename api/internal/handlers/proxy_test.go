@@ -683,7 +683,7 @@ func TestProxy_E2E_FullFlow(t *testing.T) {
 	w = env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/sess-1/message", strings.NewReader(`{"content":"hello"}`))
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	env.handler.removeActiveSession("ws-1", "sess-1")
+	env.handler.removeActiveSession(context.Background(), "ws-1", "sess-1")
 
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
 	w = env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/sess-1/prompt", strings.NewReader(`{"prompt":"do something"}`))
@@ -790,7 +790,7 @@ func TestProxy_CacheInvalidation(t *testing.T) {
 	handler.SetWorkspaceConfigForTest("ws-1", wsstate.Config{MaxActiveSessions: 5})
 	handler.SetActiveSessionsForTest("ws-1", []string{"s1"})
 
-	handler.invalidateCaches("ws-1")
+	handler.invalidateCaches(context.Background(), "ws-1")
 
 	_, pwOk := handler.GetCachedPasswordForTest("ws-1")
 	assert.False(t, pwOk, "password cache should be cleared")
@@ -884,11 +884,11 @@ func TestProxy_RemoveActiveSession(t *testing.T) {
 
 	handler.SetActiveSessionsForTest("ws-1", []string{"s1", "s2"})
 
-	handler.removeActiveSession("ws-1", "s1")
-	assert.Equal(t, 1, handler.activeSessionCount("ws-1"))
+	handler.removeActiveSession(context.Background(), "ws-1", "s1")
+	assert.Equal(t, 1, handler.activeSessionCount(context.Background(), "ws-1"))
 
-	handler.removeActiveSession("ws-1", "s2")
-	assert.Equal(t, 0, handler.activeSessionCount("ws-1"))
+	handler.removeActiveSession(context.Background(), "ws-1", "s2")
+	assert.Equal(t, 0, handler.activeSessionCount(context.Background(), "ws-1"))
 
 	assert.False(t, handler.HasActiveWorkspaceForTest("ws-1"), "empty session set should be cleaned up")
 }
@@ -896,8 +896,8 @@ func TestProxy_RemoveActiveSession(t *testing.T) {
 func TestProxy_RemoveNonexistentSession(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
-	handler.removeActiveSession("sb-missing", "s1")
-	assert.Equal(t, 0, handler.activeSessionCount("sb-missing"))
+	handler.removeActiveSession(context.Background(), "sb-missing", "s1")
+	assert.Equal(t, 0, handler.activeSessionCount(context.Background(), "sb-missing"))
 }
 
 func TestIsConnectionError(t *testing.T) {
@@ -1056,7 +1056,7 @@ func TestProxy_E2E_SSEDrivenSessionLifecycle(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/v1/workspaces/ws-1/sessions/s1/message", strings.NewReader(`{"msg":"hi"}`))
 	router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, 1, handler.activeSessionCount("ws-1"), "session s1 should be active")
+	assert.Equal(t, 1, handler.activeSessionCount(context.Background(), "ws-1"), "session s1 should be active")
 
 	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(
 		makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1"), nil,
@@ -1070,7 +1070,7 @@ func TestProxy_E2E_SSEDrivenSessionLifecycle(t *testing.T) {
 	idleSignal <- struct{}{}
 
 	require.Eventually(t, func() bool {
-		return handler.activeSessionCount("ws-1") == 0
+		return handler.activeSessionCount(context.Background(), "ws-1") == 0
 	}, 3*time.Second, 50*time.Millisecond, "SSE idle event should clear session s1")
 
 	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(
@@ -1092,13 +1092,13 @@ func TestProxy_E2E_SSEBusyEventAddsActiveSession(t *testing.T) {
 	handler.SetWorkspaceConfigForTest("ws-1", wsstate.Config{MaxActiveSessions: 5})
 
 	handler.onSessionActive("ws-1", "s1")
-	assert.Equal(t, 1, handler.activeSessionCount("ws-1"), "busy event should add session s1")
+	assert.Equal(t, 1, handler.activeSessionCount(context.Background(), "ws-1"), "busy event should add session s1")
 
 	handler.onSessionActive("ws-1", "s1")
-	assert.Equal(t, 1, handler.activeSessionCount("ws-1"), "duplicate busy should not double-count")
+	assert.Equal(t, 1, handler.activeSessionCount(context.Background(), "ws-1"), "duplicate busy should not double-count")
 
 	handler.onSessionActive("ws-1", "s2")
-	assert.Equal(t, 2, handler.activeSessionCount("ws-1"), "second busy session should be counted")
+	assert.Equal(t, 2, handler.activeSessionCount(context.Background(), "ws-1"), "second busy session should be counted")
 }
 
 func TestProxy_SessionLeak_NotOnConnectionCeilingReject(t *testing.T) {
@@ -1115,7 +1115,7 @@ func TestProxy_SessionLeak_NotOnConnectionCeilingReject(t *testing.T) {
 	w := env.doRequestWithT(t, "POST", "/api/v1/workspaces/ws-1/sessions/s1/message", strings.NewReader(`{}`))
 	assert.Equal(t, http.StatusTooManyRequests, w.Code)
 
-	assert.Equal(t, 0, env.handler.activeSessionCount("ws-1"),
+	assert.Equal(t, 0, env.handler.activeSessionCount(context.Background(), "ws-1"),
 		"session should not leak into active set when connection ceiling rejects")
 }
 
@@ -1155,7 +1155,7 @@ func TestProxy_SessionLeak_CleanedUpOn503(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-	assert.Equal(t, 0, handler.activeSessionCount("ws-1"),
+	assert.Equal(t, 0, handler.activeSessionCount(context.Background(), "ws-1"),
 		"active session should be cleaned up when proxy fails with 503")
 }
 
@@ -1365,7 +1365,7 @@ func TestProxy_OnPhaseChange_SecondActiveNoManualSeed_PreservesState(t *testing.
 	sb2 := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(phaseActive), "ws-1")
 	handler.onPhaseChange(sb2)
 
-	assert.True(t, handler.isSessionActive("ws-1", "sess-1"),
+	assert.True(t, handler.isSessionActive(context.Background(), "ws-1", "sess-1"),
 		"Active→Active reconcile must preserve active sessions (regression: US-45.1 InvalidateAll was clearing priorPhase, wiping activeSess)")
 	assert.True(t, handler.isSessionDeleted("ws-1", "sess-deleted"),
 		"Active→Active reconcile must preserve deleted tombstones (regression: late SSE events for deleted sessions would resurrect zombie session_index rows)")
@@ -1504,7 +1504,7 @@ func TestProxy_OnSessionIdle_RecordsActivityWithoutWsConfig(t *testing.T) {
 
 	assert.Equal(t, 1, tracker.PendingCount(),
 		"activity should be recorded on idle even without wsConfig entry (US-6.5 fix)")
-	assert.Equal(t, 0, handler.activeSessionCount("ws-1"),
+	assert.Equal(t, 0, handler.activeSessionCount(context.Background(), "ws-1"),
 		"session should still be removed from active set")
 }
 
@@ -1867,6 +1867,61 @@ func TestProxy_DeleteSession_IndexErrorStillReturns200(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code, "should still return 200 even if index delete fails")
 }
 
+// ctxRecordingStore wraps an InMemoryStore to capture the context passed to
+// MarkSessionDeleted, so the tombstone's detach-from-request contract can be
+// asserted (regression guard: the tombstone must survive client disconnect).
+type ctxRecordingStore struct {
+	wsstate.Store
+	mu          sync.Mutex
+	recordedCtx context.Context
+	called      bool
+}
+
+func (s *ctxRecordingStore) MarkSessionDeleted(ctx context.Context, workspaceID, sessionID string) {
+	s.mu.Lock()
+	s.recordedCtx = ctx
+	s.called = true
+	s.mu.Unlock()
+	s.Store.MarkSessionDeleted(ctx, workspaceID, sessionID)
+}
+
+// TestProxy_DeleteSession_TombstoneUsesDetachedContext asserts the deleted-
+// session tombstone is written with a context NOT derived from the request,
+// so a client disconnect mid-request cannot cancel the tombstone write and
+// reopen the zombie-session window the tombstone exists to close.
+//
+// Method: the request is dispatched with a sentinel-bearing context. If
+// MarkSessionDeleted used c.Request.Context(), the recorded ctx would carry
+// the sentinel; using context.Background() (the fix) it does not. (Comparing
+// to context.Background() directly is vacuous — httptest.NewRequest already
+// sets the request ctx to context.Background().)
+func TestProxy_DeleteSession_TombstoneUsesDetachedContext(t *testing.T) {
+	store := &ctxRecordingStore{Store: wsstate.NewInMemoryStore()}
+	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]bool{"deleted": true})
+	})
+	env.handler.SetStateStore(store)
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+	env.setupWorkspaceWithT(t, "ws-1", 5)
+
+	type sentinelKey struct{}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/workspaces/ws-1/sessions/s1", nil).
+		WithContext(context.WithValue(context.Background(), sentinelKey{}, "request"))
+	env.router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	store.mu.Lock()
+	called := store.called
+	recorded := store.recordedCtx
+	store.mu.Unlock()
+	require.True(t, called, "MarkSessionDeleted must be called")
+	assert.Nil(t, recorded.Value(sentinelKey{}),
+		"tombstone must use a detached context (not the request ctx) so it survives client disconnect")
+}
+
 type recordingDeleteSessionIndex struct {
 	mu          sync.Mutex
 	called      bool
@@ -1942,10 +1997,10 @@ func TestProxy_DeleteSession_RemovesActiveSession(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	assert.Eventually(t, func() bool {
-		return !env.handler.isSessionActive("ws-1", "s1")
+		return !env.handler.isSessionActive(context.Background(), "ws-1", "s1")
 	}, 2*time.Second, 10*time.Millisecond, "deleted session should be removed from active sessions")
 
-	assert.True(t, env.handler.isSessionActive("ws-1", "s2"), "other sessions should be unaffected")
+	assert.True(t, env.handler.isSessionActive(context.Background(), "ws-1", "s2"), "other sessions should be unaffected")
 }
 
 func TestProxy_DeleteSession_PublishesSSEEvent(t *testing.T) {
@@ -2033,7 +2088,7 @@ func TestProxy_DeleteSession_ConcurrentDeletesIdempotent(t *testing.T) {
 	}
 
 	assert.Eventually(t, func() bool {
-		return !env.handler.isSessionActive("ws-1", "s1")
+		return !env.handler.isSessionActive(context.Background(), "ws-1", "s1")
 	}, 2*time.Second, 10*time.Millisecond, "session should be removed from active set after concurrent deletes")
 
 	assert.Eventually(t, func() bool {
@@ -2263,7 +2318,7 @@ func TestProxy_OnSessionIdle_RecordsSessionIndexWithoutWsConfig(t *testing.T) {
 	si.mu.Unlock()
 
 	assert.Equal(t, 1, tracker.PendingCount(), "activity tracker should record activity")
-	assert.Equal(t, 0, handler.activeSessionCount("ws-1"), "session should be removed from active set")
+	assert.Equal(t, 0, handler.activeSessionCount(context.Background(), "ws-1"), "session should be removed from active set")
 }
 
 func TestProxy_OnSessionIdle_FetchAndPersistTitleWithoutWsConfig(t *testing.T) {
@@ -2358,7 +2413,7 @@ func TestProxy_SendPromptAsync_ProceedsWhenSessionNotActive(t *testing.T) {
 func TestProxy_IsSessionActive_ReturnsFalseForUnknownWorkspace(t *testing.T) {
 	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
 
-	assert.False(t, handler.isSessionActive("unknown-ws", "s1"),
+	assert.False(t, handler.isSessionActive(context.Background(), "unknown-ws", "s1"),
 		"isSessionActive should return false for unknown workspace")
 }
 
@@ -2367,9 +2422,9 @@ func TestProxy_IsSessionActive_ReturnsTrueForActiveSession(t *testing.T) {
 
 	handler.SetActiveSessionsForTest("ws-1", []string{"s1", "s2"})
 
-	assert.True(t, handler.isSessionActive("ws-1", "s1"), "s1 should be active")
-	assert.True(t, handler.isSessionActive("ws-1", "s2"), "s2 should be active")
-	assert.False(t, handler.isSessionActive("ws-1", "s3"), "s3 should not be active")
+	assert.True(t, handler.isSessionActive(context.Background(), "ws-1", "s1"), "s1 should be active")
+	assert.True(t, handler.isSessionActive(context.Background(), "ws-1", "s2"), "s2 should be active")
+	assert.False(t, handler.isSessionActive(context.Background(), "ws-1", "s3"), "s3 should not be active")
 }
 
 func TestProxy_SendPromptAsync_409DoesNotAffectSendMessage(t *testing.T) {
@@ -2444,7 +2499,7 @@ func TestProxy_IsSessionActive_ConcurrentReads(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			assert.True(t, handler.isSessionActive("ws-1", "s1"))
+			assert.True(t, handler.isSessionActive(context.Background(), "ws-1", "s1"))
 		}()
 	}
 	wg.Wait()

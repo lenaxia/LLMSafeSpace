@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
+	"github.com/lenaxia/llmsafespaces/controller/internal/freemodels"
 	"github.com/lenaxia/llmsafespaces/pkg/agentd"
 	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
@@ -102,7 +103,39 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 					}(),
 				},
 			},
-			InitialDelaySeconds: 10, PeriodSeconds: 15, TimeoutSeconds: 3, FailureThreshold: 5,
+			// Tight cadence (2026-06-23 perf audit, item #3). The startup
+			// probe below handles boot-time tightening; this readiness
+			// probe runs at steady-state and after startup completes.
+			// Period=2s means a Ready transition happens at most 2s after
+			// the agent's first /v1/readyz=200. Total ready budget is
+			// FailureThreshold * Period = 60s, generous against transient
+			// network issues.
+			InitialDelaySeconds: 2, PeriodSeconds: 2, TimeoutSeconds: 2, FailureThreshold: 30,
+		},
+		// StartupProbe (2026-06-23 perf audit, item #4). When set,
+		// kubelet pauses readiness/liveness probes until startup
+		// succeeds (one HTTP 200 response from /v1/readyz). This lets
+		// us probe at 1s during boot without paying the cost on every
+		// steady-state liveness check. FailureThreshold=120 gives a
+		// 2-minute boot budget, comfortably covering the relay-injector
+		// restart cycle (~30s today, ~5s once item #1a lands) plus all
+		// other init work.
+		StartupProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{
+					Path: "/v1/readyz",
+					Port: intstr.FromInt(agentd.AgentdAdminPort),
+					HTTPHeaders: func() []corev1.HTTPHeader {
+						if adminToken == "" {
+							return nil
+						}
+						return []corev1.HTTPHeader{
+							{Name: "Authorization", Value: "Bearer " + adminToken},
+						}
+					}(),
+				},
+			},
+			InitialDelaySeconds: 1, PeriodSeconds: 1, TimeoutSeconds: 2, FailureThreshold: 120,
 		},
 		LivenessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
@@ -121,15 +154,15 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		},
 		VolumeMounts: []corev1.VolumeMount{
 			// The workspace PVC contains three named subtrees via explicit subPaths:
-			//   workspace/ — user workspace data, opencode.db, auth.json
-			//   home/      — SSH keys, secrets base dir, enricher cache, tool caches
-			//   tmp/       — agent-config.json, secrets-env; agentd rewrites these
-			//                on each credential cycle. Other files persist across
-			//                pod restarts (PVC-backed, not ephemeral).
-			// workspace-dirs init container unconditionally creates all three
-			// subdirectories at the PVC root before any subPath mount is attempted.
+			//   workspace/ — user workspace data, opencode.db
+			//   home/      — symlinks to credential paths (plaintext lives in tmpfs)
+			//   tmp/       — init scripts, package caches; NOT credentials (US-35.7)
 			{Name: "workspace", MountPath: "/workspace", SubPath: "workspace"},
 			{Name: "sandbox-cfg", MountPath: "/sandbox-cfg", ReadOnly: true},
+			// US-35.7: sandbox-runtime is RW tmpfs for credential output files
+			// (agent-config.json, secrets-env) and symlink targets for $HOME-relative
+			// credential paths. Wiped on pod death — no plaintext on PVC at rest.
+			{Name: "sandbox-runtime", MountPath: "/sandbox-runtime"},
 			{Name: "workspace", MountPath: "/tmp", SubPath: "tmp"},
 			{Name: "workspace", MountPath: "/home/sandbox", SubPath: "home"},
 		},
@@ -142,16 +175,19 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		}},
 		// G15 (Epic 17): sandbox-cfg is tmpfs-backed (Memory medium) to
 		// prevent plaintext secrets / session keys from touching node disk.
-		// /tmp is now a subPath on the workspace PVC (see SubPath: "tmp" mount
-		// above) so agent-config.json and secrets-env survive pod restarts and
-		// are subject to the same Longhorn redundancy as other workspace data.
-		// The agentd Materializer.reset() deletes agent-config.json and
-		// secrets-env at the start of each credential materialize cycle, so
-		// these specific files are always freshly written. Other files written
-		// to /tmp by packages or agent processes persist across pod restarts.
+		// US-35.7: bumped from 4Mi to 32Mi for headroom on bootstrap secrets.json
+		// with many providers.
 		{Name: "sandbox-cfg", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
 			Medium:    corev1.StorageMediumMemory,
-			SizeLimit: ptrQuantity("4Mi"),
+			SizeLimit: ptrQuantity("32Mi"),
+		}}},
+		// US-35.7: sandbox-runtime is RW tmpfs for credential OUTPUT files.
+		// agent-config.json, secrets-env, and symlink targets for SSH/git/secrets/auth.json
+		// live here. Wiped on pod death regardless of how it dies (SIGTERM, SIGKILL,
+		// eviction) — no plaintext credential bytes persist on the PVC at rest.
+		{Name: "sandbox-runtime", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
+			Medium:    corev1.StorageMediumMemory,
+			SizeLimit: ptrQuantity("96Mi"),
 		}}},
 	}
 
@@ -168,8 +204,9 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 	// to route free-tier inference through the Cloudflare Worker for IP distribution.
 	// When InferenceRelaySecret is set it is embedded as the first path segment;
 	// the Worker strips and validates it before forwarding to upstream.
+	relayBaseURL := ""
 	if r.InferenceRelayURL != "" {
-		relayBaseURL := r.InferenceRelayURL
+		relayBaseURL = r.InferenceRelayURL
 		if r.InferenceRelaySecret != "" {
 			relayBaseURL = r.InferenceRelayURL + "/" + r.InferenceRelaySecret
 		}
@@ -184,13 +221,25 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 	}
 
 	// Credential setup init.
-	credInit, pwVolume, bootstrapTokenVol, err := r.buildCredentialSetupInit(workspace, runtimeImage)
+	credInit, pwVolume, bootstrapTokenVol, err := r.buildCredentialSetupInit(workspace, runtimeImage, relayBaseURL)
 	if err != nil {
 		return nil, err
 	}
 	initContainers = append(initContainers, credInit)
 	volumes = append(volumes, pwVolume)
 	volumes = append(volumes, bootstrapTokenVol)
+
+	// Free-models ConfigMap volume (2026-06-23 cold-start optimization,
+	// item #1a). Mounted optionally so a pod started before the
+	// controller's first refresh — or on a cluster with the refresher
+	// disabled — still boots cleanly. The credential-setup init script
+	// copies the file if present; agentd's materialize subcommand reads
+	// it to pre-render the relay-provider block in agent-config.json
+	// before opencode starts, eliminating the in-pod opencode-restart
+	// cycle that the legacy relay injector imposed.
+	if relayBaseURL != "" {
+		volumes = append(volumes, buildFreeModelsVolume())
+	}
 
 	// Epic 51 S51.1: Runtime class resolution. Per-workspace opt-out
 	// (spec.runtimeClass) takes precedence; otherwise use the controller's
@@ -201,6 +250,35 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 		runtimeClassName = *workspace.Spec.RuntimeClass
 	}
 
+	// terminationGracePeriodSeconds (2026-06-23 perf audit, item #5).
+	// The kubelet default of 30s wasted ~25s on every pod termination.
+	//
+	// agentd has TWO different shutdown budgets layered:
+	//   1. The HTTP server's overall shutdown context is 25s
+	//      (cmd/workspace-agentd/main.go runShutdown). It includes
+	//      graceful HTTP server drain, background goroutine wait
+	//      (5s), and the opencode child SIGTERM→SIGKILL fallback.
+	//   2. The opencode child SIGTERM grace is 5s (managed_process.go
+	//      stop()). After 5s without exit, agentd SIGKILLs opencode.
+	//
+	// Setting kubelet's terminationGracePeriodSeconds=5 means kubelet
+	// will SIGKILL the entire pod 5s after sending SIGTERM,
+	// short-circuiting agentd's outer 25s budget. That sounds
+	// aggressive, but it's safe in this codebase because:
+	//   - The 25s budget is a worst-case for a stuck HTTP server or
+	//     hung goroutine; live cluster measurement (see worklog) shows
+	//     pod-gone in ~2.2s after pod-delete in normal operation.
+	//   - opencode's 5s SIGTERM window matches kubelet's 5s here;
+	//     agentd will have just enough time to send SIGTERM and
+	//     observe a clean exit before kubelet SIGKILLs the whole pod.
+	//   - Even when agentd is killed mid-shutdown by kubelet, the only
+	//     state on disk is the workspace PVC, which is not modified
+	//     by shutdown. There is no graceful-state to lose.
+	//
+	// If the in-process measurement ever shows clean shutdowns
+	// approaching 5s, raise this to 10s rather than back to 30s.
+	terminationGrace := int64(5)
+
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        name,
@@ -209,10 +287,11 @@ func (r *WorkspaceReconciler) buildPod(ctx context.Context, workspace *v1.Worksp
 			Annotations: annotations,
 		},
 		Spec: corev1.PodSpec{
-			InitContainers: initContainers,
-			Containers:     []corev1.Container{mainContainer},
-			Volumes:        volumes,
-			NodeSelector:   buildNodeSelector(workspace),
+			InitContainers:                initContainers,
+			Containers:                    []corev1.Container{mainContainer},
+			Volumes:                       volumes,
+			NodeSelector:                  buildNodeSelector(workspace),
+			TerminationGracePeriodSeconds: &terminationGrace,
 			// G17 (Epic 17): Sandbox pods MUST NOT automount the default
 			// ServiceAccount token. The agent has no business calling the
 			// K8s API; mounting the token only widens the blast radius for
@@ -377,8 +456,40 @@ func buildNodeSelector(workspace *v1.Workspace) map[string]string {
 	}
 }
 
-func (r *WorkspaceReconciler) buildCredentialSetupInit(workspace *v1.Workspace, runtimeImage string) (corev1.Container, corev1.Volume, corev1.Volume, error) {
+func (r *WorkspaceReconciler) buildCredentialSetupInit(workspace *v1.Workspace, runtimeImage string, relayBaseURL string) (corev1.Container, corev1.Volume, corev1.Volume, error) {
 	credScript := `
+set -e
+
+# US-35.7: create symlink farm so credential files resolve to tmpfs, not PVC.
+# The PVC paths ($HOME/.ssh, $HOME/.secrets, $HOME/.git-credentials,
+# $WORKSPACE/.local/opencode/auth.json) become symlinks pointing into
+# /sandbox-runtime/rt/*. On pod death, tmpfs is wiped — the PVC retains
+# only dangling symlink inodes, no plaintext bytes.
+mkdir -p /sandbox-runtime/rt/ssh /sandbox-runtime/rt/secrets /sandbox-runtime/rt
+chmod 700 /sandbox-runtime/rt/ssh /sandbox-runtime/rt/secrets
+
+# rm -rf is required: ln -s into an existing directory creates the symlink
+# inside it. These are credential paths that reset() wipes on every reload
+# — no user data is lost.
+rm -rf /home/sandbox/.ssh /home/sandbox/.secrets /home/sandbox/.git-credentials
+ln -s /sandbox-runtime/rt/ssh             /home/sandbox/.ssh
+ln -s /sandbox-runtime/rt/secrets         /home/sandbox/.secrets
+ln -s /sandbox-runtime/rt/git-credentials /home/sandbox/.git-credentials
+
+mkdir -p /workspace/.local/opencode
+rm -f /workspace/.local/opencode/auth.json
+ln -s /sandbox-runtime/rt/auth.json /workspace/.local/opencode/auth.json
+
+# 2026-06-23 cold-start optimization (item #1a): copy the cluster-wide
+# free-models catalog into /sandbox-cfg so the materialize subcommand
+# can render the relay agent-config.json block before opencode boots.
+# Mounted optional: an absent file is normal (relay disabled or
+# controller hasn't fetched yet). The script swallows the error and
+# materialize falls back to the legacy in-pod relay injector path.
+if [ -f /mnt/freemodels/models.json ]; then
+  cp /mnt/freemodels/models.json /sandbox-cfg/free-models.json
+fi
+
 workspace-agentd bootstrap --workspace-id "$WORKSPACE_ID" --api-url "$LLMSAFESPACE_API_URL"
 workspace-agentd materialize
 cp /mnt/secrets/password/password /sandbox-cfg/password
@@ -392,8 +503,25 @@ cp /mnt/secrets/password/password /sandbox-cfg/password
 
 	credMounts := []corev1.VolumeMount{
 		{Name: "sandbox-cfg", MountPath: "/sandbox-cfg"},
+		{Name: "sandbox-runtime", MountPath: "/sandbox-runtime"},
 		{Name: "pw-secret", MountPath: "/mnt/secrets/password", ReadOnly: true},
 		{Name: "bootstrap-token", MountPath: "/var/run/bootstrap", ReadOnly: true},
+		// US-35.7: RW PVC mounts needed for symlink creation on the PVC paths.
+		// Without these, ReadOnlyRootFilesystem causes ln -s to silently fail.
+		{Name: "workspace", MountPath: "/home/sandbox", SubPath: "home"},
+		{Name: "workspace", MountPath: "/workspace", SubPath: "workspace"},
+	}
+
+	// 2026-06-23 cold-start optimization (item #1a). The free-models
+	// ConfigMap is added to pod.Spec.Volumes by buildPod when a relay
+	// URL is configured; we always mount it here when the volume is
+	// present (init-side) so the cp in the script can read it. Optional
+	// mount semantics live on the Volume itself (Optional: true), so an
+	// absent CM is harmless — the cp simply finds no file.
+	if relayBaseURL != "" {
+		credMounts = append(credMounts, corev1.VolumeMount{
+			Name: "free-models", MountPath: "/mnt/freemodels", ReadOnly: true,
+		})
 	}
 
 	// Epic 35 US-35.4: projected SA token volume. The kubelet creates a token
@@ -401,7 +529,7 @@ cp /mnt/secrets/password/password /sandbox-cfg/password
 	// audience and expiry. Mounted only on the init container — the main
 	// container never sees this token (AutomountServiceAccountToken: false
 	// suppresses the default mount; this is an explicit projected volume).
-	tokenTTL := int64(300)
+	tokenTTL := int64(600)
 	bootstrapTokenVolume := corev1.Volume{
 		Name: "bootstrap-token",
 		VolumeSource: corev1.VolumeSource{
@@ -423,10 +551,45 @@ cp /mnt/secrets/password/password /sandbox-cfg/password
 		Name:    "credential-setup",
 		Image:   runtimeImage,
 		Command: []string{"/bin/sh", "-c", credScript},
-		Env: []corev1.EnvVar{
-			{Name: "WORKSPACE_ID", Value: workspace.Name},
-			{Name: "LLMSAFESPACE_API_URL", Value: r.APIServiceURL},
-		},
+		Env: func() []corev1.EnvVar {
+			env := []corev1.EnvVar{
+				{Name: "WORKSPACE_ID", Value: workspace.Name},
+				{Name: "LLMSAFESPACE_API_URL", Value: r.APIServiceURL},
+				// 2026-06-24 PR #401 review fix: XDG_DATA_HOME must
+				// match the value entrypoint-opencode.sh sets in the
+				// MAIN container so agentd's materialize subcommand
+				// (running in the INIT container) reads auth.json from
+				// the same location opencode will read it from in the
+				// main container — i.e. the symlink the init script
+				// creates at /workspace/.local/opencode/auth.json
+				// pointing into /sandbox-runtime/rt/auth.json (US-35.7).
+				//
+				// Without this, preBootAuthJSONPath falls back to
+				// $HOME/.local/opencode/auth.json
+				// (=/home/sandbox/.local/opencode/auth.json), which
+				// for a fresh pod doesn't exist (correct by accident:
+				// shouldSkipRelay returns false → relay proceeds), but
+				// for a resumed pod with a stale pre-US-35.7 auth.json
+				// at PVC:home/.local/opencode/auth.json containing a
+				// personal key, the bypass check would silently miss
+				// the key and the cold-start optimization would then
+				// be lost (the legacy in-pod injector would pick up
+				// the slack and skip injection itself, but the user
+				// loses the ~6-8s savings).
+				{Name: "XDG_DATA_HOME", Value: "/workspace/.local"},
+			}
+			// 2026-06-23 cold-start optimization (item #1a): propagate
+			// the relay URL into the init container so the materialize
+			// subcommand can pre-render the relay agent-config block
+			// before opencode boots. Without this, materialize has no
+			// way to know whether to inject relay (it currently runs
+			// in the main container as a goroutine after opencode is
+			// already up).
+			if relayBaseURL != "" {
+				env = append(env, corev1.EnvVar{Name: "INFERENCE_RELAY_BASEURL", Value: relayBaseURL})
+			}
+			return env
+		}(),
 		SecurityContext: &corev1.SecurityContext{
 			ReadOnlyRootFilesystem:   &trueVal,
 			RunAsNonRoot:             &trueVal,
@@ -458,6 +621,36 @@ func buildWorkspaceDirsInit(runtimeImage string) corev1.Container {
 			RunAsNonRoot:             &trueVal,
 			AllowPrivilegeEscalation: &falseVal,
 			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		},
+	}
+}
+
+// buildFreeModelsVolume returns the volume spec for the cluster-wide
+// free-models ConfigMap (2026-06-23 cold-start optimization, item #1a).
+// The credential-setup init container mounts it at /mnt/freemodels and
+// copies models.json into /sandbox-cfg/ so agentd's materialize
+// subcommand can read it before opencode boots.
+//
+// Optional: true is critical — pods can be created before the
+// controller's free-models refresher runs its first fetch (e.g.
+// immediately after a fresh install), and the refresher can be
+// disabled entirely via --enable-free-models-refresher=false. In
+// either case, kubelet skips the mount silently and the credential-setup
+// init script's `if [ -f ... ]` guard finds no file. agentd's
+// materialize subcommand then falls back to the legacy in-pod
+// relay-injector path (Phase D will short-circuit when this file IS
+// present).
+func buildFreeModelsVolume() corev1.Volume {
+	optionalTrue := true
+	return corev1.Volume{
+		Name: "free-models",
+		VolumeSource: corev1.VolumeSource{
+			ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: freemodels.ConfigMapName,
+				},
+				Optional: &optionalTrue,
+			},
 		},
 	}
 }

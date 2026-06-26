@@ -120,15 +120,15 @@ func TestUS501_DefaultRender_KEKViaFileMount_NotEnvVar(t *testing.T) {
 	// The file-path env var points at the mount.
 	filePath, ok := envValue(container, "LLMSAFESPACES_MASTER_SECRET_FILE")
 	require.True(t, ok, "default render must set LLMSAFESPACES_MASTER_SECRET_FILE")
-	assert.Equal(t, "/etc/llmsafespaces/master-secret", filePath,
-		"default file mount path should be /etc/llmsafespaces/master-secret")
+	assert.Equal(t, "/var/run/secrets/llmsafespaces/master-secret", filePath,
+		"default file mount path should be /var/run/secrets/llmsafespaces/master-secret")
 
 	// The master-secret volume + mount exist.
 	ps := podSpec(t, dep)
 	require.True(t, hasVolume(ps, "master-secret"), "default render must define the master-secret volume")
 	mp, ok := volumeMountPath(container, "master-secret")
 	require.True(t, ok, "default render must mount the master-secret volume")
-	assert.Equal(t, "/etc/llmsafespaces/master-secret", mp)
+	assert.Equal(t, "/var/run/secrets/llmsafespaces/master-secret", mp)
 }
 
 // TestUS501_DefaultRender_MasterSecretVolumeMode0440 asserts the secret volume
@@ -200,4 +200,43 @@ func TestUS501_FileMountPathOverride(t *testing.T) {
 	mp, ok := volumeMountPath(container, "master-secret")
 	require.True(t, ok)
 	assert.Equal(t, "/var/run/llmsafespaces/kek", mp)
+}
+
+// TestMasterSecret_MountPathNotNestedInOtherVolume guards against the exact
+// failure mode where master-secret's mountPath sits *inside* another volume's
+// mountPath (regression: chart_master_secret_test path was previously
+// "/etc/llmsafespaces/master-secret", inside the config volume's
+// "/etc/llmsafespaces"). runc rejects nested subPath secret-over-configmap
+// mounts with "not a directory" on some kernel/runtime combos, surfacing as
+// CrashLoopBackOff at first deploy.
+//
+// The invariant: no other volumeMount's mountPath may be a strict ancestor
+// directory of the master-secret mountPath.
+func TestMasterSecret_MountPathNotNestedInOtherVolume(t *testing.T) {
+	docs := helmTemplate(t, "")
+	dep := apiDeploymentDoc(t, docs)
+	container := apiContainer(t, dep)
+
+	msMount, ok := volumeMountPath(container, "master-secret")
+	require.True(t, ok, "master-secret volumeMount must be present in default render")
+
+	vms, _ := container["volumeMounts"].([]any)
+	for _, v := range vms {
+		vm, _ := v.(map[string]any)
+		name, _ := vm["name"].(string)
+		if name == "master-secret" {
+			continue
+		}
+		other, _ := vm["mountPath"].(string)
+		if other == "" {
+			continue
+		}
+		// Ancestor iff msMount == other or starts with other+"/"
+		ancestor := msMount == other || strings.HasPrefix(msMount, strings.TrimRight(other, "/")+"/")
+		assert.Falsef(t, ancestor,
+			"master-secret mountPath %q is nested inside volumeMount %q (path %q); "+
+				"runc rejects nested secret-over-configmap subPath mounts. Choose a "+
+				"sibling location like /var/run/secrets/llmsafespaces/master-secret.",
+			msMount, name, other)
+	}
 }

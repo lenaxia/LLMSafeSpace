@@ -147,15 +147,15 @@ func TestG18_RevokeThenValidate_RejectsToken(t *testing.T) {
 	svc, _, token := newRevocationFixture(t)
 
 	// Sanity check: token validates before revocation.
-	userID, err := svc.ValidateToken(token)
+	userID, err := svc.ValidateToken(context.Background(), token)
 	require.NoError(t, err)
 	require.Equal(t, "user-revocation-test", userID)
 
 	// Revoke.
-	require.NoError(t, svc.RevokeToken(token))
+	require.NoError(t, svc.RevokeToken(context.Background(), token))
 
 	// Validation must now fail.
-	userID, err = svc.ValidateToken(token)
+	userID, err = svc.ValidateToken(context.Background(), token)
 	require.Error(t, err)
 	require.Empty(t, userID)
 	require.Contains(t, err.Error(), "revoked", "ValidateToken must surface a 'revoked' error after RevokeToken")
@@ -173,7 +173,7 @@ func TestG18_RevokeWritesBothKeys(t *testing.T) {
 	jti, _ := claims["jti"].(string)
 	require.NotEmpty(t, jti, "test setup: token must carry a jti claim")
 
-	require.NoError(t, svc.RevokeToken(token))
+	require.NoError(t, svc.RevokeToken(context.Background(), token))
 
 	// Hash-keyed entry: the fast-path in ValidateToken reads this on entry.
 	hashKey := "token:" + pkgutil.HashString(token)
@@ -195,13 +195,13 @@ func TestG18_RevokeWritesBothKeys(t *testing.T) {
 func TestG18_RevocationDefenseInDepth_HashCacheEvicted(t *testing.T) {
 	svc, cache, token := newRevocationFixture(t)
 
-	require.NoError(t, svc.RevokeToken(token))
+	require.NoError(t, svc.RevokeToken(context.Background(), token))
 
 	// Manually evict the hash-keyed revocation entry but leave the jti entry.
 	hashKey := "token:" + pkgutil.HashString(token)
 	require.NoError(t, cache.Delete(context.Background(), hashKey))
 
-	userID, err := svc.ValidateToken(token)
+	userID, err := svc.ValidateToken(context.Background(), token)
 	require.Error(t, err)
 	require.Empty(t, userID)
 	require.Contains(t, err.Error(), "revoked",
@@ -214,7 +214,7 @@ func TestG18_NonRevokedToken_StillValidates(t *testing.T) {
 	svc, _, token := newRevocationFixture(t)
 
 	for i := 0; i < 3; i++ {
-		userID, err := svc.ValidateToken(token)
+		userID, err := svc.ValidateToken(context.Background(), token)
 		require.NoError(t, err, "iteration %d: non-revoked token must validate cleanly", i)
 		require.Equal(t, "user-revocation-test", userID)
 	}
@@ -229,15 +229,15 @@ func TestG18_RevocationSurvivesCacheRoundTrip(t *testing.T) {
 	svc, _, token := newRevocationFixture(t)
 
 	// Warm the validation cache (writes token:<hash> = userID).
-	userID, err := svc.ValidateToken(token)
+	userID, err := svc.ValidateToken(context.Background(), token)
 	require.NoError(t, err)
 	require.Equal(t, "user-revocation-test", userID)
 
 	// Revoke.
-	require.NoError(t, svc.RevokeToken(token))
+	require.NoError(t, svc.RevokeToken(context.Background(), token))
 
 	// Same token should now be rejected on the very next call.
-	userID, err = svc.ValidateToken(token)
+	userID, err = svc.ValidateToken(context.Background(), token)
 	require.Error(t, err)
 	require.Empty(t, userID)
 	require.True(t, strings.Contains(err.Error(), "revoked"),
@@ -249,11 +249,11 @@ func TestG18_RevocationSurvivesCacheRoundTrip(t *testing.T) {
 func TestG18_DoubleRevoke_Idempotent(t *testing.T) {
 	svc, _, token := newRevocationFixture(t)
 
-	require.NoError(t, svc.RevokeToken(token))
+	require.NoError(t, svc.RevokeToken(context.Background(), token))
 	// Second call must succeed (Set is idempotent in-memory; Redis SET is too).
-	require.NoError(t, svc.RevokeToken(token))
+	require.NoError(t, svc.RevokeToken(context.Background(), token))
 
-	_, err := svc.ValidateToken(token)
+	_, err := svc.ValidateToken(context.Background(), token)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "revoked")
 }

@@ -255,6 +255,26 @@ func startRelayInjector(ctx context.Context, cfg relayInjectorConfig) {
 	if cfg.RelayURL == "" {
 		return
 	}
+	// 2026-06-23 cold-start optimization (item #1a, Phase D):
+	// short-circuit if the materialize subcommand has already
+	// pre-injected the relay block via the cluster-wide free-models
+	// ConfigMap. AgentConfigWriter.hasRelay() is true when
+	// loadExisting found a populated `provider.opencode-relay`
+	// block at agentd startup (i.e. Phases A+B+C all succeeded).
+	//
+	// In that case the legacy fetch+kill+restart path would be a
+	// pure waste — opencode is already booting (or booted) with
+	// the correct config. Save the ~6-8s cycle.
+	//
+	// If pre-boot injection skipped (no CM, empty catalog, refresher
+	// disabled, etc.), hasRelay() is false and we fall through to
+	// the legacy path, preserving correctness on every cluster
+	// regardless of whether the optimization is wired up.
+	if cfg.AgentConfigWriter != nil && cfg.AgentConfigWriter.hasRelay() {
+		log.Info("relay injector: pre-boot relay already applied; skipping in-pod injection")
+		relayInjectorOutcomes.WithLabelValues("skipped_pre_boot_applied").Inc()
+		return
+	}
 	// Capture the logger at call-site so the goroutine does not race with
 	// test code that reassigns the package-level log variable.
 	lg := log

@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	"github.com/lenaxia/llmsafespaces/controller/internal/controller"
+	"github.com/lenaxia/llmsafespaces/controller/internal/freemodels"
 	"github.com/lenaxia/llmsafespaces/controller/internal/metrics"
 	"github.com/lenaxia/llmsafespaces/controller/internal/webhooks"
 	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
@@ -126,6 +127,24 @@ func main() {
 	flag.Int64Var(&maxMemoryMiPerTenant, "max-memory-mi-per-tenant", 0,
 		"Maximum aggregate memory requests (MiB) per tenant (Epic 51 S51.2). "+
 			"0 means unlimited. Recommended: 16384 (16GiB) for multi-tenant.")
+	var enableFreeModelsRefresher bool
+	flag.BoolVar(&enableFreeModelsRefresher, "enable-free-models-refresher", true,
+		"Periodically fetch the opencode free-tier model catalog from models.dev "+
+			"and publish it as a ConfigMap in POD_NAMESPACE. Workspace pods consume "+
+			"this CM to pre-render their relay agent-config.json before opencode "+
+			"boots, eliminating the in-pod opencode-restart cycle that the legacy "+
+			"relay-injector goroutine imposed (~6-8s saved per cold start). Default "+
+			"true; set false to disable and fall back to per-pod fetching.")
+	var freeModelsRefreshInterval time.Duration
+	flag.DurationVar(&freeModelsRefreshInterval, "free-models-refresh-interval", 6*time.Hour,
+		"How often the free-models refresher fetches the catalog. The catalog "+
+			"changes ~weekly so 6h is generous; lower values are fine but "+
+			"increase load on models.dev.")
+	var freeModelsAPIURL string
+	flag.StringVar(&freeModelsAPIURL, "free-models-api-url", "",
+		"Override URL for the free-models catalog. Empty defaults to "+
+			"https://models.dev/api.json. Useful for air-gapped clusters that "+
+			"mirror the catalog internally.")
 	flag.Parse()
 
 	// US-43.19 / D20: the shared secret authenticating controller→API internal
@@ -259,6 +278,32 @@ func main() {
 	if err := mgr.Add(&workspaceGaugeSeeder{Client: mgr.GetClient()}); err != nil {
 		setupLog.Error(err, "unable to add workspace gauge seeder")
 		os.Exit(1)
+	}
+
+	// Free-models refresher (2026-06-23 cold-start optimization, item
+	// #1a). Periodically fetches the opencode free-tier model catalog
+	// from models.dev and publishes it as a ConfigMap that workspace
+	// pods consume to pre-render their relay config before opencode
+	// boots. NeedLeaderElection() returns true so only one replica
+	// fetches at a time.
+	if enableFreeModelsRefresher {
+		fmNamespace := os.Getenv("POD_NAMESPACE")
+		if fmNamespace == "" {
+			fmNamespace = "llmsafespaces"
+		}
+		if err := mgr.Add(&freemodels.Refresher{
+			Client:    mgr.GetClient(),
+			Namespace: fmNamespace,
+			Interval:  freeModelsRefreshInterval,
+			Fetcher:   &freemodels.Fetcher{URL: freeModelsAPIURL},
+		}); err != nil {
+			setupLog.Error(err, "unable to add free-models refresher")
+			os.Exit(1)
+		}
+		setupLog.Info("free-models refresher enabled",
+			"namespace", fmNamespace,
+			"interval", freeModelsRefreshInterval,
+			"url", freeModelsAPIURL)
 	}
 
 	// Add health check endpoints

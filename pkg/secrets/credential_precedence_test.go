@@ -72,7 +72,7 @@ func TestCredentialPrecedence_AdminFreeTierOverrideByUser(t *testing.T) {
 	svc.SetOrgProvider(mustStaticProvider(t, adminKEK))
 
 	ctx := context.Background()
-	result, err := svc.PrepareSecretsForInjection(ctx, userID, sessionID, workspaceID)
+	result, err := svc.InjectSecrets(ctx, userID, sessionID, workspaceID)
 	require.NoError(t, err)
 
 	var injected []InjectedSecret
@@ -124,7 +124,7 @@ func TestCredentialPrecedence_ModelAllowlistFiltering(t *testing.T) {
 	svc.SetAdminProvider(mustStaticProvider(t, adminKEK))
 	svc.SetOrgProvider(mustStaticProvider(t, adminKEK))
 
-	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
+	result, err := svc.InjectSecrets(context.Background(), "user-1", "no-session", "ws-1")
 	require.NoError(t, err)
 
 	var injected []InjectedSecret
@@ -169,7 +169,7 @@ func TestCredentialPrecedence_ModelAllowlistFallback(t *testing.T) {
 	svc.SetAdminProvider(mustStaticProvider(t, adminKEK))
 	svc.SetOrgProvider(mustStaticProvider(t, adminKEK))
 
-	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
+	result, err := svc.InjectSecrets(context.Background(), "user-1", "no-session", "ws-1")
 	require.NoError(t, err)
 
 	var injected []InjectedSecret
@@ -216,7 +216,7 @@ func TestCredentialPrecedence_DecryptionFailureFallback(t *testing.T) {
 	svc.SetAdminProvider(mustStaticProvider(t, adminKEK))
 	svc.SetOrgProvider(mustStaticProvider(t, adminKEK))
 
-	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
+	result, err := svc.InjectSecrets(context.Background(), "user-1", "no-session", "ws-1")
 	require.NoError(t, err)
 
 	var injected []InjectedSecret
@@ -258,7 +258,7 @@ func TestCredentialPrecedence_AdminOnlyNoSession(t *testing.T) {
 	svc.SetOrgProvider(mustStaticProvider(t, adminKEK))
 
 	ctx := context.Background()
-	result, err := svc.PrepareSecretsForInjection(ctx, "user-1", "no-session", "ws-1")
+	result, err := svc.InjectSecrets(ctx, "user-1", "no-session", "ws-1")
 	require.NoError(t, err)
 
 	var injected []InjectedSecret
@@ -337,7 +337,8 @@ func (c *testDEKCache) GetDEK(_ context.Context, sessionID string) ([]byte, erro
 func (c *testDEKCache) EvictDEK(_ context.Context, _ string) error { return nil }
 
 // TestAsyncAuditLogger_ImplementsCredentialStore verifies that the type assertion
-// in PrepareSecretsForInjection succeeds when store is *AsyncAuditLogger.
+// in the injector methods (InjectSecrets / InjectSessionlessSecrets) succeeds
+// when store is *AsyncAuditLogger.
 func TestAsyncAuditLogger_ImplementsCredentialStore(t *testing.T) {
 	inner := newMockSecretStore()
 	logger := &asyncAuditTestLogger{}
@@ -349,9 +350,9 @@ func TestAsyncAuditLogger_ImplementsCredentialStore(t *testing.T) {
 	require.True(t, ok, "AsyncAuditLogger must implement CredentialStore for injection path to activate")
 }
 
-// TestPrepareSecretsForInjection_ViaAsyncAuditLogger ensures the new path
+// TestInjectSecrets_ViaAsyncAuditLogger ensures the new path
 // activates when store is wrapped in AsyncAuditLogger (production configuration).
-func TestPrepareSecretsForInjection_ViaAsyncAuditLogger(t *testing.T) {
+func TestInjectSecrets_ViaAsyncAuditLogger(t *testing.T) {
 	// Inner store implements both SecretStore and CredentialStore.
 	innerSecret := newMockSecretStore()
 	adminKEK := make([]byte, 32)
@@ -384,7 +385,7 @@ func TestPrepareSecretsForInjection_ViaAsyncAuditLogger(t *testing.T) {
 	svc.SetOrgProvider(mustStaticProvider(t, adminKEK))
 
 	ctx := context.Background()
-	result, err := svc.PrepareSecretsForInjection(ctx, "user-1", "sess-1", "ws-1")
+	result, err := svc.InjectSecrets(ctx, "user-1", "sess-1", "ws-1")
 	require.NoError(t, err)
 
 	var injected []InjectedSecret
@@ -430,7 +431,7 @@ func TestCredentialPrecedence_AllowlistOnlyDefaultID(t *testing.T) {
 	svc.SetAdminProvider(mustStaticProvider(t, adminKEK))
 	svc.SetOrgProvider(mustStaticProvider(t, adminKEK))
 
-	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
+	result, err := svc.InjectSecrets(context.Background(), "user-1", "no-session", "ws-1")
 	require.NoError(t, err)
 
 	var injected []InjectedSecret
@@ -477,7 +478,7 @@ func TestCredentialPrecedence_AllowlistMixedValidAndInvalid(t *testing.T) {
 	svc.SetAdminProvider(mustStaticProvider(t, adminKEK))
 	svc.SetOrgProvider(mustStaticProvider(t, adminKEK))
 
-	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
+	result, err := svc.InjectSecrets(context.Background(), "user-1", "no-session", "ws-1")
 	require.NoError(t, err)
 
 	var injected []InjectedSecret
@@ -548,7 +549,7 @@ func TestCredentialPrecedence_ModelContextLimits_InjectedIntoLLMModelConfig(t *t
 	svc.SetAdminProvider(mustStaticProvider(t, adminKEK))
 	svc.SetOrgProvider(mustStaticProvider(t, adminKEK))
 
-	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
+	result, err := svc.InjectSecrets(context.Background(), "user-1", "no-session", "ws-1")
 	require.NoError(t, err)
 
 	var injected []InjectedSecret
@@ -612,7 +613,7 @@ func TestCredentialPrecedence_ModelContextLimits_DoesNotOverrideExisting(t *test
 	svc.SetAdminProvider(mustStaticProvider(t, adminKEK))
 	svc.SetOrgProvider(mustStaticProvider(t, adminKEK))
 
-	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
+	result, err := svc.InjectSecrets(context.Background(), "user-1", "no-session", "ws-1")
 	require.NoError(t, err)
 
 	var injected []InjectedSecret
@@ -662,7 +663,7 @@ func TestCredentialPrecedence_OrgCredentialViaServerKEK(t *testing.T) {
 	svc := NewSecretService(keyService, combinedStore)
 	svc.SetOrgProvider(mustStaticProvider(t, orgKEK))
 
-	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
+	result, err := svc.InjectSecrets(context.Background(), "user-1", "no-session", "ws-1")
 	require.NoError(t, err)
 
 	var injected []InjectedSecret
@@ -724,7 +725,7 @@ func TestCredentialPrecedence_DomainSeparation_AdminAndOrgDistinctKeys(t *testin
 	svc.SetAdminProvider(mustStaticProvider(t, adminKEK))
 	svc.SetOrgProvider(mustStaticProvider(t, orgKEK))
 
-	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
+	result, err := svc.InjectSecrets(context.Background(), "user-1", "no-session", "ws-1")
 	require.NoError(t, err)
 
 	var injected []InjectedSecret
@@ -778,7 +779,7 @@ func TestCredentialPrecedence_OrgCredential_WrongKEK_FailsAndFallsBack(t *testin
 	svc.SetAdminProvider(mustStaticProvider(t, deriveKEK))
 	svc.SetOrgProvider(mustStaticProvider(t, deriveKEK))
 
-	result, err := svc.PrepareSecretsForInjection(context.Background(), "user-1", "no-session", "ws-1")
+	result, err := svc.InjectSecrets(context.Background(), "user-1", "no-session", "ws-1")
 	require.NoError(t, err, "fail-soft: decrypt failure must not error the whole call")
 
 	var injected []InjectedSecret

@@ -4,6 +4,7 @@
 package wsstate
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -44,9 +45,9 @@ func TestRedisStore_MarkSessionDeleted_ThenIsDeleted_ReturnsTrue(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
 
-	assert.False(t, store.IsSessionDeleted("ws-1", "s1"))
-	store.MarkSessionDeleted("ws-1", "s1")
-	assert.True(t, store.IsSessionDeleted("ws-1", "s1"))
+	assert.False(t, store.IsSessionDeleted(context.Background(), "ws-1", "s1"))
+	store.MarkSessionDeleted(context.Background(), "ws-1", "s1")
+	assert.True(t, store.IsSessionDeleted(context.Background(), "ws-1", "s1"))
 	assert.True(t, mr.Exists(deletedKey("ws-1", "s1")),
 		"tombstone must be a real Redis key with TTL")
 }
@@ -55,23 +56,23 @@ func TestRedisStore_MarkSessionDeleted_MultipleWorkspaces_TrackedSeparately(t *t
 	store, _, _, cleanup := setupRedisStore(t)
 	defer cleanup()
 
-	store.MarkSessionDeleted("ws-1", "s1")
-	store.MarkSessionDeleted("ws-1", "s2")
-	store.MarkSessionDeleted("ws-2", "s1")
+	store.MarkSessionDeleted(context.Background(), "ws-1", "s1")
+	store.MarkSessionDeleted(context.Background(), "ws-1", "s2")
+	store.MarkSessionDeleted(context.Background(), "ws-2", "s1")
 
-	assert.True(t, store.IsSessionDeleted("ws-1", "s1"))
-	assert.True(t, store.IsSessionDeleted("ws-1", "s2"))
-	assert.True(t, store.IsSessionDeleted("ws-2", "s1"))
-	assert.False(t, store.IsSessionDeleted("ws-1", "s3"))
-	assert.False(t, store.IsSessionDeleted("ws-3", "s1"))
+	assert.True(t, store.IsSessionDeleted(context.Background(), "ws-1", "s1"))
+	assert.True(t, store.IsSessionDeleted(context.Background(), "ws-1", "s2"))
+	assert.True(t, store.IsSessionDeleted(context.Background(), "ws-2", "s1"))
+	assert.False(t, store.IsSessionDeleted(context.Background(), "ws-1", "s3"))
+	assert.False(t, store.IsSessionDeleted(context.Background(), "ws-3", "s1"))
 }
 
 func TestRedisStore_MarkSessionDeleted_PerKeyTTL(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
 
-	store.MarkSessionDeleted("ws-1", "s1")
-	store.MarkSessionDeleted("ws-1", "s2")
+	store.MarkSessionDeleted(context.Background(), "ws-1", "s1")
+	store.MarkSessionDeleted(context.Background(), "ws-1", "s2")
 
 	ttl1 := mr.TTL(deletedKey("ws-1", "s1"))
 	ttl2 := mr.TTL(deletedKey("ws-1", "s2"))
@@ -95,13 +96,13 @@ func TestRedisStore_MarkSessionDeleted_TTLAutoExpires(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
 
-	store.MarkSessionDeleted("ws-1", "s1")
-	require.True(t, store.IsSessionDeleted("ws-1", "s1"))
+	store.MarkSessionDeleted(context.Background(), "ws-1", "s1")
+	require.True(t, store.IsSessionDeleted(context.Background(), "ws-1", "s1"))
 
 	// Fast-forward past the TTL — tombstone must auto-expire.
 	mr.FastForward(testDeletedTTL + time.Second)
 
-	assert.False(t, store.IsSessionDeleted("ws-1", "s1"),
+	assert.False(t, store.IsSessionDeleted(context.Background(), "ws-1", "s1"),
 		"tombstone must auto-expire after TTL — bounded memory, no manual eviction needed")
 	assert.False(t, mr.Exists(deletedKey("ws-1", "s1")),
 		"Redis key must be gone after TTL expiry")
@@ -111,12 +112,12 @@ func TestRedisStore_MarkSessionDeleted_IdempotentReMark(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
 
-	store.MarkSessionDeleted("ws-1", "s1")
+	store.MarkSessionDeleted(context.Background(), "ws-1", "s1")
 	ttl1 := mr.TTL(deletedKey("ws-1", "s1"))
 
 	// Marking again should refresh the TTL (or at minimum not error).
-	store.MarkSessionDeleted("ws-1", "s1")
-	assert.True(t, store.IsSessionDeleted("ws-1", "s1"))
+	store.MarkSessionDeleted(context.Background(), "ws-1", "s1")
+	assert.True(t, store.IsSessionDeleted(context.Background(), "ws-1", "s1"))
 
 	// TTL should still be positive.
 	ttl2 := mr.TTL(deletedKey("ws-1", "s1"))
@@ -133,17 +134,17 @@ func TestRedisStore_ClearDeletedSessions_ScopedToWorkspace(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
 
-	store.MarkSessionDeleted("ws-1", "s1")
-	store.MarkSessionDeleted("ws-1", "s2")
-	store.MarkSessionDeleted("ws-2", "s1")
+	store.MarkSessionDeleted(context.Background(), "ws-1", "s1")
+	store.MarkSessionDeleted(context.Background(), "ws-1", "s2")
+	store.MarkSessionDeleted(context.Background(), "ws-2", "s1")
 
-	store.ClearDeletedSessions("ws-1")
+	store.ClearDeletedSessions(context.Background(), "ws-1")
 
-	assert.False(t, store.IsSessionDeleted("ws-1", "s1"))
-	assert.False(t, store.IsSessionDeleted("ws-1", "s2"))
+	assert.False(t, store.IsSessionDeleted(context.Background(), "ws-1", "s1"))
+	assert.False(t, store.IsSessionDeleted(context.Background(), "ws-1", "s2"))
 	assert.False(t, mr.Exists(deletedKey("ws-1", "s1")))
 	assert.False(t, mr.Exists(deletedKey("ws-1", "s2")))
-	assert.True(t, store.IsSessionDeleted("ws-2", "s1"),
+	assert.True(t, store.IsSessionDeleted(context.Background(), "ws-2", "s1"),
 		"ClearDeletedSessions must not affect other workspaces")
 	assert.True(t, mr.Exists(deletedKey("ws-2", "s1")))
 }
@@ -153,7 +154,7 @@ func TestRedisStore_ClearDeletedSessions_NoTombstones_NoOp(t *testing.T) {
 	defer cleanup()
 
 	// Must not panic or error on workspace with no tombstones.
-	store.ClearDeletedSessions("ws-never-was")
+	store.ClearDeletedSessions(context.Background(), "ws-never-was")
 }
 
 // ---------------------------------------------------------------------------
@@ -173,12 +174,12 @@ func TestRedisStore_IsSessionDeleted_RedisDown_FailsClosed(t *testing.T) {
 	store := NewRedisStore(client, testActiveSessTTL)
 
 	// No tombstone exists for this session.
-	require.False(t, store.IsSessionDeleted("ws-1", "s1"))
+	require.False(t, store.IsSessionDeleted(context.Background(), "ws-1", "s1"))
 
 	// Tear down Redis.
 	mr.Close()
 
-	assert.True(t, store.IsSessionDeleted("ws-1", "s1"),
+	assert.True(t, store.IsSessionDeleted(context.Background(), "ws-1", "s1"),
 		"Redis-down must fail-CLOSED for IsSessionDeleted: assume deleted to prevent zombie resurrection")
 	_ = client.Close()
 }
@@ -196,7 +197,7 @@ func TestRedisStore_MarkSessionDeleted_RedisDown_NoPanic(t *testing.T) {
 	mr.Close()
 
 	assert.NotPanics(t, func() {
-		store.MarkSessionDeleted("ws-1", "s1")
+		store.MarkSessionDeleted(context.Background(), "ws-1", "s1")
 	}, "MarkSessionDeleted must not panic on Redis-down — silently fail and continue")
 	_ = client.Close()
 }
@@ -212,7 +213,7 @@ func TestRedisStore_ClearDeletedSessions_RedisDown_NoPanic(t *testing.T) {
 	mr.Close()
 
 	assert.NotPanics(t, func() {
-		store.ClearDeletedSessions("ws-1")
+		store.ClearDeletedSessions(context.Background(), "ws-1")
 	}, "ClearDeletedSessions must not panic on Redis-down")
 	_ = client.Close()
 }
@@ -225,13 +226,13 @@ func TestRedisStore_InvalidateAll_ClearsRedisDeletedTombstones(t *testing.T) {
 	store, mr, _, cleanup := setupRedisStore(t)
 	defer cleanup()
 
-	store.MarkSessionDeleted("ws-1", "s1")
-	store.MarkSessionDeleted("ws-1", "s2")
-	require.True(t, store.IsSessionDeleted("ws-1", "s1"))
+	store.MarkSessionDeleted(context.Background(), "ws-1", "s1")
+	store.MarkSessionDeleted(context.Background(), "ws-1", "s2")
+	require.True(t, store.IsSessionDeleted(context.Background(), "ws-1", "s1"))
 
-	store.InvalidateAll("ws-1")
+	store.InvalidateAll(context.Background(), "ws-1")
 
-	assert.False(t, store.IsSessionDeleted("ws-1", "s1"),
+	assert.False(t, store.IsSessionDeleted(context.Background(), "ws-1", "s1"),
 		"InvalidateAll must clear Redis-backed tombstones")
 	assert.False(t, mr.Exists(deletedKey("ws-1", "s1")))
 	assert.False(t, mr.Exists(deletedKey("ws-1", "s2")))

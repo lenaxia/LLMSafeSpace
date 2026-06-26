@@ -5,12 +5,16 @@ package agentd
 
 // Well-known paths shared between entrypoint scripts and agentd.
 // Shell scripts reference these by convention — keep in sync.
+//
+// US-35.7: credential output paths point to /sandbox-runtime (tmpfs, RAM-backed)
+// so no plaintext persists on the PVC at rest. $HOME-relative paths (SSH, git,
+// secrets) are symlinks created by the init container pointing into /sandbox-runtime/rt/*.
 const (
-	SecretsEnvPath  = "/tmp/secrets-env"
-	AgentConfigPath = "/tmp/agent-config.json"
+	SecretsEnvPath  = "/sandbox-runtime/secrets-env"
+	AgentConfigPath = "/sandbox-runtime/agent-config.json"
 	AdminPromptPath = "/tmp/admin-prompt.md"
 	PasswordPath    = "/sandbox-cfg/password"
-	SecretsBasePath = "/home/sandbox/.secrets"
+	SecretsBasePath = "/sandbox-runtime/rt/secrets"
 	WorkspacePath   = "/workspace"
 )
 

@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/lenaxia/llmsafespaces/api/internal/services/prompt"
+	"github.com/lenaxia/llmsafespaces/pkg/interfaces"
 	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
@@ -39,8 +40,16 @@ type TokenReviewer interface {
 }
 
 // bootstrapInjector prepares decrypted secrets for pod injection.
+//
+// This is the SessionlessSecretInjector contract from pkg/secrets:
+// the init container has no user session, so user-DEK encrypted
+// content is not deliverable here and the implementation must skip
+// it (with audit) rather than propagate a "DEK not available" error.
+//
+// Production wiring passes *secrets.SecretService, which satisfies
+// secrets.SessionlessSecretInjector via InjectSessionlessSecrets.
 type bootstrapInjector interface {
-	PrepareSecretsForInjection(ctx context.Context, userID, sessionID, workspaceID string) ([]byte, error)
+	InjectSessionlessSecrets(ctx context.Context, userID, workspaceID string) ([]byte, error)
 }
 
 // bootstrapWorkspaceLookup resolves workspace metadata for bootstrap.
@@ -92,6 +101,7 @@ type PodBootstrapHandler struct {
 	lookup            bootstrapWorkspaceLookup
 	promptSvc         *prompt.Service
 	expectedNamespace string
+	logger            interfaces.LoggerInterface
 }
 
 // NewPodBootstrapHandler constructs the handler. In production, pass a
@@ -118,6 +128,30 @@ func NewPodBootstrapHandlerFromClientset(clientset kubernetes.Interface, injecto
 // Used when the prompt service is built later in the startup sequence.
 func (h *PodBootstrapHandler) SetPromptService(svc *prompt.Service) {
 	h.promptSvc = svc
+}
+
+// SetLogger installs a structured logger so the handler can emit
+// diagnostic events for 5xx responses. Without this, the handler returns
+// a generic "secret preparation failed" body and the underlying error
+// (e.g. "DEK not available", "decrypt failed", "DB timeout") is silently
+// dropped — exactly the observability gap that turned the 2026-06-24
+// outage into a 30-minute diagnosis exercise instead of a 1-minute one.
+//
+// The logger is optional: when nil, the handler falls back to a silent
+// no-op so unit tests that don't care about log emission can omit it.
+// Production wiring (api/internal/app/app.go) MUST install one — see
+// TestPodBootstrapHandler_LoggerWired in api/internal/app/ for the
+// regression guard that enforces this.
+func (h *PodBootstrapHandler) SetLogger(l interfaces.LoggerInterface) {
+	h.logger = l
+}
+
+// HasLogger reports whether a logger has been wired. Used by the
+// app-level wiring test to enforce that production constructs the
+// handler with SetLogger called — without this, the underlying error
+// in 5xx responses is silently dropped (the very gap PR #407 closed).
+func (h *PodBootstrapHandler) HasLogger() bool {
+	return h.logger != nil
 }
 
 // Bootstrap handles POST /internal/v1/pod-bootstrap.
@@ -166,8 +200,19 @@ func (h *PodBootstrapHandler) Bootstrap(c *gin.Context) {
 		return
 	}
 
-	secretsJSON, err := h.injector.PrepareSecretsForInjection(c.Request.Context(), ws.UserID, "", req.WorkspaceID)
+	secretsJSON, err := h.injector.InjectSessionlessSecrets(c.Request.Context(), ws.UserID, req.WorkspaceID)
 	if err != nil {
+		// Surface the underlying error to operators. The user-facing body
+		// stays generic ("secret preparation failed") to avoid leaking
+		// internal-state detail across the trust boundary, but operators
+		// need the actual error to diagnose live boot failures (the
+		// 2026-06-24 outage took 30+ minutes to localize because this
+		// log line was missing).
+		if h.logger != nil {
+			h.logger.Error("pod-bootstrap: secret preparation failed", err,
+				"workspaceID", req.WorkspaceID,
+				"userID", ws.UserID)
+		}
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "secret preparation failed"})
 		return
 	}

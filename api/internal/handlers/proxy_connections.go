@@ -22,7 +22,7 @@ func (h *ProxyHandler) getPassword(ctx context.Context, workspaceID string) (str
 	// fallback stays local so the store remains pure-state with no I/O
 	// dependencies. This separation is what allows US-45.4 to swap the
 	// cache layer to Redis without dragging a K8s client into the store.
-	if pw, ok := h.state().GetCachedPassword(workspaceID); ok {
+	if pw, ok := h.state().GetCachedPassword(ctx, workspaceID); ok {
 		return pw, nil
 	}
 
@@ -37,24 +37,24 @@ func (h *ProxyHandler) getPassword(ctx context.Context, workspaceID string) (str
 		return "", fmt.Errorf("password secret %s has empty password key", secretName)
 	}
 
-	h.state().SetCachedPassword(workspaceID, pw)
+	h.state().SetCachedPassword(ctx, workspaceID, pw)
 	return pw, nil
 }
 
-func (h *ProxyHandler) checkAndAddActiveSession(workspaceID, sessionID string, maxSessions int) bool {
-	return h.state().CheckAndAddActiveSession(workspaceID, sessionID, maxSessions)
+func (h *ProxyHandler) checkAndAddActiveSession(ctx context.Context, workspaceID, sessionID string, maxSessions int) bool {
+	return h.state().CheckAndAddActiveSession(ctx, workspaceID, sessionID, maxSessions)
 }
 
-func (h *ProxyHandler) removeActiveSession(workspaceID, sessionID string) {
-	h.state().RemoveActiveSession(workspaceID, sessionID)
+func (h *ProxyHandler) removeActiveSession(ctx context.Context, workspaceID, sessionID string) {
+	h.state().RemoveActiveSession(ctx, workspaceID, sessionID)
 }
 
-func (h *ProxyHandler) isSessionActive(workspaceID, sessionID string) bool {
-	return h.state().IsSessionActive(workspaceID, sessionID)
+func (h *ProxyHandler) isSessionActive(ctx context.Context, workspaceID, sessionID string) bool {
+	return h.state().IsSessionActive(ctx, workspaceID, sessionID)
 }
 
-func (h *ProxyHandler) activeSessionCount(workspaceID string) int {
-	return h.state().ActiveSessionCount(workspaceID)
+func (h *ProxyHandler) activeSessionCount(ctx context.Context, workspaceID string) int {
+	return h.state().ActiveSessionCount(ctx, workspaceID)
 }
 
 func (h *ProxyHandler) acquireConnection(workspaceID string) bool {
@@ -89,8 +89,8 @@ func (h *ProxyHandler) connectionCount(workspaceID string) int {
 // connCount is intentionally NOT cleared — it represents in-flight HTTP
 // connections that must finish naturally; clearing it would leak the
 // connection-tracking accounting for live requests.
-func (h *ProxyHandler) invalidateCaches(workspaceID string) {
-	h.state().InvalidateAll(workspaceID)
+func (h *ProxyHandler) invalidateCaches(ctx context.Context, workspaceID string) {
+	h.state().InvalidateAll(ctx, workspaceID)
 
 	if h.sessionParents != nil {
 		h.sessionParents.invalidate(workspaceID)
@@ -100,8 +100,8 @@ func (h *ProxyHandler) invalidateCaches(workspaceID string) {
 // GetActiveSessions returns the IDs of all sessions currently marked
 // active for the workspace. Public because it is called from outside
 // the handlers package (admin tooling, canary checks).
-func (h *ProxyHandler) GetActiveSessions(workspaceID string) []string {
-	return h.state().GetActiveSessions(workspaceID)
+func (h *ProxyHandler) GetActiveSessions(ctx context.Context, workspaceID string) []string {
+	return h.state().GetActiveSessions(ctx, workspaceID)
 }
 
 // SetActiveSessionsForTest seeds the active-session set for the workspace.
@@ -116,9 +116,10 @@ func (h *ProxyHandler) GetActiveSessions(workspaceID string) []string {
 // (i.e. seed a state that violates the maxSessions invariant) must call
 // CheckAndAddActiveSession directly, not this helper.
 func (h *ProxyHandler) SetActiveSessionsForTest(workspaceID string, sessionIDs []string) {
-	h.state().ClearActiveSessions(workspaceID)
+	ctx := context.Background()
+	h.state().ClearActiveSessions(ctx, workspaceID)
 	for _, sid := range sessionIDs {
-		h.state().CheckAndAddActiveSession(workspaceID, sid, len(sessionIDs)+1)
+		h.state().CheckAndAddActiveSession(ctx, workspaceID, sid, len(sessionIDs)+1)
 	}
 }
 
@@ -127,7 +128,7 @@ func (h *ProxyHandler) SetActiveSessionsForTest(workspaceID string, sessionIDs [
 // Used by tests asserting that the per-workspace entry is cleaned up
 // after the last session is removed.
 func (h *ProxyHandler) HasActiveWorkspaceForTest(workspaceID string) bool {
-	return h.state().ActiveSessionCount(workspaceID) > 0
+	return h.state().ActiveSessionCount(context.Background(), workspaceID) > 0
 }
 
 // --- Test helpers for state that was previously poked via map fields ---
@@ -140,43 +141,43 @@ func (h *ProxyHandler) HasActiveWorkspaceForTest(workspaceID string) bool {
 
 // SetCachedPasswordForTest seeds the password cache for a workspace.
 func (h *ProxyHandler) SetCachedPasswordForTest(workspaceID, password string) {
-	h.state().SetCachedPassword(workspaceID, password)
+	h.state().SetCachedPassword(context.Background(), workspaceID, password)
 }
 
 // GetCachedPasswordForTest returns whether a password is cached for the
 // workspace (used by tests asserting cache invalidation).
 func (h *ProxyHandler) GetCachedPasswordForTest(workspaceID string) (string, bool) {
-	return h.state().GetCachedPassword(workspaceID)
+	return h.state().GetCachedPassword(context.Background(), workspaceID)
 }
 
 // SetWorkspaceConfigForTest seeds the workspace-config cache.
 func (h *ProxyHandler) SetWorkspaceConfigForTest(workspaceID string, cfg wsstate.Config) {
-	h.state().SetWorkspaceConfig(workspaceID, cfg)
+	h.state().SetWorkspaceConfig(context.Background(), workspaceID, cfg)
 }
 
 // GetWorkspaceConfigForTest returns the cached config for the workspace.
 func (h *ProxyHandler) GetWorkspaceConfigForTest(workspaceID string) (wsstate.Config, bool) {
-	return h.state().GetWorkspaceConfig(workspaceID)
+	return h.state().GetWorkspaceConfig(context.Background(), workspaceID)
 }
 
 // SetPriorPhaseForTest seeds the prior-phase entry.
 func (h *ProxyHandler) SetPriorPhaseForTest(workspaceID, phase string) {
-	h.state().SetPriorPhase(workspaceID, phase)
+	h.state().SetPriorPhase(context.Background(), workspaceID, phase)
 }
 
 // GetPriorPhaseForTest returns the prior-phase entry if present.
 func (h *ProxyHandler) GetPriorPhaseForTest(workspaceID string) (string, bool) {
-	return h.state().GetPriorPhase(workspaceID)
+	return h.state().GetPriorPhase(context.Background(), workspaceID)
 }
 
 // SetParentBackfilledForTest seeds the parent-backfill marker.
 func (h *ProxyHandler) SetParentBackfilledForTest(workspaceID string) {
-	h.state().SetParentBackfilled(workspaceID)
+	h.state().SetParentBackfilled(context.Background(), workspaceID)
 }
 
 // MarkSessionDeletedForTest seeds a deleted-session tombstone.
 func (h *ProxyHandler) MarkSessionDeletedForTest(workspaceID, sessionID string) {
-	h.state().MarkSessionDeleted(workspaceID, sessionID)
+	h.state().MarkSessionDeleted(context.Background(), workspaceID, sessionID)
 }
 
 // state returns the per-workspace state store, initializing it lazily.

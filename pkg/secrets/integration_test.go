@@ -176,7 +176,7 @@ func TestIntegration_InjectionAfterUpdate(t *testing.T) {
 	_, _ = svc.SetBindings(ctx, "user-1", "ws-1", []string{s.ID})
 
 	// Inject — should get "original"
-	data, _ := svc.PrepareSecretsForInjection(ctx, "user-1", sessionID, "ws-1")
+	data, _ := svc.InjectSecrets(ctx, "user-1", sessionID, "ws-1")
 	var injected []InjectedSecret
 	json.Unmarshal(data, &injected)
 	if injected[0].Plaintext != "original" {
@@ -187,7 +187,7 @@ func TestIntegration_InjectionAfterUpdate(t *testing.T) {
 	svc.UpdateSecret(ctx, "user-1", sessionID, s.ID, UpdateSecretRequest{Value: "updated"})
 
 	// Inject again — should get "updated"
-	data, _ = svc.PrepareSecretsForInjection(ctx, "user-1", sessionID, "ws-1")
+	data, _ = svc.InjectSecrets(ctx, "user-1", sessionID, "ws-1")
 	json.Unmarshal(data, &injected)
 	if injected[0].Plaintext != "updated" {
 		t.Errorf("Expected 'updated', got '%s'", injected[0].Plaintext)
@@ -217,7 +217,7 @@ func TestIntegration_AuditCompleteness(t *testing.T) {
 	_, _ = svc.SetBindings(ctx, "user-1", "ws-1", []string{s.ID})
 
 	// Inject
-	svc.PrepareSecretsForInjection(ctx, "user-1", sessionID, "ws-1")
+	svc.InjectSecrets(ctx, "user-1", sessionID, "ws-1")
 
 	// Delete
 	svc.DeleteSecret(ctx, "user-1", s.ID)

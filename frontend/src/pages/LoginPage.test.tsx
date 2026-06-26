@@ -261,4 +261,12 @@ describe("LoginPage", () => {
       expect(screen.getByText(/Something went wrong/i)).toBeInTheDocument();
     });
   });
+
+  it("shows SSO-not-configured message when ?sso=config_error", async () => {
+    window.history.replaceState({}, "", "/login?sso=config_error");
+    renderLoginPage();
+    await waitFor(() => {
+      expect(screen.getByText(/not configured on this instance/i)).toBeInTheDocument();
+    });
+  });
 });

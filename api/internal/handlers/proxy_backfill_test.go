@@ -101,7 +101,7 @@ func TestBackfillSessionParents_HappyPath(t *testing.T) {
 	si := newRecordingSessionIndex()
 	env.handler.sessionIndex = si
 
-	env.handler.BackfillSessionParents("ws-1")
+	env.handler.BackfillSessionParents(context.Background(), "ws-1")
 
 	require.Eventually(t, func() bool {
 		return si.parentCount() == 2
@@ -136,7 +136,7 @@ func TestBackfillSessionParents_IsIdempotent(t *testing.T) {
 	env.handler.sessionIndex = newRecordingSessionIndex()
 
 	for i := 0; i < 5; i++ {
-		env.handler.BackfillSessionParents("ws-1")
+		env.handler.BackfillSessionParents(context.Background(), "ws-1")
 	}
 
 	// Allow goroutines to complete; only ONE backend request should fire
@@ -180,14 +180,14 @@ func TestBackfillSessionParents_RetriesAfterFailure(t *testing.T) {
 	env.handler.sessionIndex = si
 
 	// First call hits the failing backend.
-	env.handler.BackfillSessionParents("ws-1")
+	env.handler.BackfillSessionParents(context.Background(), "ws-1")
 	require.Eventually(t, func() bool { return requestCount.Load() >= 1 }, time.Second, 10*time.Millisecond)
 	time.Sleep(50 * time.Millisecond)
 	assert.Equal(t, 0, si.parentCount(), "no parents written on first (failing) attempt")
 
 	// Backend recovers; second call retries since we cleared the gate.
 	failFirst.Store(false)
-	env.handler.BackfillSessionParents("ws-1")
+	env.handler.BackfillSessionParents(context.Background(), "ws-1")
 	require.Eventually(t, func() bool {
 		return si.parentCount() == 1
 	}, 2*time.Second, 10*time.Millisecond, "retry should populate parents after backend recovers")
@@ -214,7 +214,7 @@ func TestBackfillSessionParents_SkipsWhenWorkspaceNotActive(t *testing.T) {
 	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", "Suspended", "ws-1")
 	env.handler.sessionIndex = newRecordingSessionIndex()
 
-	env.handler.BackfillSessionParents("ws-1")
+	env.handler.BackfillSessionParents(context.Background(), "ws-1")
 	time.Sleep(50 * time.Millisecond)
 
 	assert.Equal(t, int32(0), requestCount.Load(), "must not hit backend for non-Active workspace")
@@ -243,13 +243,13 @@ func TestBackfillSessionParents_InvalidateCachesAllowsRetry(t *testing.T) {
 	env.setupPasswordWithT(t, "ws-1", "test-password")
 	env.handler.sessionIndex = newRecordingSessionIndex()
 
-	env.handler.BackfillSessionParents("ws-1")
+	env.handler.BackfillSessionParents(context.Background(), "ws-1")
 	require.Eventually(t, func() bool { return requestCount.Load() == 1 }, time.Second, 10*time.Millisecond)
 
 	// Simulate suspend/restart cycle.
-	env.handler.invalidateCaches("ws-1")
+	env.handler.invalidateCaches(context.Background(), "ws-1")
 
-	env.handler.BackfillSessionParents("ws-1")
+	env.handler.BackfillSessionParents(context.Background(), "ws-1")
 	require.Eventually(t, func() bool { return requestCount.Load() == 2 }, time.Second, 10*time.Millisecond,
 		"backfill must rerun after invalidateCaches")
 }

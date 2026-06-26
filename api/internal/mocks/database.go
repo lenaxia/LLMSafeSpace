@@ -160,12 +160,12 @@ func (m *MockDatabaseService) MarkWorkspaceDeleted(ctx context.Context, workspac
 	m.Called(ctx, workspaceID)
 }
 
-func (m *MockDatabaseService) CheckPermission(userID, resourceType, resourceID, action string) (bool, error) {
+func (m *MockDatabaseService) CheckPermission(ctx context.Context, userID, resourceType, resourceID, action string) (bool, error) {
 	args := m.Called(userID, resourceType, resourceID, action)
 	return args.Bool(0), args.Error(1)
 }
 
-func (m *MockDatabaseService) CheckResourceOwnership(userID, resourceType, resourceID string) (bool, error) {
+func (m *MockDatabaseService) CheckResourceOwnership(ctx context.Context, userID, resourceType, resourceID string) (bool, error) {
 	args := m.Called(userID, resourceType, resourceID)
 	return args.Bool(0), args.Error(1)
 }

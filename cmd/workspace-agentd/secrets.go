@@ -298,15 +298,19 @@ func (c materializeConfig) toPaths() secrets.Paths {
 // loadMaterializeConfig resolves filesystem paths. It honors the same
 // LLMSAFESPACES_* env-var overrides used by the test suite; in production
 // no overrides are set and defaults match the runtime pod layout.
+//
+// US-35.7: credential paths point to /sandbox-runtime (tmpfs) so reset()
+// operates on tmpfs targets, not PVC-side symlinks. The symlinks are created
+// by the credential-setup init container and point into the same tmpfs paths.
 func loadMaterializeConfig() materializeConfig {
 	home := envOrDefault("HOME", "/home/sandbox")
 	return materializeConfig{
 		home:             home,
 		secretsBaseDir:   envOrDefault("LLMSAFESPACES_SECRETS_BASE_DIR", agentd.SecretsBasePath),
-		sshDir:           envOrDefault("LLMSAFESPACES_SSH_DIR", home+"/.ssh"),
+		sshDir:           envOrDefault("LLMSAFESPACES_SSH_DIR", "/sandbox-runtime/rt/ssh"),
 		agentConfigPath:  envOrDefault("LLMSAFESPACES_AGENT_CONFIG_PATH", agentd.AgentConfigPath),
 		secretsEnvPath:   envOrDefault("LLMSAFESPACES_SECRETS_ENV_PATH", agentd.SecretsEnvPath),
-		gitCredsPath:     envOrDefault("LLMSAFESPACES_GIT_CREDS_PATH", home+"/.git-credentials"),
+		gitCredsPath:     envOrDefault("LLMSAFESPACES_GIT_CREDS_PATH", "/sandbox-runtime/rt/git-credentials"),
 		enricherCacheDir: envOrDefault("LLMSAFESPACES_ENRICHER_CACHE_DIR", home+"/.local/state/llmsafespaces"),
 	}
 }
@@ -384,6 +388,38 @@ func runMaterializeCommand(args []string, stdout, stderr io.Writer) int {
 	// Apply workspace-level default model if present. This file is
 	// written by the API server alongside secrets.json.
 	applyWorkspaceConfig(cfg.toPaths().AgentConfigPath, *from)
+
+	// 2026-06-23 cold-start optimization (item #1a, Phase C): pre-render
+	// the relay-provider block in agent-config.json BEFORE opencode is
+	// started. This eliminates the in-pod opencode-restart cycle that
+	// startRelayInjector imposes when called after opencode is running
+	// (saves ~6-8s per cold start AND every resume).
+	//
+	// Inputs (all controlled by the controller's pod_builder):
+	//   - $INFERENCE_RELAY_BASEURL: relay URL with embedded path-secret.
+	//     Empty → no-op (relay disabled cluster-wide).
+	//   - /sandbox-cfg/free-models.json: cluster-wide free-models catalog
+	//     dropped by the credential-setup init container. Absent → no-op
+	//     (Phase A refresher hasn't published yet, or it's disabled);
+	//     the in-pod startRelayInjector will run after opencode boots.
+	//   - $HOME/.local/opencode/auth.json: bypass check for personal
+	//     opencode key. Skipped if the user is paying for direct Zen.
+	//
+	// Outcome is logged but not fatal. Failures of the catalog read or
+	// the agent-config write are returned as exit 3 (the same as a
+	// secrets I/O failure) so kubelet sees CrashLoop on a real bug.
+	if outcome, err := applyRelayConfigPreBoot(
+		os.Getenv("INFERENCE_RELAY_BASEURL"),
+		preBootAuthJSONPath(cfg.home),
+		cfg.toPaths().AgentConfigPath,
+		log,
+	); err != nil {
+		_, _ = fmt.Fprintf(stderr, "materialize: pre-boot relay (%s): %v\n", outcome, err)
+		return 3
+	} else if outcome != "skipped_no_relay_url" && outcome != "skipped_no_catalog" {
+		// Useful operability signal in pod logs.
+		_, _ = fmt.Fprintf(stderr, "materialize: pre-boot relay outcome=%s\n", outcome)
+	}
 
 	if result != nil && result.HasFailures() {
 		// Some I/O failure already logged via reportResult; exit 3 so the
