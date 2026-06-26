@@ -28,10 +28,10 @@ const (
 // WorkspacePrompt holds the user-level agent customization for a workspace.
 // This is only consulted when the org's allow_user_prompt policy is true.
 type WorkspacePrompt struct {
-	WorkspaceID string  `json:"-"`
-	Prompt      string  `json:"prompt"`
-	AgentRoleID *string `json:"agentRoleId,omitempty"`
-	UpdatedBy   string  `json:"-"`
+	WorkspaceID string    `json:"-"`
+	Prompt      string    `json:"prompt"`
+	AgentRoleID *string   `json:"agentRoleId,omitempty"`
+	UpdatedBy   string    `json:"-"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 

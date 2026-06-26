@@ -29,17 +29,17 @@ type AgentRole struct {
 // RoleConfig is the strongly-typed view of a role's JSONB config.
 // Fields are pointers so nil = inherit from parent (during merge).
 type RoleConfig struct {
-	Version     int             `json:"version"`
-	System      *string         `json:"system,omitempty"`
-	Description *string         `json:"description,omitempty"`
-	Color       *string         `json:"color,omitempty"`
-	Model       *string         `json:"model,omitempty"`
-	Mode        *string         `json:"mode,omitempty"`
-	Hidden      *bool           `json:"hidden,omitempty"`
+	Version     int              `json:"version"`
+	System      *string          `json:"system,omitempty"`
+	Description *string          `json:"description,omitempty"`
+	Color       *string          `json:"color,omitempty"`
+	Model       *string          `json:"model,omitempty"`
+	Mode        *string          `json:"mode,omitempty"`
+	Hidden      *bool            `json:"hidden,omitempty"`
 	Permissions []PermissionRule `json:"permissions,omitempty"`
-	Tools       json.RawMessage `json:"tools,omitempty"`
-	MCP         json.RawMessage `json:"mcp,omitempty"`
-	Raw         map[string]any  `json:"-"`
+	Tools       json.RawMessage  `json:"tools,omitempty"`
+	MCP         json.RawMessage  `json:"mcp,omitempty"`
+	Raw         map[string]any   `json:"-"`
 }
 
 // PermissionRule is one tool-permission rule in a role config.
@@ -175,6 +175,6 @@ func MergeRoleConfigs(parent, child *RoleConfig) *RoleConfig {
 // chain and merging all configs from root to leaf.
 type EffectiveAgentRole struct {
 	AgentRole
-	EffectiveConfig RoleConfig `json:"effectiveConfig"`
-	InheritanceChain []string  `json:"inheritanceChain"`
+	EffectiveConfig  RoleConfig `json:"effectiveConfig"`
+	InheritanceChain []string   `json:"inheritanceChain"`
 }

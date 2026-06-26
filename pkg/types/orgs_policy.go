@@ -21,8 +21,8 @@ const (
 	PolicyMaxActiveWorkspacesPerMem OrgPolicyKey = "max_active_workspaces_per_member"
 
 	// Agent customization policies
-	PolicySysPromptOrg     OrgPolicyKey = "sys_prompt_org"
-	PolicyAllowUserPrompt  OrgPolicyKey = "allow_user_prompt"
+	PolicySysPromptOrg    OrgPolicyKey = "sys_prompt_org"
+	PolicyAllowUserPrompt OrgPolicyKey = "allow_user_prompt"
 )
 
 // OrgPolicy is one row of org_policies. The Value is the raw JSONB payload; the
