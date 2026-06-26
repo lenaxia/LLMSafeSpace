@@ -28,7 +28,10 @@ echo "== migration-jwt-sessions: resetting public schema =="
 $PSQL -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 
 echo "== applying migrations 000001-000045 =="
-for f in $(ls api/migrations/00000[1-9]*.up.sql api/migrations/00001[0-9]*.up.sql api/migrations/0000[2-3][0-9]*.up.sql api/migrations/000040*.up.sql api/migrations/000041*.up.sql api/migrations/000042*.up.sql api/migrations/000043*.up.sql api/migrations/000044*.up.sql api/migrations/000045*.up.sql 2>/dev/null | sort); do
+# Simpler glob: any .up.sql, sorted. Auto-handles future migrations
+# (000046+) without script edits. Matches the pattern in
+# migration-idempotent.sh and migration-roundtrip.sh.
+for f in $(ls api/migrations/*.up.sql 2>/dev/null | sort); do
     echo "  $f"
     $PSQL -f "$f" >/dev/null
 done
