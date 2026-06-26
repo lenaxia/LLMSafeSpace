@@ -1,8 +1,6 @@
 import { api } from "./client";
 import type {
   ActivateWorkspaceResponse,
-  ActiveSessionsResponse,
-  WorkspaceListItem,
   SessionListItem,
   WorkspaceListResponse,
   WorkspaceStatus,
@@ -52,8 +50,6 @@ export const workspacesApi = {
   activate: (id: string) => api.post<ActivateWorkspaceResponse>(`/workspaces/${id}/activate`),
   suspend: (id: string) => api.post<void>(`/workspaces/${id}/suspend`),
   getSessions: (id: string) => api.get<SessionListItem[]>(`/workspaces/${id}/sessions`),
-  getActiveSessions: (id: string) => api.get<ActiveSessionsResponse>(`/workspaces/${id}/sessions/active`),
-  getWorkspaceSessions: (id: string) => api.get<WorkspaceListItem[]>(`/workspaces/${id}/sessions`),
   getSession: (workspaceId: string, sessionId: string) =>
     api.get<OpenCodeSession>(`/workspaces/${workspaceId}/sessions/${sessionId}`),
   renameSession: (workspaceId: string, sessionId: string, title: string) =>

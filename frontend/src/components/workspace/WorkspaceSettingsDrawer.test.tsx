@@ -12,6 +12,7 @@ vi.mock("../../api/secrets", () => ({
 vi.mock("../../api/client", () => ({
   api: {
     get: vi.fn(),
+    put: vi.fn(),
   },
 }));
 
@@ -32,13 +33,18 @@ const mockWorkspace: WorkspaceListItem = {
 };
 
 describe("WorkspaceSettingsDrawer", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (api.get as ReturnType<typeof vi.fn>).mockResolvedValue({ bindings: [] });
+    (api.put as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+  });
+
   it("renders when open", () => {
     render(
       <WorkspaceSettingsDrawer
         workspace={mockWorkspace}
         open={true}
         onOpenChange={vi.fn()}
-        onSave={vi.fn()}
       />,
     );
     expect(screen.getByText("Workspace Settings")).toBeInTheDocument();
@@ -51,68 +57,39 @@ describe("WorkspaceSettingsDrawer", () => {
         workspace={mockWorkspace}
         open={false}
         onOpenChange={vi.fn()}
-        onSave={vi.fn()}
       />,
     );
     expect(screen.queryByText("Workspace Settings")).not.toBeInTheDocument();
   });
 
-  it("shows auto-suspend toggle defaulting to on", () => {
+  it("does not show auto-suspend controls (removed in US-47.2)", () => {
     render(
       <WorkspaceSettingsDrawer
         workspace={mockWorkspace}
         open={true}
         onOpenChange={vi.fn()}
-        onSave={vi.fn()}
       />,
     );
-    expect(screen.getByRole("switch")).toBeInTheDocument();
+    expect(screen.queryByText("Auto-Suspend")).not.toBeInTheDocument();
+    expect(screen.queryByText("Idle Timeout (min)")).not.toBeInTheDocument();
   });
 
-  it("shows idle timeout when auto-suspend is enabled", () => {
-    render(
-      <WorkspaceSettingsDrawer
-        workspace={mockWorkspace}
-        open={true}
-        onOpenChange={vi.fn()}
-        onSave={vi.fn()}
-      />,
-    );
-    expect(screen.getByLabelText("Idle Timeout (min)")).toBeInTheDocument();
-  });
-
-  it("calls onSave with settings when Save is clicked", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    render(
-      <WorkspaceSettingsDrawer
-        workspace={mockWorkspace}
-        open={true}
-        onOpenChange={vi.fn()}
-        onSave={onSave}
-      />,
-    );
-
-    fireEvent.click(screen.getByText("Save"));
-
-    await waitFor(() => {
-      expect(onSave).toHaveBeenCalledWith({
-        autoSuspendEnabled: true,
-        autoSuspendIdleMinutes: 60,
-      });
+  it("shows error when binding save fails", async () => {
+    (secretsApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      secrets: [{ id: "s1", name: "key", type: "llm-provider" }],
     });
-  });
-
-  it("shows error when onSave fails", async () => {
-    const onSave = vi.fn().mockRejectedValue(new Error("Network error"));
+    (api.get as ReturnType<typeof vi.fn>).mockResolvedValue({ bindings: [] });
+    (api.put as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Network error"));
     render(
       <WorkspaceSettingsDrawer
         workspace={mockWorkspace}
         open={true}
         onOpenChange={vi.fn()}
-        onSave={onSave}
       />,
     );
 
+    await waitFor(() => expect(screen.getByText("key")).toBeInTheDocument());
+    fireEvent.click(screen.getByLabelText("key"));
     fireEvent.click(screen.getByText("Save"));
 
     await waitFor(() => {
@@ -122,13 +99,11 @@ describe("WorkspaceSettingsDrawer", () => {
 
   it("closes drawer on successful save", async () => {
     const onOpenChange = vi.fn();
-    const onSave = vi.fn().mockResolvedValue(undefined);
     render(
       <WorkspaceSettingsDrawer
         workspace={mockWorkspace}
         open={true}
         onOpenChange={onOpenChange}
-        onSave={onSave}
       />,
     );
 
@@ -140,16 +115,21 @@ describe("WorkspaceSettingsDrawer", () => {
   });
 
   it("disables save button while saving", async () => {
-    const onSave = vi.fn().mockImplementation(() => new Promise(() => {})); // never resolves
+    (secretsApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+      secrets: [{ id: "s1", name: "key", type: "llm-provider" }],
+    });
+    (api.get as ReturnType<typeof vi.fn>).mockResolvedValue({ bindings: [] });
+    (api.put as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise(() => {}));
     render(
       <WorkspaceSettingsDrawer
         workspace={mockWorkspace}
         open={true}
         onOpenChange={vi.fn()}
-        onSave={onSave}
       />,
     );
 
+    await waitFor(() => expect(screen.getByText("key")).toBeInTheDocument());
+    fireEvent.click(screen.getByLabelText("key"));
     fireEvent.click(screen.getByText("Save"));
     expect(screen.getByText("Saving...")).toBeInTheDocument();
   });
@@ -160,7 +140,6 @@ describe("WorkspaceSettingsDrawer", () => {
         workspace={mockWorkspace}
         open={true}
         onOpenChange={vi.fn()}
-        onSave={vi.fn()}
       />,
     );
     const content = screen.getByText("Workspace Settings").closest("[class*='max-w-full']");
@@ -184,7 +163,6 @@ describe("WorkspaceSettingsDrawer – secret-type grouping (US-44.9)", () => {
         workspace={mockWorkspace}
         open={true}
         onOpenChange={vi.fn()}
-        onSave={vi.fn()}
       />,
     );
     await waitFor(() => expect(screen.getByText("Attached Secrets")).toBeInTheDocument());

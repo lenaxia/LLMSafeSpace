@@ -127,7 +127,7 @@ export function ChatPage() {
 
   // Reactive subscription to sessions list for context_used.
   // Uses the same query key as the Sidebar's sessions query so no extra fetch is made.
-  // staleTime:Infinity prevents re-fetching (Sidebar/useSessions owns the fetch lifecycle).
+  // staleTime:Infinity prevents re-fetching (Sidebar owns the fetch lifecycle).
   // notifyOnChangeProps:["data"] limits re-renders to data changes only.
   // We find the active session from the full list in the render body (not via `select`)
   // to avoid TanStack Query's structural-sharing optimisation dropping updates.
@@ -267,7 +267,7 @@ export function ChatPage() {
   }, [sessionStatus]);
 
 
-  const { send, abort, streaming, localStreaming, notifySessionIdle, error: chatError, clearError, atCapRetryAfter, clearAtCap, streamTimedOut, clearStreamTimedOut } = useChatStream(activeWorkspaceId, sessionId, serverBusy);
+  const { send, streaming, localStreaming, notifySessionIdle, error: chatError, clearError, atCapRetryAfter, clearAtCap, streamTimedOut, clearStreamTimedOut } = useChatStream(activeWorkspaceId, sessionId, serverBusy);
   const [retryStatus, setRetryStatus] = useState<RetryStatus | null>(null);
   const sessionTitle = useSessionTitle(activeWorkspaceId, sessionId, isReady, streaming);
 
@@ -983,7 +983,6 @@ export function ChatPage() {
               if (workspaceId && sessionId) {
                 workspacesApi.abortSession(workspaceId, sessionId);
               }
-              abort();
               void queue.clearAll();
             }}
             onLoadEarlier={() => fetchNextPage()}

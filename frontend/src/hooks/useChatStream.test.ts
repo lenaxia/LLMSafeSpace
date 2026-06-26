@@ -10,7 +10,6 @@ vi.mock("../api/messages", () => ({
 }));
 
 import { messagesApi } from "../api/messages";
-import * as eventsApi from "../api/events";
 
 // Helper: sends a message and signals idle after sendAsync resolves
 async function sendAndIdle(
@@ -215,11 +214,6 @@ describe("useChatStream", () => {
     expect(result.current.error).toBeNull();
   });
 
-  it("abort() is a no-op when not streaming", () => {
-    const { result } = renderHook(() => useChatStream("sb-1", "sess-1"));
-    expect(() => result.current.abort()).not.toThrow();
-  });
-
   it("does NOT install a beforeunload handler — refresh must not abort the in-flight LLM response", async () => {
     // Regression: prior to this fix, useChatStream installed a beforeunload
     // handler that called navigator.sendBeacon('/abort'), which killed the
@@ -236,12 +230,6 @@ describe("useChatStream", () => {
     expect(beforeUnloadCalls).toHaveLength(0);
 
     addSpy.mockRestore();
-  });
-
-  it("registerTabCloseAbort is not exported from api/events (removed in fix for refresh-abort bug)", () => {
-    // The function is the API surface that previously installed the bad
-     // beforeunload handler. Removing it ensures no regression.
-    expect((eventsApi as Record<string, unknown>).registerTabCloseAbort).toBeUndefined();
   });
 
   // ─────────────────────────────────────────────────────────────────────
