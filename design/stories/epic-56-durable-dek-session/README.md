@@ -2,7 +2,10 @@
 
 **Status:** Planning
 **Created:** 2026-06-25
-**Last Revision:** 2026-06-26 (review pass 1: corrected [HIGH] soft-unlock backfill ambiguity — wrap under matched key, not active key; rewrote threat-model framing so signing-key delivery is not equated with master-KEK delivery; refactored `GetDEK` so the low-level `pkg/secrets` package no longer reads middleware-owned context keys — caller passes the matched signing key explicitly; corrected change-site reference from `ValidateToken` to `parseTokenAcceptingRotatedKeys`; fixed `GetDEK` Redis-error handling to distinguish miss vs. transient error; added thundering-herd analysis as stress test #12; added regression test for rotated-key soft-unlock backfill; documented chart-migrations parity requirement; noted worklog deliverable).
+**Last Revision:** 2026-06-26 (review pass 2: added token-validation-cache interaction analysis — store `userID|matchedKeyIndex` in the token cache so a cache hit can surface the matched key without re-parsing; removed duplicate section header; rephrased the risk-table DB-compromise-alone row to cross-reference the threat-model section; added the worklog file to the diff).
+
+**Earlier Revisions:**
+- 2026-06-26 (review pass 1: corrected [HIGH] soft-unlock backfill ambiguity — wrap under matched key, not active key; rewrote threat-model framing so signing-key delivery is not equated with master-KEK delivery; refactored `GetDEK` so the low-level `pkg/secrets` package no longer reads middleware-owned context keys — caller passes the matched signing key explicitly; corrected change-site reference from `ValidateToken` to `parseTokenAcceptingRotatedKeys`; fixed `GetDEK` Redis-error handling to distinguish miss vs. transient error; added thundering-herd analysis as stress test #12; added regression test for rotated-key soft-unlock backfill; documented chart-migrations parity requirement; noted worklog deliverable).
 **Depends On:** US-50.x (master KEK at rest), existing JWT multi-key rotation window
 **Unblocks:** Epic 57 (workspace secret-delivery reconciler — Epic 35 regression fix)
 **Priority:** High — closes Invariant 2 ("DEK availability matches JWT validity") that is violated in production today (Valkey runs without persistence; every Valkey restart drops every cached DEK while JWTs remain valid for up to 30 days).
@@ -109,8 +112,6 @@ Atomic: same handler that caches to Redis writes durably. Failure to write durab
 
 ### GetDEK rehydrate-on-miss (`key_service.go`)
 
-### GetDEK rehydrate-on-miss (`key_service.go`)
-
 The caller (auth middleware) MUST pass the matched signing key into `GetDEK` explicitly. The low-level `pkg/secrets.KeyService` package does NOT read from `gin.Context` / middleware-owned context keys — that would be an upward-dependency violation (the codebase pattern at `auth.go:1244-1248` and `UnlockDEK`'s signature is "middleware sets context values, handler reads them and passes explicitly to KeyService"). The rehydrate path follows the same pattern.
 
 ```go
@@ -159,6 +160,24 @@ func (s *KeyService) rehydrateDEKFromJWTSession(ctx context.Context, sessionID s
 ```
 
 The "matched signing key" piece requires extending the existing multi-key parse loop at `parseTokenAcceptingRotatedKeys` (`auth.go:1259-1297`). Today it parses with the active key, then each previous key, and **discards which one matched**. The fix returns the matched key alongside the parsed token, and the auth middleware sets it in the gin context (`c.Set("jwt_signing_key", matched)`). Handlers that call `GetDEK` extract it from context and pass it explicitly — same pattern as `userID` / `sessionID`.
+
+#### Token validation cache interaction (#411 pass-2 [MED])
+
+`ValidateTokenWithClientIP` (`auth.go:456-464`) maintains a token-validation cache: `token:<hash>` → `userID`, TTL = min(remaining JWT lifetime, 1h). On a cache hit, the function returns `userID` **without parsing the JWT** — so the matched signing key is never computed.
+
+Gap scenario: Redis LRU pressure evicts `dek:<jti>` but RETAINS `token:<hash>` (the token-validation entries are smaller and accessed more often). The next request hits the token cache, the middleware never parses the JWT, no matched key in gin context. `GetDEK` receives `matchedSigningKey == nil` → returns `ErrDEKUnavailable` even though the durable row exists and the JWT is valid.
+
+The Valkey-restart scenario (the epic's primary trigger) is NOT affected because both caches flush together — token gets re-parsed on the next request, matched key becomes available. This gap is specifically the **LRU-eviction-of-DEK-only** path, which is plausible given the production observation of "1 DEK key cluster-wide" today.
+
+**Fix (chosen for implementation):** store the matched key index alongside the userID in the token cache, so a cache hit can still surface the matched key without re-parsing.
+
+```
+token:<hash> → "userID|matchedKeyIndex"      // matched key index into [active, prev[0], prev[1], ...]
+```
+
+The middleware reads both fields on cache hit and sets `c.Set("jwt_signing_key", keys[matchedKeyIndex])`. Cost: one tiny string change in the cache value format; no parsing on cache hit; no extra Redis round-trip; no change to the rotation window code paths.
+
+Alternative considered: have the middleware re-derive the matched key from `tokenString` on cache hit by calling the parse loop anyway. Rejected because it defeats the point of the validation cache (which exists to skip parsing on hot paths).
 
 ### Soft-unlock endpoint
 
@@ -241,7 +260,7 @@ The "soft-unlock needed" column is the small residual.
 | Multi-key rotation window too narrow → users re-login on rotation | `jwtPreviousSecrets` already exists; rotation policy is operator-controlled |
 | Backfill at feature launch surprises users with soft-unlock prompts | Communicate via release note; alternative would be force-logout at launch which is worse |
 | Signing key compromise | Already a catastrophic event; this epic doesn't change that posture — attacker who steals signing key can forge JWTs regardless |
-| DB compromise alone | Without signing-key (process memory), `wrapped_dek` is unrecoverable. Same property as master-KEK wrapped admin/org creds |
+| DB compromise alone | Without signing-key (process memory), `wrapped_dek` is unrecoverable. Same narrow DB-alone property as master-KEK wrapped admin/org creds — but the signing key's delivery is strictly weaker than the master KEK's (see "Threat model" above). The DB-alone case is genuinely unrecoverable; the broader "compromised signing key from env/Helm leak" is dominated by the JWT-forgery threat that pre-existed Epic 56. |
 
 ---
 
