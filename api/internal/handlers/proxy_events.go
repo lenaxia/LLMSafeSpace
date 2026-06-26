@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -426,6 +427,12 @@ func (h *ProxyHandler) publishDismissedForWorkspace(ctx context.Context, workspa
 
 const maxQueueRetries = 5
 
+// errSessionBusy is returned by sendQueuedToOpencode when opencode responds
+// with 409 Conflict. drainQueuedMessage treats this differently from transient
+// errors: instead of burning the retry budget (which would drop the message),
+// it requeues once and returns so the real onSessionIdle can drain later.
+var errSessionBusy = errors.New("session busy")
+
 type queueUpdateData struct {
 	Event     string `json:"event"`
 	MessageID string `json:"messageID"`
@@ -450,6 +457,22 @@ func (h *ProxyHandler) drainQueuedMessage(workspaceID, sessionID string) {
 		}
 
 		if err := h.sendQueuedToOpencode(ctx, workspaceID, sessionID, msg); err != nil {
+			// 409 Conflict: the session is genuinely busy. This can happen when
+			// drain-on-enqueue fires on a false-idle read (Redis fail-open or an
+			// autonomous opencode turn). Instead of burning the retry budget —
+			// which would permanently drop the message — requeue once and return.
+			// The real onSessionIdle (or the periodic sweep) will drain later
+			// when the session is actually idle.
+			if errors.Is(err, errSessionBusy) {
+				h.logger.Debug("drainQueuedMessage: session busy, requeuing for later",
+					"workspaceID", workspaceID, "sessionID", sessionID, "messageID", msg.ID)
+				if requeueErr := h.queueSvc.Requeue(ctx, workspaceID, sessionID, *msg); requeueErr != nil {
+					h.logger.Error("Failed to requeue message after 409", requeueErr,
+						"workspaceID", workspaceID, "sessionID", sessionID)
+				}
+				return
+			}
+
 			h.logger.Error("Failed to send queued message to opencode", err,
 				"workspaceID", workspaceID, "sessionID", sessionID, "messageID", msg.ID)
 			msg.RetryCount++
@@ -515,7 +538,7 @@ func (h *ProxyHandler) sendQueuedToOpencode(ctx context.Context, workspaceID, se
 		return nil
 	}
 	if resp.StatusCode == http.StatusConflict {
-		return fmt.Errorf("session busy")
+		return errSessionBusy
 	}
 	return fmt.Errorf("unexpected status: %d", resp.StatusCode)
 }
@@ -625,4 +648,77 @@ func (h *ProxyHandler) reconcileSessionState(workspaceID, podIP, password string
 			h.onSessionIdle(workspaceID, sess.ID)
 		}
 	}
+}
+
+const queueSweepInterval = 30 * time.Second
+
+// startQueueSweep runs a periodic sweep for stranded queued messages.
+// It is intended to run as a background goroutine.
+//
+// Unlike the lightweight onSessionIdle-based sweep, this one queries
+// /v1/statusz on the workspace pod for any workspace that has non-empty
+// queues. This catches the core bug (Mode A): sessions that went idle
+// but whose session.status=idle event was lost, leaving them stuck in
+// activeSess. Only workspaces with non-empty queues incur an HTTP call.
+func (h *ProxyHandler) startQueueSweep(stopCh <-chan struct{}) {
+	ticker := time.NewTicker(queueSweepInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-stopCh:
+			return
+		case <-ticker.C:
+			h.sweepStrandedQueues()
+		}
+	}
+}
+
+// sweepStrandedQueues scans for non-empty queues across all workspaces and
+// runs reconcileSessionState for each workspace that has queued messages.
+// reconcileSessionState queries /v1/statusz to determine the real session
+// state, bypassing the local activeSess map. This catches sessions that
+// are idle in opencode but still marked active locally (the lost-event case).
+func (h *ProxyHandler) sweepStrandedQueues() {
+	if h.queueSvc == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	all, err := h.queueSvc.PeekAllGlobal(ctx)
+	if err != nil {
+		h.logger.Debug("stranded queue sweep: PeekAllGlobal failed", "error", err)
+		return
+	}
+	if len(all) == 0 {
+		return
+	}
+
+	// Collect unique workspace IDs that have queued messages.
+	seen := make(map[string]struct{})
+	for _, msg := range all {
+		seen[msg.WorkspaceID] = struct{}{}
+	}
+
+	for workspaceID := range seen {
+		h.reconcileWorkspaceQueues(workspaceID)
+	}
+}
+
+func (h *ProxyHandler) reconcileWorkspaceQueues(workspaceID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	podIP, password, err := h.getPodIPAndPassword(ctx, workspaceID)
+	if err != nil {
+		h.logger.Debug("stranded queue sweep: cannot resolve pod for workspace",
+			"error", err, "workspaceID", workspaceID)
+		return
+	}
+
+	h.logger.Info("stranded queue sweep: reconciling workspace",
+		"workspaceID", workspaceID, "podIP", podIP)
+	h.reconcileSessionState(workspaceID, podIP, password)
 }

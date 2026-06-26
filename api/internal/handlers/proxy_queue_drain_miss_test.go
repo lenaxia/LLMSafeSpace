@@ -834,3 +834,229 @@ func TestReconcileStrandedQueues_MultipleIdleSessions(t *testing.T) {
 	assert.Equal(t, int64(0), n1, "ses-1 queue should be empty")
 	assert.Equal(t, int64(0), n2, "ses-2 queue should be empty")
 }
+
+// TestPeriodicSweep_DrainsStrandedQueue verifies that the periodic queue
+// sweep discovers non-empty queues via PeekAllGlobal and drains stranded
+// messages by calling reconcileSessionState (which queries /v1/statusz).
+//
+// This catches the core bug (Mode A): a session went idle but the
+// session.status=idle event was lost, leaving the session stuck in activeSess.
+// reconcileSessionState bypasses the local activeSess map by asking the pod.
+func TestPeriodicSweep_DrainsStrandedQueue(t *testing.T) {
+	promptCalled := make(chan string, 1)
+
+	// Single pod server that handles both statusz and prompt_async.
+	// The routingTransport dispatches /v1/statusz to eventHost and
+	// /session/*/prompt_async to promptHost — both are this server.
+	podServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/statusz":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			resp, _ := json.Marshal(map[string]interface{}{
+				"ready": true,
+				"sessions": []map[string]interface{}{
+					{"id": "ses-1", "status": "idle"},
+				},
+			})
+			_, _ = w.Write(resp)
+
+		case "/session/ses-1/prompt_async":
+			var body struct {
+				Parts []struct{ Text string } `json:"parts"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if len(body.Parts) > 0 {
+				select {
+				case promptCalled <- body.Parts[0].Text:
+				default:
+				}
+			}
+			w.WriteHeader(http.StatusNoContent)
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer podServer.Close()
+
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	redisClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer redisClient.Close()
+	svc := msgqueue.NewWithClient(redisClient)
+
+	podAddr := podServer.Listener.Addr().String()
+	httpClient := &http.Client{
+		Transport: &routingTransport{
+			eventHost:  podAddr,
+			promptHost: podAddr,
+		},
+		Timeout: 5 * time.Second,
+	}
+
+	k8sMock := newMockK8sWithWorkspace(t, "ws-1", podAddr)
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient, nil)
+	require.NoError(t, err)
+	handler.SetMessageQueueService(svc)
+	handler.userBroker = eventbroker.NewUserEventBroker()
+	setupPasswordSecret(t, handler, "ws-1", "test-pw")
+
+	// Enqueue a message for a session that the pod says is idle.
+	_, err = svc.Enqueue(context.Background(), "ws-1", "ses-1",
+		"stranded message that sweep should drain")
+	require.NoError(t, err)
+
+	n, err := svc.Len(context.Background(), "ws-1", "ses-1")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n, "precondition: queue should have 1 message")
+
+	// Run the periodic sweep directly. It calls PeekAllGlobal to find
+	// non-empty queues, then reconcileSessionState to query statusz.
+	handler.sweepStrandedQueues()
+
+	select {
+	case text := <-promptCalled:
+		assert.Contains(t, text, "stranded message that sweep should drain")
+		n, err = svc.Len(context.Background(), "ws-1", "ses-1")
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), n, "queue should be empty after sweep drains it")
+	case <-time.After(2 * time.Second):
+		t.Fatal("sweep: prompt_async was never called — sweep did not drain stranded queue")
+	}
+}
+
+// TestPeriodicSweep_BlocksActiveSession verifies that the sweep does NOT drain
+// sessions that statusz reports as busy, even when their queue is non-empty.
+// reconcileSessionState checks statusz before draining.
+func TestPeriodicSweep_BlocksActiveSession(t *testing.T) {
+	promptCalled := make(chan string, 1)
+
+	podServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/statusz":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			resp, _ := json.Marshal(map[string]interface{}{
+				"ready": true,
+				"sessions": []map[string]interface{}{
+					{"id": "ses-1", "status": "busy"},
+				},
+			})
+			_, _ = w.Write(resp)
+
+		case "/session/ses-1/prompt_async":
+			select {
+			case promptCalled <- "called":
+			default:
+			}
+			w.WriteHeader(http.StatusNoContent)
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer podServer.Close()
+
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	redisClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer redisClient.Close()
+	svc := msgqueue.NewWithClient(redisClient)
+
+	podAddr := podServer.Listener.Addr().String()
+	httpClient := &http.Client{
+		Transport: &routingTransport{
+			eventHost:  podAddr,
+			promptHost: podAddr,
+		},
+		Timeout: 5 * time.Second,
+	}
+
+	k8sMock := newMockK8sWithWorkspace(t, "ws-1", podAddr)
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient, nil)
+	require.NoError(t, err)
+	handler.SetMessageQueueService(svc)
+	handler.userBroker = eventbroker.NewUserEventBroker()
+	setupPasswordSecret(t, handler, "ws-1", "test-pw")
+
+	// Enqueue a message for a session that the pod says is busy.
+	_, err = svc.Enqueue(context.Background(), "ws-1", "ses-1",
+		"message queued during active session")
+	require.NoError(t, err)
+
+	n, err := svc.Len(context.Background(), "ws-1", "ses-1")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n, "precondition: queue should have 1 message")
+
+	// Run the sweep — it should NOT drain because statusz says busy.
+	handler.sweepStrandedQueues()
+
+	select {
+	case <-promptCalled:
+		t.Fatal("sweep should NOT drain active session")
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	n, err = svc.Len(context.Background(), "ws-1", "ses-1")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n,
+		"queue should be untouched when session is busy per statusz")
+}
+
+// TestDrainQueuedMessage_409RequeuesAndReturns verifies that when opencode
+// responds with 409 Conflict (session genuinely busy), drainQueuedMessage
+// requeues the message once and returns — instead of burning the retry budget
+// and permanently dropping the message. This is the key safety property that
+// makes drain-on-enqueue safe.
+func TestDrainQueuedMessage_409RequeuesAndReturns(t *testing.T) {
+	var promptAttempts atomic.Int32
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/session/ses-1/prompt_async" {
+			promptAttempts.Add(1)
+			w.WriteHeader(http.StatusConflict) // 409 — session busy
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer backend.Close()
+
+	transport := &redirectTransport{server: backend}
+	httpClient := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+
+	k8sMock := newMockK8sWithWorkspace(t, "ws-1", "10.0.0.1")
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient, nil)
+	require.NoError(t, err)
+
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	redisClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer redisClient.Close()
+	svc := msgqueue.NewWithClient(redisClient)
+	handler.SetMessageQueueService(svc)
+	handler.userBroker = eventbroker.NewUserEventBroker()
+	setupPasswordSecret(t, handler, "ws-1", "test-pw")
+
+	_, err = svc.Enqueue(context.Background(), "ws-1", "ses-1", "will get 409")
+	require.NoError(t, err)
+
+	handler.drainQueuedMessage("ws-1", "ses-1")
+
+	// Should have been called exactly once (requeued+returned, not retried).
+	assert.Equal(t, int32(1), promptAttempts.Load(),
+		"prompt_async should be called exactly once for 409 — no retries")
+
+	// Message should still be in the queue (requeued).
+	n, err := svc.Len(context.Background(), "ws-1", "ses-1")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n, "message should be requeued after 409, not dropped")
+
+	// RetryCount should NOT have been incremented (409 is not a retryable error).
+	msgs, err := svc.PeekAll(context.Background(), "ws-1", "ses-1")
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	assert.Equal(t, 0, msgs[0].RetryCount, "retry count should not increase for 409")
+}
