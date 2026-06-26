@@ -1,4 +1,4 @@
-# Worklog: NNNN_2026-06-26_queue-drain-reliability-and-frontend-sort.md
+# Worklog: 0555_2026-06-26_queue-drain-reliability-and-frontend-sort.md
 
 **Date:** 2026-06-26
 **Session:** Fix two production bugs reported as GitHub issues #387 and #388 — a frontend message rendering regression and a stranded-queue reliability gap.
