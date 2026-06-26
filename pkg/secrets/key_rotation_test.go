@@ -30,7 +30,7 @@ func TestKeyService_RotateKeyWithPassword(t *testing.T) {
 	_ = svc.UnlockDEK(ctx, "user-1", password, "sess-1", time.Hour)
 
 	// Get DEK before rotation
-	dekBefore, _ := svc.GetDEK(ctx, "sess-1")
+	dekBefore, _ := svc.GetDEK(ctx, "sess-1", nil)
 
 	// Rotate
 	result, err := svc.RotateKeyWithPassword(ctx, "user-1", password, "sess-1", time.Hour)
@@ -45,7 +45,7 @@ func TestKeyService_RotateKeyWithPassword(t *testing.T) {
 	}
 
 	// DEK should be different after rotation
-	dekAfter, _ := svc.GetDEK(ctx, "sess-1")
+	dekAfter, _ := svc.GetDEK(ctx, "sess-1", nil)
 	if bytesEq(dekBefore, dekAfter) {
 		t.Error("DEK should change after rotation")
 	}
@@ -115,7 +115,7 @@ func TestKeyService_RotateKeyWithPassword_LoginAfterRotation(t *testing.T) {
 		t.Fatalf("UnlockDEK after rotation failed: %v", err)
 	}
 
-	dek, _ := svc.GetDEK(ctx, "sess-2")
+	dek, _ := svc.GetDEK(ctx, "sess-2", nil)
 	if dek == nil || len(dek) != 32 {
 		t.Error("Should have valid DEK after re-login post-rotation")
 	}

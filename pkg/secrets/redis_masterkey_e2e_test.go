@@ -90,7 +90,7 @@ func TestE2E_MasterKey_FullLifecycle(t *testing.T) {
 	}
 
 	// === Phase 3: Create a secret (uses the cached DEK) ===
-	created, err := secretSvc.CreateSecret(ctx, userID, sessionID, CreateSecretRequest{
+	created, err := secretSvc.CreateSecret(ctx, userID, sessionID, nil, CreateSecretRequest{
 		Name:     "e2e-master-key-secret",
 		Type:     SecretTypeAPIKey,
 		Value:    "sk-super-secret-value-that-must-be-encrypted",
@@ -101,7 +101,7 @@ func TestE2E_MasterKey_FullLifecycle(t *testing.T) {
 	}
 
 	// === Phase 4: Decrypt the secret (proves DEK retrieval works through master key) ===
-	plaintext, err := secretSvc.DecryptSecretValue(ctx, userID, sessionID, created.ID)
+	plaintext, err := secretSvc.DecryptSecretValue(ctx, userID, sessionID, nil, created.ID)
 	if err != nil {
 		t.Fatalf("DecryptSecretValue: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestE2E_MasterKey_FullLifecycle(t *testing.T) {
 
 	// === Phase 5: Prepare injection (proves full flow works) ===
 	_, _ = secretSvc.SetBindings(ctx, userID, "ws-mk-test", []string{created.ID})
-	injData, err := secretSvc.InjectSecrets(ctx, userID, sessionID, "ws-mk-test")
+	injData, err := secretSvc.InjectSecrets(ctx, userID, sessionID, nil, "ws-mk-test")
 	if err != nil {
 		t.Fatalf("InjectSecrets: %v", err)
 	}

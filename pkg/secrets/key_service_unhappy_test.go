@@ -106,7 +106,7 @@ func TestKeyService_GetDEK_CacheFailure(t *testing.T) {
 	cache := &failingDEKCache{failOn: "get"}
 	svc := NewKeyService(store, cache)
 
-	_, err := svc.GetDEK(context.Background(), "sess")
+	_, err := svc.GetDEK(context.Background(), "sess", nil)
 	if err == nil {
 		t.Error("Should fail when cache.GetDEK fails")
 	}

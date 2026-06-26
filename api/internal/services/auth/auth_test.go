@@ -1012,7 +1012,7 @@ func (f *fakeKeyService) HasKeys(ctx context.Context, userID string) (bool, erro
 	return true, nil
 }
 
-func (f *fakeKeyService) GetDEK(ctx context.Context, sessionID string) ([]byte, error) {
+func (f *fakeKeyService) GetDEK(ctx context.Context, sessionID string, matchedSigningKey []byte) ([]byte, error) {
 	return nil, errors.New("not implemented in fake")
 }
 
@@ -1284,7 +1284,7 @@ func TestCreateAPIKey_Success(t *testing.T) {
 		return k.UserID == "user-1" && k.Name == "my-key" && k.Active && len(k.Key) > 4
 	})).Return(nil)
 
-	apiKey, err := svc.CreateAPIKey(ctx, "user-1", types.CreateAPIKeyRequest{Name: "my-key"}, "")
+	apiKey, err := svc.CreateAPIKey(ctx, "user-1", types.CreateAPIKeyRequest{Name: "my-key"}, "", nil)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, apiKey)
@@ -1300,7 +1300,7 @@ func TestCreateAPIKey_DBError(t *testing.T) {
 
 	mockDb.On("CreateAPIKey", ctx, mock.Anything).Return(errors.New("db error"))
 
-	apiKey, err := svc.CreateAPIKey(ctx, "user-1", types.CreateAPIKeyRequest{Name: "my-key"}, "")
+	apiKey, err := svc.CreateAPIKey(ctx, "user-1", types.CreateAPIKeyRequest{Name: "my-key"}, "", nil)
 
 	assert.Error(t, err)
 	assert.Nil(t, apiKey)

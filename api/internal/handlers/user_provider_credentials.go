@@ -91,7 +91,7 @@ func (h *UserProviderCredentialsHandler) Create(c *gin.Context) {
 	req.Provider = strings.TrimSpace(req.Provider)
 	req.Name = strings.TrimSpace(req.Name)
 
-	dek, err := h.keys.GetDEK(c.Request.Context(), sessionID)
+	dek, err := h.keys.GetDEK(c.Request.Context(), sessionID, extractMatchedSigningKey(c))
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "encryption unavailable"})
 		return

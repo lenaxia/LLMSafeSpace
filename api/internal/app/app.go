@@ -311,6 +311,12 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		asyncAudit = secrets.NewAsyncAuditLogger(pgStore, 4096, log)
 		keyService = secrets.NewKeyService(secrets.NewPgKeyStore(secretsPool), dekCache)
 		keyService.SetLogger(log)
+		// Epic 56: wire the durable jwt_sessions store so GetDEK can
+		// rehydrate user DEKs after Valkey restart / LRU eviction.
+		// Without this, every cache miss surfaces ErrDEKUnavailable
+		// regardless of JWT validity — the production bug this epic
+		// closes (see design/stories/epic-56-durable-dek-session).
+		keyService.SetJWTSessionStore(secrets.NewPgJWTSessionStore(secretsPool))
 		secretService = secrets.NewSecretService(keyService, asyncAudit)
 		auditStore = asyncAudit
 

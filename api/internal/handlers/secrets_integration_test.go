@@ -601,7 +601,7 @@ func TestHandler_RevealSecret_RequiresPasswordVerification(t *testing.T) {
 		t.Fatalf("UnlockDEK: %v", err)
 	}
 
-	created, err := svc.CreateSecret(ctx, userID, sessionID, secrets.CreateSecretRequest{
+	created, err := svc.CreateSecret(ctx, userID, sessionID, nil, secrets.CreateSecretRequest{
 		Name: "reveal-me", Type: secrets.SecretTypeEnvSecret, Value: "real-value",
 		Metadata: []byte(`{"var_name":"X"}`),
 	})
@@ -703,7 +703,7 @@ func TestHandler_RevealSecret_CiphertextDecryptFailed_Returns409(t *testing.T) {
 		t.Fatalf("UnlockDEK: %v", err)
 	}
 
-	created, err := svc.CreateSecret(ctx, userID, sessionID, secrets.CreateSecretRequest{
+	created, err := svc.CreateSecret(ctx, userID, sessionID, nil, secrets.CreateSecretRequest{
 		Name: "rotated-out", Type: secrets.SecretTypeEnvSecret, Value: "stale-value",
 		Metadata: []byte(`{"var_name":"X"}`),
 	})
@@ -807,7 +807,7 @@ func TestHandler_RevealSecret_DEKUnavailable_Returns403(t *testing.T) {
 	if err := keySvc.UnlockDEK(ctx, userID, password, sessionID, time.Hour); err != nil {
 		t.Fatalf("UnlockDEK: %v", err)
 	}
-	created, err := svc.CreateSecret(ctx, userID, sessionID, secrets.CreateSecretRequest{
+	created, err := svc.CreateSecret(ctx, userID, sessionID, nil, secrets.CreateSecretRequest{
 		Name: "expired-session", Type: secrets.SecretTypeEnvSecret, Value: "v",
 		Metadata: []byte(`{"var_name":"X"}`),
 	})

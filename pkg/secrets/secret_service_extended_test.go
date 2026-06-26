@@ -104,7 +104,7 @@ func TestSecretService_CreateSecret_AllTypes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp, err := svc.CreateSecret(ctx, "user-1", sessionID, tt.req)
+			resp, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, tt.req)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("Expected error, got nil")
@@ -135,7 +135,7 @@ func TestSecretService_ConcurrentAccess(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			name := "concurrent-" + string(rune('a'+idx))
-			_, errs[idx] = svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+			_, errs[idx] = svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 				Name: name, Type: SecretTypeAPIKey, Value: "val",
 				Metadata: json.RawMessage(`{"provider":"x"}`),
 			})
@@ -177,7 +177,7 @@ func TestSecretService_EncryptionIsolation(t *testing.T) {
 	_ = keySvc.UnlockDEK(ctx, "user-2", []byte("pw2"), "sess-2", time.Hour)
 
 	// User 1 creates a secret
-	created, err := svc.CreateSecret(ctx, "user-1", "sess-1", CreateSecretRequest{
+	created, err := svc.CreateSecret(ctx, "user-1", "sess-1", nil, CreateSecretRequest{
 		Name: "private", Type: SecretTypeAPIKey, Value: "user1-secret-key",
 		Metadata: json.RawMessage(`{"provider":"x"}`),
 	})
@@ -192,7 +192,7 @@ func TestSecretService_EncryptionIsolation(t *testing.T) {
 	}
 
 	// User 2 should not be able to decrypt user 1's secret
-	_, err = svc.DecryptSecretValue(ctx, "user-2", "sess-2", created.ID)
+	_, err = svc.DecryptSecretValue(ctx, "user-2", "sess-2", nil, created.ID)
 	if err == nil {
 		t.Error("User 2 should not be able to decrypt user 1's secret")
 	}
@@ -202,7 +202,7 @@ func TestSecretService_UpdatePreservesEncryption(t *testing.T) {
 	svc, store, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "rotate-test", Type: SecretTypeAPIKey, Value: "original",
 		Metadata: json.RawMessage(`{"provider":"x"}`),
 	})
@@ -213,7 +213,7 @@ func TestSecretService_UpdatePreservesEncryption(t *testing.T) {
 	copy(ctBefore, secretBefore.Ciphertext)
 
 	// Update
-	svc.UpdateSecret(ctx, "user-1", sessionID, created.ID, UpdateSecretRequest{Value: "updated"})
+	svc.UpdateSecret(ctx, "user-1", sessionID, nil, created.ID, UpdateSecretRequest{Value: "updated"})
 
 	// Ciphertext should be different
 	secretAfter, _ := store.GetSecret(ctx, "user-1", created.ID)
@@ -222,7 +222,7 @@ func TestSecretService_UpdatePreservesEncryption(t *testing.T) {
 	}
 
 	// But decryption should yield new value
-	plaintext, _ := svc.DecryptSecretValue(ctx, "user-1", sessionID, created.ID)
+	plaintext, _ := svc.DecryptSecretValue(ctx, "user-1", sessionID, nil, created.ID)
 	if string(plaintext) != "updated" {
 		t.Errorf("Expected 'updated', got '%s'", string(plaintext))
 	}
@@ -233,7 +233,7 @@ func TestSecretService_BindingMultipleWorkspaces(t *testing.T) {
 	ctx := context.Background()
 
 	// Create one secret
-	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "shared-key", Type: SecretTypeAPIKey, Value: "v",
 		Metadata: json.RawMessage(`{"provider":"x"}`),
 	})
@@ -259,11 +259,11 @@ func TestSecretService_RebindReplacesExisting(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	s1, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	s1, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "key-1", Type: SecretTypeAPIKey, Value: "v1",
 		Metadata: json.RawMessage(`{"provider":"a"}`),
 	})
-	s2, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	s2, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "key-2", Type: SecretTypeAPIKey, Value: "v2",
 		Metadata: json.RawMessage(`{"provider":"b"}`),
 	})
@@ -298,7 +298,7 @@ func TestKeyService_PasswordChange_SecretsStillDecryptable(t *testing.T) {
 	_ = keySvc.UnlockDEK(ctx, "user-1", oldPw, "sess-1", time.Hour)
 
 	// Create a secret
-	created, _ := svc.CreateSecret(ctx, "user-1", "sess-1", CreateSecretRequest{
+	created, _ := svc.CreateSecret(ctx, "user-1", "sess-1", nil, CreateSecretRequest{
 		Name: "persist", Type: SecretTypeAPIKey, Value: "my-api-key",
 		Metadata: json.RawMessage(`{"provider":"x"}`),
 	})
@@ -310,7 +310,7 @@ func TestKeyService_PasswordChange_SecretsStillDecryptable(t *testing.T) {
 	_ = keySvc.UnlockDEK(ctx, "user-1", newPw, "sess-2", time.Hour)
 
 	// Secret should still be decryptable
-	plaintext, err := svc.DecryptSecretValue(ctx, "user-1", "sess-2", created.ID)
+	plaintext, err := svc.DecryptSecretValue(ctx, "user-1", "sess-2", nil, created.ID)
 	if err != nil {
 		t.Fatalf("DecryptSecretValue after password change failed: %v", err)
 	}

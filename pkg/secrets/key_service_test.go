@@ -292,7 +292,7 @@ func TestKeyService_GetDEK(t *testing.T) {
 	_, _ = svc.InitializeUserKeys(ctx, "user-1", password)
 	_ = svc.UnlockDEK(ctx, "user-1", password, "session-1", time.Hour)
 
-	dek, err := svc.GetDEK(ctx, "session-1")
+	dek, err := svc.GetDEK(ctx, "session-1", nil)
 	if err != nil {
 		t.Fatalf("GetDEK failed: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestKeyService_GetDEK_NotCached(t *testing.T) {
 	svc := NewKeyService(store, cache)
 	ctx := context.Background()
 
-	_, err := svc.GetDEK(ctx, "nonexistent-session")
+	_, err := svc.GetDEK(ctx, "nonexistent-session", nil)
 	if err == nil {
 		t.Error("GetDEK for nonexistent session should fail")
 	}
@@ -326,7 +326,7 @@ func TestKeyService_ChangePassword(t *testing.T) {
 
 	// Unlock with old password to get DEK
 	_ = svc.UnlockDEK(ctx, "user-1", oldPassword, "session-before", time.Hour)
-	dekBefore, _ := svc.GetDEK(ctx, "session-before")
+	dekBefore, _ := svc.GetDEK(ctx, "session-before", nil)
 
 	// Change password
 	err := svc.ChangePassword(ctx, "user-1", "", oldPassword, newPassword)
@@ -347,7 +347,7 @@ func TestKeyService_ChangePassword(t *testing.T) {
 	}
 
 	// DEK should be the same (password change doesn't rotate DEK)
-	dekAfter, _ := svc.GetDEK(ctx, "session-new")
+	dekAfter, _ := svc.GetDEK(ctx, "session-new", nil)
 	if len(dekBefore) != len(dekAfter) {
 		t.Error("DEK length changed after password change")
 	}
@@ -384,7 +384,7 @@ func TestKeyService_ResetWithRecoveryKey(t *testing.T) {
 
 	// Unlock to get original DEK
 	_ = svc.UnlockDEK(ctx, "user-1", password, "session-orig", time.Hour)
-	originalDEK, _ := svc.GetDEK(ctx, "session-orig")
+	originalDEK, _ := svc.GetDEK(ctx, "session-orig", nil)
 
 	// Reset with recovery key
 	newPassword := []byte("new-password-after-reset")
@@ -405,7 +405,7 @@ func TestKeyService_ResetWithRecoveryKey(t *testing.T) {
 	}
 
 	// DEK should be unchanged
-	resetDEK, _ := svc.GetDEK(ctx, "session-reset")
+	resetDEK, _ := svc.GetDEK(ctx, "session-reset", nil)
 	for i := range originalDEK {
 		if originalDEK[i] != resetDEK[i] {
 			t.Error("DEK should be unchanged after recovery reset")
@@ -521,7 +521,7 @@ func TestKeyService_RotateKey_EagerlyReEncryptsSecrets(t *testing.T) {
 		"gamma": "gamma-value-pre-rotate",
 	}
 	for name, value := range plaintexts {
-		_, err := secretSvc.CreateSecret(ctx, userID, sessionID, CreateSecretRequest{
+		_, err := secretSvc.CreateSecret(ctx, userID, sessionID, nil, CreateSecretRequest{
 			Name: name, Type: SecretTypeEnvSecret, Value: value,
 			Metadata: []byte(`{"var_name":"X"}`),
 		})
@@ -554,7 +554,7 @@ func TestKeyService_RotateKey_EagerlyReEncryptsSecrets(t *testing.T) {
 		t.Fatalf("expected %d secrets after rotate, got %d", len(plaintexts), len(listed))
 	}
 	for _, sr := range listed {
-		got, err := secretSvc.DecryptSecretValue(ctx, userID, sessionID, sr.ID)
+		got, err := secretSvc.DecryptSecretValue(ctx, userID, sessionID, nil, sr.ID)
 		if err != nil {
 			t.Fatalf("DecryptSecretValue(%s) after rotate: %v — Bug 9 has regressed", sr.Name, err)
 		}
@@ -580,7 +580,7 @@ func TestKeyService_RotateKey_EagerlyReEncryptsSecrets(t *testing.T) {
 
 	// New secrets created post-rotation must also work — confirms the
 	// rotation did not corrupt the active DEK cache.
-	_, err = secretSvc.CreateSecret(ctx, userID, sessionID, CreateSecretRequest{
+	_, err = secretSvc.CreateSecret(ctx, userID, sessionID, nil, CreateSecretRequest{
 		Name: "post-rotate", Type: SecretTypeEnvSecret, Value: "post",
 		Metadata: []byte(`{"var_name":"X"}`),
 	})
@@ -619,7 +619,7 @@ func TestKeyService_RotateKey_IssuesFreshRecoveryKey(t *testing.T) {
 
 	// Create a pre-rotation secret.
 	plaintext := "pre-rotate-secret-value"
-	if _, err := secretSvc.CreateSecret(ctx, userID, sessionID, CreateSecretRequest{
+	if _, err := secretSvc.CreateSecret(ctx, userID, sessionID, nil, CreateSecretRequest{
 		Name: "pre", Type: SecretTypeEnvSecret, Value: plaintext,
 		Metadata: []byte(`{"var_name":"P"}`),
 	}); err != nil {
@@ -665,7 +665,7 @@ func TestKeyService_RotateKey_IssuesFreshRecoveryKey(t *testing.T) {
 	if len(listed) != 1 {
 		t.Fatalf("expected 1 secret post-reset, got %d", len(listed))
 	}
-	got, err := secretSvc.DecryptSecretValue(ctx, userID, "sess-after-reset", listed[0].ID)
+	got, err := secretSvc.DecryptSecretValue(ctx, userID, "sess-after-reset", nil, listed[0].ID)
 	if err != nil {
 		t.Fatalf("DecryptSecretValue post-rotation-then-reset: %v — recovery flow yielded the wrong DEK", err)
 	}

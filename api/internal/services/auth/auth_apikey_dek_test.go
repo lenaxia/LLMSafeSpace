@@ -52,7 +52,7 @@ func (d *dekJKeyService) UnlockDEK(_ context.Context, _ string, _ []byte, _ stri
 func (d *dekJKeyService) HasKeys(_ context.Context, _ string) (bool, error) {
 	return true, nil
 }
-func (d *dekJKeyService) GetDEK(_ context.Context, sessionID string) ([]byte, error) {
+func (d *dekJKeyService) GetDEK(_ context.Context, sessionID string, _ []byte) ([]byte, error) {
 	if d.getDEKErr != nil {
 		return nil, d.getDEKErr
 	}
@@ -97,7 +97,7 @@ func TestCreateAPIKey_WithDecryptAccess_StoresWrappedDEK(t *testing.T) {
 	apiKey, err := svc.CreateAPIKey(ctx, "user-1", types.CreateAPIKeyRequest{
 		Name:          "my-key",
 		DecryptAccess: true,
-	}, "jwt-session-1")
+	}, "jwt-session-1", nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, apiKey)
@@ -114,7 +114,7 @@ func TestCreateAPIKey_WithDecryptAccess_RequiresJWTSession(t *testing.T) {
 	apiKey, err := svc.CreateAPIKey(ctx, "user-1", types.CreateAPIKeyRequest{
 		Name:          "my-key",
 		DecryptAccess: true,
-	}, "")
+	}, "", nil)
 
 	assert.Error(t, err)
 	assert.Nil(t, apiKey)
@@ -128,7 +128,7 @@ func TestCreateAPIKey_WithDecryptAccess_RequiresMasterKey(t *testing.T) {
 	apiKey, err := svc.CreateAPIKey(ctx, "user-1", types.CreateAPIKeyRequest{
 		Name:          "my-key",
 		DecryptAccess: true,
-	}, "jwt-session-1")
+	}, "jwt-session-1", nil)
 
 	assert.Error(t, err)
 	assert.Nil(t, apiKey)
@@ -145,7 +145,7 @@ func TestCreateAPIKey_WithDecryptAccess_DEKNotAvailable(t *testing.T) {
 	apiKey, err := svc.CreateAPIKey(ctx, "user-1", types.CreateAPIKeyRequest{
 		Name:          "my-key",
 		DecryptAccess: true,
-	}, "jwt-session-1")
+	}, "jwt-session-1", nil)
 
 	assert.Error(t, err)
 	assert.Nil(t, apiKey)
@@ -167,7 +167,7 @@ func TestCreateAPIKey_WithoutDecryptAccess_NoWrappedDEK(t *testing.T) {
 	apiKey, err := svc.CreateAPIKey(ctx, "user-1", types.CreateAPIKeyRequest{
 		Name:          "my-key",
 		DecryptAccess: false,
-	}, "")
+	}, "", nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, apiKey)
@@ -195,7 +195,7 @@ func TestValidateAPIKey_WithDecryptAccess_UnlocksDEK(t *testing.T) {
 	apiKey, err := svc.CreateAPIKey(ctx, "user-1", types.CreateAPIKeyRequest{
 		Name:          "dek-key",
 		DecryptAccess: true,
-	}, "jwt-session-1")
+	}, "jwt-session-1", nil)
 	require.NoError(t, err)
 	require.NotNil(t, storedKey)
 
@@ -227,7 +227,7 @@ func TestValidateAPIKey_WithoutDecryptAccess_NoDEK(t *testing.T) {
 	apiKey, err := svc.CreateAPIKey(ctx, "user-1", types.CreateAPIKeyRequest{
 		Name:          "no-dek-key",
 		DecryptAccess: false,
-	}, "")
+	}, "", nil)
 	require.NoError(t, err)
 
 	rawKey := apiKey.Key
@@ -293,7 +293,7 @@ func TestCreateAPIKey_DEKRoundTrip(t *testing.T) {
 	apiKey, err := svc.CreateAPIKey(ctx, "user-1", types.CreateAPIKeyRequest{
 		Name:          "roundtrip-key",
 		DecryptAccess: true,
-	}, "jwt-session-rt")
+	}, "jwt-session-rt", nil)
 	require.NoError(t, err)
 
 	rawKey := apiKey.Key
@@ -330,7 +330,7 @@ func TestCreateAPIKey_NonDecryptKey_GetsKeyCiphertext(t *testing.T) {
 	apiKey, err := svc.CreateAPIKey(context.Background(), "user1", types.CreateAPIKeyRequest{
 		Name:          "no-decrypt",
 		DecryptAccess: false,
-	}, "")
+	}, "", nil)
 	require.NoError(t, err)
 	require.NotNil(t, apiKey)
 
@@ -356,7 +356,7 @@ func TestCreateAPIKey_NoRootKeyProvider_NoKeyCiphertext(t *testing.T) {
 	apiKey, err := svc.CreateAPIKey(context.Background(), "user1", types.CreateAPIKeyRequest{
 		Name:          "basic",
 		DecryptAccess: false,
-	}, "")
+	}, "", nil)
 	require.NoError(t, err)
 	require.NotNil(t, apiKey)
 	assert.Nil(t, storedKey.KeyCiphertext, "without RootKeyProvider, key_ciphertext should be nil")
@@ -431,7 +431,7 @@ func TestCreateAPIKey_WithSealedKeyProvider(t *testing.T) {
 	apiKey, err := svc.CreateAPIKey(context.Background(), "user1", types.CreateAPIKeyRequest{
 		Name:          "sealed-test",
 		DecryptAccess: false,
-	}, "")
+	}, "", nil)
 	require.NoError(t, err)
 	require.NotNil(t, apiKey)
 	assert.NotNil(t, storedKey.KeyCiphertext)
@@ -485,7 +485,7 @@ func TestValidateAPIKey_DEKNotSynced_SkipsUnwrap(t *testing.T) {
 	assert.Equal(t, "u1", userID)
 
 	sessionID := "apikey:" + pkgutil.HashString(rawKey)
-	cachedDEK, cacheErr := ks.GetDEK(context.Background(), sessionID)
+	cachedDEK, cacheErr := ks.GetDEK(context.Background(), sessionID, nil)
 	assert.Error(t, cacheErr, "DEK should NOT be cached when dek_synced=false")
 	assert.Nil(t, cachedDEK)
 }

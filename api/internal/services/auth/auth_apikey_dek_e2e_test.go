@@ -102,7 +102,7 @@ func setupDEKRegressionRouter(t *testing.T) (
 		}
 		sid, _ := c.Get("sessionID")
 		sidStr, _ := sid.(string)
-		apiKey, err := svc.CreateAPIKey(c.Request.Context(), svc.GetUserID(c), req, sidStr)
+		apiKey, err := svc.CreateAPIKey(c.Request.Context(), svc.GetUserID(c), req, sidStr, nil)
 		if err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
@@ -327,7 +327,7 @@ func TestE2E_APIKey_CreateWithoutDecryptAccess_NoDEKColumns(t *testing.T) {
 		apiKey, err := svc.CreateAPIKey(ctx, u.ID, types.CreateAPIKeyRequest{
 			Name:          "no-dek",
 			DecryptAccess: false,
-		}, "")
+		}, "", nil)
 		if err != nil {
 			t.Fatalf("CreateAPIKey: %v", err)
 		}
@@ -410,7 +410,7 @@ func TestE2E_APIKey_RewrapAfterRotation(t *testing.T) {
 	if jti == "" {
 		t.Fatal("JWT must have a jti claim")
 	}
-	_, err := keySvc.GetDEK(context.Background(), jti)
+	_, err := keySvc.GetDEK(context.Background(), jti, nil)
 	if err != nil {
 		t.Fatalf("DEK not available for JWT session (jti=%s): %v", jti, err)
 	}

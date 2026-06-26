@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,7 +40,12 @@ type KeyServiceInterface interface {
 	InitializeUserKeys(ctx context.Context, userID string, password []byte) (recoveryKeyHex string, err error)
 	UnlockDEK(ctx context.Context, userID string, password []byte, sessionID string, ttl time.Duration) error
 	HasKeys(ctx context.Context, userID string) (bool, error)
-	GetDEK(ctx context.Context, sessionID string) ([]byte, error)
+	// GetDEK (Epic 56) takes the matched signing key so the rehydrate path
+	// can derive the per-session KEK from the same key the JWT validated
+	// under. Pass nil for API-key callers — rehydrate is skipped and
+	// ErrDEKUnavailable is returned (correct: API keys have their own
+	// durable DEK path via api_keys.WrappedDEK).
+	GetDEK(ctx context.Context, sessionID string, matchedSigningKey []byte) ([]byte, error)
 	CacheDEK(ctx context.Context, sessionID string, dek []byte, ttl time.Duration) error
 }
 
@@ -312,8 +318,10 @@ func (s *Service) RevokeToken(ctx context.Context, token string) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	// Parse token (accepts active key or any previous key for F1.7.5)
-	parsedToken, err := s.parseTokenAcceptingRotatedKeys(token)
+	// Parse token (accepts active key or any previous key for F1.7.5).
+	// RevokeToken only needs claims; the matched-key + index returns added
+	// for Epic 56 are intentionally discarded here.
+	parsedToken, _, _, err := s.parseTokenAcceptingRotatedKeys(token)
 
 	if err != nil {
 		return fmt.Errorf("failed to parse token: %w", err)
@@ -445,9 +453,29 @@ func (s *Service) ValidateToken(ctx context.Context, tokenString string) (string
 // allowed_cidrs when clientIP is non-empty. ctx propagates the caller's
 // deadline/cancellation into the cache + DB calls (US-46.5 / issue #224);
 // the 5s cap is retained as a per-call safety bound derived from ctx.
+//
+// The token-validation cache value uses the format "userID|matchedKeyIndex"
+// (Epic 56 Step 3) so a cache hit can surface the matched signing-key
+// index without re-parsing the JWT. Legacy entries (pre-deploy) are bare
+// "userID"; the reader treats them as matchedKeyIndex = -1 ("unknown,
+// caller must re-parse if it needs the key"). The "revoked" sentinel
+// keeps its original meaning.
 func (s *Service) ValidateTokenWithClientIP(ctx context.Context, tokenString, clientIP string) (string, error) {
+	uid, _, err := s.validateTokenAndMatchedKey(ctx, tokenString, clientIP)
+	return uid, err
+}
+
+// validateTokenAndMatchedKey is the full-fat validation entry point used
+// by AuthMiddleware (Epic 56 Step 4) when it needs the matched signing-key
+// index alongside the userID. Returns (userID, matchedKeyIdx, err); a
+// matchedKeyIdx of -1 means "unknown" — either the token is an API key
+// (matched-key concept doesn't apply) or the legacy cache hit didn't
+// preserve it. Callers that need the actual signing-key bytes must
+// resolve idx → key via s.signingKeyByIndex().
+func (s *Service) validateTokenAndMatchedKey(ctx context.Context, tokenString, clientIP string) (string, int, error) {
 	if utilities.IsAPIKey(tokenString, s.config.Auth.APIKeyPrefix) {
-		return s.validateAPIKey(ctx, tokenString, clientIP)
+		uid, err := s.validateAPIKey(ctx, tokenString, clientIP)
+		return uid, -1, err
 	}
 
 	// Check if token is cached
@@ -456,35 +484,43 @@ func (s *Service) ValidateTokenWithClientIP(ctx context.Context, tokenString, cl
 	cacheKey := fmt.Sprintf("token:%s", pkgutil.HashString(tokenString))
 
 	// Try to get from cache first
-	if cachedUserID, err := s.cacheService.Get(ctx, cacheKey); err == nil && cachedUserID != "" {
-		if cachedUserID == "revoked" {
-			return "", errors.New("token has been revoked")
+	if cachedValue, err := s.cacheService.Get(ctx, cacheKey); err == nil && cachedValue != "" {
+		uid, idx, ok, revoked := parseValidationCacheValue(cachedValue)
+		if revoked {
+			return "", -1, errors.New("token has been revoked")
 		}
-		return cachedUserID, nil
+		if ok {
+			return uid, idx, nil
+		}
+		// Unparseable cache value — log + fall through to full parse.
+		s.logger.Warn("Unparseable token cache value; falling through to JWT parse",
+			"raw_value_len", len(cachedValue))
 	}
 
-	// Parse token (accepts active key or any previous key for F1.7.5)
-	token, err := s.parseTokenAcceptingRotatedKeys(tokenString)
-
+	// Parse token (accepts active key or any previous key for F1.7.5).
+	// Epic 56: capture matched key index so downstream rehydrate paths
+	// can derive the per-session KEK from the same key the JWT validated
+	// under (the [HIGH] regression case from #411 review pass 1).
+	token, _, matchedIdx, err := s.parseTokenAcceptingRotatedKeys(tokenString)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse token: %w", err)
+		return "", -1, fmt.Errorf("failed to parse token: %w", err)
 	}
 
 	// Validate token
 	if !token.Valid {
-		return "", errors.New("invalid token")
+		return "", -1, errors.New("invalid token")
 	}
 
 	// Get claims
 	claims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
-		return "", errors.New("invalid token claims")
+		return "", -1, errors.New("invalid token claims")
 	}
 
 	// Get user ID
 	userID, ok := claims["sub"].(string)
 	if !ok {
-		return "", errors.New("invalid user ID in token")
+		return "", -1, errors.New("invalid user ID in token")
 	}
 
 	// G18 (Epic 17): Defense-in-depth revocation check by jti AFTER parsing.
@@ -494,14 +530,14 @@ func (s *Service) ValidateTokenWithClientIP(ctx context.Context, tokenString, cl
 	// revocation could be silently bypassed under cache pressure.
 	if jti, ok := claims["jti"].(string); ok && jti != "" {
 		if status, gerr := s.cacheService.Get(ctx, "token:"+jti); gerr == nil && status == "revoked" {
-			return "", errors.New("token has been revoked")
+			return "", -1, errors.New("token has been revoked")
 		}
 	}
 
 	// Get expiration time
 	exp, ok := claims["exp"].(float64)
 	if !ok {
-		return "", errors.New("invalid expiration time in token")
+		return "", -1, errors.New("invalid expiration time in token")
 	}
 
 	// Calculate remaining time until expiration
@@ -516,14 +552,91 @@ func (s *Service) ValidateTokenWithClientIP(ctx context.Context, tokenString, cl
 			cacheDuration = time.Hour
 		}
 
-		err = s.cacheService.Set(ctx, cacheKey, userID, cacheDuration)
+		err = s.cacheService.Set(ctx, cacheKey, formatValidationCacheValue(userID, matchedIdx), cacheDuration)
 		if err != nil {
 			s.logger.Error("Failed to cache token", err, "user_id", userID)
 			// Continue even if caching fails
 		}
 	}
 
-	return userID, nil
+	return userID, matchedIdx, nil
+}
+
+// signingKeyByIndex resolves a matched-key index back to the actual
+// signing-key bytes. Returns nil for idx == -1 (unknown), API-key paths,
+// or an out-of-range index (which can happen on a Helm rotation that
+// shortens jwtPreviousSecrets while pre-rotation tokens are still valid;
+// the caller's auto-rehydrate path must then fall through to soft-unlock).
+//
+// The returned slice is a defensive copy — callers cannot mutate
+// s.jwtSecret or s.jwtPreviousSecrets via the return value.
+func (s *Service) signingKeyByIndex(idx int) []byte {
+	if idx < 0 {
+		return nil
+	}
+	if idx == 0 {
+		out := make([]byte, len(s.jwtSecret))
+		copy(out, s.jwtSecret)
+		return out
+	}
+	prev := idx - 1
+	if prev >= len(s.jwtPreviousSecrets) {
+		return nil
+	}
+	out := make([]byte, len(s.jwtPreviousSecrets[prev]))
+	copy(out, s.jwtPreviousSecrets[prev])
+	return out
+}
+
+// formatValidationCacheValue produces the cache value for a successful
+// token validation. Format: "userID|matchedKeyIdx". Both fields are
+// non-secret — the userID is already public to the request, the matched
+// key index is a small integer ≤ len(jwtPreviousSecrets).
+func formatValidationCacheValue(userID string, matchedIdx int) string {
+	return fmt.Sprintf("%s|%d", userID, matchedIdx)
+}
+
+// parseValidationCacheValue inverts formatValidationCacheValue and
+// transparently handles three legacy / sentinel cases:
+//
+//   - bare "userID" (pre-Epic-56 entries) → idx = -1 (unknown)
+//   - "revoked" → revoked = true, ok = false
+//   - "" → ok = false (cache miss)
+//   - "userID|N" where N is not an integer → idx = -1 (recoverable)
+//   - "userID|x|y" extra delimiters → idx = -1 (recoverable)
+//
+// "ok" means "the value identifies an authenticated user"; "revoked"
+// means "the cached entry explicitly says this token is revoked"; the
+// two are mutually exclusive.
+func parseValidationCacheValue(raw string) (userID string, matchedIdx int, ok bool, revoked bool) {
+	if raw == "" {
+		return "", -1, false, false
+	}
+	if raw == "revoked" {
+		return "", -1, false, true
+	}
+	// strings.Cut returns ok=false when there's no separator → legacy format.
+	uid, rest, found := strings.Cut(raw, "|")
+	if !found {
+		return raw, -1, true, false
+	}
+	// New format. We accept and surface uid even when the index suffix is
+	// malformed — the userID is still authenticated, the caller just has
+	// no matched-key hint (forcing a re-parse on rehydrate paths).
+	if rest == "" {
+		return uid, -1, true, false
+	}
+	// Additional pipes → not our format; treat as unknown index but still
+	// surface the uid prefix (defensive — value was set by us, schema drift
+	// is the only way to get here).
+	if strings.Contains(rest, "|") {
+		return uid, -1, true, false
+	}
+	idx, err := strconv.Atoi(rest)
+	if err != nil {
+		return uid, -1, true, false
+	}
+	return uid, idx, true, false
 }
 
 // validateAPIKey validates an API key (internal method).
@@ -1007,7 +1120,13 @@ func (s *Service) clearFailedAttempts(ctx context.Context, email string) {
 	}
 }
 
-func (s *Service) CreateAPIKey(ctx context.Context, userID string, req types.CreateAPIKeyRequest, sessionID string) (*types.APIKey, error) {
+// CreateAPIKey creates a new API key for the user. When req.DecryptAccess is
+// true, the user's DEK is wrapped under the new API key's derived KEK so
+// API-key auth can read encrypted user_secrets. matchedSigningKey is the
+// JWT signing key that validated the caller's session (Epic 56); pass nil
+// for API-key-authenticated callers (a key cannot be created from an API-key
+// session anyway — the existing sessionID check requires a JWT).
+func (s *Service) CreateAPIKey(ctx context.Context, userID string, req types.CreateAPIKeyRequest, sessionID string, matchedSigningKey []byte) (*types.APIKey, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return nil, fmt.Errorf("failed to generate api key: %w", err)
@@ -1044,7 +1163,7 @@ func (s *Service) CreateAPIKey(ctx context.Context, userID string, req types.Cre
 			return nil, errors.New("key service not configured; decrypt_access keys unavailable")
 		}
 
-		dek, err := s.keyService.GetDEK(ctx, sessionID)
+		dek, err := s.keyService.GetDEK(ctx, sessionID, matchedSigningKey)
 		if err != nil {
 			return nil, fmt.Errorf("DEK not available for wrapping: %w", err)
 		}
@@ -1134,8 +1253,11 @@ func (s *Service) AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// Validate token
-		userID, err := s.ValidateTokenWithClientIP(c.Request.Context(), tokenString, c.ClientIP())
+		// Validate token. Epic 56: also surface the matched signing-key
+		// index so the rehydrate path can derive the per-session KEK from
+		// the same key the JWT validated under. For API-key auth, idx = -1
+		// (no JWT) and signingKeyByIndex returns nil.
+		userID, matchedIdx, err := s.validateTokenAndMatchedKey(c.Request.Context(), tokenString, c.ClientIP())
 		if err != nil {
 			c.JSON(401, gin.H{"error": "Invalid or expired token"})
 			c.Abort()
@@ -1144,6 +1266,17 @@ func (s *Service) AuthMiddleware() gin.HandlerFunc {
 
 		// Set user ID in context
 		c.Set("userID", userID)
+
+		// Epic 56 Step 4: expose the matched JWT signing key (and its
+		// rotation-window index) for downstream KeyService.GetDEK callers.
+		// We always set jwt_signing_key_index so handlers can distinguish
+		// "no value" (key wasn't set at all, suggests an unrelated bug)
+		// from "set to -1" (legitimately unknown — API key auth, legacy
+		// cache hit, or out-of-rotation-window scenarios).
+		c.Set("jwt_signing_key_index", matchedIdx)
+		if key := s.signingKeyByIndex(matchedIdx); key != nil {
+			c.Set("jwt_signing_key", key)
+		}
 
 		// Set session ID for DEK cache lookup in secret management.
 		if jti := utilities.ExtractJTI(tokenString); jti != "" {
@@ -1220,7 +1353,7 @@ func (s *Service) OptionalAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tokenString := s.extractToken(c)
 		if tokenString != "" {
-			userID, err := s.ValidateTokenWithClientIP(c.Request.Context(), tokenString, c.ClientIP())
+			userID, matchedIdx, err := s.validateTokenAndMatchedKey(c.Request.Context(), tokenString, c.ClientIP())
 			if err == nil && userID != "" {
 				suspended := false
 				// OptionalAuthMiddleware never aborts; it excludes a suspended
@@ -1247,6 +1380,13 @@ func (s *Service) OptionalAuthMiddleware() gin.HandlerFunc {
 					} else if utilities.IsAPIKey(tokenString, s.config.Auth.APIKeyPrefix) {
 						c.Set("sessionID", "apikey:"+pkgutil.HashString(tokenString))
 					}
+					// Epic 56 Step 4: same context keys as AuthMiddleware so
+					// optional-auth handlers (e.g. GetUser, public-with-bonus)
+					// can use the durable-DEK rehydrate path when present.
+					c.Set("jwt_signing_key_index", matchedIdx)
+					if key := s.signingKeyByIndex(matchedIdx); key != nil {
+						c.Set("jwt_signing_key", key)
+					}
 				}
 			}
 		}
@@ -1254,49 +1394,71 @@ func (s *Service) OptionalAuthMiddleware() gin.HandlerFunc {
 	}
 }
 
-// The keyFunc closure is shared between ValidateToken and
-// RevokeToken so both surfaces honor the rotated-key list.
-func (s *Service) parseTokenAcceptingRotatedKeys(token string) (*jwt.Token, error) {
-	keyFunc := func(t *jwt.Token) (interface{}, error) {
+// parseTokenAcceptingRotatedKeys parses the token under the active
+// signing key or any previous (rotation-window) key. Returns the parsed
+// token along with the *matched* signing key and its index so callers
+// that need to derive per-session crypto from the same key the JWT
+// validated under (Epic 56: durable DEK rehydrate, soft-unlock backfill)
+// can do so explicitly.
+//
+// Index convention:
+//
+//	 0 = active key (s.jwtSecret)
+//	 1 = s.jwtPreviousSecrets[0]
+//	 2 = s.jwtPreviousSecrets[1]
+//	...
+//	-1 = sentinel for "no key matched" (caller should also see a non-nil error)
+//
+// Callers that do not need the matched key (RevokeToken,
+// ValidateTokenWithClientIP without rehydrate) can discard the matched
+// key and index. The shape change is intentional: making the matched
+// key always-available eliminates a class of subtle bugs where the
+// caller assumed the active key was the matched key. See the [HIGH]
+// finding from PR #411 review pass 1.
+func (s *Service) parseTokenAcceptingRotatedKeys(token string) (*jwt.Token, []byte, int, error) {
+	// Active-key first attempt
+	parsed, err := jwt.Parse(token, func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
-		// jwt.Parse calls keyFunc once per parse attempt; we return
-		// a slice of candidate keys via a custom multi-key strategy
-		// not natively supported by jwt-go. Instead we parse
-		// repeatedly: first with the active key, then with each
-		// previous key. The first non-error parse wins.
 		return s.jwtSecret, nil
-	}
-	parsed, err := jwt.Parse(token, keyFunc)
+	})
 	if err == nil && parsed.Valid {
-		return parsed, nil
+		// Return a defensive copy of the matched key so callers cannot
+		// mutate s.jwtSecret through the returned slice. Cheap (32-byte
+		// secrets) and removes a footgun.
+		matched := make([]byte, len(s.jwtSecret))
+		copy(matched, s.jwtSecret)
+		return parsed, matched, 0, nil
 	}
-	// Fall through: try each previous key. We re-parse with a
-	// fresh keyFunc that returns the candidate.
+
+	// Previous keys
 	var lastErr error
-	for _, prev := range s.jwtPreviousSecrets {
-		altKeyFunc := func(prevKey []byte) jwt.Keyfunc {
-			return func(t *jwt.Token) (interface{}, error) {
-				if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-					return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-				}
-				return prevKey, nil
+	for i, prev := range s.jwtPreviousSecrets {
+		prevKey := prev
+		alt, altErr := jwt.Parse(token, func(t *jwt.Token) (interface{}, error) {
+			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 			}
-		}(prev)
-		alt, altErr := jwt.Parse(token, altKeyFunc)
+			return prevKey, nil
+		})
 		if altErr == nil && alt.Valid {
-			return alt, nil
+			matched := make([]byte, len(prevKey))
+			copy(matched, prevKey)
+			return alt, matched, i + 1, nil
 		}
 		lastErr = altErr
 	}
+
+	// Nothing matched. Surface the most-recent parse error if any,
+	// else the active-key error, else a synthetic sentinel.
 	if err != nil {
-		return nil, err
+		return nil, nil, -1, err
 	}
 	if lastErr != nil {
-		return nil, lastErr
+		return nil, nil, -1, lastErr
 	}
-	return nil, errors.New("token signature does not verify against any active or previous key")
+	return nil, nil, -1, errors.New("token signature does not verify against any active or previous key")
 }
 
 func zeroBytes(b []byte) {

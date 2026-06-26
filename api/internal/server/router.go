@@ -751,7 +751,14 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, insta
 		}
 		sessionID, _ := c.Get("sessionID")
 		sid, _ := sessionID.(string)
-		apiKey, err := authSvc.CreateAPIKey(c.Request.Context(), userID, req, sid)
+		// Epic 56: forward the matched JWT signing key (nil for API-key
+		// auth) so CreateAPIKey's DEK-wrapping path can rehydrate from
+		// jwt_sessions on Redis miss.
+		var matchedKey []byte
+		if v, ok := c.Get("jwt_signing_key"); ok {
+			matchedKey, _ = v.([]byte)
+		}
+		apiKey, err := authSvc.CreateAPIKey(c.Request.Context(), userID, req, sid, matchedKey)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return

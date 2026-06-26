@@ -26,7 +26,7 @@ func (p *PostgresSecretProvider) Encrypt(ctx context.Context, owner SecretOwner,
 		return nil, 0, fmt.Errorf("no active session for encryption")
 	}
 
-	dek, err := p.keys.GetDEK(ctx, sessionID)
+	dek, err := p.keys.GetDEK(ctx, sessionID, matchedSigningKeyFromContext(ctx))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -50,7 +50,7 @@ func (p *PostgresSecretProvider) Decrypt(ctx context.Context, owner SecretOwner,
 		return nil, fmt.Errorf("no active session for decryption")
 	}
 
-	dek, err := p.keys.GetDEK(ctx, sessionID)
+	dek, err := p.keys.GetDEK(ctx, sessionID, matchedSigningKeyFromContext(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -76,10 +76,24 @@ func (p *PostgresSecretProvider) DEKAvailable(ctx context.Context, owner SecretO
 type contextKeyType string
 
 const contextKeySessionID contextKeyType = "secretsSessionID"
+const contextKeyMatchedSigningKey contextKeyType = "secretsMatchedSigningKey"
 
 // ContextWithSessionID adds a session ID to the context for the SecretProvider.
 func ContextWithSessionID(ctx context.Context, sessionID string) context.Context {
 	return context.WithValue(ctx, contextKeySessionID, sessionID)
+}
+
+// ContextWithMatchedSigningKey carries the JWT signing key that validated
+// the caller's token, so PostgresSecretProvider.Encrypt/Decrypt can pass
+// it through to KeyService.GetDEK for durable-DEK rehydrate (Epic 56).
+// Pass nil for API-key / sessionless paths — KeyService.GetDEK will
+// surface ErrDEKUnavailable when rehydrate is needed.
+//
+// Note: this is the SecretProvider's own typed-context key, NOT the
+// gin.Context value set by AuthMiddleware. Handlers extract from gin and
+// stash here before invoking provider methods.
+func ContextWithMatchedSigningKey(ctx context.Context, matchedSigningKey []byte) context.Context {
+	return context.WithValue(ctx, contextKeyMatchedSigningKey, matchedSigningKey)
 }
 
 func sessionIDFromContext(ctx context.Context) string {
@@ -88,6 +102,15 @@ func sessionIDFromContext(ctx context.Context) string {
 		return ""
 	}
 	return v.(string)
+}
+
+func matchedSigningKeyFromContext(ctx context.Context) []byte {
+	v := ctx.Value(contextKeyMatchedSigningKey)
+	if v == nil {
+		return nil
+	}
+	b, _ := v.([]byte)
+	return b
 }
 
 // Ensure PostgresSecretProvider implements SecretProvider at compile time.

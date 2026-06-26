@@ -249,7 +249,7 @@ func (t *trackingKeyService) HasKeys(_ context.Context, userID string) (bool, er
 	return t.initialized[userID], nil
 }
 
-func (t *trackingKeyService) GetDEK(_ context.Context, _ string) ([]byte, error) {
+func (t *trackingKeyService) GetDEK(_ context.Context, _ string, _ []byte) ([]byte, error) {
 	return nil, nil
 }
 
