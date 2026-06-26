@@ -56,9 +56,13 @@ func wsCacheKey(workspaceID string) string { return cacheKeyPref + workspaceID }
 // called by the bootstrap endpoint to deliver the admin prompt to the pod.
 func (s *Service) ResolveEffective(ctx context.Context, workspaceID string) (*types.EffectivePrompt, error) {
 	if s.cache != nil {
-		var cached types.EffectivePrompt
-		if err := s.cache.GetObject(ctx, wsCacheKey(workspaceID), &cached); err == nil {
-			return &cached, nil
+		// A cache MISS returns nil error from cache.GetObject (redis.Nil is
+		// swallowed), leaving the pointer untouched (nil). A HIT unmarshals
+		// the stored object and makes the pointer non-nil. We must consult
+		// the store on miss, so nil-pointer is the miss sentinel.
+		var cached *types.EffectivePrompt
+		if err := s.cache.GetObject(ctx, wsCacheKey(workspaceID), &cached); err == nil && cached != nil {
+			return cached, nil
 		}
 	}
 
@@ -139,9 +143,11 @@ func mergePromptParts(p *types.EffectivePrompt) string {
 
 func (s *Service) getPlatformPrompt(ctx context.Context) (string, error) {
 	if s.cache != nil {
-		var cached string
-		if err := s.cache.GetObject(ctx, platformCacheKey, &cached); err == nil {
-			return cached, nil
+		// nil-pointer sentinel distinguishes miss (nil err, ptr stays nil)
+		// from a legitimately-empty cached platform prompt ("").
+		var cached *string
+		if err := s.cache.GetObject(ctx, platformCacheKey, &cached); err == nil && cached != nil {
+			return *cached, nil
 		}
 	}
 

@@ -6,8 +6,8 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/lenaxia/llmsafespaces/api/internal/services/role"
@@ -18,14 +18,15 @@ import (
 type roleStore interface {
 	GetAgentRole(ctx context.Context, roleID string) (*types.AgentRole, error)
 	ListAgentRoles(ctx context.Context, scope string, orgID string) ([]*types.AgentRole, error)
-	CreateAgentRole(ctx context.Context, role *types.AgentRole, configJSON []byte, updatedBy string) (*types.AgentRole, error)
-	UpdateAgentRole(ctx context.Context, roleID string, role *types.AgentRole, configJSON []byte, expectedUpdatedAt interface{}) (*types.AgentRole, error)
+	CreateAgentRole(ctx context.Context, role *types.AgentRole, configJSON []byte) (*types.AgentRole, error)
+	UpdateAgentRole(ctx context.Context, roleID string, role *types.AgentRole, configJSON []byte) (*types.AgentRole, error)
 	DeleteAgentRole(ctx context.Context, roleID string) error
 	GetRoleDependents(ctx context.Context, roleID string) ([]*types.AgentRole, error)
 	HasRoleWorkspaceUsage(ctx context.Context, roleID string) (bool, error)
 	SetOrgDefaultRole(ctx context.Context, orgID, roleID string) error
 	GetWorkspaceAgentRole(ctx context.Context, workspaceID string) (*types.AgentRole, error)
 	SetWorkspaceAgentRole(ctx context.Context, workspaceID, roleID, userID string) error
+	ClearWorkspaceAgentRole(ctx context.Context, workspaceID, userID string) error
 	GetWorkspaceOrgID(ctx context.Context, workspaceID string) (string, error)
 	GetOrgPolicies(ctx context.Context, orgID string) ([]*types.OrgPolicy, error)
 	LogOrgEvent(ctx context.Context, orgID, actorID, action, targetID string, metadata map[string]any) error
@@ -45,21 +46,21 @@ func NewAgentRoleHandler(store roleStore, svc *role.Service, authSvc orgAuthServ
 }
 
 type createRoleRequest struct {
-	Name        string             `json:"name" binding:"required,max=100"`
-	Slug        string             `json:"slug" binding:"required,max=50"`
-	Description string             `json:"description"`
-	Extends     *string            `json:"extends,omitempty"`
-	IsDefault   bool               `json:"isDefault"`
-	Config      *types.RoleConfig  `json:"config,omitempty"`
+	Name        string            `json:"name" binding:"required,max=100"`
+	Slug        string            `json:"slug" binding:"required,max=50"`
+	Description string            `json:"description"`
+	Extends     *string           `json:"extends,omitempty"`
+	IsDefault   bool              `json:"isDefault"`
+	Config      *types.RoleConfig `json:"config,omitempty"`
 }
 
 type updateRoleRequest struct {
-	Name        *string            `json:"name,omitempty"`
-	Slug        *string            `json:"slug,omitempty"`
-	Description *string            `json:"description,omitempty"`
-	Extends     *string            `json:"extends,omitempty"`
-	IsDefault   *bool              `json:"isDefault,omitempty"`
-	Config      *types.RoleConfig  `json:"config,omitempty"`
+	Name        *string           `json:"name,omitempty"`
+	Slug        *string           `json:"slug,omitempty"`
+	Description *string           `json:"description,omitempty"`
+	Extends     *string           `json:"extends,omitempty"`
+	IsDefault   *bool             `json:"isDefault,omitempty"`
+	Config      *types.RoleConfig `json:"config,omitempty"`
 }
 
 // --- Platform Roles ---
@@ -89,7 +90,11 @@ func (h *AgentRoleHandler) CreatePlatform(c *gin.Context) {
 		}
 	}
 
-	configJSON, _ := types.MarshalRoleConfig(roleConfigOrDefault(req.Config))
+	configJSON, err := types.MarshalRoleConfig(roleConfigOrDefault(req.Config))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid role config"})
+		return
+	}
 	created, err := h.store.CreateAgentRole(c.Request.Context(), &types.AgentRole{
 		Scope:       "platform",
 		Name:        req.Name,
@@ -97,7 +102,7 @@ func (h *AgentRoleHandler) CreatePlatform(c *gin.Context) {
 		Description: req.Description,
 		Extends:     req.Extends,
 		IsDefault:   req.IsDefault,
-	}, configJSON, actorID)
+	}, configJSON)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create role"})
 		return
@@ -152,9 +157,13 @@ func (h *AgentRoleHandler) UpdatePlatform(c *gin.Context) {
 	}
 
 	updated := applyUpdates(existing, &req)
-	configJSON, _ := types.MarshalRoleConfig(&updated.Config)
+	configJSON, err := types.MarshalRoleConfig(&updated.Config)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid role config"})
+		return
+	}
 
-	result, err := h.store.UpdateAgentRole(c.Request.Context(), roleID, updated, configJSON, nil)
+	result, err := h.store.UpdateAgentRole(c.Request.Context(), roleID, updated, configJSON)
 	if err != nil || result == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update role"})
 		return
@@ -169,10 +178,13 @@ func (h *AgentRoleHandler) DeletePlatform(c *gin.Context) {
 	actorID := h.authSvc.GetUserID(c)
 
 	if err := h.svc.CheckDelete(c.Request.Context(), roleID); err != nil {
-		if _, ok := err.(*role.DependentRolesError); ok {
+		var dre *role.DependentRolesError
+		var inUse *role.RoleInUseError
+		switch {
+		case errors.As(err, &dre), errors.As(err, &inUse):
 			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-		} else {
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check role dependencies"})
 		}
 		return
 	}
@@ -215,7 +227,11 @@ func (h *AgentRoleHandler) CreateOrg(c *gin.Context) {
 		}
 	}
 
-	configJSON, _ := types.MarshalRoleConfig(roleConfigOrDefault(req.Config))
+	configJSON, err := types.MarshalRoleConfig(roleConfigOrDefault(req.Config))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid role config"})
+		return
+	}
 	created, err := h.store.CreateAgentRole(c.Request.Context(), &types.AgentRole{
 		Scope:       "org",
 		OrgID:       &orgID,
@@ -224,14 +240,17 @@ func (h *AgentRoleHandler) CreateOrg(c *gin.Context) {
 		Description: req.Description,
 		Extends:     req.Extends,
 		IsDefault:   req.IsDefault,
-	}, configJSON, actorID)
+	}, configJSON)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create org role"})
 		return
 	}
 
 	if req.IsDefault {
-		_ = h.store.SetOrgDefaultRole(c.Request.Context(), orgID, created.ID)
+		if err := h.store.SetOrgDefaultRole(c.Request.Context(), orgID, created.ID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to set default role"})
+			return
+		}
 	}
 
 	h.store.LogOrgEvent(c.Request.Context(), orgID, actorID, "role.org.create", created.ID, map[string]any{"name": req.Name})
@@ -262,16 +281,23 @@ func (h *AgentRoleHandler) UpdateOrg(c *gin.Context) {
 	}
 
 	updated := applyUpdates(existing, &req)
-	configJSON, _ := types.MarshalRoleConfig(&updated.Config)
+	configJSON, err := types.MarshalRoleConfig(&updated.Config)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid role config"})
+		return
+	}
 
-	result, err := h.store.UpdateAgentRole(c.Request.Context(), roleID, updated, configJSON, nil)
+	result, err := h.store.UpdateAgentRole(c.Request.Context(), roleID, updated, configJSON)
 	if err != nil || result == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update role"})
 		return
 	}
 
 	if req.IsDefault != nil && *req.IsDefault {
-		_ = h.store.SetOrgDefaultRole(c.Request.Context(), orgID, roleID)
+		if err := h.store.SetOrgDefaultRole(c.Request.Context(), orgID, roleID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to set default role"})
+			return
+		}
 	}
 
 	h.store.LogOrgEvent(c.Request.Context(), orgID, actorID, "role.org.update", roleID, nil)
@@ -284,7 +310,14 @@ func (h *AgentRoleHandler) DeleteOrg(c *gin.Context) {
 	actorID := h.authSvc.GetUserID(c)
 
 	if err := h.svc.CheckDelete(c.Request.Context(), roleID); err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		var dre *role.DependentRolesError
+		var inUse *role.RoleInUseError
+		switch {
+		case errors.As(err, &dre), errors.As(err, &inUse):
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check role dependencies"})
+		}
 		return
 	}
 
@@ -371,6 +404,44 @@ func (h *AgentRoleHandler) SetWorkspaceRole(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
+// ClearWorkspaceRole removes the workspace's role assignment so it falls back
+// to the platform default. Enforces the same allow_user_prompt gate as
+// SetWorkspaceRole.
+func (h *AgentRoleHandler) ClearWorkspaceRole(c *gin.Context) {
+	wsID := c.Param("id")
+	actorID := h.authSvc.GetUserID(c)
+
+	orgID, err := h.store.GetWorkspaceOrgID(c.Request.Context(), wsID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve workspace org"})
+		return
+	}
+
+	if orgID != "" {
+		policies, err := h.store.GetOrgPolicies(c.Request.Context(), orgID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to check org policy"})
+			return
+		}
+		for _, p := range policies {
+			if p.Key == types.PolicyAllowUserPrompt {
+				var allowed bool
+				if json.Unmarshal(p.Value, &allowed) == nil && !allowed {
+					c.JSON(http.StatusForbidden, gin.H{"error": "org admin has disabled member role customization"})
+					return
+				}
+			}
+		}
+	}
+
+	if err := h.store.ClearWorkspaceAgentRole(c.Request.Context(), wsID, actorID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to clear workspace role"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
 func (h *AgentRoleHandler) GetEffectiveWorkspaceRole(c *gin.Context) {
 	wsID := c.Param("id")
 	r, err := h.store.GetWorkspaceAgentRole(c.Request.Context(), wsID)
@@ -425,5 +496,3 @@ func applyUpdates(existing *types.AgentRole, req *updateRoleRequest) *types.Agen
 	}
 	return &updated
 }
-
-var _ = time.Now

@@ -5,7 +5,6 @@ package role
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -42,13 +41,13 @@ func (m *mockStore) GetAgentRole(_ context.Context, roleID string) (*types.Agent
 func (m *mockStore) ListAgentRoles(_ context.Context, scope, orgID string) ([]*types.AgentRole, error) {
 	return nil, nil
 }
-func (m *mockStore) CreateAgentRole(_ context.Context, _ *types.AgentRole, _ []byte, _ string) (*types.AgentRole, error) {
+func (m *mockStore) CreateAgentRole(_ context.Context, _ *types.AgentRole, _ []byte) (*types.AgentRole, error) {
 	return nil, nil
 }
-func (m *mockStore) UpdateAgentRole(_ context.Context, _ string, _ *types.AgentRole, _ []byte, _ interface{}) (*types.AgentRole, error) {
+func (m *mockStore) UpdateAgentRole(_ context.Context, _ string, _ *types.AgentRole, _ []byte) (*types.AgentRole, error) {
 	return nil, nil
 }
-func (m *mockStore) DeleteAgentRole(_ context.Context, _ string) error { return nil }
+func (m *mockStore) DeleteAgentRole(_ context.Context, _ string) error      { return nil }
 func (m *mockStore) SetOrgDefaultRole(_ context.Context, _, _ string) error { return nil }
 
 func (m *mockStore) GetRoleDependents(_ context.Context, roleID string) ([]*types.AgentRole, error) {
@@ -217,5 +216,3 @@ func TestCheckDelete_PassesWhenClean(t *testing.T) {
 		t.Errorf("expected no error for clean role: %v", err)
 	}
 }
-
-var _ = json.Marshal

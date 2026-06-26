@@ -187,3 +187,80 @@ func mustMarshalBool(b *bool) []byte {
 	}
 	return []byte("false")
 }
+
+// missCache faithfully reproduces the real cache.Service miss behaviour:
+// GetObject returns a nil error (redis.Nil is swallowed internally) and does
+// NOT touch the caller's value pointer — so it stays nil. Before the fix,
+// ResolveEffective treated nil-error as a hit and returned the zero-value
+// prompt without ever consulting the store.
+type missCache struct{}
+
+func (missCache) GetObject(context.Context, string, interface{}) error          { return nil }
+func (missCache) SetObject(context.Context, string, interface{}, time.Duration) error { return nil }
+func (missCache) Delete(context.Context, string) error                          { return nil }
+func (missCache) DeleteByPrefix(context.Context, string) error                  { return nil }
+
+// hitCache simulates a cache hit: GetObject populates the caller's value
+// pointer with the stored object.
+type hitCache struct{ hit *types.EffectivePrompt }
+
+func (h hitCache) GetObject(_ context.Context, _ string, value interface{}) error {
+	*value.(**types.EffectivePrompt) = h.hit
+	return nil
+}
+func (hitCache) SetObject(context.Context, string, interface{}, time.Duration) error { return nil }
+func (hitCache) Delete(context.Context, string) error                               { return nil }
+func (hitCache) DeleteByPrefix(context.Context, string) error                       { return nil }
+
+// TestResolveEffective_CacheMiss_ConsultsStore is the regression test for the
+// critical cache bug: a miss (nil error, value untouched) MUST fall through to
+// the store and return the resolved prompt, not an empty EffectivePrompt.
+func TestResolveEffective_CacheMiss_ConsultsStore(t *testing.T) {
+	store := new(mockPromptStore)
+	store.On("GetPlatformSetting", mock.Anything, types.SettingSysPromptPlatform).Return(&types.PlatformSetting{
+		Value: []byte(`"Platform rules"`),
+	}, nil)
+	store.On("GetWorkspaceOrgID", mock.Anything, "ws-1").Return("", nil)
+	store.On("GetWorkspacePrompt", mock.Anything, "ws-1").Return(&types.WorkspacePrompt{
+		Prompt: "User instructions",
+	}, nil)
+
+	svc := New(store, missCache{})
+	result, err := svc.ResolveEffective(context.Background(), "ws-1")
+	assert.NoError(t, err)
+	assert.Equal(t, "Platform rules", result.PlatformPrompt)
+	assert.Contains(t, result.Resolved, "Platform rules")
+	assert.Contains(t, result.Resolved, "User instructions")
+	store.AssertCalled(t, "GetPlatformSetting", mock.Anything, types.SettingSysPromptPlatform)
+}
+
+// TestResolveEffective_CacheHit_SkipsStore verifies a hit returns the cached
+// value without touching the store.
+func TestResolveEffective_CacheHit_SkipsStore(t *testing.T) {
+	store := new(mockPromptStore)
+	cached := &types.EffectivePrompt{
+		PlatformPrompt: "Cached platform",
+		Resolved:       "Cached platform",
+	}
+	svc := New(store, hitCache{hit: cached})
+	result, err := svc.ResolveEffective(context.Background(), "ws-1")
+	assert.NoError(t, err)
+	assert.Equal(t, cached, result)
+	store.AssertNotCalled(t, "GetPlatformSetting")
+}
+
+// TestGetPlatformPrompt_CacheMiss_ConsultsStore guards the same bug in the
+// platform-prompt path, where an empty platform prompt is a legitimate value
+// and must not be confused with a miss.
+func TestGetPlatformPrompt_CacheMiss_ConsultsStore(t *testing.T) {
+	store := new(mockPromptStore)
+	store.On("GetPlatformSetting", mock.Anything, types.SettingSysPromptPlatform).Return(&types.PlatformSetting{
+		Value: []byte(`"Platform rules"`),
+	}, nil)
+
+	svc := New(store, missCache{})
+	prompt, err := svc.getPlatformPrompt(context.Background())
+	assert.NoError(t, err)
+	assert.Equal(t, "Platform rules", prompt)
+	store.AssertCalled(t, "GetPlatformSetting", mock.Anything, types.SettingSysPromptPlatform)
+}

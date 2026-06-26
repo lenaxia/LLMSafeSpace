@@ -6,7 +6,6 @@ package role
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
@@ -17,8 +16,8 @@ const maxChainDepth = 10
 type roleStore interface {
 	GetAgentRole(ctx context.Context, roleID string) (*types.AgentRole, error)
 	ListAgentRoles(ctx context.Context, scope string, orgID string) ([]*types.AgentRole, error)
-	CreateAgentRole(ctx context.Context, role *types.AgentRole, configJSON []byte, updatedBy string) (*types.AgentRole, error)
-	UpdateAgentRole(ctx context.Context, roleID string, role *types.AgentRole, configJSON []byte, expectedUpdatedAt interface{}) (*types.AgentRole, error)
+	CreateAgentRole(ctx context.Context, role *types.AgentRole, configJSON []byte) (*types.AgentRole, error)
+	UpdateAgentRole(ctx context.Context, roleID string, role *types.AgentRole, configJSON []byte) (*types.AgentRole, error)
 	DeleteAgentRole(ctx context.Context, roleID string) error
 	GetRoleDependents(ctx context.Context, roleID string) ([]*types.AgentRole, error)
 	HasRoleWorkspaceUsage(ctx context.Context, roleID string) (bool, error)
@@ -159,7 +158,7 @@ func (s *Service) CheckDelete(ctx context.Context, roleID string) error {
 		return fmt.Errorf("check workspace usage: %w", err)
 	}
 	if inUse {
-		return fmt.Errorf("role is assigned to one or more workspaces")
+		return &RoleInUseError{RoleID: roleID}
 	}
 
 	return nil
@@ -175,4 +174,12 @@ func (e *DependentRolesError) Error() string {
 	return fmt.Sprintf("role %s has dependent roles: %v", e.RoleID, e.Dependents)
 }
 
-var _ = time.Now
+// RoleInUseError indicates a role cannot be deleted because one or more
+// workspaces currently have it assigned.
+type RoleInUseError struct {
+	RoleID string
+}
+
+func (e *RoleInUseError) Error() string {
+	return fmt.Sprintf("role %s is assigned to one or more workspaces", e.RoleID)
+}

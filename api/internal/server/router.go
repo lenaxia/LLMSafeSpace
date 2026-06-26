@@ -405,7 +405,7 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		platformAudit.GET("", cfg.AuditHandler.ListCrossOrg)
 	}
 
-	// US-43.19: Platform-admin org/user suspension (D19/D20). Behind
+	// Platform-admin system prompt (agent customization, Phase 1).
 	if cfg.PromptHandler != nil {
 		promptAdmin := router.Group("/api/v1/admin/prompt")
 		promptAdmin.Use(services.GetAuth().AuthMiddleware())
@@ -1119,6 +1119,7 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, idGroup *gin.RouterGroup, serv
 	if cfg.AgentRoleHandler != nil {
 		idGroup.GET("/agent-role", cfg.AgentRoleHandler.GetWorkspaceRole)
 		idGroup.PUT("/agent-role", cfg.AgentRoleHandler.SetWorkspaceRole)
+		idGroup.DELETE("/agent-role", cfg.AgentRoleHandler.ClearWorkspaceRole)
 		idGroup.GET("/effective-agent-role", cfg.AgentRoleHandler.GetEffectiveWorkspaceRole)
 	}
 }

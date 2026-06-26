@@ -62,6 +62,17 @@ export function RoleSelector({ workspaceId, orgId, disabled }: Props) {
     },
   });
 
+  const clearRoleMutation = useMutation({
+    mutationFn: () => agentRolesApi.clearWorkspaceRole(workspaceId),
+    onSuccess: () => {
+      setOptimisticRole(null);
+      queryClient.invalidateQueries({ queryKey: ["workspace-role", workspaceId] });
+    },
+    onError: () => {
+      setOptimisticRole(null);
+    },
+  });
+
   const isLocked = orgId !== undefined && allowUserPrompt === false;
   const allRoles = [...orgRoles, ...platformRoles.filter((pr) => !orgRoles.some((or) => or.extends === pr.id))];
   const roleId = optimisticRole ?? currentRole?.id ?? null;
@@ -107,7 +118,7 @@ export function RoleSelector({ workspaceId, orgId, disabled }: Props) {
                 onClick={() => {
                   setOpen(false);
                   setOptimisticRole(null);
-                  queryClient.invalidateQueries({ queryKey: ["workspace-role", workspaceId] });
+                  clearRoleMutation.mutate();
                 }}
                 className="flex w-full items-center justify-between px-3 py-2 text-left text-xs hover:bg-accent text-muted-foreground"
               >

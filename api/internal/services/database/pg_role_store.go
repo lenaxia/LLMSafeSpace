@@ -6,7 +6,6 @@ package database
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 
 	"github.com/lenaxia/llmsafespaces/pkg/types"
@@ -63,7 +62,7 @@ func (s *PgOrgStore) ListAgentRoles(ctx context.Context, scope string, orgID str
 }
 
 // CreateAgentRole inserts a new agent role.
-func (s *PgOrgStore) CreateAgentRole(ctx context.Context, role *types.AgentRole, configJSON []byte, updatedBy string) (*types.AgentRole, error) {
+func (s *PgOrgStore) CreateAgentRole(ctx context.Context, role *types.AgentRole, configJSON []byte) (*types.AgentRole, error) {
 	query := `
         INSERT INTO agent_roles (scope, org_id, name, slug, description, extends, is_default, config)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -84,13 +83,13 @@ func (s *PgOrgStore) CreateAgentRole(ctx context.Context, role *types.AgentRole,
 	))
 }
 
-// UpdateAgentRole updates an agent role. Uses optimistic locking via updatedAt.
-func (s *PgOrgStore) UpdateAgentRole(ctx context.Context, roleID string, role *types.AgentRole, configJSON []byte, expectedUpdatedAt interface{}) (*types.AgentRole, error) {
+// UpdateAgentRole updates an agent role.
+func (s *PgOrgStore) UpdateAgentRole(ctx context.Context, roleID string, role *types.AgentRole, configJSON []byte) (*types.AgentRole, error) {
 	query := `
         UPDATE agent_roles SET
             name = $2, slug = $3, description = $4, extends = $5,
             is_default = $6, config = $7, updated_at = now()
-        WHERE id = $1 AND ($8::timestamptz IS NULL OR updated_at = $8)
+        WHERE id = $1
         RETURNING id, scope, COALESCE(org_id::text, ''), name, slug, description,
                   COALESCE(extends::text, ''), is_default, config, created_at, updated_at
     `
@@ -100,7 +99,7 @@ func (s *PgOrgStore) UpdateAgentRole(ctx context.Context, roleID string, role *t
 	}
 	roleResult, err := scanAgentRole(s.db.QueryRowContext(ctx, query,
 		roleID, role.Name, role.Slug, role.Description,
-		extends, role.IsDefault, configJSON, expectedUpdatedAt,
+		extends, role.IsDefault, configJSON,
 	))
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -257,4 +256,15 @@ func scanAgentRoleRows(rows *sql.Rows) (*types.AgentRole, error) {
 	return &r, nil
 }
 
-var _ = json.RawMessage(nil)
+// ClearWorkspaceAgentRole removes the role assignment from a workspace
+// (sets agent_role_id = NULL). Used by the "use platform default" action.
+func (s *PgOrgStore) ClearWorkspaceAgentRole(ctx context.Context, workspaceID, userID string) error {
+	_, err := s.db.ExecContext(ctx, `
+        UPDATE workspace_prompts SET agent_role_id = NULL, updated_by = $2, updated_at = now()
+        WHERE workspace_id = $1
+    `, workspaceID, nullableString(userID))
+	if err != nil {
+		return fmt.Errorf("clear workspace agent role: %w", err)
+	}
+	return nil
+}

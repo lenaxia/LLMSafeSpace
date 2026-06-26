@@ -164,6 +164,12 @@ func intersect(platform *types.OrgPolicyValues, org *types.OrgPolicyValues) *typ
 	result.MaxWorkspacesPerMember = minInt(platform.MaxWorkspacesPerMember, org.MaxWorkspacesPerMember)
 	result.MaxActiveWorkspacesPerMem = minInt(platform.MaxActiveWorkspacesPerMem, org.MaxActiveWorkspacesPerMem)
 
+	// Prompt-overlay fields are org-scoped (no platform counterpart in the
+	// intersection sense): pass the org value through, falling back to the
+	// platform value when the org does not set one.
+	result.SysPromptOrg = firstNonNil(org.SysPromptOrg, platform.SysPromptOrg)
+	result.AllowUserPrompt = firstNonNilBool(org.AllowUserPrompt, platform.AllowUserPrompt)
+
 	return result
 }
 
@@ -205,6 +211,23 @@ func minInt(a, b *int) *int {
 		return a
 	}
 	if *a < *b {
+		return a
+	}
+	return b
+}
+
+// firstNonNil returns the first non-nil pointer, or nil. Used for org-scoped
+// policy fields that pass through unchanged when set.
+func firstNonNil(a, b *string) *string {
+	if a != nil {
+		return a
+	}
+	return b
+}
+
+// firstNonNilBool returns the first non-nil bool pointer, or nil.
+func firstNonNilBool(a, b *bool) *bool {
+	if a != nil {
 		return a
 	}
 	return b

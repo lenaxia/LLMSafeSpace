@@ -71,6 +71,8 @@ export const agentRolesApi = {
   getWorkspaceRole: (workspaceId: string) => api.get<AgentRole | null>(`/workspaces/${workspaceId}/agent-role`),
   setWorkspaceRole: (workspaceId: string, roleId: string) =>
     api.put<{ status: string }>(`/workspaces/${workspaceId}/agent-role`, { roleId }),
+  clearWorkspaceRole: (workspaceId: string) =>
+    api.delete<{ status: string }>(`/workspaces/${workspaceId}/agent-role`),
   getEffectiveWorkspaceRole: (workspaceId: string) =>
     api.get<EffectiveAgentRole>(`/workspaces/${workspaceId}/effective-agent-role`),
 };

@@ -29,15 +29,7 @@ CREATE TABLE IF NOT EXISTS workspace_prompts (
     PRIMARY KEY (workspace_id)
 );
 
--- updated_at trigger for workspace_prompts
-CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = now();
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
+-- updated_at triggers (shared function already exists from migration 000006).
 DROP TRIGGER IF EXISTS workspace_prompts_updated_at ON workspace_prompts;
 CREATE TRIGGER workspace_prompts_updated_at BEFORE UPDATE ON workspace_prompts
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

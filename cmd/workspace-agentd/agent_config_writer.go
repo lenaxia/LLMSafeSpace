@@ -283,8 +283,22 @@ func (w *AgentConfigWriter) rebuild() error {
 			_ = json.Unmarshal(w.agentsRaw, &agents)
 		}
 		if w.adminPrompt != "" {
-			buildAgent := map[string]string{"system": w.adminPrompt}
-			buildJSON, _ := json.Marshal(buildAgent)
+			// Deep-merge into any existing build agent config so we only
+			// override "system" and preserve sibling fields (tools, model,
+			// mode, etc.) rather than wholesale-replacing the build agent.
+			var existingBuild map[string]json.RawMessage
+			if raw, ok := agents["build"]; ok {
+				_ = json.Unmarshal(raw, &existingBuild)
+			}
+			if existingBuild == nil {
+				existingBuild = map[string]json.RawMessage{}
+			}
+			systemJSON, _ := json.Marshal(w.adminPrompt)
+			existingBuild["system"] = systemJSON
+			buildJSON, err := json.Marshal(existingBuild)
+			if err != nil {
+				return fmt.Errorf("agent-config writer: marshal build agent: %w", err)
+			}
 			agents["build"] = buildJSON
 		}
 		agentsJSON, err := json.Marshal(agents)
