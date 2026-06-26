@@ -34,7 +34,7 @@
 -- Refs: PR #411 (design merged 2026-06-26), PR #228 (multi-key
 -- rotation infrastructure reused).
 
-CREATE TABLE jwt_sessions (
+CREATE TABLE IF NOT EXISTS jwt_sessions (
     jti         UUID PRIMARY KEY,
     user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     wrapped_dek BYTEA NOT NULL,
@@ -43,5 +43,5 @@ CREATE TABLE jwt_sessions (
     expires_at  TIMESTAMPTZ NOT NULL
 );
 
-CREATE INDEX idx_jwt_sessions_user_id    ON jwt_sessions(user_id);
-CREATE INDEX idx_jwt_sessions_expires_at ON jwt_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_jwt_sessions_user_id    ON jwt_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_jwt_sessions_expires_at ON jwt_sessions(expires_at);
