@@ -71,6 +71,7 @@ type App struct {
 	dekCacheClient     *redis.Client             // redis client for DEK cache; closed on shutdown
 	healthChecker      *health.Checker           // periodic dependency probe; nil only in degraded test setups
 	pendingOrgCleaner  *handlers.PendingOrgCleaner
+	jwtSessionJanitor  *secrets.JWTSessionJanitor // Epic 56: prunes expired jwt_sessions rows
 	invitationsHandler *handlers.InvitationsHandler
 	emailService       *emailsvc.Service
 	emailHandler       *handlers.EmailHandler
@@ -216,6 +217,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var modelsHandler *handlers.ModelsHandler
 	var workspaceEnvHandler *handlers.WorkspaceEnvHandler
 	var rotateKeyHandler *handlers.RotateKeyHandler
+	var unlockDEKHandler *handlers.UnlockDEKHandler
 	var adminProvCredHandler *handlers.AdminProviderCredentialsHandler
 	var userProvCredHandler *handlers.UserProviderCredentialsHandler
 	var orgsHandler *handlers.OrgsHandler
@@ -229,6 +231,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var passwordResetHandler *handlers.PasswordResetHandler
 	var orgCredBinder *secrets.PgSecretStore
 	var keyService *secrets.KeyService
+	var jwtSessionJanitor *secrets.JWTSessionJanitor // populated when secrets are enabled; goroutine started below
 	var policySvc *policy.Service
 	var policyHandler *handlers.PolicyHandler
 	var auditHandler *handlers.AuditHandler
@@ -311,6 +314,17 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		asyncAudit = secrets.NewAsyncAuditLogger(pgStore, 4096, log)
 		keyService = secrets.NewKeyService(secrets.NewPgKeyStore(secretsPool), dekCache)
 		keyService.SetLogger(log)
+		// Epic 56: wire the durable jwt_sessions store so GetDEK can
+		// rehydrate user DEKs after Valkey restart / LRU eviction.
+		// Without this, every cache miss surfaces ErrDEKUnavailable
+		// regardless of JWT validity — the production bug this epic
+		// closes (see design/stories/epic-56-durable-dek-session).
+		jwtSessionStore := secrets.NewPgJWTSessionStore(secretsPool)
+		keyService.SetJWTSessionStore(jwtSessionStore)
+		// Epic 56: prune expired jwt_sessions rows on a 60s cron so the
+		// table stays bounded as login traffic accrues. Idempotent and
+		// best-effort — see pkg/secrets/jwt_session_janitor.go.
+		jwtSessionJanitor = secrets.NewJWTSessionJanitor(jwtSessionStore, 0, log)
 		secretService = secrets.NewSecretService(keyService, asyncAudit)
 		auditStore = asyncAudit
 
@@ -380,6 +394,11 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		secretService.SetOrgProvider(orgCredsProv)
 		rotateKeyHandler = handlers.NewRotateKeyHandler(keyService)
 		rotateKeyHandler.SetPasswordUpdater(&bcryptPasswordUpdater{db: svc.Database})
+		// Epic 56: soft-unlock handler — same KeyService backing
+		// UnlockDEKWithSigningKey for rewriting the durable jwt_sessions
+		// row when a Valkey miss + missing/stale durable row needs the
+		// user to re-enter their password.
+		unlockDEKHandler = handlers.NewUnlockDEKHandler(keyService)
 		rotateKeyHandler.SetAuditFunc(func(userID, action string) {
 			entry := &secrets.AuditEntry{
 				UserID:    userID,
@@ -762,6 +781,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		ModelsHandler:                   modelsHandler,
 		WorkspaceEnvHandler:             workspaceEnvHandler,
 		RotateKeyHandler:                rotateKeyHandler,
+		UnlockDEKHandler:                unlockDEKHandler,
 		OrgsHandler:                     orgsHandler,
 		OrgCredentialsHandler:           orgCredsHandler,
 		TerminalHandler:                 terminalHandler,
@@ -812,6 +832,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		asyncAudit:         asyncAudit,
 		secretsPool:        secretsPool,
 		pendingOrgCleaner:  pendingOrgCleaner,
+		jwtSessionJanitor:  jwtSessionJanitor,
 		invitationsHandler: invitationsHandler,
 		emailService:       emailService,
 		emailHandler:       emailHandler,
@@ -851,6 +872,16 @@ func (a *App) Run() error {
 	// 	go a.pendingOrgCleaner.Run(a.ctx)
 	// 	a.logger.Info("pending org cleanup cron started", "interval", "1h", "maxAge", "7d")
 	// }
+
+	// Epic 56: prune expired jwt_sessions rows on a 60s cron. Started
+	// here (after dependencies are healthy) so a transient PG outage at
+	// boot doesn't prevent the API from coming up. The janitor's
+	// runOnce is internally tolerant of store errors — it retries on
+	// the next tick.
+	if a.jwtSessionJanitor != nil {
+		go a.jwtSessionJanitor.Run(a.ctx)
+		a.logger.Info("jwt_sessions janitor started", "interval", secrets.DefaultJWTSessionJanitorInterval.String())
+	}
 
 	// Start instance settings (loads cache from DB).
 	if err := a.instanceSettings.Start(); err != nil {

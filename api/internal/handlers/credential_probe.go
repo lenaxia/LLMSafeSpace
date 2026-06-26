@@ -266,9 +266,10 @@ func (h *UserProviderCredentialsHandler) ProbeModels(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
 	}
+	matchedKey := extractMatchedSigningKey(c)
 
 	resolveDecrypt := func(ctx context.Context) (func(context.Context, []byte) ([]byte, error), string, int) {
-		dek, err := h.keys.GetDEK(ctx, sessionID)
+		dek, err := h.keys.GetDEK(ctx, sessionID, matchedKey)
 		if err != nil {
 			return nil, "", http.StatusServiceUnavailable
 		}

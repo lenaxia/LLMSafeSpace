@@ -28,8 +28,8 @@ type WorkspaceEnvService interface {
 	// spurious 500 and break env-var creation. Backed by
 	// pg_secret_store.go, which maps pgx.ErrNoRows → (nil, nil).
 	GetSecretByName(ctx context.Context, userID, name string) (*secrets.SecretResponse, error)
-	UpdateSecret(ctx context.Context, userID, sessionID, secretID string, req secrets.UpdateSecretRequest) error
-	CreateSecret(ctx context.Context, userID, sessionID string, req secrets.CreateSecretRequest) (*secrets.SecretResponse, error)
+	UpdateSecret(ctx context.Context, userID, sessionID string, matchedSigningKey []byte, secretID string, req secrets.UpdateSecretRequest) error
+	CreateSecret(ctx context.Context, userID, sessionID string, matchedSigningKey []byte, req secrets.CreateSecretRequest) (*secrets.SecretResponse, error)
 	AddBindings(ctx context.Context, userID, workspaceID string, secretIDs []string) (secrets.BindingsMutationResult, error)
 	GetBindings(ctx context.Context, userID, workspaceID string) (*secrets.BindingsResponse, error)
 	DeleteSecret(ctx context.Context, userID, secretID string) error
@@ -110,7 +110,7 @@ func (h *WorkspaceEnvHandler) SetWorkspaceEnv(c *gin.Context) {
 			return
 		}
 		if existing != nil {
-			if err := h.svc.UpdateSecret(ctx, userID, sessionID, existing.ID,
+			if err := h.svc.UpdateSecret(ctx, userID, sessionID, extractMatchedSigningKey(c), existing.ID,
 				secrets.UpdateSecretRequest{Value: value}); err != nil {
 				h.warn("SetWorkspaceEnv: UpdateSecret failed",
 					"varName", varName, "secretID", existing.ID, "error", err.Error())
@@ -120,7 +120,7 @@ func (h *WorkspaceEnvHandler) SetWorkspaceEnv(c *gin.Context) {
 			newBindings = append(newBindings, existing.ID)
 			continue
 		}
-		created, err := h.svc.CreateSecret(ctx, userID, sessionID, secrets.CreateSecretRequest{
+		created, err := h.svc.CreateSecret(ctx, userID, sessionID, extractMatchedSigningKey(c), secrets.CreateSecretRequest{
 			Name: secretName, Type: secrets.SecretTypeEnvSecret, Value: value,
 			Metadata: metadata,
 		})

@@ -308,7 +308,7 @@ func setupRealAuthRouter(t *testing.T) (*gin.Engine, string, *testContext) {
 		}
 		sid, _ := c.Get("sessionID")
 		sidStr, _ := sid.(string)
-		apiKey, err := authSvc.CreateAPIKey(c.Request.Context(), authSvc.GetUserID(c), req, sidStr)
+		apiKey, err := authSvc.CreateAPIKey(c.Request.Context(), authSvc.GetUserID(c), req, sidStr, nil)
 		if err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return
@@ -400,12 +400,20 @@ func (c *capturingKeyService) UnlockDEK(ctx context.Context, userID string, pass
 	return c.inner.UnlockDEK(ctx, userID, password, sessionID, ttl)
 }
 
+func (c *capturingKeyService) UnlockDEKWithSigningKey(ctx context.Context, userID string, password []byte, sessionID string, ttl time.Duration, _ []byte) error {
+	return c.UnlockDEK(ctx, userID, password, sessionID, ttl)
+}
+
+func (c *capturingKeyService) DeleteDurableSessionsForUser(_ context.Context, _ string) error {
+	return nil
+}
+
 func (c *capturingKeyService) HasKeys(ctx context.Context, userID string) (bool, error) {
 	return c.inner.HasKeys(ctx, userID)
 }
 
-func (c *capturingKeyService) GetDEK(ctx context.Context, sessionID string) ([]byte, error) {
-	return c.inner.GetDEK(ctx, sessionID)
+func (c *capturingKeyService) GetDEK(ctx context.Context, sessionID string, matchedSigningKey []byte) ([]byte, error) {
+	return c.inner.GetDEK(ctx, sessionID, nil)
 }
 
 func (c *capturingKeyService) CacheDEK(ctx context.Context, sessionID string, dek []byte, ttl time.Duration) error {
@@ -479,7 +487,7 @@ func TestE2E_APIKey_CreateWithDecryptAccess_SecretsOperationSucceeds(t *testing.
 		}
 		sid, _ := c.Get("sessionID")
 		sidStr, _ := sid.(string)
-		apiKey, err := authSvc.CreateAPIKey(c.Request.Context(), authSvc.GetUserID(c), req, sidStr)
+		apiKey, err := authSvc.CreateAPIKey(c.Request.Context(), authSvc.GetUserID(c), req, sidStr, nil)
 		if err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return

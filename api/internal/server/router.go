@@ -73,6 +73,12 @@ type RouterConfig struct {
 	// RotateKeyHandler is the handler for key rotation (optional)
 	RotateKeyHandler *handlers.RotateKeyHandler
 
+	// UnlockDEKHandler is the soft-unlock endpoint for re-deriving the
+	// DEK without forcing logout (Epic 56). Optional — when nil the
+	// /auth/unlock-dek route is not registered, which is appropriate
+	// for tests that don't exercise key material.
+	UnlockDEKHandler *handlers.UnlockDEKHandler
+
 	// OrgsHandler handles org CRUD routes (optional)
 	OrgsHandler *handlers.OrgsHandler
 
@@ -489,6 +495,18 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		router.POST("/api/v1/account/recover", cfg.RotateKeyHandler.RecoverAccount)
 	}
 
+	// Soft-unlock endpoint (Epic 56). Behind AuthMiddleware so the
+	// middleware stashes the matched JWT signing key on the gin context —
+	// the handler then forwards it to KeyService.UnlockDEKWithSigningKey
+	// to rewrap the durable jwt_sessions row under the SAME key the
+	// JWT validated under (not the active signing key — see the [HIGH]
+	// regression case from PR #411 review pass 1 and worklog 0550).
+	if cfg.UnlockDEKHandler != nil {
+		unlockGroup := router.Group("/api/v1/auth")
+		unlockGroup.Use(services.GetAuth().AuthMiddleware())
+		unlockGroup.POST("/unlock-dek", cfg.UnlockDEKHandler.Unlock)
+	}
+
 	// Org CRUD routes (Epic 11)
 	if cfg.OrgsHandler != nil {
 		registerOrgRoutes(router, services, cfg.OrgsHandler, cfg.OrgCredentialsHandler, cfg.InvitationsHandler, cfg.PolicyHandler, cfg.AuditHandler, cfg.SSOHandler)
@@ -751,7 +769,14 @@ func registerAuthRoutes(rg *gin.RouterGroup, services interfaces.Services, insta
 		}
 		sessionID, _ := c.Get("sessionID")
 		sid, _ := sessionID.(string)
-		apiKey, err := authSvc.CreateAPIKey(c.Request.Context(), userID, req, sid)
+		// Epic 56: forward the matched JWT signing key (nil for API-key
+		// auth) so CreateAPIKey's DEK-wrapping path can rehydrate from
+		// jwt_sessions on Redis miss.
+		var matchedKey []byte
+		if v, ok := c.Get("jwt_signing_key"); ok {
+			matchedKey, _ = v.([]byte)
+		}
+		apiKey, err := authSvc.CreateAPIKey(c.Request.Context(), userID, req, sid, matchedKey)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return

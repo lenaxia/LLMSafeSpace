@@ -218,7 +218,7 @@ func runReloadE2E(t *testing.T, bindings []reloadBinding, wireAdmin, wireOrg boo
 	svc := buildReloadSecretService(t, bindings, wireAdmin, wireOrg)
 
 	// Real decrypt: the seam that broke for org credentials.
-	secretsJSON, err := svc.InjectSecrets(context.Background(), "user-e2e", "sess-e2e", "ws-e2e")
+	secretsJSON, err := svc.InjectSecrets(context.Background(), "user-e2e", "sess-e2e", nil, "ws-e2e")
 	require.NoError(t, err)
 	require.NotEmpty(t, secretsJSON, "InjectSecrets must return non-empty JSON for non-empty bindings")
 
@@ -321,7 +321,7 @@ func TestE2E_ReloadSecrets_OrgProviderUnwired_OrgAbsentButReloadSucceeds(t *test
 func TestE2E_ReloadSecrets_EmptyBindings_Returns200(t *testing.T) {
 	// InjectSecrets on empty bindings returns "[]".
 	svc := buildReloadSecretService(t, nil, true, true)
-	secretsJSON, err := svc.InjectSecrets(context.Background(), "user-e2e", "sess-e2e", "ws-e2e")
+	secretsJSON, err := svc.InjectSecrets(context.Background(), "user-e2e", "sess-e2e", nil, "ws-e2e")
 	require.NoError(t, err)
 
 	dir := t.TempDir()

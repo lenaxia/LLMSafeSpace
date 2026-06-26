@@ -1334,100 +1334,12 @@ jobs:
           docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf '${{ env.REGISTRY }}/${{ env.FRONTEND_IMAGE }}@sha256:%s ' *)
 
-  # repolint-autofix: post-merge worklog numbering. Assigns real numbers
-  # to NNNN_ sentinel files (the placeholder form authors write) and
-  # resolves any residual duplicate-version collisions from concurrent
-  # merges. Pushes the renumbered files back to main and comments the
-  # assigned numbers on the merged PR so the author can reference them
-  # ("resume from worklog 0544").
-  #
-  # Race safety: GitHub serializes merge commits, so each run sees the
-  # previous run's renumbered state. Two PRs merging in the same second
-  # is impossible — each merge creates a distinct commit on main's tree.
-  # The [skip ci] in the auto-commit message prevents an infinite loop.
-  #
-  # The repolint sentinel check on main is non-gating (warns only); a
-  # persistent NNNN_ on main means this job is broken, which is real
-  # signal worth investigating, but should not block builds.
-  repolint-autofix:
-    name: Assign worklog numbers
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    permissions:
-      contents: write
-      pull-requests: write
-
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version: "1.25.11"
-          cache: true
-
-      - name: Build repolint
-        run: make repolint-build
-
-      - name: Assign numbers to NNNN_ worklogs and fix collisions
-        id: autofix
-        run: |
-          # Capture the PR number from the CURRENT HEAD (the merge commit)
-          # before we commit any renames below. After the commit+push, HEAD
-          # becomes the bot's own commit ("chore(repolint): ..."), which has
-          # no PR number.
-          PR_NUM=$(git log -1 --pretty=%B | grep -oE '#[0-9]+' | tail -1 | tr -d '#')
-          echo "pr_num=$PR_NUM" >> "$GITHUB_OUTPUT"
-
-          OUTPUT=$(./bin/repolint -fix-worklogs-only 2>&1) || true
-          echo "$OUTPUT"
-          # Capture rename lines for the PR comment. Format:
-          #   fix-worklogs: renamed NNNN_2026-06-22_foo.md → 0544_2026-06-22_foo.md
-          RENAMES=$(echo "$OUTPUT" | grep '^fix-worklogs: renamed ' || true)
-          if [ -z "$RENAMES" ]; then
-            echo "No NNNN_ sentinels or collisions — nothing to rename"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            # Save renames to a file for the comment step (multiline safe).
-            echo "$RENAMES" > /tmp/renames.txt
-          fi
-
-      - name: Commit and push if changed
-        if: steps.autofix.outputs.changed == 'true'
-        run: |
-          echo "Worklog numbering applied:"
-          git --no-pager diff --stat -- worklogs/
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add worklogs/
-          git commit -m "chore(repolint): assign worklog numbers [skip ci]"
-          git push
-
-      - name: Comment assigned numbers on merged PR
-        if: steps.autofix.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          PR_NUM="${{ steps.autofix.outputs.pr_num }}"
-          if [ -z "$PR_NUM" ]; then
-            echo "No PR number found in merge commit — skipping comment"
-            exit 0
-          fi
-
-          # Build the comment body using a heredoc to avoid quote-nesting issues.
-          {
-            echo "## Worklog numbers assigned"
-            echo ""
-            echo "The post-merge bot assigned the following worklog number(s):"
-            echo ""
-            while IFS= read -r line; do
-              # Extract the target filename from "fix-worklogs: renamed SRC → TARGET"
-              TARGET=$(echo "$line" | sed 's/.*→ //')
-              echo "- \`$TARGET\`"
-            done < /tmp/renames.txt
-          } > /tmp/full-comment.md
-
-          gh pr comment "$PR_NUM" --body-file /tmp/full-comment.md
+  # The post-merge worklog renumbering bot lives in its own workflow file
+  # at .github/workflows/worklog-renumber.yml. It used to be a job here,
+  # but a docs-only PR (#414) merged with [skip ci] in the commit message
+  # bypassed the entire CI workflow — including the bot — and left a
+  # NNNN_ sentinel on main for hours, breaking TestLive_Worklogs_NoDuplicates
+  # for every downstream PR. The dedicated workflow has a push-to-main
+  # path filter (fast path) AND a 6-hour schedule trigger (self-healing
+  # catch-up) so any future [skip ci] bypass is recovered within 6h.
+  # See worklog 0552/0553 for the incident and resolution.

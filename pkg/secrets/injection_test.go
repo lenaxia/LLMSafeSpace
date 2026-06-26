@@ -14,7 +14,7 @@ func TestSecretService_InjectSecrets_Empty(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	data, err := svc.InjectSecrets(ctx, "user-1", sessionID, "ws-empty")
+	data, err := svc.InjectSecrets(ctx, "user-1", sessionID, nil, "ws-empty")
 	if err != nil {
 		t.Fatalf("InjectSecrets failed: %v", err)
 	}
@@ -31,15 +31,15 @@ func TestSecretService_InjectSecrets_MultipleTypes(t *testing.T) {
 	ctx := context.Background()
 
 	// Create secrets of different types
-	s1, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	s1, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "anthropic", Type: SecretTypeAPIKey, Value: `{"apiKey":"sk-ant-123","provider":"anthropic"}`,
 		Metadata: json.RawMessage(`{"provider":"anthropic"}`),
 	})
-	s2, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	s2, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "gh-ssh", Type: SecretTypeSSHKey, Value: "-----BEGIN OPENSSH PRIVATE KEY-----\nfake",
 		Metadata: json.RawMessage(`{"key_type":"ed25519","host":"github.com"}`),
 	})
-	s3, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	s3, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "db-url", Type: SecretTypeEnvSecret, Value: "postgres://user:pass@host/db",
 		Metadata: json.RawMessage(`{"var_name":"DATABASE_URL"}`),
 	})
@@ -48,7 +48,7 @@ func TestSecretService_InjectSecrets_MultipleTypes(t *testing.T) {
 	_, _ = svc.SetBindings(ctx, "user-1", "ws-1", []string{s1.ID, s2.ID, s3.ID})
 
 	// Prepare injection
-	data, err := svc.InjectSecrets(ctx, "user-1", sessionID, "ws-1")
+	data, err := svc.InjectSecrets(ctx, "user-1", sessionID, nil, "ws-1")
 	if err != nil {
 		t.Fatalf("InjectSecrets failed: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestSecretService_InjectSecrets_NoSession(t *testing.T) {
 	// Initialize but don't unlock
 	_, _ = keySvc.InitializeUserKeys(ctx, "user-1", []byte("pw"))
 
-	_, err := svc.InjectSecrets(ctx, "user-1", "no-session", "ws-1")
+	_, err := svc.InjectSecrets(ctx, "user-1", "no-session", nil, "ws-1")
 	// Should succeed with empty result (no bindings)
 	if err != nil {
 		t.Fatalf("Should succeed with no bindings: %v", err)
@@ -101,7 +101,7 @@ func TestSecretService_InjectSecrets_AuditLogged(t *testing.T) {
 	svc, store, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	s1, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	s1, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "audited-inject", Type: SecretTypeAPIKey, Value: "val",
 		Metadata: json.RawMessage(`{"provider":"x"}`),
 	})
@@ -111,7 +111,7 @@ func TestSecretService_InjectSecrets_AuditLogged(t *testing.T) {
 	store.audit = nil
 	store.mu.Unlock()
 
-	data, err := svc.InjectSecrets(ctx, "user-1", sessionID, "ws-1")
+	data, err := svc.InjectSecrets(ctx, "user-1", sessionID, nil, "ws-1")
 	if err != nil {
 		t.Fatalf("InjectSecrets failed: %v", err)
 	}
@@ -127,13 +127,13 @@ func TestSecretService_InjectSecrets_PreservesMetadata(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	s1, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	s1, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "file-secret", Type: SecretTypeSecretFile, Value: "cert-content",
 		Metadata: json.RawMessage(`{"mount_path":"cert.pem"}`),
 	})
 	_, _ = svc.SetBindings(ctx, "user-1", "ws-1", []string{s1.ID})
 
-	data, _ := svc.InjectSecrets(ctx, "user-1", sessionID, "ws-1")
+	data, _ := svc.InjectSecrets(ctx, "user-1", sessionID, nil, "ws-1")
 
 	var injected []InjectedSecret
 	json.Unmarshal(data, &injected)
@@ -198,7 +198,7 @@ func TestSecretService_InjectSecrets_BootstrapPath_NoSession_BoundNonLLMSecrets(
 	// to trigger the bug.) The user creates the secret with a real session
 	// — they are logged in when binding it. The bug only manifests later
 	// at pod boot when there is no session.
-	s, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	s, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name:     "github",
 		Type:     SecretTypeSSHKey,
 		Value:    "-----BEGIN OPENSSH PRIVATE KEY-----\nfake",
@@ -274,7 +274,7 @@ func TestSecretService_InjectSecrets_BootstrapPath_NoSession_PreservesServerKEKC
 	svc.SetAdminProvider(mustStaticProvider(t, adminKEK))
 
 	// Bind a non-LLM user secret (the trigger for the bug).
-	userSecret, err := svc.CreateSecret(ctx, "user-1", "create-session", CreateSecretRequest{
+	userSecret, err := svc.CreateSecret(ctx, "user-1", "create-session", nil, CreateSecretRequest{
 		Name:     "github",
 		Type:     SecretTypeSSHKey,
 		Value:    "-----BEGIN OPENSSH PRIVATE KEY-----\nfake",
@@ -361,7 +361,7 @@ func TestSecretService_InjectSecrets_BootstrapPath_NoSession_OrgCredential(t *te
 	svc.SetOrgProvider(mustStaticProvider(t, orgKEK))
 
 	// Trigger condition: user has a bound non-LLM secret (ssh-key in production).
-	userSecret, err := svc.CreateSecret(ctx, "user-1", "create-session", CreateSecretRequest{
+	userSecret, err := svc.CreateSecret(ctx, "user-1", "create-session", nil, CreateSecretRequest{
 		Name:     "github",
 		Type:     SecretTypeSSHKey,
 		Value:    "-----BEGIN OPENSSH PRIVATE KEY-----\nfake",
@@ -431,7 +431,7 @@ func TestSecretService_InjectSecrets_BootstrapPath_NoSession_LegacyAPIKey_Skippe
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	apiKey, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	apiKey, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name:     "legacy-anthropic",
 		Type:     SecretTypeAPIKey,
 		Value:    `{"apiKey":"sk-ant-legacy","provider":"anthropic"}`,
@@ -478,7 +478,7 @@ func TestSecretService_InjectSecrets_BootstrapPath_NoSession_AuditsSkippedUserDE
 	svc, store, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	envSecret, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	envSecret, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name:     "database_url",
 		Type:     SecretTypeEnvSecret,
 		Value:    "postgres://user:pass@host/db",
@@ -569,7 +569,7 @@ func TestSecretService_InjectSecrets_BootstrapPath_DeliversWorkspaceConfigDefaul
 	svc := NewSecretService(keySvc, combined)
 	svc.SetOrgProvider(mustStaticProvider(t, orgKEK))
 
-	userSecret, _ := svc.CreateSecret(ctx, "user-1", "create-session", CreateSecretRequest{
+	userSecret, _ := svc.CreateSecret(ctx, "user-1", "create-session", nil, CreateSecretRequest{
 		Name: "github", Type: SecretTypeSSHKey, Value: "fake",
 		Metadata: json.RawMessage(`{"key_type":"ed25519","host":"github.com"}`),
 	})
@@ -688,14 +688,14 @@ func TestSecretService_InjectSecrets_CrossTenantIsolation(t *testing.T) {
 	ctx := context.Background()
 
 	// User 1 creates and binds a secret
-	s1, _ := svc.CreateSecret(ctx, "user-1", sess1, CreateSecretRequest{
+	s1, _ := svc.CreateSecret(ctx, "user-1", sess1, nil, CreateSecretRequest{
 		Name: "private", Type: SecretTypeAPIKey, Value: "user1-key",
 		Metadata: json.RawMessage(`{"provider":"x"}`),
 	})
 	_, _ = svc.SetBindings(ctx, "user-1", "ws-user1", []string{s1.ID})
 
 	// User 2 tries to inject from user 1's workspace (should get nothing)
-	data, err := svc.InjectSecrets(ctx, "user-2", "sess-2", "ws-user1")
+	data, err := svc.InjectSecrets(ctx, "user-2", "sess-2", nil, "ws-user1")
 	if err != nil {
 		t.Fatalf("Should not error: %v", err)
 	}

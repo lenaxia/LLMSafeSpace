@@ -29,7 +29,7 @@ func TestSunset_APIKey_CreateSucceedsBeforeSunset(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	resp, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	resp, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name:     "legacy-before-sunset",
 		Type:     SecretTypeAPIKey,
 		Value:    "sk-legacy",
@@ -51,7 +51,7 @@ func TestSunset_APIKey_CreateFailsAfterSunset(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	_, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	_, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name:     "legacy-after-sunset",
 		Type:     SecretTypeAPIKey,
 		Value:    "sk-legacy",
@@ -111,7 +111,7 @@ func TestSunset_NonAPIKeyTypes_UnaffectedAfterSunset(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resp, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+			resp, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 				Name: tc.secret, Type: tc.typ, Value: tc.value, Metadata: tc.metadata,
 			})
 			if err != nil {

@@ -45,7 +45,7 @@ type AuthService interface {
 	AuthenticateAPIKey(ctx context.Context, apiKey string) (string, error)
 	Register(ctx context.Context, req types.RegisterRequest) (*types.AuthResponse, error)
 	Login(ctx context.Context, req types.LoginRequest) (*types.AuthResponse, error)
-	CreateAPIKey(ctx context.Context, userID string, req types.CreateAPIKeyRequest, sessionID string) (*types.APIKey, error)
+	CreateAPIKey(ctx context.Context, userID string, req types.CreateAPIKeyRequest, sessionID string, matchedSigningKey []byte) (*types.APIKey, error)
 	ListAPIKeys(ctx context.Context, userID string) ([]*types.APIKey, error)
 	DeleteAPIKey(ctx context.Context, userID, keyID string) error
 	AuthMiddleware() gin.HandlerFunc

@@ -53,7 +53,7 @@ func TestE2E_PasswordReset_OldDEKCannotDecryptAfterReinit(t *testing.T) {
 	// Unlock DEK1 into the cache so we can encrypt a secret with it.
 	const sessPre = "sess-pre-reset"
 	require.NoError(t, keySvc.UnlockDEK(ctx, userID, []byte("password-1"), sessPre, time.Hour))
-	dek1, err := keySvc.GetDEK(ctx, sessPre)
+	dek1, err := keySvc.GetDEK(ctx, sessPre, nil)
 	require.NoError(t, err)
 	require.Len(t, dek1, 32, "DEK must be 32 bytes")
 
@@ -75,7 +75,7 @@ func TestE2E_PasswordReset_OldDEKCannotDecryptAfterReinit(t *testing.T) {
 	// (4) Unlock with the NEW password → the system now holds only DEK2.
 	const sessPost = "sess-post-reset"
 	require.NoError(t, keySvc.UnlockDEK(ctx, userID, []byte("password-2"), sessPost, time.Hour))
-	dek2, err := keySvc.GetDEK(ctx, sessPost)
+	dek2, err := keySvc.GetDEK(ctx, sessPost, nil)
 	require.NoError(t, err)
 
 	// (5) THE ASSERTION: DEK2 must NOT decrypt the old ciphertext.

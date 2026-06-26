@@ -55,7 +55,7 @@ func (m *mockEnvService) GetSecretByName(_ context.Context, _, name string) (*se
 	return m.secrets[name], nil
 }
 
-func (m *mockEnvService) CreateSecret(_ context.Context, _, _ string, req secrets.CreateSecretRequest) (*secrets.SecretResponse, error) {
+func (m *mockEnvService) CreateSecret(_ context.Context, _, _ string, _ []byte, req secrets.CreateSecretRequest) (*secrets.SecretResponse, error) {
 	m.createCallCount++
 	m.lastCreateReq = req
 	if m.createErr != nil {
@@ -71,7 +71,7 @@ func (m *mockEnvService) CreateSecret(_ context.Context, _, _ string, req secret
 	return resp, nil
 }
 
-func (m *mockEnvService) UpdateSecret(_ context.Context, _, _, secretID string, req secrets.UpdateSecretRequest) error {
+func (m *mockEnvService) UpdateSecret(_ context.Context, _, _ string, _ []byte, secretID string, req secrets.UpdateSecretRequest) error {
 	m.updateCallCount++
 	m.lastUpdateID = secretID
 	m.lastUpdateReq = req
