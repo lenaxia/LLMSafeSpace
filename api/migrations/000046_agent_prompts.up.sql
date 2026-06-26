@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS platform_settings (
 );
 
 -- 2. Workspace prompt overrides (user-level customization)
--- agent_role_id will be added in Phase 2 (migration 000045) when agent_roles table exists
+-- agent_role_id will be added in Phase 2 (migration 000047) when agent_roles table exists
 CREATE TABLE IF NOT EXISTS workspace_prompts (
     workspace_id  UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     prompt        TEXT NOT NULL DEFAULT '',
