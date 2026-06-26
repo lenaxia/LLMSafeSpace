@@ -107,7 +107,9 @@ func (h *AgentRoleHandler) CreatePlatform(c *gin.Context) {
 		return
 	}
 
-	h.store.LogAuditEvent(c.Request.Context(), "admin", actorID, "role.platform.create", created.ID, nil, map[string]any{"name": req.Name})
+	if err := h.store.LogAuditEvent(c.Request.Context(), "admin", actorID, "role.platform.create", created.ID, nil, map[string]any{"name": req.Name}); err != nil && h.logger != nil {
+		h.logger.Warn("audit log emission failed", "action", "role.platform.create", "error", err.Error())
+	}
 	c.JSON(http.StatusCreated, created)
 }
 
@@ -182,7 +184,9 @@ func (h *AgentRoleHandler) UpdatePlatform(c *gin.Context) {
 		return
 	}
 
-	h.store.LogAuditEvent(c.Request.Context(), "admin", actorID, "role.platform.update", roleID, nil, nil)
+	if err := h.store.LogAuditEvent(c.Request.Context(), "admin", actorID, "role.platform.update", roleID, nil, nil); err != nil && h.logger != nil {
+		h.logger.Warn("audit log emission failed", "action", "role.platform.update", "error", err.Error())
+	}
 	c.JSON(http.StatusOK, result)
 }
 
@@ -207,7 +211,9 @@ func (h *AgentRoleHandler) DeletePlatform(c *gin.Context) {
 		return
 	}
 
-	h.store.LogAuditEvent(c.Request.Context(), "admin", actorID, "role.platform.delete", roleID, nil, nil)
+	if err := h.store.LogAuditEvent(c.Request.Context(), "admin", actorID, "role.platform.delete", roleID, nil, nil); err != nil && h.logger != nil {
+		h.logger.Warn("audit log emission failed", "action", "role.platform.delete", "error", err.Error())
+	}
 	c.Status(http.StatusNoContent)
 }
 
@@ -268,7 +274,9 @@ func (h *AgentRoleHandler) CreateOrg(c *gin.Context) {
 		}
 	}
 
-	h.store.LogOrgEvent(c.Request.Context(), orgID, actorID, "role.org.create", created.ID, map[string]any{"name": req.Name})
+	if err := h.store.LogOrgEvent(c.Request.Context(), orgID, actorID, "role.org.create", created.ID, map[string]any{"name": req.Name}); err != nil && h.logger != nil {
+		h.logger.Warn("audit log emission failed", "action", "role.org.create", "error", err.Error())
+	}
 	c.JSON(http.StatusCreated, created)
 }
 
@@ -324,7 +332,9 @@ func (h *AgentRoleHandler) UpdateOrg(c *gin.Context) {
 		}
 	}
 
-	h.store.LogOrgEvent(c.Request.Context(), orgID, actorID, "role.org.update", roleID, nil)
+	if err := h.store.LogOrgEvent(c.Request.Context(), orgID, actorID, "role.org.update", roleID, nil); err != nil && h.logger != nil {
+		h.logger.Warn("audit log emission failed", "action", "role.org.update", "error", err.Error())
+	}
 	c.JSON(http.StatusOK, result)
 }
 
@@ -359,7 +369,9 @@ func (h *AgentRoleHandler) DeleteOrg(c *gin.Context) {
 		return
 	}
 
-	h.store.LogOrgEvent(c.Request.Context(), orgID, actorID, "role.org.delete", roleID, nil)
+	if err := h.store.LogOrgEvent(c.Request.Context(), orgID, actorID, "role.org.delete", roleID, nil); err != nil && h.logger != nil {
+		h.logger.Warn("audit log emission failed", "action", "role.org.delete", "error", err.Error())
+	}
 	c.Status(http.StatusNoContent)
 }
 
