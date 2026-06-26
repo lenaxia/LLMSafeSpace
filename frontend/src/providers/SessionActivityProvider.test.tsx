@@ -1669,6 +1669,38 @@ describe("US-55.3: provider onEvent input-event handling", () => {
     });
     expect(screen.getByTestId("pending").textContent).toBe("no");
   });
+
+  it("marker commit prunes prompt content for ghosted requestIds", () => {
+    function ContentDisplay({ sessionId }: { sessionId: string }) {
+      const addQuestion = useAddPendingQuestion();
+      const questions = usePendingQuestionsForSession(sessionId);
+      return (
+        <>
+          <span data-testid="q-count">{questions.length}</span>
+          <button data-testid="add-q" onClick={() => addQuestion("ws-1", makeQuestion("que_content", "ses-1"))}>add</button>
+        </>
+      );
+    }
+
+    renderProvider(<ContentDisplay sessionId="ses-1" />);
+
+    // Add content via addPendingQuestion
+    act(() => { screen.getByTestId("add-q").click(); });
+    expect(screen.getByTestId("q-count").textContent).toBe("1");
+
+    // Reconnect then marker fires with empty staging (question resolved during disconnect)
+    act(() => { capturedOnReconnect!(); });
+
+    act(() => {
+      capturedOnEvent!({
+        type: "agent.input.snapshot_complete",
+        workspace_id: "ws-1",
+      });
+    });
+
+    // Content should be pruned — no ghost prompt card
+    expect(screen.getByTestId("q-count").textContent).toBe("0");
+  });
 });
 
 describe("agent_died handler", () => {

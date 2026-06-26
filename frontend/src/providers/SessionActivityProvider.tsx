@@ -272,28 +272,29 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
         stagingRef.current.delete(wsId);
         committedWsRef.current.add(wsId);
 
-        // Collect doomed requestIds outside the setPendingActions updater
-        // so we can call the content setters (React state) separately.
+        // Compute doomed requestIds from the CURRENT pendingActions snapshot
+        // in the closure — NOT inside the setPendingActions updater (which
+        // React runs asynchronously during render, so the array would be empty
+        // at the content-pruning call). Mirrors clearWorkspacePendingActions.
         const stagedRequestIds = new Set(staged?.keys() ?? []);
         const doomedRequestIds: string[] = [];
+        for (const [sessionId, rids] of pendingActions) {
+          if (pendingActionWsRef.current.get(sessionId) === wsId) {
+            for (const rid of rids) {
+              if (!stagedRequestIds.has(rid)) {
+                doomedRequestIds.push(rid);
+              }
+            }
+          }
+        }
 
         setPendingActions((prev) => {
           const next = new Map(prev);
-          // Remove all pending entries for sessions belonging to this workspace.
           for (const [sessionId] of next) {
             if (pendingActionWsRef.current.get(sessionId) === wsId) {
-              const sessionRequests = next.get(sessionId);
-              if (sessionRequests) {
-                for (const rid of sessionRequests) {
-                  if (!stagedRequestIds.has(rid)) {
-                    doomedRequestIds.push(rid);
-                  }
-                }
-              }
               next.delete(sessionId);
             }
           }
-          // Re-add the authoritative set from staging.
           if (staged) {
             for (const [requestId, sessionId] of staged) {
               const existing = next.get(sessionId);
