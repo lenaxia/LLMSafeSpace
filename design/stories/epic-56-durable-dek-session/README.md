@@ -325,7 +325,7 @@ The "soft-unlock needed" column is the small residual.
 ## Definition of done
 
 - [x] Design doc (this file).
-- [ ] Worklog `NNNN_2026-06-26_durable-dek-session.md` (post-merge numbering) with assumptions + adversarial review.
+- [x] Worklog `NNNN_2026-06-26_epic-56-durable-dek-design.md` (sentinel; post-merge bot assigns the number).
 - [ ] Migration `000045` (new table + indexes + down). MUST be committed in **both** `api/migrations/` and `charts/llmsafespaces/migrations/` (the two are kept in lockstep; `make chart-sync-migrations` enforces this).
 - [ ] `parseTokenAcceptingRotatedKeys` extended to return the matched key alongside the parsed token (the real change site, not `ValidateToken`).
 - [ ] Auth middleware sets `c.Set("jwt_signing_key", matched)` after a successful parse so handlers can forward it explicitly to `KeyService.GetDEK`.
