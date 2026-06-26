@@ -272,22 +272,21 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
         stagingRef.current.delete(wsId);
         committedWsRef.current.add(wsId);
 
+        // Collect doomed requestIds outside the setPendingActions updater
+        // so we can call the content setters (React state) separately.
+        const stagedRequestIds = new Set(staged?.keys() ?? []);
+        const doomedRequestIds: string[] = [];
+
         setPendingActions((prev) => {
           const next = new Map(prev);
-          // Build the authoritative requestId set from staging for this ws.
-          const stagedRequestIds = new Set(staged?.keys() ?? []);
-
           // Remove all pending entries for sessions belonging to this workspace.
-          // Also clean up requestToSessionRef and content maps for dropped requestIds.
           for (const [sessionId] of next) {
             if (pendingActionWsRef.current.get(sessionId) === wsId) {
               const sessionRequests = next.get(sessionId);
               if (sessionRequests) {
                 for (const rid of sessionRequests) {
                   if (!stagedRequestIds.has(rid)) {
-                    requestToSessionRef.current.delete(rid);
-                    pendingQuestionContent.delete(rid);
-                    pendingPermissionContent.delete(rid);
+                    doomedRequestIds.push(rid);
                   }
                 }
               }
@@ -307,6 +306,23 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
           }
           return next;
         });
+
+        // Prune content maps for dropped requestIds via the setters (React state).
+        if (doomedRequestIds.length > 0) {
+          for (const rid of doomedRequestIds) {
+            requestToSessionRef.current.delete(rid);
+          }
+          setPendingQuestionContent((prev) => {
+            const next = new Map(prev);
+            for (const rid of doomedRequestIds) next.delete(rid);
+            return next;
+          });
+          setPendingPermissionContent((prev) => {
+            const next = new Map(prev);
+            for (const rid of doomedRequestIds) next.delete(rid);
+            return next;
+          });
+        }
         return;
       }
 
