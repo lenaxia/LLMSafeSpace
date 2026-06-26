@@ -973,10 +973,10 @@ func TestSnapshotUserWorkspaces_FansOutPendingForActiveWorkspaces(t *testing.T) 
 //   - agent.question/permission/.resolved — THIS TEST (the US-55.2 additions)
 func TestForgottenPublishGuard_InputEventsReachUserStream(t *testing.T) {
 	tests := []struct {
-		name       string
-		eventType  string
-		envelope   string
-		wantType   string
+		name      string
+		eventType string
+		envelope  string
+		wantType  string
 	}{
 		{
 			name:      "agent.question",
