@@ -92,6 +92,14 @@ func ContextWithSessionID(ctx context.Context, sessionID string) context.Context
 // Note: this is the SecretProvider's own typed-context key, NOT the
 // gin.Context value set by AuthMiddleware. Handlers extract from gin and
 // stash here before invoking provider methods.
+//
+// Current state (PR #421): no production caller sets this value because
+// PostgresSecretProvider itself has no production caller — *SecretService
+// (not *PostgresSecretProvider) is the live path for user-secret CRUD.
+// The matched-key plumbing is preserved on the SecretProvider interface
+// for symmetry with the design doc and so a future revival of the
+// SecretProvider path inherits Epic 56 rehydrate by setting this key;
+// without that revival it is harmless dead code, not a regression.
 func ContextWithMatchedSigningKey(ctx context.Context, matchedSigningKey []byte) context.Context {
 	return context.WithValue(ctx, contextKeyMatchedSigningKey, matchedSigningKey)
 }

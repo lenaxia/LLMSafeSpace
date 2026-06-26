@@ -231,3 +231,79 @@ func TestKeyService_GetDEK_NonUUIDSessionID_SkipsRehydrate(t *testing.T) {
 		t.Errorf("non-uuid sessionID must not touch jwt_sessions, GetCount=%d", jwtStore.GetCount)
 	}
 }
+
+// TestKeyService_GetDEK_RedisError_FallsThroughToDurableRehydrate is the
+// epic's CENTRAL regression test: the production scenario that motivated
+// Epic 56 is "Valkey is up at JWT-issue time but down later, the durable
+// row exists, and the matched key is recoverable from the validating JWT".
+//
+// Crucially, this exercises the Redis-*ERROR* branch in GetDEK (not the
+// nil-miss branch). The two are different code paths:
+//
+//   - `cache.GetDEK` returning `(nil, nil)` (miss) — covered by other tests
+//   - `cache.GetDEK` returning `(nil, error)` — until this test, untested
+//
+// A future refactor that fail-closed the Redis-error branch (`return nil, err`
+// instead of falling through to rehydrate) would silently break the entire
+// epic and pass every other test in this file. This test pins the
+// resilience contract: Redis error MUST fall through to durable rehydrate
+// and return the DEK when the durable row + matched key are available.
+//
+// Review feedback from PR #421 review pass 1.
+func TestKeyService_GetDEK_RedisError_FallsThroughToDurableRehydrate(t *testing.T) {
+	store := newMockKeyStore()
+	cache := &failingDEKCache{failOn: "get"} // every GetDEK returns an error
+	jwtStore := newMockJWTSessionStore()
+	svc := NewKeyService(store, cache)
+	svc.SetJWTSessionStore(jwtStore)
+	ctx := context.Background()
+
+	// Seed a durable row that the rehydrate path should successfully
+	// unwrap using the same matched key.
+	matchedKey := []byte("matched-signing-key-32-bytes-pad")
+	jti := uuid.New()
+	dek := []byte("durable-dek-32-bytes-padding-12x")
+	wrapped, salt := wrapDEKForJWT(t, matchedKey, jti, dek)
+	if err := jwtStore.WriteJWTSession(ctx, &JWTSession{
+		JTI:        jti,
+		UserID:     "u-redis-down",
+		WrappedDEK: wrapped,
+		KEKSalt:    salt,
+		CreatedAt:  time.Now(),
+		ExpiresAt:  time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("seed durable row: %v", err)
+	}
+
+	got, err := svc.GetDEK(ctx, jti.String(), matchedKey)
+	if err != nil {
+		t.Fatalf("GetDEK with Redis error MUST fall through to durable rehydrate, got: %v", err)
+	}
+	if !bytes.Equal(got, dek) {
+		t.Errorf("rehydrated DEK mismatch; Redis-error fallthrough returned wrong bytes")
+	}
+}
+
+// TestKeyService_GetDEK_RedisError_NoDurableRow_StillFailsClosed pins the
+// other half of the Redis-error contract: if the rehydrate path cannot
+// recover (no durable row), GetDEK STILL surfaces ErrDEKUnavailable rather
+// than the raw Redis error. The caller's contract is "ErrDEKUnavailable
+// means soft-unlock can recover"; leaking the underlying Redis error
+// would break the handler's errors.Is sentinel mapping.
+func TestKeyService_GetDEK_RedisError_NoDurableRow_StillFailsClosed(t *testing.T) {
+	store := newMockKeyStore()
+	cache := &failingDEKCache{failOn: "get"}
+	jwtStore := newMockJWTSessionStore()
+	svc := NewKeyService(store, cache)
+	svc.SetJWTSessionStore(jwtStore)
+	ctx := context.Background()
+
+	matchedKey := []byte("matched-signing-key-32-bytes-pad")
+	jti := uuid.New()
+	// No durable row seeded.
+
+	_, err := svc.GetDEK(ctx, jti.String(), matchedKey)
+	if !errors.Is(err, ErrDEKUnavailable) {
+		t.Errorf("Redis error + no durable row → ErrDEKUnavailable, got %v", err)
+	}
+}

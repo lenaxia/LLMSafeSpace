@@ -1411,6 +1411,15 @@ func (s *Service) OptionalAuthMiddleware() gin.HandlerFunc {
 					c.Set("userID", userID)
 					if jti := utilities.ExtractJTI(tokenString); jti != "" {
 						c.Set("sessionID", jti)
+						// Epic 56: stash JWT exp (unix) so handlers behind
+						// OptionalAuthMiddleware (and AuthMiddleware via
+						// the parallel path above) can size the soft-unlock
+						// durable-row TTL to the JWT's remaining lifetime.
+						// Symmetric with auth.go:1314-1317 — PR #421 review
+						// pass 1 caught the missing setter here.
+						if exp := utilities.ExtractExp(tokenString); exp > 0 {
+							c.Set("jwt_exp_unix", exp)
+						}
 					} else if utilities.IsAPIKey(tokenString, s.config.Auth.APIKeyPrefix) {
 						c.Set("sessionID", "apikey:"+pkgutil.HashString(tokenString))
 					}

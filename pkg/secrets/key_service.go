@@ -616,15 +616,28 @@ func (s *KeyService) ChangePassword(ctx context.Context, userID, sessionID strin
 	// outage that silently leaves the cached DEK in place re-opens
 	// the race window the reorder closed. Log Warn so operators see
 	// the degradation (validator pass-5 finding N-3).
-	if sessionID != "" && s.cache != nil {
-		if err := s.cache.EvictDEK(ctx, sessionID); err != nil && s.logger != nil {
-			s.logger.Warn("ChangePassword: DEK evict failed; cached DEK may be stale until TTL",
-				"userID", userID, "sessionID", sessionID, "error", err.Error())
+	if sessionID != "" {
+		// Cache-evict errors are non-fatal but observable. Skipped when
+		// no cache is wired (test-only path); production always wires
+		// one.
+		if s.cache != nil {
+			if err := s.cache.EvictDEK(ctx, sessionID); err != nil && s.logger != nil {
+				s.logger.Warn("ChangePassword: DEK evict failed; cached DEK may be stale until TTL",
+					"userID", userID, "sessionID", sessionID, "error", err.Error())
+			}
 		}
 		// Epic 56: also delete the durable jwt_sessions row. Without
 		// this, an attacker who has the old JWT (signing key valid)
 		// could rehydrate the OLD DEK from PG after the password change
 		// — defeating the point of the change.
+		//
+		// Decoupled from `s.cache != nil` (PR #421 review pass 1): the
+		// durable delete is logically independent of cache presence and
+		// must run whenever we know which session to invalidate. The
+		// previous coupling was latent rather than live (cache is always
+		// wired in production), but the literal-meaning fix is one
+		// line and prevents a future cache-less unit test from
+		// silently bypassing the durable invalidation.
 		s.deleteDurableSession(ctx, sessionID)
 	}
 

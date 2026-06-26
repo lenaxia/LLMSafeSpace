@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -120,7 +121,7 @@ func (h *UnlockDEKHandler) Unlock(c *gin.Context) {
 // isAPIKeySessionID reports whether a sessionID belongs to an API-key
 // authenticated request (set by AuthMiddleware as "apikey:<hash>").
 func isAPIKeySessionID(sessionID string) bool {
-	return len(sessionID) > 7 && sessionID[:7] == "apikey:"
+	return strings.HasPrefix(sessionID, "apikey:")
 }
 
 // remainingTokenTTL returns the JWT's remaining lifetime, derived from
