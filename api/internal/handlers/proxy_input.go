@@ -87,6 +87,22 @@ func (h *ProxyHandler) PermissionReply(c *gin.Context) {
 // emitPendingInputRequests fetches pending questions and permissions from the pod
 // and publishes them as synthetic events so reconnecting browsers see them immediately.
 func (h *ProxyHandler) emitPendingInputRequests(workspaceID string) {
+	// D9: emit the snapshot-complete marker unconditionally on exit, even on
+	// timeout/error. This lets the provider commit (or clear) the workspace's
+	// pending set without hanging. On timeout, staging is empty → the provider
+	// commits empty (pending cleared for this workspace).
+	defer func() {
+		if h.userBroker == nil {
+			return
+		}
+		if userID := h.userBroker.WorkspaceOwner(workspaceID); userID != "" {
+			h.userBroker.PublishToUser(userID, apitypes.WorkspaceSSEEvent{
+				Type:        "agent.input.snapshot_complete",
+				WorkspaceID: workspaceID,
+			})
+		}
+	}()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -114,7 +130,12 @@ func (h *ProxyHandler) emitPendingInputRequests(workspaceID string) {
 			} else {
 				req.RootSessionID = req.SessionID
 			}
-			h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{Type: "agent.question", Data: req})
+			h.publishWorkspaceAndUserEvent(workspaceID, apitypes.WorkspaceSSEEvent{
+				Type:      "agent.question",
+				SessionID: req.SessionID,
+				RequestID: req.ID,
+				Data:      req,
+			})
 		}
 	}
 
@@ -127,7 +148,12 @@ func (h *ProxyHandler) emitPendingInputRequests(workspaceID string) {
 				} else {
 					req.RootSessionID = req.SessionID
 				}
-				h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{Type: "agent.permission", Data: req})
+				h.publishWorkspaceAndUserEvent(workspaceID, apitypes.WorkspaceSSEEvent{
+					Type:      "agent.permission",
+					SessionID: req.SessionID,
+					RequestID: req.ID,
+					Data:      req,
+				})
 			}
 		}
 	}

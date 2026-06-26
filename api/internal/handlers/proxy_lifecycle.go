@@ -145,6 +145,24 @@ func (h *ProxyHandler) publishWorkspaceEvent(workspaceID string, evt apitypes.Wo
 	}
 }
 
+// publishWorkspaceAndUserEvent delivers an event to BOTH the workspace stream
+// (active-view consumers) and the user stream (cross-workspace, replay-buffered).
+// Use for low-frequency events that affect global UI state (agent.question,
+// agent.permission). The user-stream copy carries WorkspaceID so the frontend
+// can route it; the workspace-stream copy does not (implicit for subscribers).
+// If the workspace owner is unrecorded, the user-stream publish is skipped
+// silently — the workspace-stream publish still fires.
+func (h *ProxyHandler) publishWorkspaceAndUserEvent(workspaceID string, evt apitypes.WorkspaceSSEEvent) {
+	if h.userBroker == nil {
+		return
+	}
+	h.userBroker.PublishToWorkspace(workspaceID, evt)
+	if userID := h.userBroker.WorkspaceOwner(workspaceID); userID != "" {
+		evt.WorkspaceID = workspaceID
+		h.userBroker.PublishToUser(userID, evt)
+	}
+}
+
 func (h *ProxyHandler) GetAllKnownPhases() map[string]string {
 	if h.watcher == nil {
 		return nil

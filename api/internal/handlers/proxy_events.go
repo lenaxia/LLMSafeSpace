@@ -249,9 +249,11 @@ func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData 
 			return
 		}
 		req.RootSessionID = h.resolveRootSessionID(workspaceID, req.SessionID)
-		h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
-			Type: "agent.question",
-			Data: req,
+		h.publishWorkspaceAndUserEvent(workspaceID, apitypes.WorkspaceSSEEvent{
+			Type:      "agent.question",
+			SessionID: req.SessionID,
+			RequestID: req.ID,
+			Data:      req,
 		})
 	} else if h.dialect.IsQuestionResolved(eventType) {
 		var resolution struct {
@@ -259,8 +261,10 @@ func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData 
 			SessionID string `json:"sessionID"`
 		}
 		_ = json.Unmarshal(properties, &resolution) //nolint:errcheck // best-effort parse; nil fields produce empty strings in the event
-		h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
-			Type: "agent.question.resolved",
+		h.publishWorkspaceAndUserEvent(workspaceID, apitypes.WorkspaceSSEEvent{
+			Type:      "agent.question.resolved",
+			SessionID: resolution.SessionID,
+			RequestID: resolution.ID,
 			Data: map[string]string{
 				"request_id": resolution.ID,
 				"session_id": resolution.SessionID,
@@ -279,9 +283,11 @@ func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData 
 		}
 
 		req.RootSessionID = h.resolveRootSessionID(workspaceID, req.SessionID)
-		h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
-			Type: "agent.permission",
-			Data: req,
+		h.publishWorkspaceAndUserEvent(workspaceID, apitypes.WorkspaceSSEEvent{
+			Type:      "agent.permission",
+			SessionID: req.SessionID,
+			RequestID: req.ID,
+			Data:      req,
 		})
 	} else if h.dialect.IsPermissionResolved(eventType) {
 		var resolution struct {
@@ -290,8 +296,10 @@ func (h *ProxyHandler) emitNormalizedInputEvent(workspaceID, eventType, rawData 
 			Reply     string `json:"reply"`
 		}
 		_ = json.Unmarshal(properties, &resolution) //nolint:errcheck // best-effort parse; nil fields produce empty strings in the event
-		h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{
-			Type: "agent.permission.resolved",
+		h.publishWorkspaceAndUserEvent(workspaceID, apitypes.WorkspaceSSEEvent{
+			Type:      "agent.permission.resolved",
+			SessionID: resolution.SessionID,
+			RequestID: resolution.ID,
 			Data: map[string]string{
 				"request_id": resolution.ID,
 				"session_id": resolution.SessionID,

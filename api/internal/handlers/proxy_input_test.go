@@ -23,6 +23,8 @@ import (
 
 	"github.com/lenaxia/llmsafespaces/api/internal/services/eventbroker"
 	"github.com/lenaxia/llmsafespaces/api/internal/services/sse"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/workspace"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/wsstate"
 	apitypes "github.com/lenaxia/llmsafespaces/api/internal/types"
 	k8smocks "github.com/lenaxia/llmsafespaces/mocks/kubernetes"
 	agentoc "github.com/lenaxia/llmsafespaces/pkg/agent/opencode"
@@ -656,4 +658,433 @@ func TestNormalizedEvents_E2E_QuestionResolved_ViaProcessEvent(t *testing.T) {
 	data := evt2.Data.(map[string]string)
 	assert.Equal(t, "que_abc", data["request_id"])
 	assert.Equal(t, "ses_xyz", data["session_id"])
+}
+
+// ===== US-55.2: Dual-Publish Input Events to User Stream =====
+
+func TestNormalizedEvents_QuestionAsked_DualPublish(t *testing.T) {
+	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
+	handler.userBroker = eventbroker.NewUserEventBroker()
+	handler.userBroker.RecordWorkspaceOwner("ws-1", "user-1")
+	handler.dialect = &agentoc.Dialect{}
+
+	wsSub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	defer handler.userBroker.UnsubscribeWorkspace("ws-1", wsSub)
+	userSub, _ := handler.userBroker.SubscribeUser("user-1")
+	defer handler.userBroker.UnsubscribeUser("user-1", userSub)
+
+	envelope := makeEnvelope("question.asked", map[string]interface{}{
+		"id":        "que_dual",
+		"sessionID": "ses_dual",
+		"questions": []map[string]interface{}{
+			{"question": "Pick?", "header": "H", "options": []map[string]string{{"label": "A", "description": "a"}}},
+		},
+	})
+	handler.onRawEvent("ws-1", "question.asked", envelope)
+
+	// Workspace stream
+	recvWithTimeout(t, wsSub, "opencode.event")
+	wsEvt := recvWithTimeout(t, wsSub, "agent.question")
+	assert.Equal(t, "agent.question", wsEvt.Type)
+	assert.Equal(t, "ses_dual", wsEvt.SessionID)
+	assert.Equal(t, "que_dual", wsEvt.RequestID)
+	assert.Empty(t, wsEvt.WorkspaceID, "workspace stream copy should NOT have WorkspaceID")
+
+	// User stream
+	userEvt := recvWithTimeout(t, userSub, "agent.question")
+	assert.Equal(t, "agent.question", userEvt.Type)
+	assert.Equal(t, "ws-1", userEvt.WorkspaceID, "user stream copy MUST have WorkspaceID")
+	assert.Equal(t, "ses_dual", userEvt.SessionID)
+	assert.Equal(t, "que_dual", userEvt.RequestID)
+}
+
+func TestNormalizedEvents_PermissionAsked_DualPublish(t *testing.T) {
+	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
+	handler.userBroker = eventbroker.NewUserEventBroker()
+	handler.userBroker.RecordWorkspaceOwner("ws-1", "user-1")
+	handler.dialect = &agentoc.Dialect{}
+	handler.SetWorkspaceConfigForTest("ws-1", wsstate.Config{AutoApprovePermissions: false})
+
+	userSub, _ := handler.userBroker.SubscribeUser("user-1")
+	defer handler.userBroker.UnsubscribeUser("user-1", userSub)
+
+	envelope := makeEnvelope("permission.asked", map[string]interface{}{
+		"id":         "per_dual",
+		"sessionID":  "ses_dual",
+		"permission": "edit",
+		"patterns":   []string{"file.go"},
+	})
+	handler.onRawEvent("ws-1", "permission.asked", envelope)
+
+	userEvt := recvWithTimeout(t, userSub, "agent.permission")
+	assert.Equal(t, "agent.permission", userEvt.Type)
+	assert.Equal(t, "ws-1", userEvt.WorkspaceID)
+	assert.Equal(t, "ses_dual", userEvt.SessionID)
+	assert.Equal(t, "per_dual", userEvt.RequestID)
+}
+
+func TestNormalizedEvents_QuestionResolved_DualPublish(t *testing.T) {
+	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
+	handler.userBroker = eventbroker.NewUserEventBroker()
+	handler.userBroker.RecordWorkspaceOwner("ws-1", "user-1")
+	handler.dialect = &agentoc.Dialect{}
+
+	userSub, _ := handler.userBroker.SubscribeUser("user-1")
+	defer handler.userBroker.UnsubscribeUser("user-1", userSub)
+
+	envelope := makeEnvelope("question.replied", map[string]interface{}{
+		"id":        "que_resolve",
+		"sessionID": "ses_resolve",
+		"answers":   [][]string{{"Go"}},
+	})
+	handler.onRawEvent("ws-1", "question.replied", envelope)
+
+	userEvt := recvWithTimeout(t, userSub, "agent.question.resolved")
+	assert.Equal(t, "agent.question.resolved", userEvt.Type)
+	assert.Equal(t, "ws-1", userEvt.WorkspaceID)
+	assert.Equal(t, "ses_resolve", userEvt.SessionID)
+	assert.Equal(t, "que_resolve", userEvt.RequestID)
+}
+
+func TestNormalizedEvents_PermissionResolved_DualPublish(t *testing.T) {
+	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
+	handler.userBroker = eventbroker.NewUserEventBroker()
+	handler.userBroker.RecordWorkspaceOwner("ws-1", "user-1")
+	handler.dialect = &agentoc.Dialect{}
+
+	userSub, _ := handler.userBroker.SubscribeUser("user-1")
+	defer handler.userBroker.UnsubscribeUser("user-1", userSub)
+
+	envelope := makeEnvelope("permission.replied", map[string]interface{}{
+		"id":        "per_resolve",
+		"sessionID": "ses_resolve",
+		"reply":     "once",
+	})
+	handler.onRawEvent("ws-1", "permission.replied", envelope)
+
+	userEvt := recvWithTimeout(t, userSub, "agent.permission.resolved")
+	assert.Equal(t, "agent.permission.resolved", userEvt.Type)
+	assert.Equal(t, "ws-1", userEvt.WorkspaceID)
+	assert.Equal(t, "ses_resolve", userEvt.SessionID)
+	assert.Equal(t, "per_resolve", userEvt.RequestID)
+}
+
+func TestNormalizedEvents_UnknownOwner_SkipsUserStream(t *testing.T) {
+	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
+	handler.userBroker = eventbroker.NewUserEventBroker()
+	// Note: RecordWorkspaceOwner NOT called — owner unknown
+	handler.dialect = &agentoc.Dialect{}
+
+	wsSub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	defer handler.userBroker.UnsubscribeWorkspace("ws-1", wsSub)
+	userSub, _ := handler.userBroker.SubscribeUser("user-unknown")
+	defer handler.userBroker.UnsubscribeUser("user-unknown", userSub)
+
+	envelope := makeEnvelope("question.asked", map[string]interface{}{
+		"id":        "que_noowner",
+		"sessionID": "ses_noowner",
+		"questions": []map[string]interface{}{
+			{"question": "Pick?", "header": "H", "options": []map[string]string{{"label": "A", "description": "a"}}},
+		},
+	})
+	handler.onRawEvent("ws-1", "question.asked", envelope)
+
+	// Workspace stream still receives
+	recvWithTimeout(t, wsSub, "opencode.event")
+	wsEvt := recvWithTimeout(t, wsSub, "agent.question")
+	assert.Equal(t, "agent.question", wsEvt.Type)
+
+	// User stream does NOT receive
+	select {
+	case evt := <-userSub.Ch:
+		t.Fatalf("expected NO user stream event when owner unknown, got: %+v", evt)
+	case <-time.After(200 * time.Millisecond):
+		// expected — no event
+	}
+}
+
+func TestNormalizedEvents_NilUserBroker_NoPanic(t *testing.T) {
+	handler, _ := NewProxyHandler(k8smocks.NewMockKubernetesClient(), &testLogger{}, "default", nil, nil)
+	handler.userBroker = nil
+	handler.dialect = &agentoc.Dialect{}
+
+	envelope := makeEnvelope("question.asked", map[string]interface{}{
+		"id":        "que_nil",
+		"sessionID": "ses_nil",
+		"questions": []map[string]interface{}{
+			{"question": "Pick?", "header": "H", "options": []map[string]string{{"label": "A", "description": "a"}}},
+		},
+	})
+	// Should not panic
+	handler.onRawEvent("ws-1", "question.asked", envelope)
+}
+
+func TestNormalizedEvents_AutoApprove_NeitherStream(t *testing.T) {
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	k8sMock.On("LlmsafespacesV1").Return(nil, fmt.Errorf("test: k8s unavailable")).Maybe()
+	handler, _ := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
+	handler.userBroker = eventbroker.NewUserEventBroker()
+	handler.userBroker.RecordWorkspaceOwner("ws-1", "user-1")
+	handler.dialect = &agentoc.Dialect{}
+
+	// Enable auto-approve for this workspace
+	handler.SetWorkspaceConfigForTest("ws-1", wsstate.Config{AutoApprovePermissions: true})
+
+	wsSub, _ := handler.userBroker.SubscribeWorkspace("ws-1")
+	defer handler.userBroker.UnsubscribeWorkspace("ws-1", wsSub)
+	userSub, _ := handler.userBroker.SubscribeUser("user-1")
+	defer handler.userBroker.UnsubscribeUser("user-1", userSub)
+
+	envelope := makeEnvelope("permission.asked", map[string]interface{}{
+		"id":         "per_auto",
+		"sessionID":  "ses_auto",
+		"permission": "edit",
+		"patterns":   []string{"file.go"},
+	})
+	handler.onRawEvent("ws-1", "permission.asked", envelope)
+
+	// opencode.event fires (raw), but agent.permission should NOT
+	recvWithTimeout(t, wsSub, "opencode.event")
+
+	// Neither workspace nor user stream should receive agent.permission
+	select {
+	case evt := <-wsSub.Ch:
+		if evt.Type == "agent.permission" {
+			t.Fatal("auto-approved permission should NOT be published to workspace stream")
+		}
+	case <-time.After(200 * time.Millisecond):
+		// expected
+	}
+	select {
+	case evt := <-userSub.Ch:
+		if evt.Type == "agent.permission" {
+			t.Fatal("auto-approved permission should NOT be published to user stream")
+		}
+	case <-time.After(200 * time.Millisecond):
+		// expected
+	}
+}
+
+// ===== US-55.3: Snapshot Marker + Anti-Entropy =====
+
+func TestEmitPendingInputRequests_EmitsSnapshotCompleteMarker(t *testing.T) {
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	k8sMock.On("LlmsafespacesV1").Return(nil, fmt.Errorf("test: k8s unavailable")).Maybe()
+	handler, _ := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
+	handler.userBroker = eventbroker.NewUserEventBroker()
+	handler.userBroker.RecordWorkspaceOwner("ws-1", "user-1")
+	handler.dialect = &agentoc.Dialect{}
+
+	userSub, _ := handler.userBroker.SubscribeUser("user-1")
+	defer handler.userBroker.UnsubscribeUser("user-1", userSub)
+
+	// emitPendingInputRequests will fail early (LlmsafespacesV1 returns error),
+	// but the defer must still emit the marker.
+	handler.emitPendingInputRequests("ws-1")
+
+	// The marker must be delivered to the user stream
+	marker := recvWithTimeout(t, userSub, "agent.input.snapshot_complete")
+	assert.Equal(t, "agent.input.snapshot_complete", marker.Type)
+	assert.Equal(t, "ws-1", marker.WorkspaceID)
+	// Marker is per-workspace, not per-request
+	assert.Empty(t, marker.SessionID)
+	assert.Empty(t, marker.RequestID)
+}
+
+func TestEmitPendingInputRequests_MarkerFiresOnTimeout(t *testing.T) {
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	k8sMock.On("LlmsafespacesV1").Return(nil, fmt.Errorf("test: k8s unavailable")).Maybe()
+	handler, _ := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
+	handler.userBroker = eventbroker.NewUserEventBroker()
+	handler.userBroker.RecordWorkspaceOwner("ws-1", "user-1")
+	handler.dialect = &agentoc.Dialect{}
+
+	userSub, _ := handler.userBroker.SubscribeUser("user-1")
+	defer handler.userBroker.UnsubscribeUser("user-1", userSub)
+
+	// k8s client returns an error from LlmsafespacesV1
+	// → emitPendingInputRequests returns early at line 95, but defer fires marker.
+	handler.emitPendingInputRequests("ws-1")
+
+	marker := recvWithTimeout(t, userSub, "agent.input.snapshot_complete")
+	assert.Equal(t, "agent.input.snapshot_complete", marker.Type)
+	assert.Equal(t, "ws-1", marker.WorkspaceID)
+}
+
+func TestSnapshotUserWorkspaces_FansOutPendingForActiveWorkspaces(t *testing.T) {
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
+	llmMock.On("Workspaces", "default").Return(wsMock)
+	wsMock.On("List", mock.Anything, mock.MatchedBy(func(opts metav1.ListOptions) bool {
+		return opts.LabelSelector == labelUserID+"=user-1"
+	})).Return(&v1.WorkspaceList{
+		Items: []v1.Workspace{
+			{ObjectMeta: metav1.ObjectMeta{Name: "ws-1"}},
+		},
+	}, nil)
+	// emitPendingInputRequests will try Get("ws-1") and fail — marker still fires
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(nil, fmt.Errorf("test: not found"))
+
+	broker := eventbroker.NewUserEventBroker()
+	broker.RecordWorkspaceOwner("ws-1", "user-1")
+
+	watcher, _ := workspace.NewWatcher(k8sMock, &testLogger{}, "default", func(*v1.Workspace) {})
+	watcher.SetKnownPhase("ws-1", string(v1.WorkspacePhaseActive))
+
+	h := &ProxyHandler{
+		k8sClient:  k8sMock,
+		logger:     &testLogger{},
+		namespace:  "default",
+		userBroker: broker,
+		watcher:    watcher,
+		dialect:    &agentoc.Dialect{},
+	}
+
+	userSub, _ := broker.SubscribeUser("user-1")
+	defer broker.UnsubscribeUser("user-1", userSub)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	h.snapshotUserWorkspaces(ctx, userSub, "user-1")
+
+	// Should receive workspace.phase event for ws-1
+	phaseEvt := recvWithTimeout(t, userSub, "workspace.phase")
+	assert.Equal(t, "workspace.phase", phaseEvt.Type)
+	assert.Equal(t, "ws-1", phaseEvt.WorkspaceID)
+
+	// Should receive the snapshot_complete marker for ws-1 (fan-out fired)
+	marker := recvWithTimeout(t, userSub, "agent.input.snapshot_complete")
+	assert.Equal(t, "agent.input.snapshot_complete", marker.Type)
+	assert.Equal(t, "ws-1", marker.WorkspaceID)
+}
+
+// ===== US-55.4: Regression Guards =====
+
+// TestForgottenPublishGuard verifies every sidebar-relevant input event type
+// reaches the user stream (PublishToUser). This guard prevents the bug class
+// that caused Epic 55: a new control event type published to the workspace
+// stream only, with the dual-publish forgotten.
+//
+// Sidebar-relevant event types and their dedicated coverage:
+//   - session.status (busy/idle) — proxy_session_status_test.go
+//   - agent_died                 — proxy_broker_agentdied_test.go
+//   - agent.question/permission/.resolved — THIS TEST (the US-55.2 additions)
+func TestForgottenPublishGuard_InputEventsReachUserStream(t *testing.T) {
+	tests := []struct {
+		name       string
+		eventType  string
+		envelope   string
+		wantType   string
+	}{
+		{
+			name:      "agent.question",
+			eventType: "question.asked",
+			envelope: makeEnvelope("question.asked", map[string]interface{}{
+				"id":        "que_guard",
+				"sessionID": "ses_guard",
+				"questions": []map[string]interface{}{
+					{"question": "Q?", "header": "H", "options": []map[string]string{{"label": "A", "description": "a"}}},
+				},
+			}),
+			wantType: "agent.question",
+		},
+		{
+			name:      "agent.permission",
+			eventType: "permission.asked",
+			envelope: makeEnvelope("permission.asked", map[string]interface{}{
+				"id":         "per_guard",
+				"sessionID":  "ses_guard",
+				"permission": "edit",
+				"patterns":   []string{"file.go"},
+			}),
+			wantType: "agent.permission",
+		},
+		{
+			name:      "agent.question.resolved",
+			eventType: "question.replied",
+			envelope: makeEnvelope("question.replied", map[string]interface{}{
+				"id":        "que_guard_r",
+				"sessionID": "ses_guard",
+				"answers":   [][]string{{"Go"}},
+			}),
+			wantType: "agent.question.resolved",
+		},
+		{
+			name:      "agent.permission.resolved",
+			eventType: "permission.replied",
+			envelope: makeEnvelope("permission.replied", map[string]interface{}{
+				"id":        "per_guard_r",
+				"sessionID": "ses_guard",
+				"reply":     "once",
+			}),
+			wantType: "agent.permission.resolved",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			k8sMock := k8smocks.NewMockKubernetesClient()
+			handler, _ := NewProxyHandler(k8sMock, &testLogger{}, "default", nil, nil)
+			handler.userBroker = eventbroker.NewUserEventBroker()
+			handler.userBroker.RecordWorkspaceOwner("ws-guard", "user-guard")
+			handler.dialect = &agentoc.Dialect{}
+			handler.SetWorkspaceConfigForTest("ws-guard", wsstate.Config{AutoApprovePermissions: false})
+
+			userSub, _ := handler.userBroker.SubscribeUser("user-guard")
+			defer handler.userBroker.UnsubscribeUser("user-guard", userSub)
+
+			handler.onRawEvent("ws-guard", tt.eventType, tt.envelope)
+
+			// Skip opencode.event (raw passthrough) — look for the normalized type
+			var found bool
+			timeout := time.After(2 * time.Second)
+			for {
+				select {
+				case evt := <-userSub.Ch:
+					if evt.Type == tt.wantType {
+						assert.Equal(t, "ws-guard", evt.WorkspaceID,
+							"%s: user-stream event must carry WorkspaceID", tt.wantType)
+						assert.NotEmpty(t, evt.SessionID,
+							"%s: user-stream event must carry SessionID", tt.wantType)
+						assert.NotEmpty(t, evt.RequestID,
+							"%s: user-stream event must carry RequestID", tt.wantType)
+						found = true
+					}
+				case <-timeout:
+					if !found {
+						t.Fatalf("FORGOTTEN PUBLISH: %s did not reach the user stream. "+
+							"This means a sidebar-relevant event is workspace-only — "+
+							"add PublishToUser to its emit path.", tt.wantType)
+					}
+					return
+				}
+			}
+		})
+	}
+}
+
+// TestInputEventEnvelope_JSONRoundTrip verifies the D10 fields (request_id,
+// session_id) survive JSON marshaling with the keys the frontend expects.
+func TestInputEventEnvelope_JSONRoundTrip(t *testing.T) {
+	evt := apitypes.WorkspaceSSEEvent{
+		Type:        "agent.question",
+		WorkspaceID: "ws-1",
+		SessionID:   "ses-1",
+		RequestID:   "que_1",
+	}
+
+	data, err := json.Marshal(evt)
+	require.NoError(t, err)
+
+	var parsed map[string]interface{}
+	require.NoError(t, json.Unmarshal(data, &parsed))
+
+	assert.Equal(t, "que_1", parsed["request_id"],
+		"request_id must serialize as 'request_id' (frontend reads evt.request_id)")
+	assert.Equal(t, "ses-1", parsed["session_id"],
+		"session_id must serialize as 'session_id' (frontend reads evt.session_id)")
+	assert.Equal(t, "ws-1", parsed["workspace_id"],
+		"workspace_id must serialize as 'workspace_id' (frontend reads evt.workspace_id)")
 }

@@ -9,6 +9,7 @@ type WorkspaceSSEEvent struct {
 	Type        string      `json:"type"`
 	Phase       string      `json:"phase,omitempty"`
 	SessionID   string      `json:"session_id,omitempty"`
+	RequestID   string      `json:"request_id,omitempty"`
 	Status      string      `json:"status,omitempty"`
 	EventType   string      `json:"event_type,omitempty"`
 	Data        interface{} `json:"data,omitempty"`

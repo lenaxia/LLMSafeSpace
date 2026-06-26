@@ -30,6 +30,12 @@ vi.mock("../../providers/SessionActivityProvider", () => ({
   usePendingQuestionsForSession: () => [],
   usePendingPermissionsForSession: () => [],
   useClearSessionPendingPrompts: () => () => {},
+  useSessionStatus: (sid: string) => {
+    if (mockSessionPendingActions().has(sid)) return "pending_input";
+    if (mockIsSessionBusy(sid)) return "busy";
+    if (mockIsSessionUnread(sid)) return "unread";
+    return "idle";
+  },
   SessionActivityProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
@@ -427,6 +433,24 @@ describe("Sidebar — pending action indicator", () => {
     // The title span should pulse when a pending action exists
     const titleSpan = screen.getByText("Needs action");
     expect(titleSpan.className).toContain("animate-unread-pulse");
+  });
+
+  it("shows HelpCircle when session is busy AND has pending action (F7 — the bug)", async () => {
+    mockIsSessionBusy = (sid: string) => sid === "sess-busy-pending";
+    mockWorkspaceBusyCount = (wsid: string) => wsid === "ws-1" ? 1 : 0;
+    mockSessionPendingActions = () => new Set(["sess-busy-pending"]);
+    (workspacesApi.getSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: "sess-busy-pending", title: "Busy Pending", messageCount: 1, status: "active", hasUnread: false },
+    ]);
+
+    renderSidebar();
+
+    await screen.findByText("Busy Pending");
+    const row = screen.getByText("Busy Pending").closest("button")!;
+    // HelpCircle (amber) should be present
+    expect(row.querySelector(".text-amber-500")).toBeTruthy();
+    // Loader2 (blue spinner) should NOT be present
+    expect(row.querySelector(".animate-spin.text-blue-500")).toBeFalsy();
   });
 
   it("parent shows indicator when child has pending action (bubble-up)", async () => {

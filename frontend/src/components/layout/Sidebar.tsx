@@ -5,7 +5,8 @@ import { workspacesApi } from "../../api/workspaces";
 import { orgsApi } from "../../api/orgs";
 import { ApiClientError } from "../../api/client";
 import { useAuth } from "../../providers/AuthProvider";
-import { useIsSessionBusy, useIsSessionUnread, useWorkspaceBusyCount, useSessionPendingActions } from "../../providers/SessionActivityProvider";
+import { useSessionStatus, useWorkspaceBusyCount, useSessionPendingActions } from "../../providers/SessionActivityProvider";
+import type { SessionDisplayStatus } from "../../providers/SessionActivityProvider";
 import { RenameWorkspaceDialog } from "../workspace/RenameWorkspaceDialog";
 import { WorkspaceSettingsDrawer } from "../workspace/WorkspaceSettingsDrawer";
 import { RenameSessionDialog } from "../session/RenameSessionDialog";
@@ -731,11 +732,13 @@ function SessionTreeRow({
   const isExpanded = expanded.has(s.id);
   const now = useNow();
   const title = sessionDisplayTitle(s.title, s.lastMessageAt);
-  const isBusy = useIsSessionBusy(s.id);
-  const isUnread = useIsSessionUnread(s.id);
+  const status = useSessionStatus(s.id);
   const isSelected = s.id === selectedSessionId;
-  const showPulse = isUnread && !isSelected && !isBusy && depth === 0;
-  const showPending = depth === 0 && pendingIndicatorIds.has(s.id);
+  const rowStatus: SessionDisplayStatus =
+    depth === 0 && pendingIndicatorIds.has(s.id) ? "pending_input"
+    : status === "pending_input" ? "busy"
+    : status;
+  const showPulse = rowStatus === "unread" && !isSelected && depth === 0;
   const contextUsed = contextBySessionId.get(s.id);
 
   if (isRenaming) {
@@ -810,16 +813,16 @@ function SessionTreeRow({
               : "text-muted-foreground",
           )}
         >
-          {isBusy ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500 flex-shrink-0" />
-          ) : showPending ? (
+          {rowStatus === "pending_input" ? (
             <HelpCircle className="h-3.5 w-3.5 flex-shrink-0 animate-unread-pulse text-amber-500" />
-          ) : showPulse ? (
+          ) : rowStatus === "busy" ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500 flex-shrink-0" />
+          ) : rowStatus === "unread" ? (
             <MessageSquareText className="h-3.5 w-3.5 flex-shrink-0 animate-unread-pulse" />
           ) : (
             <MessageSquare className="h-3.5 w-3.5 flex-shrink-0" />
           )}
-          <span className={cn("flex-1 truncate", (showPulse || showPending) && "animate-unread-pulse")}>{title}</span>
+          <span className={cn("flex-1 truncate", (showPulse || rowStatus === "pending_input") && "animate-unread-pulse")}>{title}</span>
           {contextUsed != null && (
             <span
               className="flex-shrink-0 text-[10px] tabular-nums text-muted-foreground/50"
