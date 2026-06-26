@@ -274,9 +274,23 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
 
         setPendingActions((prev) => {
           const next = new Map(prev);
+          // Build the authoritative requestId set from staging for this ws.
+          const stagedRequestIds = new Set(staged?.keys() ?? []);
+
           // Remove all pending entries for sessions belonging to this workspace.
+          // Also clean up requestToSessionRef and content maps for dropped requestIds.
           for (const [sessionId] of next) {
             if (pendingActionWsRef.current.get(sessionId) === wsId) {
+              const sessionRequests = next.get(sessionId);
+              if (sessionRequests) {
+                for (const rid of sessionRequests) {
+                  if (!stagedRequestIds.has(rid)) {
+                    requestToSessionRef.current.delete(rid);
+                    pendingQuestionContent.delete(rid);
+                    pendingPermissionContent.delete(rid);
+                  }
+                }
+              }
               next.delete(sessionId);
             }
           }

@@ -434,7 +434,7 @@ describe("Integration: US-55 input events → provider → status resolution (#3
     expect(screen.getByTestId("status-sess-ws2").textContent).toBe("pending_input");
   });
 
-  it("#42: no flicker on reconnect — pendingActions not wiped", async () => {
+  it("duplicate agent.question (same requestId) is idempotent — does not double-add", async () => {
     function PendingIndicator({ sessionId }: { sessionId: string }) {
       const isPending = useIsSessionPendingAction(sessionId);
       return <span data-testid={`pending-${sessionId}`}>{isPending ? "yes" : "no"}</span>;
@@ -451,18 +451,18 @@ describe("Integration: US-55 input events → provider → status resolution (#3
         type: "agent.question",
         workspace_id: "ws-1",
         session_id: "ses-1",
-        request_id: "que_flicker",
+        request_id: "que_dedup",
       });
     });
     expect(screen.getByTestId("pending-ses-1").textContent).toBe("yes");
 
-    // Reconnect fires — pendingActions should NOT be wiped (D9)
+    // Same requestId again — idempotent (addPendingAction deduplicates)
     await act(async () => {
       capturedOnEvent!({
         type: "agent.question",
         workspace_id: "ws-1",
         session_id: "ses-1",
-        request_id: "que_flicker",
+        request_id: "que_dedup",
       });
     });
     expect(screen.getByTestId("pending-ses-1").textContent).toBe("yes");
