@@ -39,6 +39,11 @@ import (
 type KeyServiceInterface interface {
 	InitializeUserKeys(ctx context.Context, userID string, password []byte) (recoveryKeyHex string, err error)
 	UnlockDEK(ctx context.Context, userID string, password []byte, sessionID string, ttl time.Duration) error
+	// UnlockDEKWithSigningKey is UnlockDEK + durable jwt_sessions write
+	// (Epic 56). Login calls this with the active signing key (s.jwtSecret)
+	// so the unlocked DEK survives Valkey restart / LRU eviction for the
+	// JWT's remaining lifetime. Pass nil to fall back to Redis-only.
+	UnlockDEKWithSigningKey(ctx context.Context, userID string, password []byte, sessionID string, ttl time.Duration, activeSigningKey []byte) error
 	HasKeys(ctx context.Context, userID string) (bool, error)
 	// GetDEK (Epic 56) takes the matched signing key so the rehydrate path
 	// can derive the per-session KEK from the same key the JWT validated
@@ -47,6 +52,12 @@ type KeyServiceInterface interface {
 	// durable DEK path via api_keys.WrappedDEK).
 	GetDEK(ctx context.Context, sessionID string, matchedSigningKey []byte) ([]byte, error)
 	CacheDEK(ctx context.Context, sessionID string, dek []byte, ttl time.Duration) error
+	// DeleteDurableSessionsForUser (Epic 56) removes every jwt_sessions
+	// row for a user. Called by RevokeAllUserSessions to keep the
+	// durable store consistent with the Redis revocation markers — without
+	// this, a stolen JWT could still rehydrate the DEK from PG after the
+	// victim resets their password.
+	DeleteDurableSessionsForUser(ctx context.Context, userID string) error
 }
 
 // SetKeyService sets the optional key service for secret management.
@@ -989,7 +1000,13 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 	// Extract jti once — used for both DEK unlock and session tracking.
 	jti := utilities.ExtractJTI(token)
 
-	// Unlock DEK for secret management (Epic 10)
+	// Unlock DEK for secret management (Epic 10 + Epic 56 durable write).
+	// We pass the active signing key (s.jwtSecret) — by definition this is
+	// the key the fresh JWT was just signed with, so the rehydrate path
+	// can later re-derive the wrapping KEK from the matched validation
+	// key (which will be either s.jwtSecret or some entry of
+	// s.jwtPreviousSecrets depending on whether rotation happens in
+	// between).
 	if s.keyService != nil {
 		if jti != "" {
 			// Auto-initialize keys for pre-Epic 10 users on first login
@@ -999,7 +1016,7 @@ func (s *Service) Login(ctx context.Context, req types.LoginRequest) (*types.Aut
 					s.logger.Warn("Login: failed to auto-init keys", "user_id", user.ID, "error", err.Error())
 				}
 			}
-			if err := s.keyService.UnlockDEK(ctx, user.ID, []byte(req.Password), jti, tokenDur); err != nil {
+			if err := s.keyService.UnlockDEKWithSigningKey(ctx, user.ID, []byte(req.Password), jti, tokenDur, s.jwtSecret); err != nil {
 				s.logger.Warn("Login: failed to unlock DEK", "user_id", user.ID, "error", err.Error())
 			}
 		}
@@ -1086,6 +1103,14 @@ func (s *Service) RevokeAllUserSessions(ctx context.Context, userID string) erro
 		}
 	}
 	_ = s.cacheService.Delete(ctx, key)
+
+	// Epic 56: keep durable jwt_sessions consistent with the Redis-side
+	// revocation markers. Best-effort — the auth-layer revocation is
+	// already authoritative; this is defense-in-depth against a future
+	// rehydrate path bug.
+	if s.keyService != nil {
+		_ = s.keyService.DeleteDurableSessionsForUser(ctx, userID)
+	}
 	return nil
 }
 

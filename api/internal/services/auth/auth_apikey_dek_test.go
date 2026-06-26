@@ -49,6 +49,14 @@ func (d *dekJKeyService) InitializeUserKeys(_ context.Context, _ string, _ []byt
 func (d *dekJKeyService) UnlockDEK(_ context.Context, _ string, _ []byte, _ string, _ time.Duration) error {
 	return nil
 }
+
+func (d *dekJKeyService) UnlockDEKWithSigningKey(ctx context.Context, userID string, password []byte, sessionID string, ttl time.Duration, _ []byte) error {
+	return d.UnlockDEK(ctx, userID, password, sessionID, ttl)
+}
+
+func (d *dekJKeyService) DeleteDurableSessionsForUser(_ context.Context, _ string) error {
+	return nil
+}
 func (d *dekJKeyService) HasKeys(_ context.Context, _ string) (bool, error) {
 	return true, nil
 }

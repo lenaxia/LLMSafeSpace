@@ -73,6 +73,12 @@ type RouterConfig struct {
 	// RotateKeyHandler is the handler for key rotation (optional)
 	RotateKeyHandler *handlers.RotateKeyHandler
 
+	// UnlockDEKHandler is the soft-unlock endpoint for re-deriving the
+	// DEK without forcing logout (Epic 56). Optional — when nil the
+	// /auth/unlock-dek route is not registered, which is appropriate
+	// for tests that don't exercise key material.
+	UnlockDEKHandler *handlers.UnlockDEKHandler
+
 	// OrgsHandler handles org CRUD routes (optional)
 	OrgsHandler *handlers.OrgsHandler
 
@@ -487,6 +493,18 @@ func NewRouter(services interfaces.Services, logger *apilogger.Logger, proxyHand
 		accountGroup.POST("/rotate-key", cfg.RotateKeyHandler.RotateKey)
 		accountGroup.POST("/change-password", cfg.RotateKeyHandler.ChangePassword)
 		router.POST("/api/v1/account/recover", cfg.RotateKeyHandler.RecoverAccount)
+	}
+
+	// Soft-unlock endpoint (Epic 56). Behind AuthMiddleware so the
+	// middleware stashes the matched JWT signing key on the gin context —
+	// the handler then forwards it to KeyService.UnlockDEKWithSigningKey
+	// to rewrap the durable jwt_sessions row under the SAME key the
+	// JWT validated under (not the active signing key — see the [HIGH]
+	// regression case from PR #411 review pass 1 and worklog 0550).
+	if cfg.UnlockDEKHandler != nil {
+		unlockGroup := router.Group("/api/v1/auth")
+		unlockGroup.Use(services.GetAuth().AuthMiddleware())
+		unlockGroup.POST("/unlock-dek", cfg.UnlockDEKHandler.Unlock)
 	}
 
 	// Org CRUD routes (Epic 11)

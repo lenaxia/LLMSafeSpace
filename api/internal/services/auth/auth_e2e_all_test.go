@@ -400,6 +400,14 @@ func (c *capturingKeyService) UnlockDEK(ctx context.Context, userID string, pass
 	return c.inner.UnlockDEK(ctx, userID, password, sessionID, ttl)
 }
 
+func (c *capturingKeyService) UnlockDEKWithSigningKey(ctx context.Context, userID string, password []byte, sessionID string, ttl time.Duration, _ []byte) error {
+	return c.UnlockDEK(ctx, userID, password, sessionID, ttl)
+}
+
+func (c *capturingKeyService) DeleteDurableSessionsForUser(_ context.Context, _ string) error {
+	return nil
+}
+
 func (c *capturingKeyService) HasKeys(ctx context.Context, userID string) (bool, error) {
 	return c.inner.HasKeys(ctx, userID)
 }

@@ -242,6 +242,14 @@ func (t *trackingKeyService) UnlockDEK(_ context.Context, _ string, _ []byte, _ 
 	return nil
 }
 
+func (t *trackingKeyService) UnlockDEKWithSigningKey(ctx context.Context, userID string, password []byte, sessionID string, ttl time.Duration, _ []byte) error {
+	return t.UnlockDEK(ctx, userID, password, sessionID, ttl)
+}
+
+func (t *trackingKeyService) DeleteDurableSessionsForUser(_ context.Context, _ string) error {
+	return nil
+}
+
 func (t *trackingKeyService) HasKeys(_ context.Context, userID string) (bool, error) {
 	if t.initialized == nil {
 		return false, nil

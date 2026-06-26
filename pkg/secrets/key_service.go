@@ -210,7 +210,48 @@ func (s *KeyService) InitializeUserKeys(ctx context.Context, userID string, pass
 
 // UnlockDEK derives the KEK from the password, unwraps the DEK, and caches it.
 // Called during login. sessionID is the JWT's jti claim.
+//
+// This is the pre-Epic-56 entry point — Redis cache only. Use
+// UnlockDEKWithSigningKey from the login site to additionally write the
+// durable jwt_sessions row (Epic 56). Internal callers (auth.Login)
+// always go through the With-SigningKey variant; tests and Register
+// (which has no JWT yet at the point of call) use this one.
 func (s *KeyService) UnlockDEK(ctx context.Context, userID string, password []byte, sessionID string, ttl time.Duration) error {
+	return s.UnlockDEKWithSigningKey(ctx, userID, password, sessionID, ttl, nil)
+}
+
+// UnlockDEKWithSigningKey is UnlockDEK + durable jwt_sessions write
+// (Epic 56). The durable row is wrapped under a KEK derived from
+// activeSigningKey || jti via HKDF-SHA256; the rehydrate path
+// (rehydrateDEKFromJWTSession) re-derives the same KEK from the
+// MATCHED signing key recovered from a presented JWT.
+//
+// Behavior matrix:
+//
+//   - activeSigningKey == nil       → Redis cache only; no durable write.
+//     This is the path tests and Register take. The legacy
+//     UnlockDEK delegates here with nil.
+//
+//   - sessionID is not a UUID       → Redis cache only. API-key sessions
+//     ("apikey:hash") and legacy non-UUID sessionIDs don't belong in
+//     jwt_sessions; the api_keys.WrappedDEK design covers API-key DEK
+//     durability separately.
+//
+//   - jwtSessions store not wired   → Redis cache only. Pre-Epic-56
+//     deploys and tests without SetJWTSessionStore.
+//
+//   - durable write fails           → NOT returned as an error. The
+//     Redis cache succeeded, so the JWT is functional for its remaining
+//     lifetime; only the durable rehydrate-on-Valkey-restart property
+//     is degraded. Log Warn so operators see the loss of resilience.
+//     Login MUST NOT fail on a transient PG hiccup.
+//
+// "activeSigningKey" name is precise: at login the JWT we just issued is
+// signed with s.jwtSecret (active), so we derive against the active key.
+// The rehydrate path may match a previous key if rotation happens
+// between issue and use — that's expected; what matters is the KEY at
+// JWT-validation time, surfaced via parseTokenAcceptingRotatedKeys.
+func (s *KeyService) UnlockDEKWithSigningKey(ctx context.Context, userID string, password []byte, sessionID string, ttl time.Duration, activeSigningKey []byte) error {
 	record, err := s.store.GetUserKey(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("get user key: %w", err)
@@ -235,12 +276,126 @@ func (s *KeyService) UnlockDEK(ctx context.Context, userID string, password []by
 		return fmt.Errorf("cache DEK: %w", err)
 	}
 
+	// Epic 56: best-effort durable write so the DEK survives Valkey
+	// restart for the JWT's remaining lifetime. Skipped when any of
+	// (store / signing key / valid jti) is missing.
+	s.writeDurableDEK(ctx, userID, sessionID, dek, ttl, activeSigningKey)
 	return nil
 }
 
-// EvictDEK removes the cached DEK for a session. Called on logout/expiry.
+// writeDurableDEK persists the unlocked DEK to jwt_sessions. Best-effort:
+// every failure path is logged at Warn and returns without propagating.
+// Login MUST stay green even if PG is degraded.
+func (s *KeyService) writeDurableDEK(ctx context.Context, userID, sessionID string, dek []byte, ttl time.Duration, activeSigningKey []byte) {
+	if s.jwtSessions == nil || activeSigningKey == nil {
+		return
+	}
+	jti, perr := uuid.Parse(sessionID)
+	if perr != nil {
+		// API-key or legacy non-UUID session — not our table.
+		return
+	}
+
+	kekSalt, sErr := GenerateSalt()
+	if sErr != nil {
+		if s.logger != nil {
+			s.logger.Warn("durable DEK write: salt generation failed", "jti", jti.String(), "error", sErr.Error())
+		}
+		return
+	}
+
+	keyMaterial := make([]byte, 0, len(activeSigningKey)+36)
+	keyMaterial = append(keyMaterial, activeSigningKey...)
+	keyMaterial = append(keyMaterial, []byte(jti.String())...)
+	kek, dErr := DeriveKEKFromKey(keyMaterial, kekSalt, JWTSessionKEKInfo)
+	zeroBytes(keyMaterial)
+	if dErr != nil {
+		if s.logger != nil {
+			s.logger.Warn("durable DEK write: KEK derive failed", "jti", jti.String(), "error", dErr.Error())
+		}
+		return
+	}
+	defer zeroBytes(kek)
+
+	wrapped, eErr := EncryptSecret(kek, dek)
+	if eErr != nil {
+		if s.logger != nil {
+			s.logger.Warn("durable DEK write: encrypt failed", "jti", jti.String(), "error", eErr.Error())
+		}
+		return
+	}
+
+	row := &JWTSession{
+		JTI:        jti,
+		UserID:     userID,
+		WrappedDEK: wrapped,
+		KEKSalt:    kekSalt,
+		CreatedAt:  time.Now(),
+		ExpiresAt:  time.Now().Add(ttl),
+	}
+	if wErr := s.jwtSessions.WriteJWTSession(ctx, row); wErr != nil {
+		if s.logger != nil {
+			s.logger.Warn("durable DEK write: jwt_sessions upsert failed (Redis cache still valid)",
+				"jti", jti.String(), "error", wErr.Error())
+		}
+	}
+}
+
+// EvictDEK removes the cached DEK for a session AND the durable
+// jwt_sessions row (Epic 56). Called on logout / explicit revocation.
+// Non-JTI sessionIDs (API-key sessions like "apikey:hash") only evict
+// the Redis cache — the api_keys table is the durable home for those.
 func (s *KeyService) EvictDEK(ctx context.Context, sessionID string) error {
-	return s.cache.EvictDEK(ctx, sessionID)
+	if err := s.cache.EvictDEK(ctx, sessionID); err != nil {
+		return err
+	}
+	s.deleteDurableSession(ctx, sessionID)
+	return nil
+}
+
+// deleteDurableSession removes a single jwt_sessions row for the
+// session, if the session is a JWT (UUID jti). Best-effort: an error
+// is logged but not returned — the Redis evict has already succeeded,
+// the JWT is functionally revoked from the rehydrate path's perspective
+// once the cache miss happens, and the row will be pruned by the
+// janitor at expires_at anyway.
+func (s *KeyService) deleteDurableSession(ctx context.Context, sessionID string) {
+	if s.jwtSessions == nil {
+		return
+	}
+	jti, err := uuid.Parse(sessionID)
+	if err != nil {
+		// API-key or legacy non-UUID — not our table.
+		return
+	}
+	if err := s.jwtSessions.DeleteJWTSession(ctx, jti); err != nil && s.logger != nil {
+		s.logger.Warn("durable session delete failed (janitor will eventually prune)",
+			"jti", jti.String(), "error", err.Error())
+	}
+}
+
+// DeleteDurableSessionsForUser removes every jwt_sessions row for a
+// user. Called by auth.Service.RevokeAllUserSessions (password reset,
+// admin force-logout) so a stolen JWT cannot rehydrate the DEK from
+// the durable store after the user has explicitly invalidated every
+// outstanding session. Best-effort: failure is logged but does not
+// propagate — the Redis revocation markers are already in place and
+// the JWT itself is functionally dead.
+//
+// Returns nil even on failure — callers do not need to handle the
+// error path; the contract is "drive jwt_sessions toward consistency
+// with the auth-layer revocation, log if we can't".
+func (s *KeyService) DeleteDurableSessionsForUser(ctx context.Context, userID string) error {
+	if s.jwtSessions == nil {
+		return nil
+	}
+	if _, err := s.jwtSessions.DeleteJWTSessionsForUser(ctx, userID); err != nil {
+		if s.logger != nil {
+			s.logger.Warn("durable sessions delete-for-user failed (janitor will eventually prune)",
+				"userID", userID, "error", err.Error())
+		}
+	}
+	return nil
 }
 
 // CacheDEK stores a DEK in the session cache. Used by API key auth to cache
@@ -466,6 +621,11 @@ func (s *KeyService) ChangePassword(ctx context.Context, userID, sessionID strin
 			s.logger.Warn("ChangePassword: DEK evict failed; cached DEK may be stale until TTL",
 				"userID", userID, "sessionID", sessionID, "error", err.Error())
 		}
+		// Epic 56: also delete the durable jwt_sessions row. Without
+		// this, an attacker who has the old JWT (signing key valid)
+		// could rehydrate the OLD DEK from PG after the password change
+		// — defeating the point of the change.
+		s.deleteDurableSession(ctx, sessionID)
 	}
 
 	if err := s.store.UpdateWrappedDEK(ctx, userID, newWrappedDEK, newSalt, record.KeyVersion); err != nil {
@@ -690,6 +850,16 @@ func (s *KeyService) RotateKeyWithPassword(ctx context.Context, userID string, p
 	if err := s.cache.CacheDEK(ctx, sessionID, newDEK, ttl); err != nil {
 		return RotationResult{}, fmt.Errorf("cache new DEK: %w", err)
 	}
+
+	// Epic 56: delete the durable jwt_sessions row. The wrapped_dek on
+	// it encrypts the OLD DEK; user_secrets are now re-encrypted under
+	// the new DEK. A rehydrate via that row would yield a DEK that
+	// can't decrypt anything — strictly worse than rehydrate-fails ⇒
+	// soft-unlock. The user's next request on a fresh request after
+	// this rotation will either hit the in-process Redis cache (just
+	// repopulated) or, after Valkey restart, surface ErrDEKUnavailable
+	// and prompt soft-unlock.
+	s.deleteDurableSession(ctx, sessionID)
 
 	s.rewrapAPIKeyDEKs(ctx, userID, newDEK)
 

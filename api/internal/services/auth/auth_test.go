@@ -1005,6 +1005,14 @@ func (f *fakeKeyService) UnlockDEK(ctx context.Context, userID string, password 
 	return f.unlockErr
 }
 
+func (f *fakeKeyService) UnlockDEKWithSigningKey(ctx context.Context, userID string, password []byte, sessionID string, ttl time.Duration, _ []byte) error {
+	return f.UnlockDEK(ctx, userID, password, sessionID, ttl)
+}
+
+func (f *fakeKeyService) DeleteDurableSessionsForUser(_ context.Context, _ string) error {
+	return nil
+}
+
 func (f *fakeKeyService) HasKeys(ctx context.Context, userID string) (bool, error) {
 	if f.hasKeysFn != nil {
 		return f.hasKeysFn(ctx, userID)
