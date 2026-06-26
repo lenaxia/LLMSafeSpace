@@ -426,4 +426,4 @@ This session merged 4 PRs (#407, #409, #410, #411) and 1 implementation foundati
 
 ### This worklog
 
-- `worklogs/NNNN_2026-06-26_provider-not-found-end-to-end.md` (this file) — session summary, will be assigned a number by the post-merge bot
+- `worklogs/0552_2026-06-26_provider-not-found-end-to-end.md` (this file) — session summary, will be assigned a number by the post-merge bot
