@@ -94,6 +94,10 @@ type ProxyHandler struct {
 	// panic if called after Start — request goroutines read stateStore
 	// without synchronization, so a late swap would race.
 	started bool
+
+	// stopCh is closed by Stop() to signal background goroutines
+	// (e.g. the stranded-queue sweep) to shut down.
+	stopCh chan struct{}
 }
 
 func NewProxyHandler(

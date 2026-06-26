@@ -430,6 +430,15 @@ func (h *ProxyHandler) EnqueueMessage(c *gin.Context) {
 		})
 	}
 
+	// If the session is already idle (not in activeSess), drain immediately.
+	// This handles the case where the user queues a message after the agent
+	// finished — no session.status=idle event will arrive because the session
+	// is already quiet. Without this check the message would sit in Redis
+	// until the next SSE reconnect triggers reconcileSessionState.
+	if !h.isSessionActive(c.Request.Context(), wid, sid) && !h.isSessionDeleted(wid, sid) {
+		go h.drainQueuedMessage(wid, sid)
+	}
+
 	c.JSON(http.StatusAccepted, gin.H{"messageID": msgID})
 }
 

@@ -26,6 +26,7 @@ func (h *ProxyHandler) Start() error {
 	var startErr error
 	h.startOnce.Do(func() {
 		h.started = true
+		h.stopCh = make(chan struct{})
 		h.userBroker = eventbroker.NewUserEventBroker()
 
 		h.activityTracker = activity.NewActivityTracker(h.k8sClient, h.logger, h.namespace)
@@ -61,12 +62,20 @@ func (h *ProxyHandler) Start() error {
 		// SSE subscriptions for already-Active workspaces are established
 		// by the watcher's seedResourceVersion(), which calls onPhaseChange
 		// for each Active workspace it discovers. No post-Start loop needed.
+
+		// Start the stranded-queue sweep last — after all other setup has
+		// succeeded. This avoids leaking the goroutine if watcher.Start()
+		// fails and the caller doesn't invoke Stop().
+		go h.startQueueSweep(h.stopCh)
 	})
 	return startErr
 }
 
 func (h *ProxyHandler) Stop() error {
 	h.stopOnce.Do(func() {
+		if h.stopCh != nil {
+			close(h.stopCh)
+		}
 		if h.sseTracker != nil {
 			h.sseTracker.Stop()
 		}

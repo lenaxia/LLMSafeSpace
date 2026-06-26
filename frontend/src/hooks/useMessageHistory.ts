@@ -9,7 +9,12 @@ interface InfiniteData {
 
 function selectChronological(data: InfiniteData): Message[] {
   const all = data.pages.flatMap((p) => p.messages);
-  return all.sort((a, b) => a.id.localeCompare(b.id));
+  return all.sort((a, b) => {
+    const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    if (aTime !== bTime) return aTime - bTime;
+    return a.id.localeCompare(b.id);
+  });
 }
 
 export function useMessageHistory(workspaceId: string | undefined, sessionId: string | undefined) {

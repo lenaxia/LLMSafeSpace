@@ -49,6 +49,12 @@ func TestEnqueueMessage_Success(t *testing.T) {
 	handler, svc, cleanup := setupQueueTestEnv(t)
 	defer cleanup()
 
+	// Mark session as active so the drain-on-enqueue goroutine does not fire.
+	// Without this, EnqueueMessage spawns drainQueuedMessage which calls
+	// getPodIPAndPassword → k8sClient.LlmsafespacesV1() on the bare mock,
+	// panicking in a background goroutine.
+	handler.SetActiveSessionsForTest("ws-1", []string{"ses-1"})
+
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -97,6 +103,162 @@ func TestEnqueueMessage_NoQueueService(t *testing.T) {
 
 	handler.EnqueueMessage(c)
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+// TestEnqueueMessage_DrainsWhenIdle verifies that EnqueueMessage triggers an
+// immediate drain when the session is not in activeSess (already idle). Without
+// this, a message enqueued after the agent finished would sit in Redis forever
+// — no session.status=idle event will arrive because the session is already quiet.
+func TestEnqueueMessage_DrainsWhenIdle(t *testing.T) {
+	promptCalled := make(chan string, 1)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/session/ses-1/prompt_async" {
+			var body struct {
+				Parts []struct{ Text string } `json:"parts"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if len(body.Parts) > 0 {
+				select {
+				case promptCalled <- body.Parts[0].Text:
+				default:
+				}
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer backend.Close()
+
+	transport := &redirectTransport{server: backend}
+	httpClient := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+
+	k8sMock := newMockK8sWithWorkspace(t, "ws-1", "10.0.0.1")
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient, nil)
+	require.NoError(t, err)
+
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+	svc := msgqueue.NewWithClient(client)
+	handler.SetMessageQueueService(svc)
+	handler.userBroker = eventbroker.NewUserEventBroker()
+	setupPasswordSecret(t, handler, "ws-1", "test-pw")
+
+	// Session is NOT in activeSess — simulates an idle session.
+	assert.False(t, handler.isSessionActive(context.Background(), "ws-1", "ses-1"))
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/queue", strings.NewReader(`{"text":"drain me"}`))
+	c.Params = gin.Params{{Key: "id", Value: "ws-1"}, {Key: "sessionId", Value: "ses-1"}}
+
+	handler.EnqueueMessage(c)
+	assert.Equal(t, http.StatusAccepted, w.Code)
+
+	// The drain goroutine should send the message to opencode immediately.
+	select {
+	case text := <-promptCalled:
+		assert.Equal(t, "drain me", text)
+	case <-time.After(2 * time.Second):
+		t.Fatal("drain-on-enqueue: prompt_async was never called for idle session")
+	}
+
+	n, _ := svc.Len(context.Background(), "ws-1", "ses-1")
+	assert.Equal(t, int64(0), n, "queue should be empty after drain-on-enqueue")
+}
+
+// TestEnqueueMessage_NoDrainWhenActive verifies that EnqueueMessage does NOT
+// trigger drain when the session is active (busy). The message should stay in
+// the queue until the session goes idle and onSessionIdle fires.
+func TestEnqueueMessage_NoDrainWhenActive(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer backend.Close()
+
+	transport := &redirectTransport{server: backend}
+	httpClient := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+
+	k8sMock := newMockK8sWithWorkspace(t, "ws-1", "10.0.0.1")
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient, nil)
+	require.NoError(t, err)
+
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+	svc := msgqueue.NewWithClient(client)
+	handler.SetMessageQueueService(svc)
+	handler.userBroker = eventbroker.NewUserEventBroker()
+	setupPasswordSecret(t, handler, "ws-1", "test-pw")
+
+	// Mark session as active (busy).
+	handler.SetActiveSessionsForTest("ws-1", []string{"ses-1"})
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/queue", strings.NewReader(`{"text":"wait for idle"}`))
+	c.Params = gin.Params{{Key: "id", Value: "ws-1"}, {Key: "sessionId", Value: "ses-1"}}
+
+	handler.EnqueueMessage(c)
+	assert.Equal(t, http.StatusAccepted, w.Code)
+
+	// Give drain goroutine time to fire if it was going to (it should NOT).
+	time.Sleep(200 * time.Millisecond)
+
+	n, _ := svc.Len(context.Background(), "ws-1", "ses-1")
+	assert.Equal(t, int64(1), n, "message should stay in queue when session is active")
+}
+
+// TestEnqueueMessage_DeletedSessionDoesNotDrain verifies that the drain-on-enqueue
+// guard correctly skips deleted sessions. A late enqueue hitting a deleted session
+// must NOT trigger drain — the message stays in the queue until the user deletes it
+// or the workspace terminates (which clears all queues).
+func TestEnqueueMessage_DeletedSessionDoesNotDrain(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer backend.Close()
+
+	transport := &redirectTransport{server: backend}
+	httpClient := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+
+	k8sMock := newMockK8sWithWorkspace(t, "ws-1", "10.0.0.1")
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient, nil)
+	require.NoError(t, err)
+
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+	svc := msgqueue.NewWithClient(client)
+	handler.SetMessageQueueService(svc)
+	handler.userBroker = eventbroker.NewUserEventBroker()
+	setupPasswordSecret(t, handler, "ws-1", "test-pw")
+
+	// Mark session as deleted (simulates user deleting the session).
+	handler.MarkSessionDeletedForTest("ws-1", "ses-1")
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/queue", strings.NewReader(`{"text":"late msg"}`))
+	c.Params = gin.Params{{Key: "id", Value: "ws-1"}, {Key: "sessionId", Value: "ses-1"}}
+
+	handler.EnqueueMessage(c)
+	assert.Equal(t, http.StatusAccepted, w.Code)
+
+	// Give drain goroutine time to fire if it was going to (it should NOT).
+	time.Sleep(200 * time.Millisecond)
+
+	// Message should stay in queue — deleted sessions must not be drained.
+	n, _ := svc.Len(context.Background(), "ws-1", "ses-1")
+	assert.Equal(t, int64(1), n, "message should stay in queue for deleted session")
 }
 
 func TestListQueue_Success(t *testing.T) {
