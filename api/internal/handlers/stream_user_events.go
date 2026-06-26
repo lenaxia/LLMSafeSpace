@@ -273,7 +273,7 @@ func (h *ProxyHandler) snapshotUserWorkspaces(ctx context.Context, s *eventbroke
 			}
 			go func(id string) {
 				defer func() { _ = recover() }() // never let a fetch panic the snapshot
-				h.emitPendingInputRequests(id)
+				h.emitPendingInputRequests(ctx, id)
 			}(wsID)
 		}
 	}

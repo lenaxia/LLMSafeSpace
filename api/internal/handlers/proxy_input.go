@@ -86,7 +86,12 @@ func (h *ProxyHandler) PermissionReply(c *gin.Context) {
 
 // emitPendingInputRequests fetches pending questions and permissions from the pod
 // and publishes them as synthetic events so reconnecting browsers see them immediately.
-func (h *ProxyHandler) emitPendingInputRequests(workspaceID string) {
+//
+// Accepts the parent's context (typically `c.Request.Context()` for the
+// SSE/snapshot path) so contextcheck is happy and a client disconnect
+// cancels the in-flight pod fetch promptly. Internally derives a 5s
+// timeout from the parent to keep the bounded-per-call cap.
+func (h *ProxyHandler) emitPendingInputRequests(ctx context.Context, workspaceID string) {
 	// D9: emit the snapshot-complete marker unconditionally on exit, even on
 	// timeout/error. This lets the provider commit (or clear) the workspace's
 	// pending set without hanging. On timeout, staging is empty → the provider
@@ -103,7 +108,7 @@ func (h *ProxyHandler) emitPendingInputRequests(workspaceID string) {
 		}
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	v1Client, err := h.k8sClient.LlmsafespacesV1()

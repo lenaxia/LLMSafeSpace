@@ -880,7 +880,7 @@ func TestEmitPendingInputRequests_EmitsSnapshotCompleteMarker(t *testing.T) {
 
 	// emitPendingInputRequests will fail early (LlmsafespacesV1 returns error),
 	// but the defer must still emit the marker.
-	handler.emitPendingInputRequests("ws-1")
+	handler.emitPendingInputRequests(context.Background(), "ws-1")
 
 	// The marker must be delivered to the user stream
 	marker := recvWithTimeout(t, userSub, "agent.input.snapshot_complete")
@@ -904,7 +904,7 @@ func TestEmitPendingInputRequests_MarkerFiresOnTimeout(t *testing.T) {
 
 	// k8s client returns an error from LlmsafespacesV1
 	// → emitPendingInputRequests returns early at line 95, but defer fires marker.
-	handler.emitPendingInputRequests("ws-1")
+	handler.emitPendingInputRequests(context.Background(), "ws-1")
 
 	marker := recvWithTimeout(t, userSub, "agent.input.snapshot_complete")
 	assert.Equal(t, "agent.input.snapshot_complete", marker.Type)
