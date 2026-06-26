@@ -279,14 +279,6 @@ func TestValidateTokenWithClientIP_RevokedSentinelStillHonored(t *testing.T) {
 //   jwt_signing_key       []byte — the matched key bytes (nil for API-key auth)
 //   jwt_signing_key_index int    — matched index (-1 when unknown / API-key)
 
-// Epic 56 Step 4: AuthMiddleware must surface the matched signing key on
-// the gin context so handlers (CreateAPIKey, UserProviderCredentials,
-// CredentialProbe, …) can forward it to KeyService.GetDEK for durable-DEK
-// rehydrate. The middleware sets two keys:
-//
-//   jwt_signing_key       []byte — the matched key bytes (nil for API-key auth)
-//   jwt_signing_key_index int    — matched index (-1 when unknown / API-key)
-
 func TestAuthMiddleware_SetsMatchedSigningKey_OnFreshParse(t *testing.T) {
 	svc, mockDB, mockCache := newTestService(t)
 	svc.jwtSecret = []byte("active-key-32-bytes-padding-here")

@@ -840,7 +840,14 @@ func (s *Service) Register(ctx context.Context, req types.RegisterRequest) (*typ
 				fmt.Errorf("empty jti"), "user_id", userID)
 			return nil, errors.New("registration failed")
 		}
-		if err := s.keyService.UnlockDEK(ctx, userID, []byte(req.Password), jti, s.tokenDuration); err != nil {
+		// Epic 56: register also gets durable jwt_sessions write, so a
+		// Valkey restart between registration and the user's first
+		// secret operation does not force a soft-unlock. The JWT was
+		// just generated above and is signed with s.jwtSecret, so that
+		// is by definition the matched key the rehydrate path will
+		// find. PR #421 review pass 2 flagged the previous nil-signing-
+		// key call as inconsistent with login.
+		if err := s.keyService.UnlockDEKWithSigningKey(ctx, userID, []byte(req.Password), jti, s.tokenDuration, s.jwtSecret); err != nil {
 			s.logger.Error("Register: failed to unlock DEK", err, "user_id", userID)
 			return nil, errors.New("registration failed")
 		}
