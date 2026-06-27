@@ -8,7 +8,7 @@
 -- Name: update_updated_at_column(); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.update_updated_at_column() RETURNS trigger
+CREATE OR REPLACE FUNCTION public.update_updated_at_column() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
@@ -24,7 +24,7 @@ $$;
 -- Name: api_keys; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.api_keys (
+CREATE TABLE IF NOT EXISTS public.api_keys (
     id character varying(36) NOT NULL,
     user_id character varying(36) NOT NULL,
     key character varying(255) NOT NULL,
@@ -48,7 +48,7 @@ CREATE TABLE public.api_keys (
 -- Name: audit_log; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.audit_log (
+CREATE TABLE IF NOT EXISTS public.audit_log (
     id bigint NOT NULL,
     actor_id text NOT NULL,
     domain text NOT NULL,
@@ -65,7 +65,7 @@ CREATE TABLE public.audit_log (
 -- Name: audit_log_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
-CREATE SEQUENCE public.audit_log_id_seq
+CREATE SEQUENCE IF NOT EXISTS public.audit_log_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -84,7 +84,7 @@ ALTER SEQUENCE public.audit_log_id_seq OWNED BY public.audit_log.id;
 -- Name: billing_accounts; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.billing_accounts (
+CREATE TABLE IF NOT EXISTS public.billing_accounts (
     id bigint NOT NULL,
     owner_id text NOT NULL,
     owner_type text DEFAULT 'user'::text NOT NULL,
@@ -101,7 +101,7 @@ CREATE TABLE public.billing_accounts (
 -- Name: billing_accounts_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
-CREATE SEQUENCE public.billing_accounts_id_seq
+CREATE SEQUENCE IF NOT EXISTS public.billing_accounts_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -120,7 +120,7 @@ ALTER SEQUENCE public.billing_accounts_id_seq OWNED BY public.billing_accounts.i
 -- Name: billing_export_cursor; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.billing_export_cursor (
+CREATE TABLE IF NOT EXISTS public.billing_export_cursor (
     provider text NOT NULL,
     last_exported_id bigint DEFAULT 0 NOT NULL,
     last_exported_at timestamp with time zone DEFAULT now() NOT NULL
@@ -131,7 +131,7 @@ CREATE TABLE public.billing_export_cursor (
 -- Name: credential_auto_apply; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.credential_auto_apply (
+CREATE TABLE IF NOT EXISTS public.credential_auto_apply (
     credential_id uuid NOT NULL,
     target_type text NOT NULL,
     target_id text,
@@ -145,7 +145,7 @@ CREATE TABLE public.credential_auto_apply (
 -- Name: credential_backfill_jobs; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.credential_backfill_jobs (
+CREATE TABLE IF NOT EXISTS public.credential_backfill_jobs (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     credential_id uuid NOT NULL,
     status text DEFAULT 'running'::text NOT NULL,
@@ -161,7 +161,7 @@ CREATE TABLE public.credential_backfill_jobs (
 -- Name: email_tokens; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.email_tokens (
+CREATE TABLE IF NOT EXISTS public.email_tokens (
     id text NOT NULL,
     user_id text NOT NULL,
     kind text NOT NULL,
@@ -177,7 +177,7 @@ CREATE TABLE public.email_tokens (
 -- Name: instance_settings; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.instance_settings (
+CREATE TABLE IF NOT EXISTS public.instance_settings (
     key text NOT NULL,
     value jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -189,7 +189,7 @@ CREATE TABLE public.instance_settings (
 -- Name: jwt_sessions; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.jwt_sessions (
+CREATE TABLE IF NOT EXISTS public.jwt_sessions (
     jti uuid NOT NULL,
     user_id text NOT NULL,
     wrapped_dek bytea NOT NULL,
@@ -203,7 +203,7 @@ CREATE TABLE public.jwt_sessions (
 -- Name: org_invitations; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.org_invitations (
+CREATE TABLE IF NOT EXISTS public.org_invitations (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     org_id uuid NOT NULL,
     email text NOT NULL,
@@ -227,7 +227,7 @@ CREATE TABLE public.org_invitations (
 -- Name: org_memberships; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.org_memberships (
+CREATE TABLE IF NOT EXISTS public.org_memberships (
     org_id uuid NOT NULL,
     user_id text NOT NULL,
     role text NOT NULL,
@@ -240,7 +240,7 @@ CREATE TABLE public.org_memberships (
 -- Name: org_policies; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.org_policies (
+CREATE TABLE IF NOT EXISTS public.org_policies (
     org_id uuid NOT NULL,
     key text NOT NULL,
     value jsonb DEFAULT '{}'::jsonb NOT NULL,
@@ -254,7 +254,7 @@ CREATE TABLE public.org_policies (
 -- Name: org_sso_configs; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.org_sso_configs (
+CREATE TABLE IF NOT EXISTS public.org_sso_configs (
     org_id uuid NOT NULL,
     oidc_discovery_url text NOT NULL,
     oidc_client_id text NOT NULL,
@@ -274,7 +274,7 @@ CREATE TABLE public.org_sso_configs (
 -- Name: organizations; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.organizations (
+CREATE TABLE IF NOT EXISTS public.organizations (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     name text NOT NULL,
     slug text NOT NULL,
@@ -294,7 +294,7 @@ CREATE TABLE public.organizations (
 -- Name: permissions; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.permissions (
+CREATE TABLE IF NOT EXISTS public.permissions (
     id character varying(36) NOT NULL,
     user_id character varying(36) NOT NULL,
     resource_type character varying(255) NOT NULL,
@@ -308,7 +308,7 @@ CREATE TABLE public.permissions (
 -- Name: provider_credentials; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.provider_credentials (
+CREATE TABLE IF NOT EXISTS public.provider_credentials (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     owner_type text NOT NULL,
     owner_id text NOT NULL,
@@ -338,7 +338,7 @@ CREATE TABLE public.provider_credentials (
 -- Name: secret_audit_log; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.secret_audit_log (
+CREATE TABLE IF NOT EXISTS public.secret_audit_log (
     id bigint NOT NULL,
     user_id character varying(36) NOT NULL,
     action character varying(50) NOT NULL,
@@ -353,7 +353,7 @@ CREATE TABLE public.secret_audit_log (
 -- Name: secret_audit_log_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
-CREATE SEQUENCE public.secret_audit_log_id_seq
+CREATE SEQUENCE IF NOT EXISTS public.secret_audit_log_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -372,7 +372,7 @@ ALTER SEQUENCE public.secret_audit_log_id_seq OWNED BY public.secret_audit_log.i
 -- Name: session_index; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.session_index (
+CREATE TABLE IF NOT EXISTS public.session_index (
     workspace_id text NOT NULL,
     session_id text NOT NULL,
     title text,
@@ -390,7 +390,7 @@ CREATE TABLE public.session_index (
 -- Name: stripe_events; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.stripe_events (
+CREATE TABLE IF NOT EXISTS public.stripe_events (
     event_id text NOT NULL,
     event_type text NOT NULL,
     processed_at timestamp with time zone DEFAULT now() NOT NULL
@@ -401,7 +401,7 @@ CREATE TABLE public.stripe_events (
 -- Name: usage_events; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.usage_events (
+CREATE TABLE IF NOT EXISTS public.usage_events (
     id bigint NOT NULL,
     idempotency_key text,
     owner_id text NOT NULL,
@@ -430,7 +430,7 @@ CREATE TABLE public.usage_events (
 -- Name: usage_events_dlq; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.usage_events_dlq (
+CREATE TABLE IF NOT EXISTS public.usage_events_dlq (
     id bigint NOT NULL,
     payload jsonb NOT NULL,
     error_message text NOT NULL,
@@ -448,7 +448,7 @@ CREATE TABLE public.usage_events_dlq (
 -- Name: usage_events_dlq_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
-CREATE SEQUENCE public.usage_events_dlq_id_seq
+CREATE SEQUENCE IF NOT EXISTS public.usage_events_dlq_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -467,7 +467,7 @@ ALTER SEQUENCE public.usage_events_dlq_id_seq OWNED BY public.usage_events_dlq.i
 -- Name: usage_events_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
-CREATE SEQUENCE public.usage_events_id_seq
+CREATE SEQUENCE IF NOT EXISTS public.usage_events_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -486,7 +486,7 @@ ALTER SEQUENCE public.usage_events_id_seq OWNED BY public.usage_events.id;
 -- Name: usage_limits; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.usage_limits (
+CREATE TABLE IF NOT EXISTS public.usage_limits (
     id bigint NOT NULL,
     owner_id text NOT NULL,
     owner_type text DEFAULT 'user'::text NOT NULL,
@@ -504,7 +504,7 @@ CREATE TABLE public.usage_limits (
 -- Name: usage_limits_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
-CREATE SEQUENCE public.usage_limits_id_seq
+CREATE SEQUENCE IF NOT EXISTS public.usage_limits_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -523,7 +523,7 @@ ALTER SEQUENCE public.usage_limits_id_seq OWNED BY public.usage_limits.id;
 -- Name: user_keys; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.user_keys (
+CREATE TABLE IF NOT EXISTS public.user_keys (
     user_id character varying(36) NOT NULL,
     key_version integer DEFAULT 1 NOT NULL,
     wrapped_dek bytea NOT NULL,
@@ -539,7 +539,7 @@ CREATE TABLE public.user_keys (
 -- Name: user_secret_bindings; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.user_secret_bindings (
+CREATE TABLE IF NOT EXISTS public.user_secret_bindings (
     secret_id uuid NOT NULL,
     workspace_id uuid NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
@@ -550,7 +550,7 @@ CREATE TABLE public.user_secret_bindings (
 -- Name: user_secrets; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.user_secrets (
+CREATE TABLE IF NOT EXISTS public.user_secrets (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     user_id character varying(36) NOT NULL,
     name character varying(255) NOT NULL,
@@ -567,7 +567,7 @@ CREATE TABLE public.user_secrets (
 -- Name: user_settings; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.user_settings (
+CREATE TABLE IF NOT EXISTS public.user_settings (
     user_id character varying(36) NOT NULL,
     key text NOT NULL,
     value jsonb NOT NULL,
@@ -580,7 +580,7 @@ CREATE TABLE public.user_settings (
 -- Name: users; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.users (
+CREATE TABLE IF NOT EXISTS public.users (
     id character varying(36) NOT NULL,
     username character varying(255) NOT NULL,
     email character varying(255) NOT NULL,
@@ -600,7 +600,7 @@ CREATE TABLE public.users (
 -- Name: workspace_agent_state; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.workspace_agent_state (
+CREATE TABLE IF NOT EXISTS public.workspace_agent_state (
     workspace_id uuid NOT NULL,
     last_credential_changed_at timestamp with time zone,
     last_agent_disposed_at timestamp with time zone,
@@ -613,7 +613,7 @@ CREATE TABLE public.workspace_agent_state (
 -- Name: workspace_credential_bindings; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.workspace_credential_bindings (
+CREATE TABLE IF NOT EXISTS public.workspace_credential_bindings (
     credential_id uuid NOT NULL,
     workspace_id uuid NOT NULL,
     source_type text DEFAULT 'explicit'::text NOT NULL,
@@ -627,7 +627,7 @@ CREATE TABLE public.workspace_credential_bindings (
 -- Name: workspace_lifecycle_events; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.workspace_lifecycle_events (
+CREATE TABLE IF NOT EXISTS public.workspace_lifecycle_events (
     id bigint NOT NULL,
     workspace_id text NOT NULL,
     owner_id text NOT NULL,
@@ -644,7 +644,7 @@ CREATE TABLE public.workspace_lifecycle_events (
 -- Name: workspace_lifecycle_events_id_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
-CREATE SEQUENCE public.workspace_lifecycle_events_id_seq
+CREATE SEQUENCE IF NOT EXISTS public.workspace_lifecycle_events_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -663,7 +663,7 @@ ALTER SEQUENCE public.workspace_lifecycle_events_id_seq OWNED BY public.workspac
 -- Name: workspaces; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.workspaces (
+CREATE TABLE IF NOT EXISTS public.workspaces (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     name character varying(255) NOT NULL,
     user_id character varying(36) NOT NULL,
@@ -734,168 +734,210 @@ ALTER TABLE ONLY public.workspace_lifecycle_events ALTER COLUMN id SET DEFAULT n
 -- Name: api_keys api_keys_key_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.api_keys
     ADD CONSTRAINT api_keys_key_key UNIQUE (key);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: api_keys api_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.api_keys
     ADD CONSTRAINT api_keys_pkey PRIMARY KEY (id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: audit_log audit_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.audit_log
     ADD CONSTRAINT audit_log_pkey PRIMARY KEY (id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: billing_accounts billing_accounts_owner_id_owner_type_provider_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.billing_accounts
     ADD CONSTRAINT billing_accounts_owner_id_owner_type_provider_key UNIQUE (owner_id, owner_type, provider);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: billing_accounts billing_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.billing_accounts
     ADD CONSTRAINT billing_accounts_pkey PRIMARY KEY (id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: billing_export_cursor billing_export_cursor_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.billing_export_cursor
     ADD CONSTRAINT billing_export_cursor_pkey PRIMARY KEY (provider);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: credential_backfill_jobs credential_backfill_jobs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.credential_backfill_jobs
     ADD CONSTRAINT credential_backfill_jobs_pkey PRIMARY KEY (id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: email_tokens email_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.email_tokens
     ADD CONSTRAINT email_tokens_pkey PRIMARY KEY (id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: email_tokens email_tokens_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.email_tokens
     ADD CONSTRAINT email_tokens_token_hash_key UNIQUE (token_hash);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: instance_settings instance_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.instance_settings
     ADD CONSTRAINT instance_settings_pkey PRIMARY KEY (key);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: jwt_sessions jwt_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.jwt_sessions
     ADD CONSTRAINT jwt_sessions_pkey PRIMARY KEY (jti);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: org_invitations org_invitations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.org_invitations
     ADD CONSTRAINT org_invitations_pkey PRIMARY KEY (id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: org_invitations org_invitations_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.org_invitations
     ADD CONSTRAINT org_invitations_token_hash_key UNIQUE (token_hash);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: org_memberships org_memberships_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.org_memberships
     ADD CONSTRAINT org_memberships_pkey PRIMARY KEY (org_id, user_id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: org_policies org_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.org_policies
     ADD CONSTRAINT org_policies_pkey PRIMARY KEY (org_id, key);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: org_sso_configs org_sso_configs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.org_sso_configs
     ADD CONSTRAINT org_sso_configs_pkey PRIMARY KEY (org_id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: organizations organizations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.organizations
     ADD CONSTRAINT organizations_pkey PRIMARY KEY (id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: permissions permissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.permissions
     ADD CONSTRAINT permissions_pkey PRIMARY KEY (id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: permissions permissions_user_id_resource_type_resource_id_action_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.permissions
     ADD CONSTRAINT permissions_user_id_resource_type_resource_id_action_key UNIQUE (user_id, resource_type, resource_id, action);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: provider_credentials provider_credentials_owner_slug_uniq; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.provider_credentials
     ADD CONSTRAINT provider_credentials_owner_slug_uniq UNIQUE (owner_type, owner_id, slug);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: provider_credentials provider_credentials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.provider_credentials
     ADD CONSTRAINT provider_credentials_pkey PRIMARY KEY (id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 
@@ -904,488 +946,529 @@ ALTER TABLE ONLY public.provider_credentials
 -- Name: secret_audit_log secret_audit_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.secret_audit_log
     ADD CONSTRAINT secret_audit_log_pkey PRIMARY KEY (id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: session_index session_index_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.session_index
     ADD CONSTRAINT session_index_pkey PRIMARY KEY (workspace_id, session_id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: stripe_events stripe_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.stripe_events
     ADD CONSTRAINT stripe_events_pkey PRIMARY KEY (event_id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: usage_events_dlq usage_events_dlq_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.usage_events_dlq
     ADD CONSTRAINT usage_events_dlq_pkey PRIMARY KEY (id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: usage_events usage_events_idempotency_key_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.usage_events
     ADD CONSTRAINT usage_events_idempotency_key_key UNIQUE (idempotency_key);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: usage_events usage_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.usage_events
     ADD CONSTRAINT usage_events_pkey PRIMARY KEY (id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: usage_limits usage_limits_owner_id_owner_type_event_type_period_type_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.usage_limits
     ADD CONSTRAINT usage_limits_owner_id_owner_type_event_type_period_type_key UNIQUE (owner_id, owner_type, event_type, period_type);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: usage_limits usage_limits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.usage_limits
     ADD CONSTRAINT usage_limits_pkey PRIMARY KEY (id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: user_keys user_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.user_keys
     ADD CONSTRAINT user_keys_pkey PRIMARY KEY (user_id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: user_secret_bindings user_secret_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.user_secret_bindings
     ADD CONSTRAINT user_secret_bindings_pkey PRIMARY KEY (secret_id, workspace_id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: user_secrets user_secrets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.user_secrets
     ADD CONSTRAINT user_secrets_pkey PRIMARY KEY (id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: user_secrets user_secrets_user_id_name_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.user_secrets
     ADD CONSTRAINT user_secrets_user_id_name_key UNIQUE (user_id, name);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: user_settings user_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.user_settings
     ADD CONSTRAINT user_settings_pkey PRIMARY KEY (user_id, key);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: users users_email_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_email_key UNIQUE (email);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: users users_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_pkey PRIMARY KEY (id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: users users_username_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_username_key UNIQUE (username);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: workspace_agent_state workspace_agent_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.workspace_agent_state
     ADD CONSTRAINT workspace_agent_state_pkey PRIMARY KEY (workspace_id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: workspace_credential_bindings workspace_credential_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.workspace_credential_bindings
     ADD CONSTRAINT workspace_credential_bindings_pkey PRIMARY KEY (credential_id, workspace_id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: workspace_lifecycle_events workspace_lifecycle_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.workspace_lifecycle_events
     ADD CONSTRAINT workspace_lifecycle_events_pkey PRIMARY KEY (id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: workspaces workspaces_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.workspaces
     ADD CONSTRAINT workspaces_pkey PRIMARY KEY (id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: idx_api_keys_key_active; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX idx_api_keys_key_active ON public.api_keys USING btree (key) WHERE (active = true);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_key_active ON public.api_keys USING btree (key) WHERE (active = true);
 
 
 --
 -- Name: idx_api_keys_user_id; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_api_keys_user_id ON public.api_keys USING btree (user_id);
+CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON public.api_keys USING btree (user_id);
 
 
 --
 -- Name: idx_audit_actor; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_audit_actor ON public.audit_log USING btree (actor_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_actor ON public.audit_log USING btree (actor_id, created_at DESC);
 
 
 --
 -- Name: idx_audit_domain; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_audit_domain ON public.audit_log USING btree (domain, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_domain ON public.audit_log USING btree (domain, created_at DESC);
 
 
 --
 -- Name: idx_audit_org; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_audit_org ON public.audit_log USING btree (org_id, created_at DESC) WHERE (org_id IS NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_audit_org ON public.audit_log USING btree (org_id, created_at DESC) WHERE (org_id IS NOT NULL);
 
 
 --
 -- Name: idx_audit_user_time; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_audit_user_time ON public.secret_audit_log USING btree (user_id, "timestamp" DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_user_time ON public.secret_audit_log USING btree (user_id, "timestamp" DESC);
 
 
 --
 -- Name: idx_cred_auto_apply_all; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_cred_auto_apply_all ON public.credential_auto_apply USING btree (target_type) WHERE (target_type = 'all'::text);
+CREATE INDEX IF NOT EXISTS idx_cred_auto_apply_all ON public.credential_auto_apply USING btree (target_type) WHERE (target_type = 'all'::text);
 
 
 --
 -- Name: idx_cred_auto_apply_org; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_cred_auto_apply_org ON public.credential_auto_apply USING btree (target_id) WHERE (target_type = 'org'::text);
+CREATE INDEX IF NOT EXISTS idx_cred_auto_apply_org ON public.credential_auto_apply USING btree (target_id) WHERE (target_type = 'org'::text);
 
 
 --
 -- Name: idx_cred_auto_apply_unique_all; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX idx_cred_auto_apply_unique_all ON public.credential_auto_apply USING btree (credential_id, target_type) WHERE (target_id IS NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cred_auto_apply_unique_all ON public.credential_auto_apply USING btree (credential_id, target_type) WHERE (target_id IS NULL);
 
 
 --
 -- Name: idx_cred_auto_apply_unique_targeted; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX idx_cred_auto_apply_unique_targeted ON public.credential_auto_apply USING btree (credential_id, target_type, target_id) WHERE (target_id IS NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cred_auto_apply_unique_targeted ON public.credential_auto_apply USING btree (credential_id, target_type, target_id) WHERE (target_id IS NOT NULL);
 
 
 --
 -- Name: idx_cred_auto_apply_user; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_cred_auto_apply_user ON public.credential_auto_apply USING btree (target_id) WHERE (target_type = 'user'::text);
+CREATE INDEX IF NOT EXISTS idx_cred_auto_apply_user ON public.credential_auto_apply USING btree (target_id) WHERE (target_type = 'user'::text);
 
 
 --
 -- Name: idx_dlq_unresolved; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_dlq_unresolved ON public.usage_events_dlq USING btree (last_retried_at NULLS FIRST) WHERE (resolved_at IS NULL);
+CREATE INDEX IF NOT EXISTS idx_dlq_unresolved ON public.usage_events_dlq USING btree (last_retried_at NULLS FIRST) WHERE (resolved_at IS NULL);
 
 
 --
 -- Name: idx_email_tokens_user_kind; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_email_tokens_user_kind ON public.email_tokens USING btree (user_id, kind);
+CREATE INDEX IF NOT EXISTS idx_email_tokens_user_kind ON public.email_tokens USING btree (user_id, kind);
 
 
 --
 -- Name: idx_jwt_sessions_expires_at; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_jwt_sessions_expires_at ON public.jwt_sessions USING btree (expires_at);
+CREATE INDEX IF NOT EXISTS idx_jwt_sessions_expires_at ON public.jwt_sessions USING btree (expires_at);
 
 
 --
 -- Name: idx_jwt_sessions_user_id; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_jwt_sessions_user_id ON public.jwt_sessions USING btree (user_id);
+CREATE INDEX IF NOT EXISTS idx_jwt_sessions_user_id ON public.jwt_sessions USING btree (user_id);
 
 
 --
 -- Name: idx_org_invitations_email; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_org_invitations_email ON public.org_invitations USING btree (email) WHERE ((accepted_at IS NULL) AND (declined_at IS NULL));
+CREATE INDEX IF NOT EXISTS idx_org_invitations_email ON public.org_invitations USING btree (email) WHERE ((accepted_at IS NULL) AND (declined_at IS NULL));
 
 
 --
 -- Name: idx_org_invitations_org; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_org_invitations_org ON public.org_invitations USING btree (org_id) WHERE ((accepted_at IS NULL) AND (declined_at IS NULL));
+CREATE INDEX IF NOT EXISTS idx_org_invitations_org ON public.org_invitations USING btree (org_id) WHERE ((accepted_at IS NULL) AND (declined_at IS NULL));
 
 
 --
 -- Name: idx_org_memberships_single_user; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX idx_org_memberships_single_user ON public.org_memberships USING btree (user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_org_memberships_single_user ON public.org_memberships USING btree (user_id);
 
 
 --
 -- Name: idx_org_memberships_user; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_org_memberships_user ON public.org_memberships USING btree (user_id);
+CREATE INDEX IF NOT EXISTS idx_org_memberships_user ON public.org_memberships USING btree (user_id);
 
 
 --
 -- Name: idx_org_sso_domains; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_org_sso_domains ON public.org_sso_configs USING gin (claimed_domains);
+CREATE INDEX IF NOT EXISTS idx_org_sso_domains ON public.org_sso_configs USING gin (claimed_domains);
 
 
 --
 -- Name: idx_org_sso_verified_domains; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_org_sso_verified_domains ON public.org_sso_configs USING gin (verified_domains);
+CREATE INDEX IF NOT EXISTS idx_org_sso_verified_domains ON public.org_sso_configs USING gin (verified_domains);
 
 
 --
 -- Name: idx_orgs_created_by; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_orgs_created_by ON public.organizations USING btree (created_by);
+CREATE INDEX IF NOT EXISTS idx_orgs_created_by ON public.organizations USING btree (created_by);
 
 
 --
 -- Name: idx_orgs_slug_active; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX idx_orgs_slug_active ON public.organizations USING btree (slug) WHERE (deleted_at IS NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orgs_slug_active ON public.organizations USING btree (slug) WHERE (deleted_at IS NULL);
 
 
 --
 -- Name: idx_orgs_slug_lower_active; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX idx_orgs_slug_lower_active ON public.organizations USING btree (lower(slug)) WHERE (deleted_at IS NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orgs_slug_lower_active ON public.organizations USING btree (lower(slug)) WHERE (deleted_at IS NULL);
 
 
 --
 -- Name: idx_orgs_status; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_orgs_status ON public.organizations USING btree (status);
+CREATE INDEX IF NOT EXISTS idx_orgs_status ON public.organizations USING btree (status);
 
 
 --
 -- Name: idx_permissions_resource; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_permissions_resource ON public.permissions USING btree (resource_type, resource_id);
+CREATE INDEX IF NOT EXISTS idx_permissions_resource ON public.permissions USING btree (resource_type, resource_id);
 
 
 --
 -- Name: idx_permissions_user_id; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_permissions_user_id ON public.permissions USING btree (user_id);
+CREATE INDEX IF NOT EXISTS idx_permissions_user_id ON public.permissions USING btree (user_id);
 
 
 --
 -- Name: idx_provider_creds_owner; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_provider_creds_owner ON public.provider_credentials USING btree (owner_type, owner_id);
+CREATE INDEX IF NOT EXISTS idx_provider_creds_owner ON public.provider_credentials USING btree (owner_type, owner_id);
 
 
 --
 -- Name: idx_secret_bindings_workspace; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_secret_bindings_workspace ON public.user_secret_bindings USING btree (workspace_id);
+CREATE INDEX IF NOT EXISTS idx_secret_bindings_workspace ON public.user_secret_bindings USING btree (workspace_id);
 
 
 --
 -- Name: idx_session_index_parent; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_session_index_parent ON public.session_index USING btree (workspace_id, parent_session_id) WHERE (parent_session_id IS NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_session_index_parent ON public.session_index USING btree (workspace_id, parent_session_id) WHERE (parent_session_id IS NOT NULL);
 
 
 --
 -- Name: idx_session_index_workspace; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_session_index_workspace ON public.session_index USING btree (workspace_id, last_message_at DESC NULLS LAST);
+CREATE INDEX IF NOT EXISTS idx_session_index_workspace ON public.session_index USING btree (workspace_id, last_message_at DESC NULLS LAST);
 
 
 --
 -- Name: idx_usage_actor_period; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_usage_actor_period ON public.usage_events USING btree (actor_id, period);
+CREATE INDEX IF NOT EXISTS idx_usage_actor_period ON public.usage_events USING btree (actor_id, period);
 
 
 --
 -- Name: idx_usage_idempotency; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_usage_idempotency ON public.usage_events USING btree (idempotency_key) WHERE (idempotency_key IS NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_usage_idempotency ON public.usage_events USING btree (idempotency_key) WHERE (idempotency_key IS NOT NULL);
 
 
 --
 -- Name: idx_usage_owner_period; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_usage_owner_period ON public.usage_events USING btree (owner_id, owner_type, period);
+CREATE INDEX IF NOT EXISTS idx_usage_owner_period ON public.usage_events USING btree (owner_id, owner_type, period);
 
 
 --
 -- Name: idx_usage_type_period; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_usage_type_period ON public.usage_events USING btree (event_type, period);
+CREATE INDEX IF NOT EXISTS idx_usage_type_period ON public.usage_events USING btree (event_type, period);
 
 
 --
 -- Name: idx_usage_workspace; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_usage_workspace ON public.usage_events USING btree (workspace_id, period) WHERE (workspace_id IS NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_usage_workspace ON public.usage_events USING btree (workspace_id, period) WHERE (workspace_id IS NOT NULL);
 
 
 --
 -- Name: idx_user_secrets_user_id; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_user_secrets_user_id ON public.user_secrets USING btree (user_id);
+CREATE INDEX IF NOT EXISTS idx_user_secrets_user_id ON public.user_secrets USING btree (user_id);
 
 
 --
 -- Name: idx_users_status; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_users_status ON public.users USING btree (status) WHERE (status <> 'active'::text);
+CREATE INDEX IF NOT EXISTS idx_users_status ON public.users USING btree (status) WHERE (status <> 'active'::text);
 
 
 --
 -- Name: idx_wle_owner; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_wle_owner ON public.workspace_lifecycle_events USING btree (owner_id, owner_type, event_time);
+CREATE INDEX IF NOT EXISTS idx_wle_owner ON public.workspace_lifecycle_events USING btree (owner_id, owner_type, event_time);
 
 
 --
 -- Name: idx_wle_workspace; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_wle_workspace ON public.workspace_lifecycle_events USING btree (workspace_id, event_time);
+CREATE INDEX IF NOT EXISTS idx_wle_workspace ON public.workspace_lifecycle_events USING btree (workspace_id, event_time);
 
 
 --
 -- Name: idx_workspace_agent_state_pending; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_workspace_agent_state_pending ON public.workspace_agent_state USING btree (pending_refresh) WHERE (pending_refresh = true);
+CREATE INDEX IF NOT EXISTS idx_workspace_agent_state_pending ON public.workspace_agent_state USING btree (pending_refresh) WHERE (pending_refresh = true);
 
 
 --
 -- Name: idx_workspaces_deleted; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_workspaces_deleted ON public.workspaces USING btree (deleted_at) WHERE (deleted_at IS NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_workspaces_deleted ON public.workspaces USING btree (deleted_at) WHERE (deleted_at IS NOT NULL);
 
 
 --
 -- Name: idx_workspaces_org; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_workspaces_org ON public.workspaces USING btree (org_id) WHERE (org_id IS NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_workspaces_org ON public.workspaces USING btree (org_id) WHERE (org_id IS NOT NULL);
 
 
 --
 -- Name: idx_workspaces_user_id; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_workspaces_user_id ON public.workspaces USING btree (user_id);
+CREATE INDEX IF NOT EXISTS idx_workspaces_user_id ON public.workspaces USING btree (user_id);
 
 
 --
 -- Name: idx_ws_cred_bindings_credential; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_ws_cred_bindings_credential ON public.workspace_credential_bindings USING btree (credential_id);
+CREATE INDEX IF NOT EXISTS idx_ws_cred_bindings_credential ON public.workspace_credential_bindings USING btree (credential_id);
 
 
 --
 -- Name: idx_ws_cred_bindings_workspace; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_ws_cred_bindings_workspace ON public.workspace_credential_bindings USING btree (workspace_id);
+CREATE INDEX IF NOT EXISTS idx_ws_cred_bindings_workspace ON public.workspace_credential_bindings USING btree (workspace_id);
 
 
 --
 -- Name: instance_settings trg_instance_settings_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
+DROP TRIGGER IF EXISTS trg_instance_settings_updated_at ON public.instance_settings;
 CREATE TRIGGER trg_instance_settings_updated_at BEFORE UPDATE ON public.instance_settings FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
 
@@ -1393,6 +1476,7 @@ CREATE TRIGGER trg_instance_settings_updated_at BEFORE UPDATE ON public.instance
 -- Name: org_invitations trg_org_invitations_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
+DROP TRIGGER IF EXISTS trg_org_invitations_updated_at ON public.org_invitations;
 CREATE TRIGGER trg_org_invitations_updated_at BEFORE UPDATE ON public.org_invitations FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
 
@@ -1400,6 +1484,7 @@ CREATE TRIGGER trg_org_invitations_updated_at BEFORE UPDATE ON public.org_invita
 -- Name: org_sso_configs trg_org_sso_configs_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
+DROP TRIGGER IF EXISTS trg_org_sso_configs_updated_at ON public.org_sso_configs;
 CREATE TRIGGER trg_org_sso_configs_updated_at BEFORE UPDATE ON public.org_sso_configs FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
 
@@ -1407,6 +1492,7 @@ CREATE TRIGGER trg_org_sso_configs_updated_at BEFORE UPDATE ON public.org_sso_co
 -- Name: organizations trg_organizations_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
+DROP TRIGGER IF EXISTS trg_organizations_updated_at ON public.organizations;
 CREATE TRIGGER trg_organizations_updated_at BEFORE UPDATE ON public.organizations FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
 
@@ -1414,6 +1500,7 @@ CREATE TRIGGER trg_organizations_updated_at BEFORE UPDATE ON public.organization
 -- Name: provider_credentials trg_provider_credentials_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
+DROP TRIGGER IF EXISTS trg_provider_credentials_updated_at ON public.provider_credentials;
 CREATE TRIGGER trg_provider_credentials_updated_at BEFORE UPDATE ON public.provider_credentials FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
 
@@ -1421,6 +1508,7 @@ CREATE TRIGGER trg_provider_credentials_updated_at BEFORE UPDATE ON public.provi
 -- Name: user_settings trg_user_settings_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
+DROP TRIGGER IF EXISTS trg_user_settings_updated_at ON public.user_settings;
 CREATE TRIGGER trg_user_settings_updated_at BEFORE UPDATE ON public.user_settings FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
 
@@ -1428,208 +1516,260 @@ CREATE TRIGGER trg_user_settings_updated_at BEFORE UPDATE ON public.user_setting
 -- Name: api_keys api_keys_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.api_keys
     ADD CONSTRAINT api_keys_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: audit_log audit_log_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.audit_log
     ADD CONSTRAINT audit_log_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organizations(id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: credential_auto_apply credential_auto_apply_credential_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.credential_auto_apply
     ADD CONSTRAINT credential_auto_apply_credential_id_fkey FOREIGN KEY (credential_id) REFERENCES public.provider_credentials(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: credential_backfill_jobs credential_backfill_jobs_credential_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.credential_backfill_jobs
     ADD CONSTRAINT credential_backfill_jobs_credential_id_fkey FOREIGN KEY (credential_id) REFERENCES public.provider_credentials(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: email_tokens email_tokens_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.email_tokens
     ADD CONSTRAINT email_tokens_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: jwt_sessions jwt_sessions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.jwt_sessions
     ADD CONSTRAINT jwt_sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: org_invitations org_invitations_accepted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.org_invitations
     ADD CONSTRAINT org_invitations_accepted_by_fkey FOREIGN KEY (accepted_by) REFERENCES public.users(id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: org_invitations org_invitations_invited_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.org_invitations
     ADD CONSTRAINT org_invitations_invited_by_fkey FOREIGN KEY (invited_by) REFERENCES public.users(id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: org_invitations org_invitations_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.org_invitations
     ADD CONSTRAINT org_invitations_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: org_memberships org_memberships_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.org_memberships
     ADD CONSTRAINT org_memberships_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: org_memberships org_memberships_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.org_memberships
     ADD CONSTRAINT org_memberships_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: org_policies org_policies_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.org_policies
     ADD CONSTRAINT org_policies_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: org_policies org_policies_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.org_policies
     ADD CONSTRAINT org_policies_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: org_sso_configs org_sso_configs_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.org_sso_configs
     ADD CONSTRAINT org_sso_configs_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: organizations organizations_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.organizations
     ADD CONSTRAINT organizations_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id);
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: permissions permissions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.permissions
     ADD CONSTRAINT permissions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: user_keys user_keys_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.user_keys
     ADD CONSTRAINT user_keys_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: user_secret_bindings user_secret_bindings_secret_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.user_secret_bindings
     ADD CONSTRAINT user_secret_bindings_secret_id_fkey FOREIGN KEY (secret_id) REFERENCES public.user_secrets(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: user_secret_bindings user_secret_bindings_workspace_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.user_secret_bindings
     ADD CONSTRAINT user_secret_bindings_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: user_secrets user_secrets_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.user_secrets
     ADD CONSTRAINT user_secrets_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: user_settings user_settings_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.user_settings
     ADD CONSTRAINT user_settings_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: workspace_agent_state workspace_agent_state_workspace_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.workspace_agent_state
     ADD CONSTRAINT workspace_agent_state_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: workspace_credential_bindings workspace_credential_bindings_credential_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.workspace_credential_bindings
     ADD CONSTRAINT workspace_credential_bindings_credential_id_fkey FOREIGN KEY (credential_id) REFERENCES public.provider_credentials(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: workspace_credential_bindings workspace_credential_bindings_workspace_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.workspace_credential_bindings
     ADD CONSTRAINT workspace_credential_bindings_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspaces(id) ON DELETE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: workspaces workspaces_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.workspaces
     ADD CONSTRAINT workspaces_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
 -- Name: workspaces workspaces_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
+DO $idempotent$ BEGIN
 ALTER TABLE ONLY public.workspaces
     ADD CONSTRAINT workspaces_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE RESTRICT;
+EXCEPTION WHEN duplicate_object THEN NULL; WHEN duplicate_table THEN NULL; WHEN invalid_table_definition THEN NULL; WHEN duplicate_alias THEN NULL;  END $idempotent$;
 
 
 --
