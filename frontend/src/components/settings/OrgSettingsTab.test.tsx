@@ -206,4 +206,35 @@ describe("OrgSettingsTab", () => {
       expect(lastCall.status).toBe("suspended");
     });
   });
+
+  it("surfaces backend per-field validation details on 400 with a friendly label", async () => {
+    mockListOrgs.mockResolvedValue(listResponse([]));
+    const { ApiClientError } = await import("../../api/client");
+    mockCreate.mockRejectedValue(
+      new ApiClientError(400, {
+        error: "validation failed",
+        details: {
+          slug: "Must be letters, digits, and single hyphens between segments (e.g. \"my-org\")",
+        },
+      }),
+    );
+    const user = userEvent.setup();
+    renderTab();
+    await waitFor(() =>
+      expect(screen.getByText("New Organisation")).toBeInTheDocument(),
+    );
+    await user.click(screen.getByText("New Organisation"));
+    await user.type(
+      screen.getByPlaceholderText(/owner email/i),
+      "owner@example.com",
+    );
+    await user.type(
+      screen.getByPlaceholderText(/organisation name/i),
+      "Acme",
+    );
+    await user.click(screen.getByText("Create"));
+    await waitFor(() =>
+      expect(screen.getByText(/^Slug:.*letters, digits/i)).toBeInTheDocument(),
+    );
+  });
 });

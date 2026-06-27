@@ -125,7 +125,7 @@ func (h *OrgsHandler) Create(c *gin.Context) {
 
 	var req types.CreateOrgRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, bindingErrorResponse(err, &req))
 		return
 	}
 	req.Slug = strings.ToLower(req.Slug)
@@ -290,7 +290,7 @@ func (h *OrgsHandler) Update(c *gin.Context) {
 
 	var req types.UpdateOrgRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, bindingErrorResponse(err, &req))
 		return
 	}
 
@@ -408,7 +408,7 @@ func (h *OrgsHandler) AddMember(c *gin.Context) {
 
 	var req types.AddOrgMemberRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, bindingErrorResponse(err, &req))
 		return
 	}
 
@@ -499,7 +499,7 @@ func (h *OrgsHandler) ChangeMemberRole(c *gin.Context) {
 
 	var req types.ChangeOrgMemberRoleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, bindingErrorResponse(err, &req))
 		return
 	}
 

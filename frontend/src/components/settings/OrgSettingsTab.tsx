@@ -76,6 +76,23 @@ function CreateOrgForm({
         setError("No user found with that owner email");
       } else if (e instanceof ApiClientError && e.status === 403) {
         setError("Only platform admins can create organisations");
+      } else if (e instanceof ApiClientError && e.status === 400 && e.body.details) {
+        // Surface per-field validation messages from the backend
+        // (e.g. bad slug, malformed email) instead of the opaque top-level
+        // "validation failed" string. Keys are JSON field names.
+        const details = e.body.details;
+        const field = Object.keys(details)[0];
+        if (field) {
+          const msg = details[field];
+          const labels: Record<string, string> = {
+            slug: "Slug",
+            name: "Name",
+            ownerEmail: "Owner email",
+          };
+          setError(`${labels[field] ?? field}: ${msg}`);
+        } else {
+          setError("Validation failed");
+        }
       } else {
         setError(e instanceof Error ? e.message : "Failed to create organisation");
       }
