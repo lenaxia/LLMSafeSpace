@@ -36,7 +36,7 @@ func TestPushCredentials_Success(t *testing.T) {
 
 	c := NewClient(srv.URL, "test-pw", zaptest.NewLogger(t))
 	err := c.PushCredentials(context.Background(), []secrets.LLMProviderData{
-		{Provider: "openai", APIKey: "sk-test"},
+		{Kind: "openai", Slug: "openai", APIKey: "sk-test"},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "openai", gotProvider)
@@ -58,7 +58,7 @@ func TestPushCredentials_RetriesOn5xx(t *testing.T) {
 
 	c := NewClient(srv.URL, "test-pw", zaptest.NewLogger(t))
 	err := c.PushCredentials(context.Background(), []secrets.LLMProviderData{
-		{Provider: "openai", APIKey: "sk-test"},
+		{Kind: "openai", Slug: "openai", APIKey: "sk-test"},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, int32(3), atomic.LoadInt32(&attempts))
@@ -74,7 +74,7 @@ func TestPushCredentials_NoRetryOn4xx(t *testing.T) {
 
 	c := NewClient(srv.URL, "test-pw", zaptest.NewLogger(t))
 	err := c.PushCredentials(context.Background(), []secrets.LLMProviderData{
-		{Provider: "openai", APIKey: "sk-test"},
+		{Kind: "openai", Slug: "openai", APIKey: "sk-test"},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 400")
@@ -92,7 +92,7 @@ func TestPushCredentials_ContextCancellation(t *testing.T) {
 
 	c := NewClient(srv.URL, "test-pw", zaptest.NewLogger(t))
 	err := c.PushCredentials(ctx, []secrets.LLMProviderData{
-		{Provider: "openai", APIKey: "sk-test"},
+		{Kind: "openai", Slug: "openai", APIKey: "sk-test"},
 	})
 	require.Error(t, err)
 }
@@ -107,7 +107,7 @@ func TestPushCredentials_MaxRetriesExceeded(t *testing.T) {
 
 	c := NewClient(srv.URL, "test-pw", zaptest.NewLogger(t))
 	err := c.PushCredentials(context.Background(), []secrets.LLMProviderData{
-		{Provider: "openai", APIKey: "sk-test"},
+		{Kind: "openai", Slug: "openai", APIKey: "sk-test"},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "server error")
@@ -124,8 +124,8 @@ func TestPushCredentials_PartialFailure(t *testing.T) {
 
 	c := NewClient(srv.URL, "test-pw", zaptest.NewLogger(t))
 	err := c.PushCredentials(context.Background(), []secrets.LLMProviderData{
-		{Provider: "anthropic", APIKey: "key-b"},
-		{Provider: "openai", APIKey: "key-c"},
+		{Kind: "anthropic", Slug: "anthropic", APIKey: "key-b"},
+		{Kind: "openai", Slug: "openai", APIKey: "key-c"},
 	})
 	require.Error(t, err)
 	assert.Equal(t, "anthropic", calledProvider)

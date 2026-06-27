@@ -122,8 +122,8 @@ func TestRotationCoordinator_ProviderCredentials_SelectsPurposeByOwnerType(t *te
 		oldKey[i] = byte(i + 1)
 	}
 
-	adminCT := encryptWithKey(t, oldKey, []byte(`{"provider":"anthropic","apiKey":"admin-key"}`))
-	orgCT := encryptWithKey(t, oldKey, []byte(`{"provider":"openai","apiKey":"org-key"}`))
+	adminCT := encryptWithKey(t, oldKey, []byte(`{"kind":"anthropic","slug":"anthropic","apiKey":"admin-key"}`))
+	orgCT := encryptWithKey(t, oldKey, []byte(`{"kind":"openai","slug":"openai","apiKey":"org-key"}`))
 	store.addRow("provider_credentials", "cred-1", "admin", adminCT, 1)
 	store.addRow("provider_credentials", "cred-2", "org", orgCT, 1)
 

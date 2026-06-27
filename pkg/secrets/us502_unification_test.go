@@ -42,7 +42,7 @@ func TestRoundTripCompatibility_ProviderCredentials_Admin(t *testing.T) {
 	// Fixed inputs (deterministic).
 	masterKey := makeFixedMasterKey(1)
 	derivedKey := deriveTestKey(t, masterKey, "provider-credentials")
-	plaintext := []byte(`{"provider":"anthropic","apiKey":"sk-ant-test123"}`)
+	plaintext := []byte(`{"kind":"anthropic","slug":"anthropic","apiKey":"sk-ant-test123"}`)
 
 	// OLD path: encrypt with raw derived key + EncryptSecret.
 	ciphertext, err := EncryptSecret(derivedKey, plaintext)
@@ -58,7 +58,7 @@ func TestRoundTripCompatibility_ProviderCredentials_Admin(t *testing.T) {
 func TestRoundTripCompatibility_ProviderCredentials_Org(t *testing.T) {
 	masterKey := makeFixedMasterKey(1)
 	derivedKey := deriveTestKey(t, masterKey, "org-credentials")
-	plaintext := []byte(`{"provider":"openai","apiKey":"sk-org-test456"}`)
+	plaintext := []byte(`{"kind":"openai","slug":"openai","apiKey":"sk-org-test456"}`)
 
 	ciphertext, err := EncryptSecret(derivedKey, plaintext)
 	require.NoError(t, err)

@@ -85,11 +85,15 @@ func getCredentialForProbe(
 // plaintext buffer so the API key does not linger in heap memory longer than
 // necessary. Admin/org handlers pass provider.Encrypt; the user handler passes
 // a DEK-wrapping closure (US-50.2: unifies all encrypt paths through closures).
-func encryptCredentialData(ctx context.Context, encrypt func(context.Context, []byte) ([]byte, error), llmProvider, apiKey, baseURL string) ([]byte, error) {
+//
+// Epic 55: kind and slug both reach LLMProviderData so the materialize path
+// can render the correct provider-map key and the SDK-class adapter.
+func encryptCredentialData(ctx context.Context, encrypt func(context.Context, []byte) ([]byte, error), kind, slug, apiKey, baseURL string) ([]byte, error) {
 	plaintext, err := json.Marshal(secrets.LLMProviderData{ //nolint:gosec // marshaling for encryption, not API response
-		Provider: llmProvider,
-		APIKey:   apiKey,
-		BaseURL:  baseURL,
+		Kind:    kind,
+		Slug:    slug,
+		APIKey:  apiKey,
+		BaseURL: baseURL,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode credential: %w", err)

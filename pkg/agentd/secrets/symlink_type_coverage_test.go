@@ -63,7 +63,7 @@ func TestMaterialize_AllTypes_WriteToTmpfs(t *testing.T) {
 		{
 			Type:      "api-key",
 			Name:      "custom",
-			Plaintext: `{"provider":"custom"}`,
+			Plaintext: `{"kind":"custom","slug":"custom"}`,
 		},
 	}
 

@@ -58,17 +58,22 @@ func enrichProviderModels(ctx context.Context, cacheDir string, client *http.Cli
 			if p.BaseURL == "" || len(p.Models) > 0 {
 				continue
 			}
-			models, err := fetchOrCacheModels(ctx, p.Provider, p.BaseURL, p.APIKey, cacheDir, client)
+			// Cache key is per-slug because Slug is the unique identity
+			// (Epic 55). Two credentials of the same Kind with different
+			// BaseURLs would otherwise share a cache file.
+			models, err := fetchOrCacheModels(ctx, p.Slug, p.BaseURL, p.APIKey, cacheDir, client)
 			if err != nil {
 				log.Warn("model enricher: failed to fetch model list; provider will use opencode default list",
-					zap.String("provider", p.Provider),
+					zap.String("slug", p.Slug),
+					zap.String("kind", p.Kind),
 					zap.String("baseURL", p.BaseURL),
 					zap.Error(err))
 				continue
 			}
 			out[i].Models = models
 			log.Info("model enricher: populated model list",
-				zap.String("provider", p.Provider),
+				zap.String("slug", p.Slug),
+				zap.String("kind", p.Kind),
 				zap.Int("count", len(models)))
 		}
 		return out

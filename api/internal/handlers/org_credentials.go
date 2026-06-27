@@ -42,7 +42,8 @@ func NewOrgCredentialsHandler(store CredentialStore, orgOps orgBindingAndAutoApp
 
 type createOrgCredentialRequest struct {
 	Name               string         `json:"name"           binding:"required,min=1,max=128"`
-	Provider           string         `json:"provider"       binding:"required"`
+	Kind               string         `json:"kind"           binding:"required"`
+	Slug               string         `json:"slug"           binding:"required"`
 	APIKey             string         `json:"apiKey"         binding:"required"              log:"-"` //nolint:gosec // G117 false positive — field has log:"-" tag, never marshaled to response
 	BaseURL            string         `json:"baseURL"`
 	ModelAllowlist     []string       `json:"modelAllowlist"`
@@ -52,6 +53,8 @@ type createOrgCredentialRequest struct {
 
 type updateOrgCredentialRequest struct {
 	Name               *string        `json:"name"`
+	Kind               *string        `json:"kind"`
+	Slug               *string        `json:"slug"`
 	APIKey             *string        `json:"apiKey"          log:"-"` //nolint:gosec // G117 false positive — field has log:"-" tag, never marshaled to response
 	BaseURL            *string        `json:"baseURL"`
 	ModelAllowlist     []string       `json:"modelAllowlist"`
@@ -75,7 +78,7 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 		return
 	}
 
-	ciphertext, err := encryptCredentialData(ctx, h.provider.Encrypt, req.Provider, req.APIKey, req.BaseURL)
+	ciphertext, err := encryptCredentialData(ctx, h.provider.Encrypt, req.Kind, req.Slug, req.APIKey, req.BaseURL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode credential"})
 		return
@@ -93,7 +96,8 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 		OwnerType:          "org",
 		OwnerID:            orgID,
 		Name:               req.Name,
-		Provider:           req.Provider,
+		Kind:               req.Kind,
+		Slug:               req.Slug,
 		Ciphertext:         ciphertext,
 		KeyVersion:         secrets.ActiveVersionOf(h.provider),
 		ModelAllowlist:     allowlist,
@@ -111,7 +115,7 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 
 	if err := h.credStore.CreateCredential(ctx, "org", orgID, row); err != nil {
 		if errors.Is(ClassifyPostgresError(err), ErrDuplicateCredential) {
-			c.JSON(http.StatusConflict, gin.H{"error": "credential for this provider already exists"})
+			c.JSON(http.StatusConflict, gin.H{"error": "credential with this slug already exists"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create credential"})
@@ -124,7 +128,7 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 	if err != nil || created == nil {
 		// Credential was stored but unreadable — surface a minimal response.
 		c.JSON(http.StatusCreated, CredentialResponse{
-			ID: credID, OrgID: orgID, Name: req.Name, Provider: req.Provider,
+			ID: credID, OrgID: orgID, Name: req.Name, Kind: req.Kind, Slug: req.Slug,
 			ModelAllowlist:     allowlist,
 			ModelContextLimits: req.ModelContextLimits,
 			ModelOutputLimits:  req.ModelOutputLimits,
@@ -229,22 +233,28 @@ func (h *OrgCredentialsHandler) Update(c *gin.Context) {
 	// Build the update row. The unified UpdateCredential uses COALESCE so that
 	// nil model_allowlist / model_context_limits / model_output_limits / ciphertext
 	// mean "don't change"; this preserves the org handler's partial-update
-	// semantics. Name is applied only when the caller supplied one (empty string
-	// leaves the column unchanged via NULLIF). Provider is never changed by org
-	// Update (org has no Provider field in its request), so it is passed through
-	// as the existing value.
+	// semantics. Name/Kind/Slug are applied only when the caller supplied one
+	// (empty string leaves the column unchanged via NULLIF). Kind and Slug are
+	// passed through as the existing value unless the request overrides them.
 	upd := &secrets.CredentialRow{
 		ID:             credID,
 		OwnerType:      "org",
 		OwnerID:        orgID,
 		Name:           existing.Name,
-		Provider:       existing.Provider,
+		Kind:           existing.Kind,
+		Slug:           existing.Slug,
 		Ciphertext:     newCiphertext,
 		KeyVersion:     newKeyVersion,
 		ModelAllowlist: req.ModelAllowlist,
 	}
 	if req.Name != nil {
 		upd.Name = *req.Name
+	}
+	if req.Kind != nil {
+		upd.Kind = *req.Kind
+	}
+	if req.Slug != nil {
+		upd.Slug = *req.Slug
 	}
 	// modelContextLimits and modelOutputLimits are intentionally NOT pre-normalized:
 	// a nil value here must reach the DB as SQL NULL so COALESCE leaves the column

@@ -153,7 +153,7 @@ func TestAdminProviderCredentials_Create_Success(t *testing.T) {
 	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(kek))
 	router := setupAdminCredRouter(h)
 
-	body := `{"name":"my-anthropic","provider":"anthropic","apiKey":"sk-ant-123"}`
+	body := `{"name":"my-anthropic","kind":"anthropic","slug":"anthropic","apiKey":"sk-ant-123"}`
 	req, _ := http.NewRequest("POST", "/api/v1/admin/provider-credentials", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -163,7 +163,7 @@ func TestAdminProviderCredentials_Create_Success(t *testing.T) {
 	var resp CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "my-anthropic", resp.Name)
-	assert.Equal(t, "anthropic", resp.Provider)
+	assert.Equal(t, "anthropic", resp.Slug)
 	assert.NotEmpty(t, resp.ID)
 	assert.Empty(t, resp.BaseURL) // not set
 }
@@ -173,7 +173,7 @@ func TestAdminProviderCredentials_Create_MissingAPIKey(t *testing.T) {
 	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(make([]byte, 32)))
 	router := setupAdminCredRouter(h)
 
-	body := `{"name":"my-anthropic","provider":"anthropic"}`
+	body := `{"name":"my-anthropic","kind":"anthropic","slug":"anthropic"}`
 	req, _ := http.NewRequest("POST", "/api/v1/admin/provider-credentials", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -187,7 +187,7 @@ func TestAdminProviderCredentials_Create_NilKEK(t *testing.T) {
 	h := NewAdminProviderCredentialsHandler(store, nil)
 	router := setupAdminCredRouter(h)
 
-	body := `{"name":"my-anthropic","provider":"anthropic","apiKey":"sk-ant-123"}`
+	body := `{"name":"my-anthropic","kind":"anthropic","slug":"anthropic","apiKey":"sk-ant-123"}`
 	req, _ := http.NewRequest("POST", "/api/v1/admin/provider-credentials", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -205,8 +205,8 @@ func TestAdminProviderCredentials_List(t *testing.T) {
 	// Create one first.
 	store.creds["id1"] = &secrets.CredentialRow{
 		OwnerType: "admin", OwnerID: "_platform",
-		ID: "id1", Name: "test", Provider: "openai",
-		Ciphertext: mustEncrypt(t, kek, `{"provider":"openai","apiKey":"sk-123"}`),
+		ID: "id1", Name: "test", Kind: "openai", Slug: "openai",
+		Ciphertext: mustEncrypt(t, kek, `{"kind":"openai","slug":"openai","apiKey":"sk-123"}`),
 	}
 
 	req, _ := http.NewRequest("GET", "/api/v1/admin/provider-credentials", nil)
@@ -217,7 +217,7 @@ func TestAdminProviderCredentials_List(t *testing.T) {
 	var list []CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &list))
 	assert.Len(t, list, 1)
-	assert.Equal(t, "openai", list[0].Provider)
+	assert.Equal(t, "openai", list[0].Slug)
 }
 
 func TestAdminProviderCredentials_Get_NotFound(t *testing.T) {
@@ -235,7 +235,7 @@ func TestAdminProviderCredentials_Get_NotFound(t *testing.T) {
 func TestAdminProviderCredentials_Delete(t *testing.T) {
 	store := newFakeAdminCredStore()
 	store.creds["del-id"] = &secrets.CredentialRow{
-		OwnerType: "admin", OwnerID: "_platform", ID: "del-id", Name: "x", Provider: "anthropic"}
+		OwnerType: "admin", OwnerID: "_platform", ID: "del-id", Name: "x", Kind: "anthropic", Slug: "anthropic"}
 	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(make([]byte, 32)))
 	router := setupAdminCredRouter(h)
 
@@ -255,13 +255,13 @@ func TestAdminProviderCredentials_Update_Success(t *testing.T) {
 	}
 	store.creds["upd-id"] = &secrets.CredentialRow{
 		OwnerType: "admin", OwnerID: "_platform",
-		ID: "upd-id", Name: "old", Provider: "anthropic",
-		Ciphertext: mustEncrypt(t, kek, `{"provider":"anthropic","apiKey":"old-key"}`),
+		ID: "upd-id", Name: "old", Kind: "anthropic", Slug: "anthropic",
+		Ciphertext: mustEncrypt(t, kek, `{"kind":"anthropic","slug":"anthropic","apiKey":"old-key"}`),
 	}
 	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(kek))
 	router := setupAdminCredRouter(h)
 
-	body := `{"name":"new-name","provider":"anthropic","apiKey":"new-key","baseURL":"https://custom.api"}`
+	body := `{"name":"new-name","kind":"anthropic","slug":"anthropic","apiKey":"new-key","baseURL":"https://custom.api"}`
 	req, _ := http.NewRequest("PUT", "/api/v1/admin/provider-credentials/upd-id", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -311,8 +311,9 @@ func TestAdminProviderCredentials_Update_CorruptCiphertext_Returns500(t *testing
 		OwnerType: "admin", OwnerID: "_platform",
 		ID:         "c1",
 		Name:       "test",
-		Provider:   "openai",
-		Ciphertext: mustEncrypt(t, differentKEK, `{"provider":"openai","apiKey":"original"}`),
+		Kind:       "openai",
+		Slug:       "openai",
+		Ciphertext: mustEncrypt(t, differentKEK, `{"kind":"openai","slug":"openai","apiKey":"original"}`),
 	}
 	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(kek))
 	router := setupAdminCredRouter(h)
@@ -337,8 +338,8 @@ func TestAdminProviderCredentials_Update_DuplicateProvider_Returns409(t *testing
 	kek := make([]byte, 32)
 	store.creds["c1"] = &secrets.CredentialRow{
 		OwnerType: "admin", OwnerID: "_platform",
-		ID: "c1", Name: "existing", Provider: "openai",
-		Ciphertext: mustEncrypt(t, kek, `{"provider":"openai","apiKey":"key1"}`),
+		ID: "c1", Name: "existing", Kind: "openai", Slug: "openai",
+		Ciphertext: mustEncrypt(t, kek, `{"kind":"openai","slug":"openai","apiKey":"key1"}`),
 	}
 	// updateErr is consumed ONLY by UpdateCredential; GetCredential won't touch it.
 	store.updateErr = &pgconn.PgError{Code: "23505", Message: "duplicate key value violates unique constraint"}
@@ -403,7 +404,7 @@ func TestAdminProviderCredentials_Create_ModelContextLimits(t *testing.T) {
 	router := setupAdminCredRouter(h)
 
 	body := `{
-		"name":"limits-test","provider":"openai","apiKey":"sk-test",
+		"name":"limits-test","kind":"openai","slug":"openai","apiKey":"sk-test",
 		"baseURL":"https://example.com/v1",
 		"modelAllowlist":["glm-5.1","gpt-4o"],
 		"modelContextLimits":{"glm-5.1":200000,"gpt-4o":128000},
@@ -436,7 +437,7 @@ func TestAdminProviderCredentials_Update_ModelContextLimits(t *testing.T) {
 	router := setupAdminCredRouter(h)
 
 	// Create first.
-	createBody := `{"name":"c1","provider":"openai","apiKey":"sk-orig","baseURL":"https://x.com/v1"}`
+	createBody := `{"name":"c1","kind":"openai","slug":"openai","apiKey":"sk-orig","baseURL":"https://x.com/v1"}`
 	req, _ := http.NewRequest("POST", "/api/v1/admin/provider-credentials", bytes.NewBufferString(createBody))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -477,7 +478,7 @@ func TestAdminProviderCredentials_ProbeModels_NoBaseURL(t *testing.T) {
 	router := setupAdminCredRouter(h)
 
 	// Create a credential without baseURL (native provider).
-	createBody := `{"name":"native","provider":"anthropic","apiKey":"sk-ant-123"}`
+	createBody := `{"name":"native","kind":"anthropic","slug":"anthropic","apiKey":"sk-ant-123"}`
 	req, _ := http.NewRequest("POST", "/api/v1/admin/provider-credentials", bytes.NewBufferString(createBody))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -523,7 +524,7 @@ func TestAdminProviderCredentials_ProbeModels_WithBaseURL_CallsProvider(t *testi
 	router := setupAdminCredRouter(h)
 
 	// Create with a baseURL that won't be reachable in tests.
-	createBody := `{"name":"custom","provider":"custom","apiKey":"sk-test","baseURL":"http://localhost:19999/v1"}`
+	createBody := `{"name":"custom","kind":"custom","slug":"custom","apiKey":"sk-test","baseURL":"http://localhost:19999/v1"}`
 	req, _ := http.NewRequest("POST", "/api/v1/admin/provider-credentials", bytes.NewBufferString(createBody))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -566,7 +567,8 @@ func TestAdminProviderCredentials_ProbeModels_WithBaseURL_Success(t *testing.T) 
 	// Create with saved context AND output limits for two of the three models.
 	createBody, _ := json.Marshal(map[string]interface{}{
 		"name":               "thekao",
-		"provider":           "thekao cloud",
+		"kind":               "thekao cloud",
+		"slug":               "thekao cloud",
 		"apiKey":             "sk-probe-key",
 		"baseURL":            fakeProvider.URL + "/v1",
 		"modelAllowlist":     []string{"glm-5.1", "glm-5.2"},
@@ -614,7 +616,7 @@ func TestAdminProviderCredentials_Response_NoOrgID(t *testing.T) {
 	router := setupAdminCredRouter(h)
 
 	// Create a credential.
-	createBody := `{"name":"test","provider":"openai","apiKey":"sk-test"}`
+	createBody := `{"name":"test","kind":"openai","slug":"openai","apiKey":"sk-test"}`
 	req, _ := http.NewRequest("POST", "/api/v1/admin/provider-credentials", bytes.NewBufferString(createBody))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()

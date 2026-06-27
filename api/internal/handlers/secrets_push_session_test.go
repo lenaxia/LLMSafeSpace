@@ -199,7 +199,7 @@ func TestHandler_BindPushesOrgCredentialEvenWithAPIKeyAuth(t *testing.T) {
 		orgKEK[i] = byte(i + 1)
 	}
 	orgPlaintext, _ := json.Marshal(secrets.LLMProviderData{
-		Provider: "custom", APIKey: "org-api-key", BaseURL: "https://example.test/v1",
+		Kind: "custom", Slug: "custom", APIKey: "org-api-key", BaseURL: "https://example.test/v1",
 	})
 	orgCipher, err := secrets.EncryptSecret(orgKEK, orgPlaintext)
 	if err != nil {
@@ -208,7 +208,7 @@ func TestHandler_BindPushesOrgCredentialEvenWithAPIKeyAuth(t *testing.T) {
 
 	store := &pushPathSessionStore{
 		credentials: []secrets.CredentialBinding{
-			{ID: "cred-org", OwnerType: "org", OwnerID: "org-1", Provider: "custom", Ciphertext: orgCipher, SourceType: "auto"},
+			{ID: "cred-org", OwnerType: "org", OwnerID: "org-1", Kind: "custom", Slug: "custom", Ciphertext: orgCipher, SourceType: "auto"},
 		},
 		bindings: map[string][]string{
 			// Workspace already has a user-DEK env-secret bound from a prior

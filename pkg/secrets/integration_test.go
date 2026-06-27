@@ -18,8 +18,8 @@ func TestIntegration_SecretCRUD_FullStack(t *testing.T) {
 	// Create
 	created, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "integration-test", Type: SecretTypeAPIKey,
-		Value:    `{"apiKey":"sk-test-123","provider":"openai"}`,
-		Metadata: json.RawMessage(`{"provider":"openai","model":"gpt-4o"}`),
+		Value:    `{"apiKey":"sk-test-123","kind":"openai","slug":"openai"}`,
+		Metadata: json.RawMessage(`{"kind":"openai","slug":"openai","model":"gpt-4o"}`),
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -45,13 +45,13 @@ func TestIntegration_SecretCRUD_FullStack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Decrypt: %v", err)
 	}
-	if string(plaintext) != `{"apiKey":"sk-test-123","provider":"openai"}` {
+	if string(plaintext) != `{"apiKey":"sk-test-123","kind":"openai","slug":"openai"}` {
 		t.Errorf("Decrypted value wrong: %s", string(plaintext))
 	}
 
 	// Update
 	err = svc.UpdateSecret(ctx, "user-1", sessionID, nil, created.ID, UpdateSecretRequest{
-		Value: `{"apiKey":"sk-new-456","provider":"openai"}`,
+		Value: `{"apiKey":"sk-new-456","kind":"openai","slug":"openai"}`,
 	})
 	if err != nil {
 		t.Fatalf("Update: %v", err)
@@ -62,7 +62,7 @@ func TestIntegration_SecretCRUD_FullStack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Decrypt after update: %v", err)
 	}
-	if string(plaintext2) != `{"apiKey":"sk-new-456","provider":"openai"}` {
+	if string(plaintext2) != `{"apiKey":"sk-new-456","kind":"openai","slug":"openai"}` {
 		t.Errorf("Updated value wrong: %s", string(plaintext2))
 	}
 
@@ -90,7 +90,7 @@ func TestIntegration_BindingLifecycle(t *testing.T) {
 		name := []string{"key-a", "key-b", "key-c"}[i]
 		s, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 			Name: name, Type: SecretTypeAPIKey, Value: "val-" + name,
-			Metadata: json.RawMessage(`{"provider":"x"}`),
+			Metadata: json.RawMessage(`{"kind":"x","slug":"x"}`),
 		})
 		ids[i] = s.ID
 	}
@@ -207,7 +207,7 @@ func TestIntegration_AuditCompleteness(t *testing.T) {
 	// Create
 	s, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "audit-complete", Type: SecretTypeAPIKey, Value: "v",
-		Metadata: json.RawMessage(`{"provider":"x"}`),
+		Metadata: json.RawMessage(`{"kind":"x","slug":"x"}`),
 	})
 
 	// Update
@@ -253,7 +253,7 @@ func TestIntegration_RecoveryKeyFullFlow(t *testing.T) {
 	// Create a secret
 	created, _ := svc.CreateSecret(ctx, "user-1", "sess-1", nil, CreateSecretRequest{
 		Name: "precious", Type: SecretTypeAPIKey, Value: "my-precious-key",
-		Metadata: json.RawMessage(`{"provider":"x"}`),
+		Metadata: json.RawMessage(`{"kind":"x","slug":"x"}`),
 	})
 
 	// Simulate "forgot password" — use recovery key

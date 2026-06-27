@@ -51,18 +51,18 @@ func TestCredentialPrecedence_AdminFreeTierOverrideByUser(t *testing.T) {
 	dekCache.CacheDEK(context.Background(), sessionID, userDEK, time.Hour) //nolint:errcheck
 
 	// Create encrypted credentials.
-	adminPlaintext, _ := json.Marshal(LLMProviderData{Provider: "anthropic", APIKey: "admin-key"})
+	adminPlaintext, _ := json.Marshal(LLMProviderData{Kind: "anthropic", Slug: "anthropic", APIKey: "admin-key"})
 	adminCipher, err := EncryptSecret(adminKEK, adminPlaintext)
 	require.NoError(t, err)
 
-	userPlaintext, _ := json.Marshal(LLMProviderData{Provider: "anthropic", APIKey: "user-key"}) //nolint:gosec
+	userPlaintext, _ := json.Marshal(LLMProviderData{Kind: "anthropic", Slug: "anthropic", APIKey: "user-key"}) //nolint:gosec
 	userCipher, err := EncryptSecret(userDEK, userPlaintext)
 	require.NoError(t, err)
 
 	mockCredStore := &mockCredentialStore{
 		bindings: []CredentialBinding{
-			{ID: "cred-user", OwnerType: "user", OwnerID: userID, Provider: "anthropic", Ciphertext: userCipher, SourceType: "explicit"},
-			{ID: "cred-admin", OwnerType: "admin", OwnerID: "_platform", Provider: "anthropic", Ciphertext: adminCipher, SourceType: "auto"},
+			{ID: "cred-user", OwnerType: "user", OwnerID: userID, Kind: "anthropic", Slug: "anthropic", Ciphertext: userCipher, SourceType: "explicit"},
+			{ID: "cred-admin", OwnerType: "admin", OwnerID: "_platform", Kind: "anthropic", Slug: "anthropic", Ciphertext: adminCipher, SourceType: "auto"},
 		},
 	}
 
@@ -84,7 +84,7 @@ func TestCredentialPrecedence_AdminFreeTierOverrideByUser(t *testing.T) {
 	var pd LLMProviderData
 	require.NoError(t, json.Unmarshal([]byte(llmSecrets[0].Plaintext), &pd))
 	assert.Equal(t, "user-key", pd.APIKey)
-	assert.Equal(t, "anthropic", pd.Provider)
+	assert.Equal(t, "anthropic", pd.Slug)
 }
 
 // TestCredentialPrecedence_ModelAllowlistFiltering verifies that model_allowlist
@@ -101,7 +101,7 @@ func TestCredentialPrecedence_ModelAllowlistFiltering(t *testing.T) {
 	}
 
 	adminPlaintext, _ := json.Marshal(LLMProviderData{
-		Provider: "anthropic", APIKey: "key",
+		Kind: "anthropic", Slug: "anthropic", APIKey: "key",
 		Models: []LLMModelConfig{
 			{ID: "claude-3", Label: "Claude 3"},
 			{ID: "claude-2", Label: "Claude 2"},
@@ -114,7 +114,7 @@ func TestCredentialPrecedence_ModelAllowlistFiltering(t *testing.T) {
 	mockCredStore := &mockCredentialStore{
 		bindings: []CredentialBinding{{
 			ID: "cred-filtered", OwnerType: "admin", OwnerID: "_platform",
-			Provider: "anthropic", Ciphertext: adminCipher,
+			Kind: "anthropic", Slug: "anthropic", Ciphertext: adminCipher,
 			SourceType: "auto", ModelAllowlist: []string{"claude-3", "claude-1"},
 		}},
 	}
@@ -152,14 +152,14 @@ func TestCredentialPrecedence_ModelAllowlistFallback(t *testing.T) {
 		adminKEK[i] = byte(i + 1)
 	}
 
-	adminPlaintext, _ := json.Marshal(LLMProviderData{Provider: "openai", APIKey: "key"})
+	adminPlaintext, _ := json.Marshal(LLMProviderData{Kind: "openai", Slug: "openai", APIKey: "key"})
 	adminCipher, err := EncryptSecret(adminKEK, adminPlaintext)
 	require.NoError(t, err)
 
 	mockCredStore := &mockCredentialStore{
 		bindings: []CredentialBinding{{
 			ID: "cred-stub", OwnerType: "admin", OwnerID: "_platform",
-			Provider: "openai", Ciphertext: adminCipher,
+			Kind: "openai", Slug: "openai", Ciphertext: adminCipher,
 			SourceType: "auto", ModelAllowlist: []string{"gpt-4o", "gpt-4o-mini"},
 		}},
 	}
@@ -198,15 +198,15 @@ func TestCredentialPrecedence_DecryptionFailureFallback(t *testing.T) {
 		adminKEK[i] = byte(i + 1)
 	}
 
-	goodPlaintext, _ := json.Marshal(LLMProviderData{Provider: "anthropic", APIKey: "good-key"})
+	goodPlaintext, _ := json.Marshal(LLMProviderData{Kind: "anthropic", Slug: "anthropic", APIKey: "good-key"})
 	goodCipher, err := EncryptSecret(adminKEK, goodPlaintext)
 	require.NoError(t, err)
 
 	mockCredStore := &mockCredentialStore{
 		bindings: []CredentialBinding{
-			{ID: "bad", OwnerType: "admin", OwnerID: "_platform", Provider: "anthropic",
+			{ID: "bad", OwnerType: "admin", OwnerID: "_platform", Kind: "anthropic", Slug: "anthropic",
 				Ciphertext: []byte("corrupt"), SourceType: "explicit", WithinPriority: 10},
-			{ID: "good", OwnerType: "admin", OwnerID: "_platform", Provider: "anthropic",
+			{ID: "good", OwnerType: "admin", OwnerID: "_platform", Kind: "anthropic", Slug: "anthropic",
 				Ciphertext: goodCipher, SourceType: "auto", WithinPriority: 0},
 		},
 	}
@@ -242,13 +242,13 @@ func TestCredentialPrecedence_AdminOnlyNoSession(t *testing.T) {
 		adminKEK[i] = byte(i + 1)
 	}
 
-	adminPlaintext, _ := json.Marshal(LLMProviderData{Provider: "opencode", APIKey: "public"})
+	adminPlaintext, _ := json.Marshal(LLMProviderData{Kind: "opencode", Slug: "opencode", APIKey: "public"})
 	adminCipher, err := EncryptSecret(adminKEK, adminPlaintext)
 	require.NoError(t, err)
 
 	mockCredStore := &mockCredentialStore{
 		bindings: []CredentialBinding{
-			{ID: "cred-free", OwnerType: "admin", OwnerID: "_platform", Provider: "opencode", Ciphertext: adminCipher, SourceType: "auto"},
+			{ID: "cred-free", OwnerType: "admin", OwnerID: "_platform", Kind: "opencode", Slug: "opencode", Ciphertext: adminCipher, SourceType: "auto"},
 		},
 	}
 
@@ -360,7 +360,7 @@ func TestInjectSecrets_ViaAsyncAuditLogger(t *testing.T) {
 		adminKEK[i] = byte(i + 1)
 	}
 
-	plaintext, _ := json.Marshal(LLMProviderData{Provider: "opencode", APIKey: "public"})
+	plaintext, _ := json.Marshal(LLMProviderData{Kind: "opencode", Slug: "opencode", APIKey: "public"})
 	cipher, err := EncryptSecret(adminKEK, plaintext)
 	require.NoError(t, err)
 
@@ -368,7 +368,7 @@ func TestInjectSecrets_ViaAsyncAuditLogger(t *testing.T) {
 	// We need to use a combined store that implements both.
 	mockCred := &mockCredentialStore{
 		bindings: []CredentialBinding{
-			{ID: "c1", OwnerType: "admin", OwnerID: "_platform", Provider: "opencode", Ciphertext: cipher, SourceType: "auto"},
+			{ID: "c1", OwnerType: "admin", OwnerID: "_platform", Kind: "opencode", Slug: "opencode", Ciphertext: cipher, SourceType: "auto"},
 		},
 	}
 	combined := &combinedTestStore{SecretStore: innerSecret, CredentialStore: mockCred}
@@ -413,14 +413,14 @@ func TestCredentialPrecedence_AllowlistOnlyDefaultID(t *testing.T) {
 		adminKEK[i] = byte(i + 1)
 	}
 
-	adminPlaintext, _ := json.Marshal(LLMProviderData{Provider: "openai", APIKey: "sk-test"})
+	adminPlaintext, _ := json.Marshal(LLMProviderData{Kind: "openai", Slug: "openai", APIKey: "sk-test"})
 	adminCipher, err := EncryptSecret(adminKEK, adminPlaintext)
 	require.NoError(t, err)
 
 	mockCredStore := &mockCredentialStore{
 		bindings: []CredentialBinding{{
 			ID: "cred-bad-allowlist", OwnerType: "admin", OwnerID: "_platform",
-			Provider: "openai", Ciphertext: adminCipher,
+			Kind: "openai", Slug: "openai", Ciphertext: adminCipher,
 			SourceType:     "auto",
 			ModelAllowlist: []string{"default"}, // invalid — should be skipped
 		}},
@@ -460,14 +460,14 @@ func TestCredentialPrecedence_AllowlistMixedValidAndInvalid(t *testing.T) {
 		adminKEK[i] = byte(i + 1)
 	}
 
-	adminPlaintext, _ := json.Marshal(LLMProviderData{Provider: "openai", APIKey: "sk-test"})
+	adminPlaintext, _ := json.Marshal(LLMProviderData{Kind: "openai", Slug: "openai", APIKey: "sk-test"})
 	adminCipher, err := EncryptSecret(adminKEK, adminPlaintext)
 	require.NoError(t, err)
 
 	mockCredStore := &mockCredentialStore{
 		bindings: []CredentialBinding{{
 			ID: "cred-mixed", OwnerType: "admin", OwnerID: "_platform",
-			Provider: "openai", Ciphertext: adminCipher,
+			Kind: "openai", Slug: "openai", Ciphertext: adminCipher,
 			SourceType:     "auto",
 			ModelAllowlist: []string{"default", "", "glm-5.1", "gpt-4o"}, // 2 invalid + 2 valid
 		}},
@@ -526,9 +526,9 @@ func TestCredentialPrecedence_ModelContextLimits_InjectedIntoLLMModelConfig(t *t
 
 	// Credential has no models in the blob — relies on ModelAllowlist + ModelContextLimits + ModelOutputLimits.
 	adminPlaintext, _ := json.Marshal(LLMProviderData{
-		Provider: "thekao cloud",
-		APIKey:   "sk-test",
-		BaseURL:  "https://ai.thekao.cloud/v1",
+		Kind: "thekao cloud", Slug: "thekao cloud",
+		APIKey:  "sk-test",
+		BaseURL: "https://ai.thekao.cloud/v1",
 	})
 	adminCipher, err := EncryptSecret(adminKEK, adminPlaintext)
 	require.NoError(t, err)
@@ -536,7 +536,7 @@ func TestCredentialPrecedence_ModelContextLimits_InjectedIntoLLMModelConfig(t *t
 	mockCredStore := &mockCredentialStore{
 		bindings: []CredentialBinding{{
 			ID: "cred-thekao", OwnerType: "admin", OwnerID: "_platform",
-			Provider: "thekao cloud", Ciphertext: adminCipher,
+			Kind: "thekao cloud", Slug: "thekao cloud", Ciphertext: adminCipher,
 			SourceType:         "auto",
 			ModelAllowlist:     []string{"glm-5.1", "glm-5.2", "classifier"},
 			ModelContextLimits: map[string]int{"glm-5.1": 200000, "glm-5.2": 1000000},
@@ -599,7 +599,7 @@ func TestCredentialPrecedence_ModelContextLimits_DoesNotOverrideExisting(t *test
 
 	// Model in the blob already has ContextLimit=128000 and OutputLimit=16384.
 	adminPlaintext, _ := json.Marshal(LLMProviderData{
-		Provider: "openai", APIKey: "sk-oai",
+		Kind: "openai", Slug: "openai", APIKey: "sk-oai",
 		Models: []LLMModelConfig{
 			{ID: "gpt-4o", ContextLimit: 128000, OutputLimit: 16384},
 		},
@@ -610,7 +610,7 @@ func TestCredentialPrecedence_ModelContextLimits_DoesNotOverrideExisting(t *test
 	mockCredStore := &mockCredentialStore{
 		bindings: []CredentialBinding{{
 			ID: "cred-oai", OwnerType: "admin", OwnerID: "_platform",
-			Provider: "openai", Ciphertext: adminCipher,
+			Kind: "openai", Slug: "openai", Ciphertext: adminCipher,
 			SourceType:         "auto",
 			ModelAllowlist:     []string{"gpt-4o"},
 			ModelContextLimits: map[string]int{"gpt-4o": 999999}, // should NOT override
@@ -660,14 +660,14 @@ func TestCredentialPrecedence_OrgCredentialViaServerKEK(t *testing.T) {
 		orgKEK[i] = byte(i + 50)
 	}
 
-	orgPlaintext, _ := json.Marshal(LLMProviderData{Provider: "openai", APIKey: "org-key"}) //nolint:gosec
+	orgPlaintext, _ := json.Marshal(LLMProviderData{Kind: "openai", Slug: "openai", APIKey: "org-key"}) //nolint:gosec
 	orgCipher, err := EncryptSecret(orgKEK, orgPlaintext)
 	require.NoError(t, err)
 
 	mockCredStore := &mockCredentialStore{
 		bindings: []CredentialBinding{{
 			ID: "cred-org", OwnerType: "org", OwnerID: "org-1",
-			Provider: "openai", Ciphertext: orgCipher, SourceType: "auto",
+			Kind: "openai", Slug: "openai", Ciphertext: orgCipher, SourceType: "auto",
 		}},
 	}
 
@@ -686,7 +686,7 @@ func TestCredentialPrecedence_OrgCredentialViaServerKEK(t *testing.T) {
 	var pd LLMProviderData
 	require.NoError(t, json.Unmarshal([]byte(llm[0].Plaintext), &pd))
 	assert.Equal(t, "org-key", pd.APIKey)
-	assert.Equal(t, "openai", pd.Provider)
+	assert.Equal(t, "openai", pd.Slug)
 }
 
 // TestCredentialPrecedence_DomainSeparation_AdminAndOrgDistinctKeys verifies
@@ -716,19 +716,19 @@ func TestCredentialPrecedence_DomainSeparation_AdminAndOrgDistinctKeys(t *testin
 	require.NotEqual(t, adminKEK, orgKEK, "test premise: keys must differ")
 
 	// Admin credential for anthropic, encrypted with adminKEK.
-	adminPlaintext, _ := json.Marshal(LLMProviderData{Provider: "anthropic", APIKey: "admin-key"})
+	adminPlaintext, _ := json.Marshal(LLMProviderData{Kind: "anthropic", Slug: "anthropic", APIKey: "admin-key"})
 	adminCipher, err := EncryptSecret(adminKEK, adminPlaintext)
 	require.NoError(t, err)
 
 	// Org credential for openai, encrypted with orgKEK.
-	orgPlaintext, _ := json.Marshal(LLMProviderData{Provider: "openai", APIKey: "org-key"}) //nolint:gosec
+	orgPlaintext, _ := json.Marshal(LLMProviderData{Kind: "openai", Slug: "openai", APIKey: "org-key"}) //nolint:gosec
 	orgCipher, err := EncryptSecret(orgKEK, orgPlaintext)
 	require.NoError(t, err)
 
 	mockCredStore := &mockCredentialStore{
 		bindings: []CredentialBinding{
-			{ID: "cred-admin", OwnerType: "admin", OwnerID: "_platform", Provider: "anthropic", Ciphertext: adminCipher, SourceType: "auto"},
-			{ID: "cred-org", OwnerType: "org", OwnerID: "org-1", Provider: "openai", Ciphertext: orgCipher, SourceType: "auto"},
+			{ID: "cred-admin", OwnerType: "admin", OwnerID: "_platform", Kind: "anthropic", Slug: "anthropic", Ciphertext: adminCipher, SourceType: "auto"},
+			{ID: "cred-org", OwnerType: "org", OwnerID: "org-1", Kind: "openai", Slug: "openai", Ciphertext: orgCipher, SourceType: "auto"},
 		},
 	}
 
@@ -749,7 +749,7 @@ func TestCredentialPrecedence_DomainSeparation_AdminAndOrgDistinctKeys(t *testin
 	for _, s := range llm {
 		var pd LLMProviderData
 		require.NoError(t, json.Unmarshal([]byte(s.Plaintext), &pd))
-		byProvider[pd.Provider] = pd.APIKey
+		byProvider[pd.Slug] = pd.APIKey
 	}
 	assert.Equal(t, "admin-key", byProvider["anthropic"], "admin cred must decrypt with adminKEK")
 	assert.Equal(t, "org-key", byProvider["openai"], "org cred must decrypt with orgKEK")
@@ -775,14 +775,14 @@ func TestCredentialPrecedence_OrgCredential_WrongKEK_FailsAndFallsBack(t *testin
 		deriveKEK[i] = byte(i + 77)
 	}
 
-	orgPlaintext, _ := json.Marshal(LLMProviderData{Provider: "openai", APIKey: "org-key"}) //nolint:gosec
+	orgPlaintext, _ := json.Marshal(LLMProviderData{Kind: "openai", Slug: "openai", APIKey: "org-key"}) //nolint:gosec
 	orgCipher, err := EncryptSecret(encryptKEK, orgPlaintext)
 	require.NoError(t, err)
 
 	mockCredStore := &mockCredentialStore{
 		bindings: []CredentialBinding{{
 			ID: "cred-org", OwnerType: "org", OwnerID: "org-1",
-			Provider: "openai", Ciphertext: orgCipher, SourceType: "auto",
+			Kind: "openai", Slug: "openai", Ciphertext: orgCipher, SourceType: "auto",
 		}},
 	}
 

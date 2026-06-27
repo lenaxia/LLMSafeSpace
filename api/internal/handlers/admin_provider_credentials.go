@@ -32,11 +32,18 @@ type CredentialStore interface {
 // Never exposes apiKey. BaseURL is extracted from the encrypted ciphertext.
 // OrgID is populated only for org-scoped credentials (omitted otherwise).
 // BindWarning is set only by org Create when auto-bind fails (non-fatal).
+//
+// Epic 55:
+//   - Kind: SDK-class enum (openai, anthropic, openai_compatible, ...).
+//   - Slug: per-owner unique identity; reaches opencode as providerID
+//     in agent-config.json.
+//   - Name: free-form display label.
 type CredentialResponse struct {
 	ID                 string         `json:"id"`
 	OrgID              string         `json:"orgId,omitempty"`
 	Name               string         `json:"name"`
-	Provider           string         `json:"provider"`
+	Kind               string         `json:"kind"`
+	Slug               string         `json:"slug"`
 	BaseURL            string         `json:"baseURL,omitempty"`
 	ModelAllowlist     []string       `json:"modelAllowlist"`
 	ModelContextLimits map[string]int `json:"modelContextLimits"`
@@ -48,7 +55,8 @@ type CredentialResponse struct {
 
 type createAdminCredentialRequest struct {
 	Name               string         `json:"name" binding:"required"`
-	Provider           string         `json:"provider" binding:"required"`
+	Kind               string         `json:"kind" binding:"required"`
+	Slug               string         `json:"slug" binding:"required"`
 	APIKey             string         `json:"apiKey" binding:"required"`
 	BaseURL            string         `json:"baseURL"`
 	ModelAllowlist     []string       `json:"modelAllowlist"`
@@ -57,10 +65,11 @@ type createAdminCredentialRequest struct {
 }
 
 // updateAdminCredentialRequest is used for PUT — all fields are optional so
-// callers can rotate just the API key without resending name/provider.
+// callers can rotate just the API key without resending name/kind/slug.
 type updateAdminCredentialRequest struct {
 	Name               *string        `json:"name"`
-	Provider           *string        `json:"provider"`
+	Kind               *string        `json:"kind"`
+	Slug               *string        `json:"slug"`
 	APIKey             *string        `json:"apiKey"`
 	BaseURL            *string        `json:"baseURL"`
 	ModelAllowlist     []string       `json:"modelAllowlist"`
@@ -77,7 +86,8 @@ func buildCredentialResponse(ctx context.Context, row *secrets.CredentialRow, pr
 	resp := CredentialResponse{
 		ID:                 row.ID,
 		Name:               row.Name,
-		Provider:           row.Provider,
+		Kind:               row.Kind,
+		Slug:               row.Slug,
 		ModelAllowlist:     row.ModelAllowlist,
 		ModelContextLimits: row.ModelContextLimits,
 		ModelOutputLimits:  row.ModelOutputLimits,
@@ -130,11 +140,16 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 		return
 	}
 
-	if strings.TrimSpace(req.Provider) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "provider must not be empty"})
+	if strings.TrimSpace(req.Kind) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "kind must not be empty"})
 		return
 	}
-	req.Provider = strings.TrimSpace(req.Provider)
+	if strings.TrimSpace(req.Slug) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "slug must not be empty"})
+		return
+	}
+	req.Kind = strings.TrimSpace(req.Kind)
+	req.Slug = strings.TrimSpace(req.Slug)
 	req.Name = strings.TrimSpace(req.Name)
 
 	if h.provider == nil {
@@ -142,7 +157,7 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 		return
 	}
 
-	ciphertext, err := encryptCredentialData(c.Request.Context(), h.provider.Encrypt, req.Provider, req.APIKey, req.BaseURL)
+	ciphertext, err := encryptCredentialData(c.Request.Context(), h.provider.Encrypt, req.Kind, req.Slug, req.APIKey, req.BaseURL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode credential"})
 		return
@@ -152,7 +167,8 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 	row := &secrets.CredentialRow{
 		ID:                 uuid.New().String(),
 		Name:               req.Name,
-		Provider:           req.Provider,
+		Kind:               req.Kind,
+		Slug:               req.Slug,
 		Ciphertext:         ciphertext,
 		KeyVersion:         secrets.ActiveVersionOf(h.provider),
 		ModelAllowlist:     req.ModelAllowlist,
@@ -173,7 +189,7 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 
 	if err := h.store.CreateCredential(c.Request.Context(), "admin", "_platform", row); err != nil {
 		if errors.Is(ClassifyPostgresError(err), ErrDuplicateCredential) {
-			c.JSON(http.StatusConflict, gin.H{"error": "credential for this provider already exists"})
+			c.JSON(http.StatusConflict, gin.H{"error": "credential with this slug already exists"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to store credential"})
@@ -183,7 +199,8 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 	c.JSON(http.StatusCreated, CredentialResponse{
 		ID:                 row.ID,
 		Name:               row.Name,
-		Provider:           row.Provider,
+		Kind:               row.Kind,
+		Slug:               row.Slug,
 		BaseURL:            req.BaseURL,
 		ModelAllowlist:     row.ModelAllowlist,
 		ModelContextLimits: row.ModelContextLimits,
@@ -246,8 +263,11 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 	if req.Name != nil {
 		existing.Name = *req.Name
 	}
-	if req.Provider != nil {
-		existing.Provider = *req.Provider
+	if req.Kind != nil {
+		existing.Kind = *req.Kind
+	}
+	if req.Slug != nil {
+		existing.Slug = *req.Slug
 	}
 	if req.ModelAllowlist != nil {
 		existing.ModelAllowlist = req.ModelAllowlist
@@ -260,7 +280,7 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 	}
 
 	// Re-encrypt only when the caller is changing an encrypted field (apiKey or baseURL).
-	if req.APIKey != nil || req.BaseURL != nil {
+	if req.APIKey != nil || req.BaseURL != nil || req.Kind != nil || req.Slug != nil {
 		if h.provider == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "master secret not configured"})
 			return
@@ -284,8 +304,11 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 			return
 		}
 		// Apply only the fields being changed.
-		if req.Provider != nil {
-			existingData.Provider = *req.Provider
+		if req.Kind != nil {
+			existingData.Kind = *req.Kind
+		}
+		if req.Slug != nil {
+			existingData.Slug = *req.Slug
 		}
 		if req.APIKey != nil {
 			existingData.APIKey = *req.APIKey

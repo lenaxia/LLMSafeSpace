@@ -40,7 +40,7 @@ func setupUnauthRouter(t *testing.T) *gin.Engine {
 func TestHandler_CreateSecret_Unauthenticated(t *testing.T) {
 	router := setupUnauthRouter(t)
 
-	body := `{"name":"test","type":"api-key","value":"v","metadata":{"provider":"x"}}`
+	body := `{"name":"test","type":"api-key","value":"v","metadata":{"kind":"x","slug":"x"}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -192,7 +192,7 @@ func TestHandler_ListSecrets_Empty(t *testing.T) {
 func TestHandler_CreateSecret_ResponseNeverContainsValue(t *testing.T) {
 	router, _, _ := setupTestRouter(t)
 
-	body := `{"name":"secret-val","type":"api-key","value":"super-secret-key-12345","metadata":{"provider":"x"}}`
+	body := `{"name":"secret-val","type":"api-key","value":"super-secret-key-12345","metadata":{"kind":"x","slug":"x"}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -213,7 +213,7 @@ func TestHandler_GetSecret_ResponseNeverContainsValue(t *testing.T) {
 	router, _, _ := setupTestRouter(t)
 
 	// Create
-	createBody := `{"name":"no-leak","type":"api-key","value":"do-not-leak-this","metadata":{"provider":"x"}}`
+	createBody := `{"name":"no-leak","type":"api-key","value":"do-not-leak-this","metadata":{"kind":"x","slug":"x"}}`
 	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(createBody))
 	createReq.Header.Set("Content-Type", "application/json")
 	cw := httptest.NewRecorder()
@@ -237,7 +237,7 @@ func TestHandler_ListSecrets_ResponseNeverContainsValues(t *testing.T) {
 	router, _, _ := setupTestRouter(t)
 
 	// Create
-	body := `{"name":"list-leak","type":"api-key","value":"hidden-value-xyz","metadata":{"provider":"x"}}`
+	body := `{"name":"list-leak","type":"api-key","value":"hidden-value-xyz","metadata":{"kind":"x","slug":"x"}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()

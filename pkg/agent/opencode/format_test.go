@@ -42,7 +42,7 @@ import (
 
 func TestFormatOpenCodeConfig_SingleProvider_Minimal(t *testing.T) {
 	providers := []secrets.LLMProviderData{
-		{Provider: "anthropic", APIKey: "sk-ant-123"},
+		{Kind: "anthropic", Slug: "anthropic", APIKey: "sk-ant-123"},
 	}
 
 	out, err := FormatOpenCodeConfig(providers)
@@ -76,10 +76,10 @@ func TestFormatOpenCodeConfig_SingleProvider_Minimal(t *testing.T) {
 func TestFormatOpenCodeConfig_SingleProvider_AllFields(t *testing.T) {
 	providers := []secrets.LLMProviderData{
 		{
-			Provider: "anthropic",
-			APIKey:   "sk-ant-123",
-			BaseURL:  "https://custom.anthropic.com/v1",
-			Default:  "anthropic/claude-sonnet-4-5",
+			Kind: "anthropic", Slug: "anthropic",
+			APIKey:  "sk-ant-123",
+			BaseURL: "https://custom.anthropic.com/v1",
+			Default: "anthropic/claude-sonnet-4-5",
 			Models: []secrets.LLMModelConfig{
 				{ID: "claude-sonnet-4-5", Label: "Claude Sonnet 4.5"},
 				{ID: "claude-haiku-4-5"},
@@ -122,8 +122,8 @@ func TestFormatOpenCodeConfig_SingleProvider_AllFields(t *testing.T) {
 
 func TestFormatOpenCodeConfig_MultipleProviders_FirstDefaultWins(t *testing.T) {
 	providers := []secrets.LLMProviderData{
-		{Provider: "anthropic", APIKey: "sk-ant", Default: "anthropic/claude-sonnet-4-5"},
-		{Provider: "openai", APIKey: "sk-oai", Default: "openai/gpt-4o"},
+		{Kind: "anthropic", Slug: "anthropic", APIKey: "sk-ant", Default: "anthropic/claude-sonnet-4-5"},
+		{Kind: "openai", Slug: "openai", APIKey: "sk-oai", Default: "openai/gpt-4o"},
 	}
 
 	out, err := FormatOpenCodeConfig(providers)
@@ -141,8 +141,8 @@ func TestFormatOpenCodeConfig_MultipleProviders_FirstDefaultWins(t *testing.T) {
 
 func TestFormatOpenCodeConfig_MultipleProviders_SecondHasDefault(t *testing.T) {
 	providers := []secrets.LLMProviderData{
-		{Provider: "anthropic", APIKey: "sk-ant"},
-		{Provider: "openai", APIKey: "sk-oai", Default: "openai/gpt-4o"},
+		{Kind: "anthropic", Slug: "anthropic", APIKey: "sk-ant"},
+		{Kind: "openai", Slug: "openai", APIKey: "sk-oai", Default: "openai/gpt-4o"},
 	}
 
 	out, err := FormatOpenCodeConfig(providers)
@@ -156,8 +156,8 @@ func TestFormatOpenCodeConfig_MultipleProviders_SecondHasDefault(t *testing.T) {
 
 func TestFormatOpenCodeConfig_MultipleProviders_NoneHasDefault(t *testing.T) {
 	providers := []secrets.LLMProviderData{
-		{Provider: "anthropic", APIKey: "sk-ant"},
-		{Provider: "openai", APIKey: "sk-oai"},
+		{Kind: "anthropic", Slug: "anthropic", APIKey: "sk-ant"},
+		{Kind: "openai", Slug: "openai", APIKey: "sk-oai"},
 	}
 
 	out, err := FormatOpenCodeConfig(providers)
@@ -178,7 +178,7 @@ func TestFormatOpenCodeConfig_MultipleProviders_NoneHasDefault(t *testing.T) {
 // place opencode 1.15.12 reads it from.
 func TestFormatOpenCodeConfig_BaseURL_LivesInOptions(t *testing.T) {
 	providers := []secrets.LLMProviderData{
-		{Provider: "openai", APIKey: "sk-oai", BaseURL: "https://litellm.example/v1"},
+		{Kind: "openai", Slug: "openai", APIKey: "sk-oai", BaseURL: "https://litellm.example/v1"},
 	}
 
 	out, err := FormatOpenCodeConfig(providers)
@@ -205,7 +205,7 @@ func TestFormatOpenCodeConfig_BaseURL_LivesInOptions(t *testing.T) {
 // ConfigInvalidError, blocking opencode boot.
 func TestFormatOpenCodeConfig_TopLevelKey_IsProviderSingular(t *testing.T) {
 	providers := []secrets.LLMProviderData{
-		{Provider: "openai", APIKey: "sk-oai"},
+		{Kind: "openai", Slug: "openai", APIKey: "sk-oai"},
 	}
 
 	out, err := FormatOpenCodeConfig(providers)
@@ -229,7 +229,7 @@ func TestFormatOpenCodeConfig_TopLevelKey_IsProviderSingular(t *testing.T) {
 // shape is options.apiKey directly.
 func TestFormatOpenCodeConfig_Options_NoAisdkWrapper(t *testing.T) {
 	providers := []secrets.LLMProviderData{
-		{Provider: "openai", APIKey: "sk-oai"},
+		{Kind: "openai", Slug: "openai", APIKey: "sk-oai"},
 	}
 
 	out, err := FormatOpenCodeConfig(providers)
@@ -253,8 +253,8 @@ func TestFormatOpenCodeConfig_Options_NoAisdkWrapper(t *testing.T) {
 func TestFormatOpenCodeConfig_ModelsWithAndWithoutLabels(t *testing.T) {
 	providers := []secrets.LLMProviderData{
 		{
-			Provider: "openai",
-			APIKey:   "sk-oai",
+			Kind: "openai", Slug: "openai",
+			APIKey: "sk-oai",
 			Models: []secrets.LLMModelConfig{
 				{ID: "gpt-4o", Label: "GPT-4o"},
 				{ID: "gpt-4o-mini"},
@@ -282,9 +282,9 @@ func TestFormatOpenCodeConfig_ModelsWithAndWithoutLabels(t *testing.T) {
 
 func TestFormatOpenCodeConfig_Deterministic(t *testing.T) {
 	providers := []secrets.LLMProviderData{
-		{Provider: "openai", APIKey: "sk-oai"},
-		{Provider: "anthropic", APIKey: "sk-ant"},
-		{Provider: "google", APIKey: "sk-goog"},
+		{Kind: "openai", Slug: "openai", APIKey: "sk-oai"},
+		{Kind: "anthropic", Slug: "anthropic", APIKey: "sk-ant"},
+		{Kind: "google", Slug: "google", APIKey: "sk-goog"},
 	}
 
 	out1, err := FormatOpenCodeConfig(providers)
@@ -307,7 +307,7 @@ func TestFormatOpenCodeConfig_EmptyInput_Error(t *testing.T) {
 
 func TestFormatOpenCodeConfig_OutputIsValidJSON(t *testing.T) {
 	providers := []secrets.LLMProviderData{
-		{Provider: "anthropic", APIKey: "sk-ant-with-special-chars-!@#$%"},
+		{Kind: "anthropic", Slug: "anthropic", APIKey: "sk-ant-with-special-chars-!@#$%"},
 	}
 
 	out, err := FormatOpenCodeConfig(providers)
@@ -331,10 +331,10 @@ func TestFormatOpenCodeConfig_OutputIsValidJSON(t *testing.T) {
 func TestFormatOpenCodeConfig_ExactSnapshot(t *testing.T) {
 	providers := []secrets.LLMProviderData{
 		{
-			Provider: "openai",
-			APIKey:   "sk-test-key",
-			BaseURL:  "https://litellm.example/v1",
-			Default:  "openai/deepseek-v3-chat",
+			Kind: "openai", Slug: "openai",
+			APIKey:  "sk-test-key",
+			BaseURL: "https://litellm.example/v1",
+			Default: "openai/deepseek-v3-chat",
 			Models: []secrets.LLMModelConfig{
 				{ID: "deepseek-v3-chat", Label: "DeepSeek V3 Chat"},
 			},
@@ -375,9 +375,9 @@ func TestFormatOpenCodeConfig_ExactSnapshot(t *testing.T) {
 func TestFormatOpenCodeConfig_NoNPMWhenNoBaseURL(t *testing.T) {
 	providers := []secrets.LLMProviderData{
 		{
-			Provider: "openai",
-			APIKey:   "sk-realkey",
-			BaseURL:  "", // no custom endpoint
+			Kind: "openai", Slug: "openai",
+			APIKey:  "sk-realkey",
+			BaseURL: "", // no custom endpoint
 		},
 	}
 
@@ -411,9 +411,9 @@ func TestFormatOpenCodeConfig_NoNPMWhenNoBaseURL(t *testing.T) {
 func TestFormatOpenCodeConfig_LimitEmission_RequiresBothContextAndOutput(t *testing.T) {
 	providers := []secrets.LLMProviderData{
 		{
-			Provider: "thekao cloud",
-			APIKey:   "sk-test",
-			BaseURL:  "https://ai.thekao.cloud/v1",
+			Kind: "thekao cloud", Slug: "thekao cloud",
+			APIKey:  "sk-test",
+			BaseURL: "https://ai.thekao.cloud/v1",
 			Models: []secrets.LLMModelConfig{
 				{ID: "glm-5.1", ContextLimit: 200000, OutputLimit: 8192},
 				{ID: "glm-5.2", Label: "GLM 5.2", ContextLimit: 200000, OutputLimit: 16384},
@@ -476,9 +476,9 @@ func TestFormatOpenCodeConfig_LimitEmission_RequiresBothContextAndOutput(t *test
 func TestFormatOpenCodeConfig_LimitFields_ZeroValues_OmitLimit(t *testing.T) {
 	providers := []secrets.LLMProviderData{
 		{
-			Provider: "openai",
-			APIKey:   "sk-test",
-			BaseURL:  "https://example.com/v1",
+			Kind: "openai", Slug: "openai",
+			APIKey:  "sk-test",
+			BaseURL: "https://example.com/v1",
 			Models: []secrets.LLMModelConfig{
 				{ID: "gpt-5", ContextLimit: 0, OutputLimit: 0},
 			},
@@ -507,10 +507,10 @@ func TestFormatOpenCodeConfig_LimitFields_ZeroValues_OmitLimit(t *testing.T) {
 func TestFormatOpenCodeConfig_ExactSnapshot_WithBothLimits(t *testing.T) {
 	providers := []secrets.LLMProviderData{
 		{
-			Provider: "openai",
-			APIKey:   "sk-test-key",
-			BaseURL:  "https://litellm.example/v1",
-			Default:  "openai/deepseek-v3-chat",
+			Kind: "openai", Slug: "openai",
+			APIKey:  "sk-test-key",
+			BaseURL: "https://litellm.example/v1",
+			Default: "openai/deepseek-v3-chat",
 			Models: []secrets.LLMModelConfig{
 				{ID: "deepseek-v3-chat", Label: "DeepSeek V3 Chat", ContextLimit: 128000, OutputLimit: 8192},
 			},

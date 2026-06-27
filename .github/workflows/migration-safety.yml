@@ -19,14 +19,9 @@ name: Migration safety
 #      where someone uses CREATE TABLE without IF NOT EXISTS, breaking
 #      the redeploy path.
 #
-#   4. Data cleanup (migration 000014 regression): apply migrations 1-13,
-#      seed edge-case rows (non-UUID workspace_id bindings, orphan
-#      workspaces), apply 000014, and assert the cleanup logic ran
-#      correctly. Self-contained regression for the hardened data-migration
-#      behaviour introduced in worklog 6c8b0a72; pinned to migration 14 by
-#      design (it is a point-in-time regression, not a forward-going check).
-#      Kept in parity with the local `make migration-safety` composite target
-#      so local and CI run the identical set of four checks.
+#   4. Initial-schema invariants: apply ups, then run the
+#      api/migrations/test/000001_initial_schema_test.sql assertions
+#      (Epic 55 column shape, CHECK constraints, slug uniqueness).
 #
 # Why a separate workflow: same isolation argument as security-scan.yml
 # — failure here is a database-shape regression, not a "tests broke" one,
@@ -173,8 +168,8 @@ jobs:
       - name: FK cascade
         run: bash api/migrations/test/fk_cascade.sh
 
-  data-cleanup:
-    name: Migration 000014 data-cleanup regression
+  initial-schema:
+    name: Initial schema invariants (Epic 55)
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -206,88 +201,12 @@ jobs:
             sleep 1
           done
 
-      # The data-cleanup script is self-contained: it resets the public
-      # schema, applies migrations 000001-000013, seeds edge-case rows,
-      # applies 000014, and asserts the cleanup ran. No pre-apply step
-      # needed (unlike fk-cascade which expects the caller to apply all
-      # ups first).
-      - name: Data cleanup (migration 000014)
-        run: bash hack/migration-data-cleanup.sh
-
-  org-id-backfill:
-    name: Migration 000044 org_id orphan backfill
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: llmsafespaces
-          POSTGRES_PASSWORD: migration-test
-          POSTGRES_DB: llmsafespaces
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U llmsafespaces"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-
-    env:
-      PGHOST: localhost
-      PGUSER: llmsafespaces
-      PGPASSWORD: migration-test
-      PGDATABASE: llmsafespaces
-
-    steps:
-      - uses: actions/checkout@v6
-      - name: Wait for Postgres
+      - name: Apply all up migrations
         run: |
-          for i in {1..20}; do
-            pg_isready -h localhost -U llmsafespaces && break
-            sleep 1
+          set -euo pipefail
+          for f in $(ls api/migrations/*.up.sql | sort); do
+            psql -v ON_ERROR_STOP=1 -f "$f"
           done
 
-      # Self-contained: resets schema, applies 000001-000043, seeds
-      # orphan rows reproducing the production bug, applies 000044,
-      # asserts backfill correctness + idempotency.
-      - name: Backfill orphan org_id (migration 000044)
-        run: bash hack/migration-orphan-org-id-backfill.sh
-
-  jwt-sessions:
-    name: Migration 000045 jwt_sessions schema
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: llmsafespaces
-          POSTGRES_PASSWORD: migration-test
-          POSTGRES_DB: llmsafespaces
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U llmsafespaces"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-
-    env:
-      PGHOST: localhost
-      PGUSER: llmsafespaces
-      PGPASSWORD: migration-test
-      PGDATABASE: llmsafespaces
-
-    steps:
-      - uses: actions/checkout@v6
-      - name: Wait for Postgres
-        run: |
-          for i in {1..20}; do
-            pg_isready -h localhost -U llmsafespaces && break
-            sleep 1
-          done
-
-      # Self-contained: resets schema, applies 000001-000045, exercises
-      # the jwt_sessions schema (constraints, indexes, FK CASCADE,
-      # up+down+up cycle).
-      - name: JWT sessions schema (migration 000045)
-        run: bash hack/migration-jwt-sessions.sh
+      - name: Initial-schema test (kind+slug, CHECK constraints, UNIQUE)
+        run: psql -v ON_ERROR_STOP=1 -f api/migrations/test/000001_initial_schema_test.sql
