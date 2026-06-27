@@ -563,7 +563,7 @@ func TestAdminProviderCredentials_ProbeModels_WithBaseURL_Success(t *testing.T) 
 	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(kek))
 	router := setupAdminCredRouter(h)
 
-	// Create with saved context limits for two of the three models.
+	// Create with saved context AND output limits for two of the three models.
 	createBody, _ := json.Marshal(map[string]interface{}{
 		"name":               "thekao",
 		"provider":           "thekao cloud",
@@ -571,6 +571,7 @@ func TestAdminProviderCredentials_ProbeModels_WithBaseURL_Success(t *testing.T) 
 		"baseURL":            fakeProvider.URL + "/v1",
 		"modelAllowlist":     []string{"glm-5.1", "glm-5.2"},
 		"modelContextLimits": map[string]int{"glm-5.1": 200000, "glm-5.2": 1000000},
+		"modelOutputLimits":  map[string]int{"glm-5.1": 8192, "glm-5.2": 16384},
 	})
 	req, _ := http.NewRequest("POST", "/api/v1/admin/provider-credentials", bytes.NewReader(createBody))
 	req.Header.Set("Content-Type", "application/json")
@@ -581,7 +582,7 @@ func TestAdminProviderCredentials_ProbeModels_WithBaseURL_Success(t *testing.T) 
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
 
 	// Probe — should return all 3 models from the fake provider,
-	// with saved context limits pre-populated for glm-5.1 and glm-5.2.
+	// with saved context AND output limits pre-populated for glm-5.1 and glm-5.2.
 	req, _ = http.NewRequest("GET", "/api/v1/admin/provider-credentials/"+created.ID+"/models", nil)
 	w = httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -597,7 +598,10 @@ func TestAdminProviderCredentials_ProbeModels_WithBaseURL_Success(t *testing.T) 
 	}
 	assert.Equal(t, 200000, byID["glm-5.1"].ContextLimit)
 	assert.Equal(t, 1000000, byID["glm-5.2"].ContextLimit)
-	assert.Equal(t, 0, byID["classifier"].ContextLimit, "classifier has no saved limit")
+	assert.Equal(t, 0, byID["classifier"].ContextLimit, "classifier has no saved context limit")
+	assert.Equal(t, 8192, byID["glm-5.1"].OutputLimit)
+	assert.Equal(t, 16384, byID["glm-5.2"].OutputLimit)
+	assert.Equal(t, 0, byID["classifier"].OutputLimit, "classifier has no saved output limit")
 }
 
 // TestAdminProviderCredentials_Response_NoOrgID verifies that admin credential
