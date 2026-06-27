@@ -5,6 +5,7 @@ import {
   type OrgCredential,
   type OrgResponse,
 } from "../../api/orgs";
+import { SDK_KINDS, SLUG_REGEX, slugFromName } from "../../api/providerCredentialTypes";
 import { useToast } from "../../providers/ToastProvider";
 import { Button } from "../ui/Button";
 import { Badge } from "../ui/Badge";
@@ -16,12 +17,9 @@ interface CredentialsContext {
   isAdmin: boolean;
 }
 
-const PROVIDERS = [
-  { id: "openai", label: "OpenAI" },
-  { id: "anthropic", label: "Anthropic" },
-  { id: "google", label: "Google" },
-  { id: "custom", label: "Custom" },
-];
+// PROVIDERS used to list SDK kinds for the dropdown. Now sourced from the
+// canonical SDK_KINDS constant in providerCredentialTypes.ts (Epic 55) so
+// the frontend choices stay in lockstep with the DB CHECK enum.
 
 export function OrgCredentialsTab() {
   const { org } = useOutletContext<CredentialsContext>();
@@ -134,9 +132,14 @@ export function OrgCredentialsTab() {
                 <div className="flex items-center gap-2">
                   <KeyRound className="h-4 w-4 text-muted-foreground" />
                   <div>
-                    <p className="font-medium">{c.name}</p>
+                    <p className="font-medium">
+                      {c.name}
+                      <span className="ml-2 rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground" title={`SDK kind: ${c.kind}`}>
+                        {c.slug}
+                      </span>
+                    </p>
                     <p className="text-xs text-muted-foreground">
-                      {c.provider}
+                      {c.kind}
                       {c.baseURL ? ` · ${c.baseURL}` : ""}
                     </p>
                   </div>
@@ -243,7 +246,13 @@ function CredentialForm({
   onCancel: () => void;
 }) {
   const [name, setName] = useState(existing?.name ?? "");
-  const [provider, setProvider] = useState(existing?.provider ?? "openai");
+  // kind starts empty for new credentials so the user is forced to make an
+  // explicit choice via the dropdown — a silent "openai" default would let a
+  // user accidentally create an openai-kind credential when they meant
+  // openai_compatible (LiteLLM/vLLM). When editing an existing cred, default
+  // to that cred's kind so the dropdown reflects current state.
+  const [kind, setKind] = useState<string>(existing?.kind ?? "");
+  const [slug, setSlug] = useState<string>(existing?.slug ?? "");
   const [apiKey, setApiKey] = useState("");
   const [baseURL, setBaseURL] = useState(existing?.baseURL ?? "");
   const [loading, setLoading] = useState(false);
@@ -301,6 +310,19 @@ function CredentialForm({
       setError(isEdit ? "Name is required" : "Name and API key are required");
       return;
     }
+    if (!isEdit) {
+      if (!kind.trim() || !slug.trim()) {
+        setError("Kind and slug are required");
+        return;
+      }
+      if (!SLUG_REGEX.test(slug.trim())) {
+        setError(
+          "Slug must be 1–64 lowercase alphanumeric characters and hyphens, " +
+          "starting and ending with alphanumeric (e.g. \"team-openai\")",
+        );
+        return;
+      }
+    }
     setLoading(true);
     setError("");
     try {
@@ -322,7 +344,22 @@ function CredentialForm({
         // Only send baseURL when it changed from the stored value. This avoids
         // triggering a ciphertext re-encryption on every save (baseURL lives in
         // the encrypted blob). Sending "" explicitly clears a previously-set URL.
-        const updateReq: Record<string, unknown> = {
+        //
+        // updateReq is typed to mirror the structured shape that
+        // orgsApi.updateCredential expects (kind?/slug?/name?/apiKey?/baseURL?/
+        // model* — all optional). Rule 1: no Record<string, unknown> for
+        // structured data — the typed signature must not be defeated at the
+        // call site.
+        const updateReq: {
+          name?: string;
+          kind?: string;
+          slug?: string;
+          apiKey?: string;
+          baseURL?: string;
+          modelAllowlist?: string[];
+          modelContextLimits?: Record<string, number>;
+          modelOutputLimits?: Record<string, number>;
+        } = {
           name: name.trim(),
           modelAllowlist: allowlist,
           modelContextLimits: ctxLimits,
@@ -340,7 +377,8 @@ function CredentialForm({
       }
       await orgsApi.createCredential(orgId, {
         name: name.trim(),
-        provider,
+        kind: kind.trim(),
+        slug: slug.trim(),
         apiKey: apiKey.trim(),
         baseURL: baseURL.trim() || undefined,
         modelAllowlist: allowlist,
@@ -369,21 +407,38 @@ function CredentialForm({
         className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm"
         placeholder="Name (e.g. Team OpenAI Key)"
         value={name}
-        onChange={(e) => setName(e.target.value)}
+        onChange={(e) => {
+          const v = e.target.value;
+          setName(v);
+          // Auto-suggest slug from name while slug is empty or matches the auto-suggested value.
+          if (!isEdit && (!slug || slug === slugFromName(name))) {
+            setSlug(slugFromName(v));
+          }
+        }}
       />
       {!isEdit && (
-        <select
-          className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm"
-          value={provider}
-          onChange={(e) => setProvider(e.target.value)}
-          disabled={isEdit}
-        >
-          {PROVIDERS.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.label}
-            </option>
-          ))}
-        </select>
+        <>
+          <select
+            className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm"
+            value={kind}
+            onChange={(e) => setKind(e.target.value)}
+          >
+            <option value="">— select SDK kind —</option>
+            {SDK_KINDS.map((k) => (
+              <option key={k} value={k}>{k}</option>
+            ))}
+          </select>
+          <input
+            className="w-full rounded border border-border bg-background px-3 py-1.5 font-mono text-sm"
+            placeholder="Slug (lowercase alphanumeric + hyphens, e.g. team-openai)"
+            value={slug}
+            onChange={(e) => setSlug(e.target.value)}
+            pattern={SLUG_REGEX.source}
+          />
+          <p className="text-[10px] text-muted-foreground">
+            Slug is the per-org identity. It appears in agent-config.json as the provider-map key (opencode persists it as <code>providerID</code>).
+          </p>
+        </>
       )}
       <input
         className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm"
