@@ -25,6 +25,7 @@ function slugify(name: string): string {
   return name
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-+/g, "-") // collapse consecutive hyphens (e.g. "my - org" -> "my-org")
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
 }

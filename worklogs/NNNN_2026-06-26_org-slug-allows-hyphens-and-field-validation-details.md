@@ -184,6 +184,14 @@ The reviewer approved the second iteration but flagged one low-risk gap: the new
 
 These close the gap and make it impossible to regress the wiring of either handler without a test catching it.
 
+### Iteration 3: Automated PR review (PR #427) — APPROVE with one non-blocking edge case
+
+The reviewer approved this iteration as well, with one strictly-improved-but-still-noteworthy observation: the frontend `slugify()` produces `"my---org"` from `"My - Org"` (three consecutive hyphens from the space-hyphen-space pattern), which the backend's `^[a-zA-Z0-9]+(-[a-zA-Z0-9]+)*$` regex rejects. Reviewer noted this is not a regression (every hyphen was rejected before this PR) and the new error UX makes it tolerable — but addressing it now also serves as a concrete demonstration of the validation-sync problem the user originally asked about.
+
+**Remediation (this iteration):**
+- `slugify()` gains a `.replace(/-+/g, "-")` step to collapse consecutive hyphens before the leading/trailing strip.
+- New test `slugify collapses consecutive hyphens so the generated slug is backend-valid` types `"My - Org"` and asserts the generated slug is `"my-org"` AND matches the backend's regex. The defense-in-depth assertion ensures any future tightening of either rule re-trips this test.
+
 ---
 
 ## Next Steps
@@ -214,5 +222,5 @@ These close the gap and make it impossible to regress the wiring of either handl
 - `frontend/src/api/types.ts` — added `details?: Record<string, string>` field to `ApiError`; added `ActiveSessionsResponse` interface (resolves pre-existing contract drift).
 - `frontend/src/api/contract.test.ts` — added `ActiveSessionsResponse` to the import list, added an assertion, and added the key to the `testedKeys` array.
 - `frontend/src/api/contract-fixtures.json` — regenerated via `go test ./pkg/types/...`. The diff is the addition of the `ActiveSessionsResponse` block that the Go generator was already producing but the file hadn't been regenerated for.
-- `frontend/src/components/settings/OrgSettingsTab.tsx` — handle 400 + `details` by surfacing the first field-level message with a friendly label.
-- `frontend/src/components/settings/OrgSettingsTab.test.tsx` — new test asserting the field-level message is rendered correctly.
+- `frontend/src/components/settings/OrgSettingsTab.tsx` — handle 400 + `details` by surfacing the first field-level message with a friendly label. Iteration 3: `slugify()` now collapses consecutive hyphens (`.replace(/-+/g, "-")`) so multi-space-hyphen names like `"My - Org"` produce backend-valid `"my-org"` instead of `"my---org"`.
+- `frontend/src/components/settings/OrgSettingsTab.test.tsx` — new test asserting the field-level message is rendered correctly. Iteration 3: added a slugify-collapses-consecutive-hyphens test with a defense-in-depth assertion against the backend regex.

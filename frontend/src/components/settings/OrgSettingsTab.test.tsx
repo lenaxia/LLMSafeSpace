@@ -170,6 +170,36 @@ describe("OrgSettingsTab", () => {
     expect(req.planId).toBe("enterprise");
   });
 
+  // slugify() must produce slugs that the backend's "slug" validator accepts:
+  // ^[a-zA-Z0-9]+(-[a-zA-Z0-9]+)*$ (no consecutive hyphens). Names that mix
+  // spaces and hyphens (e.g. "My - Org") would previously have generated
+  // "my---org", which the backend rejects.
+  it("slugify collapses consecutive hyphens so the generated slug is backend-valid", async () => {
+    mockListOrgs.mockResolvedValue(listResponse([]));
+    mockCreate.mockResolvedValue({});
+    const user = userEvent.setup();
+    renderTab();
+    await waitFor(() =>
+      expect(screen.getByText("New Organisation")).toBeInTheDocument(),
+    );
+    await user.click(screen.getByText("New Organisation"));
+    await user.type(
+      screen.getByPlaceholderText(/owner email/i),
+      "owner@example.com",
+    );
+    await user.type(
+      screen.getByPlaceholderText(/organisation name/i),
+      "My - Org",
+    );
+    await user.click(screen.getByText("Create"));
+    await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1));
+    const req = mockCreate.mock.calls[0]![0] as { slug: string };
+    expect(req.slug).toBe("my-org");
+    // Defence-in-depth: assert the slug satisfies the backend's regex too,
+    // so any future tightening of either rule re-trips this test.
+    expect(req.slug).toMatch(/^[a-z0-9]+(-[a-z0-9]+)*$/);
+  });
+
   it("surfaces a 'no user' message when the backend returns 404", async () => {
     mockListOrgs.mockResolvedValue(listResponse([]));
     const { ApiClientError } = await import("../../api/client");
