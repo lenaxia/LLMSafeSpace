@@ -259,6 +259,9 @@ func (s *SecretService) applyModelAllowlist(pd *LLMProviderData, b CredentialBin
 			if m.ContextLimit == 0 {
 				m.ContextLimit = b.ModelContextLimits[m.ID]
 			}
+			if m.OutputLimit == 0 {
+				m.OutputLimit = b.ModelOutputLimits[m.ID]
+			}
 			filtered = append(filtered, m)
 		}
 	}
@@ -272,6 +275,7 @@ func (s *SecretService) applyModelAllowlist(pd *LLMProviderData, b CredentialBin
 				filtered = append(filtered, LLMModelConfig{
 					ID:           id,
 					ContextLimit: b.ModelContextLimits[id],
+					OutputLimit:  b.ModelOutputLimits[id],
 				})
 			}
 		}

@@ -319,6 +319,7 @@ function CreateUserCredentialForm({
         id: m.id,
         enabled: true,
         contextLimit: m.contextLimit > 0 ? String(m.contextLimit) : "",
+        outputLimit: m.outputLimit > 0 ? String(m.outputLimit) : "",
       }));
       setModelRows(rows);
       setFetchState("done");
@@ -339,9 +340,12 @@ function CreateUserCredentialForm({
       const enabled = modelRows.filter((r) => r.enabled);
       const modelAllowlist = enabled.length > 0 ? enabled.map((r) => r.id) : undefined;
       const modelContextLimits: Record<string, number> = {};
+      const modelOutputLimits: Record<string, number> = {};
       for (const r of enabled) {
-        const v = parseInt(r.contextLimit, 10);
-        if (v > 0) modelContextLimits[r.id] = v;
+        const ctx = parseInt(r.contextLimit, 10);
+        if (ctx > 0) modelContextLimits[r.id] = ctx;
+        const out = parseInt(r.outputLimit, 10);
+        if (out > 0) modelOutputLimits[r.id] = out;
       }
       const req: CreateUserCredentialRequest = {
         name: form.name.trim(),
@@ -350,6 +354,7 @@ function CreateUserCredentialForm({
         ...(form.baseURL?.trim() ? { baseURL: form.baseURL.trim() } : {}),
         ...(modelAllowlist ? { modelAllowlist } : {}),
         ...(Object.keys(modelContextLimits).length > 0 ? { modelContextLimits } : {}),
+        ...(Object.keys(modelOutputLimits).length > 0 ? { modelOutputLimits } : {}),
       };
       const c = await userProviderCredentialsApi.create(req);
       onCreated(c);

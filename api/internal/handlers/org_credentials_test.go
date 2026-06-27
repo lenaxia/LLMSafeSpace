@@ -107,6 +107,9 @@ func (f *fakeOrgCredStore) UpdateCredential(_ context.Context, _, _, credID stri
 	if row.ModelContextLimits != nil {
 		c.ModelContextLimits = row.ModelContextLimits
 	}
+	if row.ModelOutputLimits != nil {
+		c.ModelOutputLimits = row.ModelOutputLimits
+	}
 	return nil
 }
 
@@ -539,6 +542,7 @@ func TestOrgCredentials_ProbeModels_Success(t *testing.T) {
 		"baseURL":            fakeProvider.URL + "/v1",
 		"modelAllowlist":     []string{"glm-5.1", "glm-5.2"},
 		"modelContextLimits": map[string]int{"glm-5.1": 200000, "glm-5.2": 1000000},
+		"modelOutputLimits":  map[string]int{"glm-5.1": 8192, "glm-5.2": 16384},
 	})
 	req, _ := http.NewRequest("POST", "/api/v1/orgs/org-1/credentials", bytes.NewReader(createBody))
 	req.Header.Set("Content-Type", "application/json")
@@ -563,7 +567,10 @@ func TestOrgCredentials_ProbeModels_Success(t *testing.T) {
 	}
 	assert.Equal(t, 200000, byID["glm-5.1"].ContextLimit)
 	assert.Equal(t, 1000000, byID["glm-5.2"].ContextLimit)
-	assert.Equal(t, 0, byID["classifier"].ContextLimit, "unsaved model has no limit")
+	assert.Equal(t, 0, byID["classifier"].ContextLimit, "unsaved model has no context limit")
+	assert.Equal(t, 8192, byID["glm-5.1"].OutputLimit)
+	assert.Equal(t, 16384, byID["glm-5.2"].OutputLimit)
+	assert.Equal(t, 0, byID["classifier"].OutputLimit, "unsaved model has no output limit")
 }
 
 // --- List (B-2): camelCase keys + baseURL extraction ---
@@ -618,10 +625,10 @@ func TestOrgCredentials_List_CamelCaseAndBaseURL(t *testing.T) {
 			keys[k] = true
 		}
 	}
-	for _, want := range []string{"id", "orgId", "name", "provider", "baseURL", "modelAllowlist", "modelContextLimits", "createdAt", "updatedAt"} {
+	for _, want := range []string{"id", "orgId", "name", "provider", "baseURL", "modelAllowlist", "modelContextLimits", "modelOutputLimits", "createdAt", "updatedAt"} {
 		assert.True(t, keys[want], "List JSON must include camelCase key %q (got %v)", want, keys)
 	}
-	for _, forbidden := range []string{"ID", "OrgID", "ModelAllowlist", "ModelContextLimits", "CreatedAt"} {
+	for _, forbidden := range []string{"ID", "OrgID", "ModelAllowlist", "ModelContextLimits", "ModelOutputLimits", "CreatedAt"} {
 		assert.False(t, keys[forbidden], "List JSON must NOT include PascalCase key %q", forbidden)
 	}
 

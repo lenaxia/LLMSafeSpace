@@ -39,6 +39,7 @@ import (
 type ProbeModelEntry struct {
 	ID           string `json:"id"`
 	ContextLimit int    `json:"contextLimit"` // 0 = unknown / not configured
+	OutputLimit  int    `json:"outputLimit"`  // 0 = unknown / not configured
 }
 
 // ProbeModelsResponse is the response body for GET /:id/models.
@@ -83,7 +84,7 @@ func ProbeModelsAnon(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
 		return
 	}
-	result := probeCredentialModels(c.Request.Context(), plaintext, nil)
+	result := probeCredentialModels(c.Request.Context(), plaintext, probeCredentialLimits{})
 	c.JSON(http.StatusOK, result)
 }
 
@@ -164,12 +165,14 @@ func isPrivateIP(ip net.IP) bool {
 }
 
 // probeCredentialModels takes the decrypted LLMProviderData, calls GET
-// {baseURL}/v1/models with the stored API key, merges saved context limits,
-// and returns the probe response.
+// {baseURL}/v1/models with the stored API key, merges saved limits, and
+// returns the probe response.
 //
 // plaintext must be the decrypted JSON-encoded LLMProviderData.
-// savedLimits is the ModelContextLimits map from the credential row.
-func probeCredentialModels(ctx context.Context, plaintext []byte, savedLimits map[string]int) ProbeModelsResponse {
+// savedLimits carries both the saved per-model context and output limits
+// so the UI can pre-populate the model-config table; pass a zero
+// probeCredentialLimits{} for the anon path where no credential row exists.
+func probeCredentialModels(ctx context.Context, plaintext []byte, savedLimits probeCredentialLimits) ProbeModelsResponse {
 	var pd secrets.LLMProviderData
 	if err := json.Unmarshal(plaintext, &pd); err != nil {
 		return ProbeModelsResponse{Warning: "credential data is unreadable"}
@@ -229,7 +232,8 @@ func probeCredentialModels(ctx context.Context, plaintext []byte, savedLimits ma
 		}
 		models = append(models, ProbeModelEntry{
 			ID:           m.ID,
-			ContextLimit: savedLimits[m.ID],
+			ContextLimit: savedLimits.Context[m.ID],
+			OutputLimit:  savedLimits.Output[m.ID],
 		})
 	}
 

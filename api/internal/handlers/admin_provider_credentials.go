@@ -40,6 +40,7 @@ type CredentialResponse struct {
 	BaseURL            string         `json:"baseURL,omitempty"`
 	ModelAllowlist     []string       `json:"modelAllowlist"`
 	ModelContextLimits map[string]int `json:"modelContextLimits"`
+	ModelOutputLimits  map[string]int `json:"modelOutputLimits"`
 	CreatedAt          string         `json:"createdAt"`
 	UpdatedAt          string         `json:"updatedAt"`
 	BindWarning        string         `json:"bindWarning,omitempty"`
@@ -52,6 +53,7 @@ type createAdminCredentialRequest struct {
 	BaseURL            string         `json:"baseURL"`
 	ModelAllowlist     []string       `json:"modelAllowlist"`
 	ModelContextLimits map[string]int `json:"modelContextLimits"`
+	ModelOutputLimits  map[string]int `json:"modelOutputLimits"`
 }
 
 // updateAdminCredentialRequest is used for PUT — all fields are optional so
@@ -63,6 +65,7 @@ type updateAdminCredentialRequest struct {
 	BaseURL            *string        `json:"baseURL"`
 	ModelAllowlist     []string       `json:"modelAllowlist"`
 	ModelContextLimits map[string]int `json:"modelContextLimits"`
+	ModelOutputLimits  map[string]int `json:"modelOutputLimits"`
 }
 
 // buildCredentialResponse converts a stored credential row into the API
@@ -77,6 +80,7 @@ func buildCredentialResponse(ctx context.Context, row *secrets.CredentialRow, pr
 		Provider:           row.Provider,
 		ModelAllowlist:     row.ModelAllowlist,
 		ModelContextLimits: row.ModelContextLimits,
+		ModelOutputLimits:  row.ModelOutputLimits,
 		CreatedAt:          row.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:          row.UpdatedAt.Format(time.RFC3339),
 	}
@@ -90,6 +94,9 @@ func buildCredentialResponse(ctx context.Context, row *secrets.CredentialRow, pr
 	}
 	if resp.ModelContextLimits == nil {
 		resp.ModelContextLimits = map[string]int{}
+	}
+	if resp.ModelOutputLimits == nil {
+		resp.ModelOutputLimits = map[string]int{}
 	}
 	if provider != nil {
 		if plain, err := provider.Decrypt(ctx, row.Ciphertext); err == nil {
@@ -150,6 +157,7 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 		KeyVersion:         secrets.ActiveVersionOf(h.provider),
 		ModelAllowlist:     req.ModelAllowlist,
 		ModelContextLimits: req.ModelContextLimits,
+		ModelOutputLimits:  req.ModelOutputLimits,
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	}
@@ -158,6 +166,9 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 	}
 	if row.ModelContextLimits == nil {
 		row.ModelContextLimits = map[string]int{}
+	}
+	if row.ModelOutputLimits == nil {
+		row.ModelOutputLimits = map[string]int{}
 	}
 
 	if err := h.store.CreateCredential(c.Request.Context(), "admin", "_platform", row); err != nil {
@@ -176,6 +187,7 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 		BaseURL:            req.BaseURL,
 		ModelAllowlist:     row.ModelAllowlist,
 		ModelContextLimits: row.ModelContextLimits,
+		ModelOutputLimits:  row.ModelOutputLimits,
 		CreatedAt:          row.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:          row.UpdatedAt.Format(time.RFC3339),
 	})
@@ -242,6 +254,9 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 	}
 	if req.ModelContextLimits != nil {
 		existing.ModelContextLimits = req.ModelContextLimits
+	}
+	if req.ModelOutputLimits != nil {
+		existing.ModelOutputLimits = req.ModelOutputLimits
 	}
 
 	// Re-encrypt only when the caller is changing an encrypted field (apiKey or baseURL).

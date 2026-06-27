@@ -47,6 +47,7 @@ type createOrgCredentialRequest struct {
 	BaseURL            string         `json:"baseURL"`
 	ModelAllowlist     []string       `json:"modelAllowlist"`
 	ModelContextLimits map[string]int `json:"modelContextLimits"`
+	ModelOutputLimits  map[string]int `json:"modelOutputLimits"`
 }
 
 type updateOrgCredentialRequest struct {
@@ -55,6 +56,7 @@ type updateOrgCredentialRequest struct {
 	BaseURL            *string        `json:"baseURL"`
 	ModelAllowlist     []string       `json:"modelAllowlist"`
 	ModelContextLimits map[string]int `json:"modelContextLimits"`
+	ModelOutputLimits  map[string]int `json:"modelOutputLimits"`
 }
 
 // Create handles POST /api/v1/orgs/:id/credentials.
@@ -96,11 +98,15 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 		KeyVersion:         secrets.ActiveVersionOf(h.provider),
 		ModelAllowlist:     allowlist,
 		ModelContextLimits: req.ModelContextLimits,
+		ModelOutputLimits:  req.ModelOutputLimits,
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	}
 	if row.ModelContextLimits == nil {
 		row.ModelContextLimits = map[string]int{}
+	}
+	if row.ModelOutputLimits == nil {
+		row.ModelOutputLimits = map[string]int{}
 	}
 
 	if err := h.credStore.CreateCredential(ctx, "org", orgID, row); err != nil {
@@ -119,7 +125,9 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 		// Credential was stored but unreadable — surface a minimal response.
 		c.JSON(http.StatusCreated, CredentialResponse{
 			ID: credID, OrgID: orgID, Name: req.Name, Provider: req.Provider,
-			ModelAllowlist: allowlist, ModelContextLimits: req.ModelContextLimits,
+			ModelAllowlist:     allowlist,
+			ModelContextLimits: req.ModelContextLimits,
+			ModelOutputLimits:  req.ModelOutputLimits,
 		})
 		return
 	}
@@ -219,11 +227,12 @@ func (h *OrgCredentialsHandler) Update(c *gin.Context) {
 	}
 
 	// Build the update row. The unified UpdateCredential uses COALESCE so that
-	// nil model_allowlist / model_context_limits / ciphertext mean "don't change";
-	// this preserves the org handler's partial-update semantics. Name is applied
-	// only when the caller supplied one (empty string leaves the column unchanged
-	// via NULLIF). Provider is never changed by org Update (org has no Provider
-	// field in its request), so it is passed through as the existing value.
+	// nil model_allowlist / model_context_limits / model_output_limits / ciphertext
+	// mean "don't change"; this preserves the org handler's partial-update
+	// semantics. Name is applied only when the caller supplied one (empty string
+	// leaves the column unchanged via NULLIF). Provider is never changed by org
+	// Update (org has no Provider field in its request), so it is passed through
+	// as the existing value.
 	upd := &secrets.CredentialRow{
 		ID:             credID,
 		OwnerType:      "org",
@@ -237,12 +246,13 @@ func (h *OrgCredentialsHandler) Update(c *gin.Context) {
 	if req.Name != nil {
 		upd.Name = *req.Name
 	}
-	// modelContextLimits is intentionally NOT pre-normalized: a nil value here
-	// must reach the DB as SQL NULL so COALESCE leaves the column unchanged
-	// (preserving the org handler's partial-update contract: nil = "don't
-	// change", empty map = "clear all"). Only set it when the caller supplied
+	// modelContextLimits and modelOutputLimits are intentionally NOT pre-normalized:
+	// a nil value here must reach the DB as SQL NULL so COALESCE leaves the column
+	// unchanged (preserving the org handler's partial-update contract: nil = "don't
+	// change", empty map = "clear all"). Only set them when the caller supplied
 	// a value.
 	upd.ModelContextLimits = req.ModelContextLimits
+	upd.ModelOutputLimits = req.ModelOutputLimits
 
 	if err := h.credStore.UpdateCredential(ctx, "org", orgID, credID, upd); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update credential"})

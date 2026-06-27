@@ -34,6 +34,7 @@ type CredentialBinding struct {
 	KeyVersion         int
 	ModelAllowlist     []string
 	ModelContextLimits map[string]int // model_id → context window size in tokens
+	ModelOutputLimits  map[string]int // model_id → max output tokens
 	SourceType         string         // "explicit" or "auto"
 	WithinPriority     int
 }

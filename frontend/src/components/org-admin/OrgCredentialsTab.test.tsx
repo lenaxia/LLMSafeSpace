@@ -66,6 +66,7 @@ const CRED: OrgCredential = {
   baseURL: "https://api.openai.com/v1",
   modelAllowlist: ["gpt-4o"],
   modelContextLimits: { "gpt-4o": 128000 },
+  modelOutputLimits: { "gpt-4o": 16384 },
   createdAt: "2026-01-02T00:00:00Z",
   updatedAt: "2026-01-02T00:00:00Z",
 };
@@ -90,12 +91,13 @@ describe("OrgCredentialsTab", () => {
     ).toBeInTheDocument();
   });
 
-  it("expands a credential to show context limits", async () => {
+  it("expands a credential to show per-model limits", async () => {
     renderTab();
     await waitFor(() => expect(screen.getByText("Team Key")).toBeInTheDocument());
     fireEvent.click(screen.getByText("Team Key"));
-    expect(screen.getByText("Context limits")).toBeInTheDocument();
-    expect(screen.getByText(/128,000 tokens/)).toBeInTheDocument();
+    expect(screen.getByText("Per-model limits")).toBeInTheDocument();
+    // Format: "<model>: ctx 128,000 / out 16,384"
+    expect(screen.getByText(/gpt-4o: ctx 128,000 \/ out 16,384/)).toBeInTheDocument();
   });
 
   it("shows empty state when no credentials exist", async () => {
@@ -189,7 +191,7 @@ describe("OrgCredentialsTab", () => {
 
   it("probes models for an existing credential in edit mode", async () => {
     mockProbe.mockResolvedValue({
-      models: [{ id: "gpt-4o-mini", contextLimit: 0 }],
+      models: [{ id: "gpt-4o-mini", contextLimit: 0, outputLimit: 0 }],
     });
     renderTab();
     await waitFor(() => expect(screen.getByText("Team Key")).toBeInTheDocument());
