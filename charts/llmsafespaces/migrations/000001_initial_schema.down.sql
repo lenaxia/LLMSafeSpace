@@ -14,9 +14,3 @@
 DROP SCHEMA IF EXISTS public CASCADE;
 CREATE SCHEMA public;
 GRANT ALL ON SCHEMA public TO PUBLIC;
-
--- Restore the default schema comment that Postgres ships with. Without
--- this, pg_dump observes an empty comment on the recreated schema and
--- the round-trip schema-diff gate flags a spurious difference vs. the
--- initial database state.
-COMMENT ON SCHEMA public IS 'standard public schema';
