@@ -180,7 +180,8 @@ export const orgsApi = {
     id: string,
     req: {
       name: string;
-      provider: string;
+      kind: string;
+      slug: string;
       apiKey: string;
       baseURL?: string;
       modelAllowlist?: string[];
@@ -193,6 +194,8 @@ export const orgsApi = {
     credId: string,
     req: {
       name?: string;
+      kind?: string;
+      slug?: string;
       apiKey?: string;
       baseURL?: string;
       modelAllowlist?: string[];

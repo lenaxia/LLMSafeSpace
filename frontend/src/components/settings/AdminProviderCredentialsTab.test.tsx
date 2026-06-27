@@ -35,7 +35,8 @@ vi.mock("../../api/providerCredentials", () => ({
 const CRED = {
   id: "cred-1",
   name: "Platform OpenAI",
-  provider: "openai",
+  kind: "openai",
+  slug: "platform-openai",
   baseURL: "https://ai.example.com/v1",
   modelAllowlist: ["glm-5.1"],
   modelContextLimits: {} as Record<string, number>,
@@ -86,11 +87,12 @@ describe("AdminProviderCredentialsTab", () => {
     });
   });
 
-  it("renders credential name and provider badge", async () => {
+  it("renders credential name and kind+slug badges", async () => {
     mockList.mockResolvedValue([CRED]);
     renderTab();
     await waitFor(() => {
       expect(screen.getByText("Platform OpenAI")).toBeInTheDocument();
+      expect(screen.getByText("platform-openai")).toBeInTheDocument();
       expect(screen.getByText("openai")).toBeInTheDocument();
     });
   });
@@ -196,14 +198,21 @@ describe("AdminProviderCredentialsTab", () => {
     expect(screen.getByText("New Platform Credential")).toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText("e.g. OpenAI Production"), { target: { value: "New Cred" } });
-    fireEvent.change(screen.getByPlaceholderText("e.g. openai"), { target: { value: "openai" } });
+    // Kind is a select element with an empty default option; pick "openai".
+    fireEvent.change(screen.getByDisplayValue("— select SDK kind —"), { target: { value: "openai" } });
+    // Slug auto-populated from name as "new-cred"; verify and proceed.
     fireEvent.change(screen.getByPlaceholderText("sk-…"), { target: { value: "sk-test-key" } });
 
     // New form: button text is "Create & fetch models" — click it
     fireEvent.click(screen.getByText(/Create & fetch models/));
     await waitFor(() => {
       expect(mockCreate).toHaveBeenCalledWith(
-        expect.objectContaining({ name: "New Cred", provider: "openai", apiKey: "sk-test-key" }),
+        expect.objectContaining({
+          name: "New Cred",
+          kind: "openai",
+          slug: "new-cred",
+          apiKey: "sk-test-key",
+        }),
       );
     });
   });
@@ -215,7 +224,7 @@ describe("AdminProviderCredentialsTab", () => {
     fireEvent.click(screen.getByText(/Add credential/));
     // New form: button text is "Create & fetch models"
     fireEvent.click(screen.getByText(/Create & fetch models/));
-    expect(screen.getByText(/Name, provider, and API key are required/)).toBeInTheDocument();
+    expect(screen.getByText(/Name, kind, slug, and API key are required/)).toBeInTheDocument();
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
@@ -232,13 +241,18 @@ describe("AdminProviderCredentialsTab", () => {
     fireEvent.click(screen.getByText(/Add credential/));
 
     fireEvent.change(screen.getByPlaceholderText("e.g. OpenAI Production"), { target: { value: "X" } });
-    fireEvent.change(screen.getByPlaceholderText("e.g. openai"), { target: { value: "openai" } });
+    fireEvent.change(screen.getByDisplayValue("— select SDK kind —"), { target: { value: "openai" } });
     fireEvent.change(screen.getByPlaceholderText("sk-…"), { target: { value: "key" } });
 
     fireEvent.click(screen.getByText(/Create & fetch models/));
     await waitFor(() => {
       expect(mockCreate).toHaveBeenCalledWith(
-        expect.objectContaining({ name: "X", provider: "openai", apiKey: "key" }),
+        expect.objectContaining({
+          name: "X",
+          kind: "openai",
+          slug: "x",
+          apiKey: "key",
+        }),
       );
     });
   });
