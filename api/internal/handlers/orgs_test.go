@@ -901,3 +901,77 @@ func TestOrgsHandler_Create_NonPlatformAdminForbidden(t *testing.T) {
 		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+// --- Update tests ---------------------------------------------------------
+//
+// These mirror the Create slug tests on the Update handler path. Update has
+// historically had no handler-level tests (the existing suite only covers
+// it indirectly via the route registration). The Update path was actively
+// modified by this PR (the alphanum -> slug binding tag swap) so per Rule 5
+// we must validate that path explicitly.
+
+// TestOrgsHandler_Update_HyphenatedSlug verifies the Update handler accepts
+// hyphenated slugs — the same regression Create suffered from.
+func TestOrgsHandler_Update_HyphenatedSlug(t *testing.T) {
+	store := newMockOrgStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1", Slug: "old-slug"}
+	router, _ := setupOrgTestRouter(t, store)
+
+	body := `{"slug":"my-new-org"}`
+	w := doRequest(router, "PUT", "/api/v1/orgs/org-1", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if store.orgs["org-1"].Slug != "my-new-org" {
+		t.Errorf("expected stored slug 'my-new-org', got %q", store.orgs["org-1"].Slug)
+	}
+}
+
+// TestOrgsHandler_Update_BadSlugReturnsDetails verifies the Update handler
+// rejects invalid slugs with per-field details, mirroring the Create path.
+func TestOrgsHandler_Update_BadSlugReturnsDetails(t *testing.T) {
+	store := newMockOrgStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1", Slug: "old-slug"}
+	router, _ := setupOrgTestRouter(t, store)
+
+	body := `{"slug":"bad_slug"}`
+	w := doRequest(router, "PUT", "/api/v1/orgs/org-1", body)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	details, ok := resp["details"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected details object, got: %s", w.Body.String())
+	}
+	if _, ok := details["slug"]; !ok {
+		t.Errorf("expected details.slug, got: %s", w.Body.String())
+	}
+	// Ensure the bad input did not reach the store.
+	if store.orgs["org-1"].Slug != "old-slug" {
+		t.Errorf("invalid slug must not have been persisted; got %q", store.orgs["org-1"].Slug)
+	}
+}
+
+// TestOrgsHandler_Update_SlugLowercased mirrors
+// TestCreateOrg_Admin_SlugLowercased on the Update path. The handler must
+// lowercase mixed-case slugs before persistence so case-insensitive
+// uniqueness (enforced by idx_orgs_slug_lower_active in migration 000030)
+// and display consistency hold across both Create and Update.
+func TestOrgsHandler_Update_SlugLowercased(t *testing.T) {
+	store := newMockOrgStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1", Slug: "acme"}
+	router, _ := setupOrgTestRouter(t, store)
+
+	body := `{"slug":"My-New-Org"}`
+	w := doRequest(router, "PUT", "/api/v1/orgs/org-1", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if store.orgs["org-1"].Slug != "my-new-org" {
+		t.Errorf("slug should be lowercased to 'my-new-org', got %q", store.orgs["org-1"].Slug)
+	}
+}

@@ -90,8 +90,17 @@ func jsonFieldName(modelType reflect.Type, fieldName string) string {
 }
 
 // bindingErrorMessage returns a short human-readable message for a single
-// validator.FieldError. The format mirrors api/internal/middleware/validation.go
-// so the two paths stay consistent.
+// validator.FieldError. The format mirrors api/internal/middleware/validation.go's
+// getValidationErrorMessage() so the two paths stay consistent.
+//
+// DUPLICATION NOTE: This switch is intentionally duplicated with
+// getValidationErrorMessage in the middleware package. The two paths emit
+// different envelope shapes (this one: {"error": <str>, "details": {...}};
+// middleware: {"error": {"code", "message", "details"}}) so a shared
+// formatter would require new abstractions. They MUST be kept in sync: if
+// you add or change a case here, update the middleware version too.
+// See worklog 0557 follow-up for the centralized-validation story that will
+// collapse this duplication.
 func bindingErrorMessage(ve validator.FieldError) string {
 	switch ve.Tag() {
 	case "required":

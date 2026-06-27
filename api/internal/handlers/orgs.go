@@ -293,6 +293,13 @@ func (h *OrgsHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, bindingErrorResponse(err, &req))
 		return
 	}
+	// Lowercase the slug before any uniqueness check or persistence — mirrors
+	// Create's behavior so the stored case is consistent across both paths.
+	// The DB enforces case-insensitive uniqueness via
+	// idx_orgs_slug_lower_active (migration 000030); this keeps the stored
+	// value canonical too, which matters for SSO URL routing
+	// (/auth/sso/:orgSlug/*) and display consistency.
+	req.Slug = strings.ToLower(req.Slug)
 
 	ctx := c.Request.Context()
 

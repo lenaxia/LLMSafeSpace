@@ -151,7 +151,27 @@ Per README §11, conducted a structured Phase 1/2/3 review. Phase 1 produced 23 
 - **Real findings remediated (5):** TypeScript type error on optional `details` (fixed); other org handlers using opaque error (fixed); pre-existing contract drift surfaced by Go test run (fixed); frontend test coverage missing for new error shape (added); Gin uses `binding:` tag not `validate:` (caught and fixed during test development).
 - **Deferred (1):** frontend doesn't pre-validate slug client-side. Documented in Next Steps as part of the centralized-validation follow-up.
 
-Zero unresolved real findings.
+Zero unresolved real findings *from my own review.*
+
+### Iteration 1: Automated PR review (PR #427)
+
+The repository's PR-review bot caught one **real correctness gap** that my self-review missed:
+
+> The Update handler does not lowercase `req.Slug` — contradicts the PR's stated design.
+> `POST /api/v1/orgs` with `slug: "My-Org"` → stored as `"my-org"` ✓
+> `PUT /api/v1/orgs/:id` with `slug: "My-Org"` → stored as `"My-Org"` ✗
+
+The asymmetry was prevented from causing duplicate-slug data corruption only by the DB's case-insensitive `idx_orgs_slug_lower_active` index (migration 000030) and the case-insensitive `GetOrgBySlug` lookup. But the stored case would have been inconsistent between Create-vs-Update paths, which matters for SSO URL routing (`/auth/sso/:orgSlug/*`) and display consistency.
+
+**Remediation (this iteration):**
+- Added `req.Slug = strings.ToLower(req.Slug)` to `Update` immediately after `ShouldBindJSON` — mirrors `Create`'s behavior.
+- Added three new Update-path tests (TDD red → green):
+  - `TestOrgsHandler_Update_HyphenatedSlug` — accepts hyphenated input.
+  - `TestOrgsHandler_Update_BadSlugReturnsDetails` — rejects invalid input with per-field details, confirms bad data does not reach the store.
+  - `TestOrgsHandler_Update_SlugLowercased` — verifies the missing `ToLower` is now applied (this test was red before the fix, green after).
+- Addressed the reviewer's style finding about duplicated `bindingErrorMessage` vs `getValidationErrorMessage` by adding reciprocal cross-reference comments in both files. Full extraction is deferred to the centralized-validation follow-up.
+
+The lesson is generic: when a binding tag is changed on a request type, every handler that consumes that type is in-scope for the change. My self-review checked the validator's behavior but not whether the *handler-side post-processing* (lowercase, trim, etc.) was symmetric between the affected handlers. Next time: when changing a binding tag, also `grep` for every handler that uses the type and confirm the post-bind processing is identical or intentionally different.
 
 ---
 
@@ -173,10 +193,11 @@ Zero unresolved real findings.
 - `pkg/types/orgs.go` — changed `binding:"alphanum"` → `binding:"slug"` on `CreateOrgRequest.Slug` and `UpdateOrgRequest.Slug`; added explanatory godoc.
 - `pkg/types/validators.go` — **new**. Slug regex, validator, init() registration on Gin's binding engine.
 - `pkg/types/validators_test.go` — **new**. Unit tests for the slug validator.
-- `api/internal/handlers/orgs.go` — replaced 4 opaque `{"error":"invalid request body"}` responses with `bindingErrorResponse(err, &req)` (Create, Update, AddMember, ChangeMemberRole).
-- `api/internal/handlers/binding_errors.go` — **new**. `bindingErrorResponse()` helper + message formatter.
+- `api/internal/handlers/orgs.go` — replaced 4 opaque `{"error":"invalid request body"}` responses with `bindingErrorResponse(err, &req)` (Create, Update, AddMember, ChangeMemberRole). Iteration 1: added `strings.ToLower(req.Slug)` to `Update` to mirror `Create`.
+- `api/internal/handlers/binding_errors.go` — **new**. `bindingErrorResponse()` helper + message formatter. Iteration 1: added cross-reference comment to the duplicated switch in middleware/validation.go.
 - `api/internal/handlers/binding_errors_test.go` — **new**. Unit tests for the helper.
-- `api/internal/handlers/orgs_test.go` — added `userRole: admin` to test middleware so platform-admin-gated handlers exercise correctly; added 5 new `TestOrgsHandler_Create_*` tests.
+- `api/internal/handlers/orgs_test.go` — added `userRole: admin` to test middleware so platform-admin-gated handlers exercise correctly; added 5 new `TestOrgsHandler_Create_*` tests. Iteration 1: added 3 new `TestOrgsHandler_Update_*` tests (hyphenated slug accepted, bad slug rejected with details, mixed-case lowercased).
+- `api/internal/middleware/validation.go` — Iteration 1: added cross-reference comment to `getValidationErrorMessage` pointing at `bindingErrorMessage`. No behavior change.
 
 **Frontend (TS):**
 - `frontend/src/api/types.ts` — added `details?: Record<string, string>` field to `ApiError`; added `ActiveSessionsResponse` interface (resolves pre-existing contract drift).
