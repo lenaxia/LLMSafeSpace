@@ -173,6 +173,17 @@ The asymmetry was prevented from causing duplicate-slug data corruption only by 
 
 The lesson is generic: when a binding tag is changed on a request type, every handler that consumes that type is in-scope for the change. My self-review checked the validator's behavior but not whether the *handler-side post-processing* (lowercase, trim, etc.) was symmetric between the affected handlers. Next time: when changing a binding tag, also `grep` for every handler that uses the type and confirm the post-bind processing is identical or intentionally different.
 
+### Iteration 2: Automated PR review (PR #427) — APPROVE with one non-blocking gap
+
+The reviewer approved the second iteration but flagged one low-risk gap: the new `bindingErrorResponse` was wired into `AddMember` and `ChangeMemberRole`, but no handler-level test verified those two paths return per-field details (only the helper was unit-tested in isolation, and only Create/Update had integration tests).
+
+**Remediation (this iteration):**
+- `TestOrgsHandler_AddMember_MissingUserIdReturnsDetails` — POSTs `{"role":"member"}` (missing `userId`), asserts 400 with `details.userId`.
+- `TestOrgsHandler_AddMember_MissingRoleReturnsDetails` — POSTs `{"userId":"x"}` (missing `role`), asserts 400 with `details.role`.
+- `TestOrgsHandler_ChangeMemberRole_MissingRoleReturnsDetails` — PUTs `{}`, asserts 400 with `details.role`.
+
+These close the gap and make it impossible to regress the wiring of either handler without a test catching it.
+
 ---
 
 ## Next Steps
@@ -196,7 +207,7 @@ The lesson is generic: when a binding tag is changed on a request type, every ha
 - `api/internal/handlers/orgs.go` — replaced 4 opaque `{"error":"invalid request body"}` responses with `bindingErrorResponse(err, &req)` (Create, Update, AddMember, ChangeMemberRole). Iteration 1: added `strings.ToLower(req.Slug)` to `Update` to mirror `Create`.
 - `api/internal/handlers/binding_errors.go` — **new**. `bindingErrorResponse()` helper + message formatter. Iteration 1: added cross-reference comment to the duplicated switch in middleware/validation.go.
 - `api/internal/handlers/binding_errors_test.go` — **new**. Unit tests for the helper.
-- `api/internal/handlers/orgs_test.go` — added `userRole: admin` to test middleware so platform-admin-gated handlers exercise correctly; added 5 new `TestOrgsHandler_Create_*` tests. Iteration 1: added 3 new `TestOrgsHandler_Update_*` tests (hyphenated slug accepted, bad slug rejected with details, mixed-case lowercased).
+- `api/internal/handlers/orgs_test.go` — added `userRole: admin` to test middleware so platform-admin-gated handlers exercise correctly; added 5 new `TestOrgsHandler_Create_*` tests. Iteration 1: added 3 new `TestOrgsHandler_Update_*` tests (hyphenated slug accepted, bad slug rejected with details, mixed-case lowercased). Iteration 2: added 3 new validation-detail tests for `AddMember` (missing userId, missing role) and `ChangeMemberRole` (missing role).
 - `api/internal/middleware/validation.go` — Iteration 1: added cross-reference comment to `getValidationErrorMessage` pointing at `bindingErrorMessage`. No behavior change.
 
 **Frontend (TS):**

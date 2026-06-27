@@ -975,3 +975,96 @@ func TestOrgsHandler_Update_SlugLowercased(t *testing.T) {
 		t.Errorf("slug should be lowercased to 'my-new-org', got %q", store.orgs["org-1"].Slug)
 	}
 }
+
+// --- AddMember + ChangeMemberRole validation-detail tests ----------------
+//
+// The PR wired bindingErrorResponse() into AddMember and ChangeMemberRole.
+// The helper is unit-tested in binding_errors_test.go and the integration
+// pattern is verified for Create/Update — these tests close the remaining
+// gap (flagged in PR #427 review iteration 2) by exercising the helper
+// through these two handlers' real request types.
+
+// TestOrgsHandler_AddMember_MissingUserIdReturnsDetails verifies that
+// AddMember returns per-field validation details when a required field is
+// omitted, rather than the legacy opaque "invalid request body" message.
+func TestOrgsHandler_AddMember_MissingUserIdReturnsDetails(t *testing.T) {
+	store := newMockOrgStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.members["org-1"] = []*types.OrgMember{
+		{OrgID: "org-1", UserID: "admin-1", Role: types.OrgRoleAdmin},
+	}
+	router, _ := setupOrgTestRouter(t, store)
+
+	// userId omitted; role present and valid
+	w := doRequest(router, "POST", "/api/v1/orgs/org-1/members", `{"role":"member"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	details, ok := resp["details"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected details object, got: %s", w.Body.String())
+	}
+	if _, ok := details["userId"]; !ok {
+		t.Errorf("expected details.userId, got: %s", w.Body.String())
+	}
+}
+
+// TestOrgsHandler_AddMember_MissingRoleReturnsDetails covers the other
+// required field on AddOrgMemberRequest.
+func TestOrgsHandler_AddMember_MissingRoleReturnsDetails(t *testing.T) {
+	store := newMockOrgStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.members["org-1"] = []*types.OrgMember{
+		{OrgID: "org-1", UserID: "admin-1", Role: types.OrgRoleAdmin},
+	}
+	router, _ := setupOrgTestRouter(t, store)
+
+	w := doRequest(router, "POST", "/api/v1/orgs/org-1/members", `{"userId":"new-user"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	details, ok := resp["details"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected details object, got: %s", w.Body.String())
+	}
+	if _, ok := details["role"]; !ok {
+		t.Errorf("expected details.role, got: %s", w.Body.String())
+	}
+}
+
+// TestOrgsHandler_ChangeMemberRole_MissingRoleReturnsDetails verifies the
+// PUT /orgs/:id/members/:userID handler returns per-field details for an
+// empty body. The only required field is role.
+func TestOrgsHandler_ChangeMemberRole_MissingRoleReturnsDetails(t *testing.T) {
+	store := newMockOrgStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.members["org-1"] = []*types.OrgMember{
+		{OrgID: "org-1", UserID: "admin-1", Role: types.OrgRoleAdmin},
+		{OrgID: "org-1", UserID: "member-1", Role: types.OrgRoleMember},
+	}
+	router, _ := setupOrgTestRouter(t, store)
+
+	w := doRequest(router, "PUT", "/api/v1/orgs/org-1/members/member-1", `{}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	details, ok := resp["details"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected details object, got: %s", w.Body.String())
+	}
+	if _, ok := details["role"]; !ok {
+		t.Errorf("expected details.role, got: %s", w.Body.String())
+	}
+}
