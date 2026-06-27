@@ -45,8 +45,8 @@ func TestE2E_FullSecretLifecycle(t *testing.T) {
 	llmSecret, err := svc.CreateSecret(ctx, userID, sessionID, nil, CreateSecretRequest{
 		Name:     "anthropic-prod",
 		Type:     SecretTypeAPIKey,
-		Value:    `{"apiKey":"sk-ant-api03-xxx","provider":"anthropic","model":"claude-sonnet-4-20250514"}`,
-		Metadata: json.RawMessage(`{"provider":"anthropic"}`),
+		Value:    `{"apiKey":"sk-ant-api03-xxx","kind":"anthropic","slug":"anthropic","model":"claude-sonnet-4-20250514"}`,
+		Metadata: json.RawMessage(`{"kind":"anthropic","slug":"anthropic"}`),
 	})
 	if err != nil {
 		t.Fatalf("Create LLM secret: %v", err)

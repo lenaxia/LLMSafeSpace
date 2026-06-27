@@ -90,10 +90,11 @@ func TestHandler_E2E_LLMProvider_BindTriggersReloadWithFormattedConfig(t *testin
 
 	// Create an llm-provider secret with structured provider data.
 	providerData := map[string]any{
-		"provider": "anthropic",
-		"apiKey":   "sk-ant-api03-test-key",
-		"baseURL":  "",
-		"default":  "anthropic/claude-sonnet-4-5",
+		"kind":    "anthropic",
+		"slug":    "anthropic",
+		"apiKey":  "sk-ant-api03-test-key",
+		"baseURL": "",
+		"default": "anthropic/claude-sonnet-4-5",
 		"models": []map[string]any{
 			{"id": "claude-sonnet-4-5", "label": "Claude Sonnet 4.5"},
 			{"id": "claude-haiku-4-5"},
@@ -149,7 +150,8 @@ func TestHandler_E2E_LLMProvider_BindTriggersReloadWithFormattedConfig(t *testin
 	// Verify the plaintext is the original provider JSON (decrypted correctly).
 	var decryptedProvider map[string]any
 	require.NoError(t, json.Unmarshal([]byte(injected[0].Plaintext), &decryptedProvider))
-	require.Equal(t, "anthropic", decryptedProvider["provider"])
+	require.Equal(t, "anthropic", decryptedProvider["kind"])
+	require.Equal(t, "anthropic", decryptedProvider["slug"])
 	require.Equal(t, "sk-ant-api03-test-key", decryptedProvider["apiKey"])
 	require.Equal(t, "anthropic/claude-sonnet-4-5", decryptedProvider["default"])
 }
@@ -211,15 +213,17 @@ func TestHandler_E2E_LLMProvider_MultipleProviders_Bind(t *testing.T) {
 
 	// Create two llm-provider secrets.
 	providers := []map[string]any{
-		{"provider": "anthropic", "apiKey": "sk-ant-123", "default": "anthropic/claude-sonnet-4-5"},
-		{"provider": "openai", "apiKey": "sk-oai-456", "default": "openai/gpt-4o"},
+		{"kind": "anthropic",
+			"slug": "anthropic", "apiKey": "sk-ant-123", "default": "anthropic/claude-sonnet-4-5"},
+		{"kind": "openai",
+			"slug": "openai", "apiKey": "sk-oai-456", "default": "openai/gpt-4o"},
 	}
 
 	var secretIDs []string
 	for i, prov := range providers {
 		provJSON, _ := json.Marshal(prov)
 		body, _ := json.Marshal(map[string]any{
-			"name":     prov["provider"],
+			"name":     prov["slug"],
 			"type":     "llm-provider",
 			"value":    string(provJSON),
 			"metadata": map[string]string{},
@@ -259,6 +263,6 @@ func TestHandler_E2E_LLMProvider_MultipleProviders_Bind(t *testing.T) {
 		require.Equal(t, "llm-provider", s.Type)
 		var prov map[string]any
 		require.NoError(t, json.Unmarshal([]byte(s.Plaintext), &prov))
-		require.Contains(t, []any{"anthropic", "openai"}, prov["provider"])
+		require.Contains(t, []any{"anthropic", "openai"}, prov["slug"])
 	}
 }

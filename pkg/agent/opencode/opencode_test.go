@@ -66,7 +66,7 @@ func TestOpenCodeAgent_ValidateCredentials_EmptyObjectAfterUnmarshal(t *testing.
 func TestOpenCodeAgent_FormatProviderConfig(t *testing.T) {
 	a := &OpenCodeAgent{}
 	providers := []agent.LLMProviderData{
-		{Provider: "anthropic", APIKey: "sk-ant-123", Default: "anthropic/claude-sonnet-4-5"},
+		{Kind: "anthropic", Slug: "anthropic", APIKey: "sk-ant-123", Default: "anthropic/claude-sonnet-4-5"},
 	}
 	output, err := a.FormatProviderConfig(providers)
 	require.NoError(t, err)

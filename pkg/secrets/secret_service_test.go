@@ -292,10 +292,11 @@ func TestSecretService_CreateSecret_LLMProvider_Legacy(t *testing.T) {
 	ctx := context.Background()
 
 	resp, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
-		Name:     "my-anthropic-key",
-		Type:     SecretTypeAPIKey,
-		Value:    "sk-ant-api03-secret-key",
-		Metadata: json.RawMessage(`{"provider": "anthropic"}`),
+		Name:  "my-anthropic-key",
+		Type:  SecretTypeAPIKey,
+		Value: "sk-ant-api03-secret-key",
+		Metadata: json.RawMessage(`{"kind": "anthropic",
+		"slug": "anthropic"}`),
 	})
 	if err != nil {
 		t.Fatalf("CreateSecret failed: %v", err)
@@ -320,8 +321,9 @@ func TestSecretService_CreateSecret_LLMProvider_Correct(t *testing.T) {
 	ctx := context.Background()
 
 	providerData, _ := json.Marshal(LLMProviderData{
-		Provider: "anthropic",
-		APIKey:   "sk-ant-api03-test-key",
+		Kind:   "anthropic",
+		Slug:   "anthropic",
+		APIKey: "sk-ant-api03-test-key",
 	})
 
 	resp, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
@@ -385,7 +387,8 @@ func TestSecretService_CreateSecret_LLMProvider_MissingAPIKey(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	val, _ := json.Marshal(map[string]string{"provider": "anthropic"})
+	val, _ := json.Marshal(map[string]string{"kind": "anthropic",
+		"slug": "anthropic"})
 	_, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name:  "missing-apikey",
 		Type:  SecretTypeLLMProvider,
@@ -629,20 +632,22 @@ func TestSecretService_CreateSecret_DuplicateName(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
-		Name:     "my-key",
-		Type:     SecretTypeAPIKey,
-		Value:    "value1",
-		Metadata: json.RawMessage(`{"provider": "openai"}`),
+		Name:  "my-key",
+		Type:  SecretTypeAPIKey,
+		Value: "value1",
+		Metadata: json.RawMessage(`{"kind": "openai",
+		"slug": "openai"}`),
 	})
 	if err != nil {
 		t.Fatalf("First create failed: %v", err)
 	}
 
 	_, err = svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
-		Name:     "my-key",
-		Type:     SecretTypeAPIKey,
-		Value:    "value2",
-		Metadata: json.RawMessage(`{"provider": "openai"}`),
+		Name:  "my-key",
+		Type:  SecretTypeAPIKey,
+		Value: "value2",
+		Metadata: json.RawMessage(`{"kind": "openai",
+		"slug": "openai"}`),
 	})
 	if err == nil {
 		t.Error("Duplicate name should fail")
@@ -675,10 +680,11 @@ func TestSecretService_GetSecret(t *testing.T) {
 	ctx := context.Background()
 
 	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
-		Name:     "test-secret",
-		Type:     SecretTypeAPIKey,
-		Value:    "secret-value",
-		Metadata: json.RawMessage(`{"provider": "openai"}`),
+		Name:  "test-secret",
+		Type:  SecretTypeAPIKey,
+		Value: "secret-value",
+		Metadata: json.RawMessage(`{"kind": "openai",
+		"slug": "openai"}`),
 	})
 
 	resp, err := svc.GetSecret(ctx, "user-1", created.ID)
@@ -705,7 +711,7 @@ func TestSecretService_ListSecrets(t *testing.T) {
 	ctx := context.Background()
 
 	svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
-		Name: "key-1", Type: SecretTypeAPIKey, Value: "v1", Metadata: json.RawMessage(`{"provider":"a"}`),
+		Name: "key-1", Type: SecretTypeAPIKey, Value: "v1", Metadata: json.RawMessage(`{"kind":"a","slug":"a"}`),
 	})
 	svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "key-2", Type: SecretTypeEnvSecret, Value: "v2", Metadata: json.RawMessage(`{"var_name":"DB_URL"}`),
@@ -725,7 +731,7 @@ func TestSecretService_UpdateSecret(t *testing.T) {
 	ctx := context.Background()
 
 	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
-		Name: "updatable", Type: SecretTypeAPIKey, Value: "old-value", Metadata: json.RawMessage(`{"provider":"x"}`),
+		Name: "updatable", Type: SecretTypeAPIKey, Value: "old-value", Metadata: json.RawMessage(`{"kind":"x","slug":"x"}`),
 	})
 
 	err := svc.UpdateSecret(ctx, "user-1", sessionID, nil, created.ID, UpdateSecretRequest{
@@ -763,7 +769,7 @@ func TestSecretService_DeleteSecret(t *testing.T) {
 	ctx := context.Background()
 
 	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
-		Name: "deletable", Type: SecretTypeAPIKey, Value: "val", Metadata: json.RawMessage(`{"provider":"x"}`),
+		Name: "deletable", Type: SecretTypeAPIKey, Value: "val", Metadata: json.RawMessage(`{"kind":"x","slug":"x"}`),
 	})
 
 	err := svc.DeleteSecret(ctx, "user-1", created.ID)
@@ -793,7 +799,7 @@ func TestSecretService_DecryptSecretValue(t *testing.T) {
 
 	originalValue := "sk-super-secret-key-12345"
 	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
-		Name: "decrypt-test", Type: SecretTypeAPIKey, Value: originalValue, Metadata: json.RawMessage(`{"provider":"x"}`),
+		Name: "decrypt-test", Type: SecretTypeAPIKey, Value: originalValue, Metadata: json.RawMessage(`{"kind":"x","slug":"x"}`),
 	})
 
 	plaintext, err := svc.DecryptSecretValue(ctx, "user-1", sessionID, nil, created.ID)
@@ -810,7 +816,7 @@ func TestSecretService_SetAndGetBindings(t *testing.T) {
 	ctx := context.Background()
 
 	s1, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
-		Name: "key-1", Type: SecretTypeAPIKey, Value: "v1", Metadata: json.RawMessage(`{"provider":"a"}`),
+		Name: "key-1", Type: SecretTypeAPIKey, Value: "v1", Metadata: json.RawMessage(`{"kind":"a","slug":"a"}`),
 	})
 	s2, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "key-2", Type: SecretTypeEnvSecret, Value: "v2", Metadata: json.RawMessage(`{"var_name":"X"}`),
@@ -846,7 +852,7 @@ func TestSecretService_AuditLogging(t *testing.T) {
 
 	// Create a secret (generates audit entry)
 	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
-		Name: "audited", Type: SecretTypeAPIKey, Value: "v", Metadata: json.RawMessage(`{"provider":"x"}`),
+		Name: "audited", Type: SecretTypeAPIKey, Value: "v", Metadata: json.RawMessage(`{"kind":"x","slug":"x"}`),
 	})
 
 	// Update (generates audit entry)
@@ -882,7 +888,7 @@ func TestSecretService_DeleteSecret_CascadesBindings(t *testing.T) {
 	ctx := context.Background()
 
 	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
-		Name: "bound-secret", Type: SecretTypeAPIKey, Value: "v", Metadata: json.RawMessage(`{"provider":"x"}`),
+		Name: "bound-secret", Type: SecretTypeAPIKey, Value: "v", Metadata: json.RawMessage(`{"kind":"x","slug":"x"}`),
 	})
 
 	// Bind to workspace

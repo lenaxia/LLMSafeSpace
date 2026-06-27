@@ -1,6 +1,0 @@
-BEGIN;
-
-ALTER TABLE users DROP COLUMN IF EXISTS plan_id;
-DROP TABLE IF EXISTS usage_limits;
-
-COMMIT;

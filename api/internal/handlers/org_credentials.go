@@ -42,7 +42,8 @@ func NewOrgCredentialsHandler(store CredentialStore, orgOps orgBindingAndAutoApp
 
 type createOrgCredentialRequest struct {
 	Name               string         `json:"name"           binding:"required,min=1,max=128"`
-	Provider           string         `json:"provider"       binding:"required"`
+	Kind               string         `json:"kind"           binding:"required"`
+	Slug               string         `json:"slug"           binding:"required"`
 	APIKey             string         `json:"apiKey"         binding:"required"              log:"-"` //nolint:gosec // G117 false positive — field has log:"-" tag, never marshaled to response
 	BaseURL            string         `json:"baseURL"`
 	ModelAllowlist     []string       `json:"modelAllowlist"`
@@ -52,6 +53,8 @@ type createOrgCredentialRequest struct {
 
 type updateOrgCredentialRequest struct {
 	Name               *string        `json:"name"`
+	Kind               *string        `json:"kind"`
+	Slug               *string        `json:"slug"`
 	APIKey             *string        `json:"apiKey"          log:"-"` //nolint:gosec // G117 false positive — field has log:"-" tag, never marshaled to response
 	BaseURL            *string        `json:"baseURL"`
 	ModelAllowlist     []string       `json:"modelAllowlist"`
@@ -70,12 +73,24 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 		return
 	}
 
+	// Boundary validation against the SDK-class enum and slug regex
+	// (Epic 55). Without this, an invalid kind/slug reaches the DB and
+	// the CHECK constraint fires as opaque 500 instead of 400.
+	if err := secrets.ValidateKind(req.Kind); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "field": "kind"})
+		return
+	}
+	if err := secrets.ValidateSlug(req.Slug); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "field": "slug"})
+		return
+	}
+
 	if h.provider == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "server key not configured"})
 		return
 	}
 
-	ciphertext, err := encryptCredentialData(ctx, h.provider.Encrypt, req.Provider, req.APIKey, req.BaseURL)
+	ciphertext, err := encryptCredentialData(ctx, h.provider.Encrypt, req.Kind, req.Slug, req.APIKey, req.BaseURL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode credential"})
 		return
@@ -93,7 +108,8 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 		OwnerType:          "org",
 		OwnerID:            orgID,
 		Name:               req.Name,
-		Provider:           req.Provider,
+		Kind:               req.Kind,
+		Slug:               req.Slug,
 		Ciphertext:         ciphertext,
 		KeyVersion:         secrets.ActiveVersionOf(h.provider),
 		ModelAllowlist:     allowlist,
@@ -110,8 +126,13 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 	}
 
 	if err := h.credStore.CreateCredential(ctx, "org", orgID, row); err != nil {
-		if errors.Is(ClassifyPostgresError(err), ErrDuplicateCredential) {
-			c.JSON(http.StatusConflict, gin.H{"error": "credential for this provider already exists"})
+		classified := ClassifyPostgresError(err)
+		if errors.Is(classified, ErrDuplicateCredential) {
+			c.JSON(http.StatusConflict, gin.H{"error": "credential with this slug already exists"})
+			return
+		}
+		if errors.Is(classified, ErrCredentialCheckViolation) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "credential failed validation; kind or slug is invalid"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create credential"})
@@ -124,7 +145,7 @@ func (h *OrgCredentialsHandler) Create(c *gin.Context) {
 	if err != nil || created == nil {
 		// Credential was stored but unreadable — surface a minimal response.
 		c.JSON(http.StatusCreated, CredentialResponse{
-			ID: credID, OrgID: orgID, Name: req.Name, Provider: req.Provider,
+			ID: credID, OrgID: orgID, Name: req.Name, Kind: req.Kind, Slug: req.Slug,
 			ModelAllowlist:     allowlist,
 			ModelContextLimits: req.ModelContextLimits,
 			ModelOutputLimits:  req.ModelOutputLimits,
@@ -173,6 +194,20 @@ func (h *OrgCredentialsHandler) Update(c *gin.Context) {
 		return
 	}
 
+	// Validate kind/slug if the caller is updating them (Epic 55).
+	if req.Kind != nil {
+		if err := secrets.ValidateKind(*req.Kind); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "field": "kind"})
+			return
+		}
+	}
+	if req.Slug != nil {
+		if err := secrets.ValidateSlug(*req.Slug); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "field": "slug"})
+			return
+		}
+	}
+
 	existing, err := h.credStore.GetCredential(ctx, "org", orgID, credID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to retrieve credential"})
@@ -185,11 +220,16 @@ func (h *OrgCredentialsHandler) Update(c *gin.Context) {
 
 	var newCiphertext []byte
 	newKeyVersion := existing.KeyVersion
-	// Re-encrypt whenever an encrypted field (apiKey OR baseURL) changes.
-	// A baseURL-only update must still rewrite the ciphertext, since baseURL
-	// lives inside the encrypted LLMProviderData blob — matching the admin
-	// handler (admin_provider_credentials.go:267).
-	if req.APIKey != nil || req.BaseURL != nil {
+	// Re-encrypt whenever any field that lives INSIDE the encrypted
+	// LLMProviderData blob changes. apiKey and baseURL are obvious; Kind
+	// and Slug also live inside the blob (LLMProviderData.Kind/Slug),
+	// and the materialize path reads them out as pd.Kind/pd.Slug to
+	// determine the SDK adapter and the agent-config.json provider-map
+	// key. If the row column changes but the ciphertext stays stale,
+	// the rename never reaches the wire format (Epic 55 stale-ciphertext
+	// regression — admin handler at admin_provider_credentials.go:283
+	// has always included Kind/Slug here for this reason).
+	if req.APIKey != nil || req.BaseURL != nil || req.Kind != nil || req.Slug != nil {
 		if h.provider == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "server key not configured"})
 			return
@@ -205,6 +245,12 @@ func (h *OrgCredentialsHandler) Update(c *gin.Context) {
 		if err := json.Unmarshal(oldPlaintext, &pd); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to decode credential"})
 			return
+		}
+		if req.Kind != nil {
+			pd.Kind = *req.Kind
+		}
+		if req.Slug != nil {
+			pd.Slug = *req.Slug
 		}
 		if req.APIKey != nil {
 			pd.APIKey = *req.APIKey
@@ -229,22 +275,28 @@ func (h *OrgCredentialsHandler) Update(c *gin.Context) {
 	// Build the update row. The unified UpdateCredential uses COALESCE so that
 	// nil model_allowlist / model_context_limits / model_output_limits / ciphertext
 	// mean "don't change"; this preserves the org handler's partial-update
-	// semantics. Name is applied only when the caller supplied one (empty string
-	// leaves the column unchanged via NULLIF). Provider is never changed by org
-	// Update (org has no Provider field in its request), so it is passed through
-	// as the existing value.
+	// semantics. Name/Kind/Slug are applied only when the caller supplied one
+	// (empty string leaves the column unchanged via NULLIF). Kind and Slug are
+	// passed through as the existing value unless the request overrides them.
 	upd := &secrets.CredentialRow{
 		ID:             credID,
 		OwnerType:      "org",
 		OwnerID:        orgID,
 		Name:           existing.Name,
-		Provider:       existing.Provider,
+		Kind:           existing.Kind,
+		Slug:           existing.Slug,
 		Ciphertext:     newCiphertext,
 		KeyVersion:     newKeyVersion,
 		ModelAllowlist: req.ModelAllowlist,
 	}
 	if req.Name != nil {
 		upd.Name = *req.Name
+	}
+	if req.Kind != nil {
+		upd.Kind = *req.Kind
+	}
+	if req.Slug != nil {
+		upd.Slug = *req.Slug
 	}
 	// modelContextLimits and modelOutputLimits are intentionally NOT pre-normalized:
 	// a nil value here must reach the DB as SQL NULL so COALESCE leaves the column
@@ -255,6 +307,15 @@ func (h *OrgCredentialsHandler) Update(c *gin.Context) {
 	upd.ModelOutputLimits = req.ModelOutputLimits
 
 	if err := h.credStore.UpdateCredential(ctx, "org", orgID, credID, upd); err != nil {
+		classified := ClassifyPostgresError(err)
+		if errors.Is(classified, ErrDuplicateCredential) {
+			c.JSON(http.StatusConflict, gin.H{"error": "a credential with this slug already exists in this organization"})
+			return
+		}
+		if errors.Is(classified, ErrCredentialCheckViolation) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "credential failed validation; kind or slug is invalid"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update credential"})
 		return
 	}

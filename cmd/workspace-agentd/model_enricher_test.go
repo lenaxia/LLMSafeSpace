@@ -193,7 +193,7 @@ func TestEnrichProviderModels_PopulatesModelsFromEndpoint(t *testing.T) {
 
 	dir := t.TempDir()
 	providers := []sec.LLMProviderData{
-		{Provider: "openai", APIKey: "test-key", BaseURL: srv.URL, Models: nil},
+		{Kind: "openai", Slug: "openai", APIKey: "test-key", BaseURL: srv.URL, Models: nil},
 	}
 
 	fn := enrichProviderModels(context.Background(), dir, srv.Client())
@@ -207,7 +207,7 @@ func TestEnrichProviderModels_PopulatesModelsFromEndpoint(t *testing.T) {
 func TestEnrichProviderModels_SkipsProviderWithNoBaseURL(t *testing.T) {
 	dir := t.TempDir()
 	providers := []sec.LLMProviderData{
-		{Provider: "anthropic", APIKey: "test-key", BaseURL: "", Models: nil},
+		{Kind: "anthropic", Slug: "anthropic", APIKey: "test-key", BaseURL: "", Models: nil},
 	}
 
 	callCount := 0
@@ -227,7 +227,7 @@ func TestEnrichProviderModels_SkipsProviderWithExistingModels(t *testing.T) {
 	dir := t.TempDir()
 	existingModels := []sec.LLMModelConfig{{ID: "allow-listed-model"}}
 	providers := []sec.LLMProviderData{
-		{Provider: "openai", APIKey: "test-key", BaseURL: "https://example.com/v1", Models: existingModels},
+		{Kind: "openai", Slug: "openai", APIKey: "test-key", BaseURL: "https://example.com/v1", Models: existingModels},
 	}
 
 	callCount := 0
@@ -251,7 +251,7 @@ func TestEnrichProviderModels_FetchFailIsBestEffort(t *testing.T) {
 
 	dir := t.TempDir()
 	providers := []sec.LLMProviderData{
-		{Provider: "openai", APIKey: "test-key", BaseURL: srv.URL, Models: nil},
+		{Kind: "openai", Slug: "openai", APIKey: "test-key", BaseURL: srv.URL, Models: nil},
 	}
 
 	fn := enrichProviderModels(context.Background(), dir, srv.Client())
@@ -288,9 +288,9 @@ func TestEnrichProviderModels_MultipleProviders(t *testing.T) {
 
 	dir := t.TempDir()
 	providers := []sec.LLMProviderData{
-		{Provider: "provider1", APIKey: "key1", BaseURL: srv1.URL},
-		{Provider: "provider2", APIKey: "key2", BaseURL: srv2.URL},
-		{Provider: "provider3", APIKey: "key3", BaseURL: ""}, // no BaseURL — skipped
+		{Kind: "provider1", Slug: "provider1", APIKey: "key1", BaseURL: srv1.URL},
+		{Kind: "provider2", Slug: "provider2", APIKey: "key2", BaseURL: srv2.URL},
+		{Kind: "provider3", Slug: "provider3", APIKey: "key3", BaseURL: ""}, // no BaseURL — skipped
 	}
 
 	// Use srv1's client (both are plain httptest servers — same transport).
@@ -326,7 +326,7 @@ func TestEnrichProviderModels_CacheWrittenToEnricherCacheDir(t *testing.T) {
 	// enricherCacheDir intentionally NOT pre-created — MkdirAll inside fetchOrCacheModels must create it.
 
 	providers := []sec.LLMProviderData{
-		{Provider: "thekao", APIKey: "test-key", BaseURL: srv.URL},
+		{Kind: "thekao", Slug: "thekao", APIKey: "test-key", BaseURL: srv.URL},
 	}
 
 	fn := enrichProviderModels(context.Background(), enricherCacheDir, srv.Client())
@@ -369,10 +369,11 @@ func TestEnrichProviderModels_PreservesContextLimitOnExistingModels(t *testing.T
 	}
 	providers := []sec.LLMProviderData{
 		{
-			Provider: "thekao cloud",
-			APIKey:   "sk-test",
-			BaseURL:  "https://ai.thekao.cloud/v1",
-			Models:   existingModels,
+			Kind:    "thekao cloud",
+			Slug:    "thekao cloud",
+			APIKey:  "sk-test",
+			BaseURL: "https://ai.thekao.cloud/v1",
+			Models:  existingModels,
 		},
 	}
 
@@ -408,7 +409,7 @@ func TestEnrichProviderModels_FetchedModels_HaveZeroContextLimit(t *testing.T) {
 
 	dir := t.TempDir()
 	providers := []sec.LLMProviderData{
-		{Provider: "thekao cloud", APIKey: "test-key", BaseURL: srv.URL},
+		{Kind: "thekao cloud", Slug: "thekao cloud", APIKey: "test-key", BaseURL: srv.URL},
 	}
 
 	fn := enrichProviderModels(context.Background(), dir, srv.Client())

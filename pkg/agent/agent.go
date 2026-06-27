@@ -36,8 +36,14 @@ type AgentRuntime interface {
 
 // LLMProviderData is re-exported from pkg/secrets for use in the interface.
 // This avoids a circular import between pkg/agent and pkg/secrets.
+//
+// Epic 55: see pkg/secrets/types.go for the authoritative documentation.
+// Briefly — Kind is the SDK-class enum; Slug is the per-owner unique
+// identity that becomes the literal key in agent-config.json's provider
+// map (opencode persists it as `providerID` on session records).
 type LLMProviderData struct {
-	Provider   string           `json:"provider"`
+	Kind       string           `json:"kind"`
+	Slug       string           `json:"slug"`
 	APIKey     string           `json:"apiKey"`
 	BaseURL    string           `json:"baseURL,omitempty"`
 	Models     []LLMModelConfig `json:"models,omitempty"`

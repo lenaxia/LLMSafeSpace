@@ -33,7 +33,7 @@ func TestSunset_APIKey_CreateSucceedsBeforeSunset(t *testing.T) {
 		Name:     "legacy-before-sunset",
 		Type:     SecretTypeAPIKey,
 		Value:    "sk-legacy",
-		Metadata: json.RawMessage(`{"provider":"anthropic"}`),
+		Metadata: json.RawMessage(`{"kind":"anthropic","slug":"anthropic"}`),
 	})
 	if err != nil {
 		t.Fatalf("api-key must be creatable before sunset, got %v", err)
@@ -55,7 +55,7 @@ func TestSunset_APIKey_CreateFailsAfterSunset(t *testing.T) {
 		Name:     "legacy-after-sunset",
 		Type:     SecretTypeAPIKey,
 		Value:    "sk-legacy",
-		Metadata: json.RawMessage(`{"provider":"anthropic"}`),
+		Metadata: json.RawMessage(`{"kind":"anthropic","slug":"anthropic"}`),
 	})
 	if err == nil {
 		t.Fatal("api-key creation must fail after sunset, got nil")
@@ -91,7 +91,7 @@ func TestSunset_NonAPIKeyTypes_UnaffectedAfterSunset(t *testing.T) {
 			name:     "llm-provider",
 			secret:   "lp-1",
 			typ:      SecretTypeLLMProvider,
-			value:    `{"provider":"anthropic","apiKey":"sk-ant-x"}`,
+			value:    `{"kind":"anthropic","slug":"anthropic","apiKey":"sk-ant-x"}`,
 			metadata: json.RawMessage(`{}`),
 		},
 		{

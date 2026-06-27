@@ -25,11 +25,25 @@ var ErrAutoBindingProtected = &pkgerrors.StatusError{
 }
 
 // CredentialBinding is a joined row from workspace_credential_bindings + provider_credentials.
+//
+// Identity model (Epic 55):
+//   - Kind: SDK-class discriminator. Enum constrained by the DB CHECK.
+//     Selects the adapter that opencode loads (openai, anthropic, bedrock,
+//     openai_compatible, ...). Multiple credentials of the same Kind can
+//     coexist (e.g. two OpenAI-compatible LiteLLM endpoints) — Kind does
+//     NOT have to be unique per owner.
+//   - Slug: stable per-owner identity. UNIQUE(owner_type, owner_id, slug)
+//     in the DB. This is also the literal key used in agent-config.json's
+//     provider map, so opencode sessions persist this value as providerID.
+//     A user with two `openai_compatible` credentials picks distinct slugs
+//     (e.g. "litellm-prod-us-west" and "litellm-prod-eu-central") to
+//     disambiguate them on the wire.
 type CredentialBinding struct {
 	ID                 string
 	OwnerType          string
 	OwnerID            string
-	Provider           string
+	Kind               string // SDK-class enum (openai, anthropic, openai_compatible, ...)
+	Slug               string // slug-safe per-owner identity; the agent-config.json provider-map key
 	Ciphertext         []byte
 	KeyVersion         int
 	ModelAllowlist     []string
@@ -67,8 +81,11 @@ type CredentialStore interface {
 	// that all credentials are bound to all of a user's workspaces.
 	BindCredentialToAllUserWorkspaces(ctx context.Context, credentialID, userID string) error
 
-	// HasUserProviderCredential returns true if the user owns a credential for the given provider.
-	HasUserProviderCredential(ctx context.Context, userID, provider string) (bool, error)
+	// HasUserProviderCredential returns true if the user owns a credential
+	// with the given slug. The lookup is per-slug because slug is the
+	// per-owner unique identity (Epic 55); kind alone is not unique per
+	// owner.
+	HasUserProviderCredential(ctx context.Context, userID, slug string) (bool, error)
 }
 
 // AdminKeyDeriver derives a server-side encryption key for admin credentials.

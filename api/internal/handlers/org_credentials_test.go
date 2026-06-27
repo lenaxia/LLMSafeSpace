@@ -95,6 +95,12 @@ func (f *fakeOrgCredStore) UpdateCredential(_ context.Context, _, _, credID stri
 		c.Name = row.Name
 		f.lastUpdateName = &row.Name
 	}
+	if row.Kind != "" {
+		c.Kind = row.Kind
+	}
+	if row.Slug != "" {
+		c.Slug = row.Slug
+	}
 	if row.Ciphertext != nil {
 		c.Ciphertext = row.Ciphertext
 		c.KeyVersion = row.KeyVersion
@@ -159,7 +165,7 @@ func TestOrgCredentials_Create_Success(t *testing.T) {
 	h := NewOrgCredentialsHandler(store, store, provider, &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
-	body := `{"name":"team-anthropic","provider":"anthropic","apiKey":"sk-ant-123"}`
+	body := `{"name":"team-anthropic","kind":"anthropic","slug":"anthropic","apiKey":"sk-ant-123"}`
 	req, _ := http.NewRequest("POST", "/api/v1/orgs/org-1/credentials", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -169,7 +175,7 @@ func TestOrgCredentials_Create_Success(t *testing.T) {
 	var resp CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "team-anthropic", resp.Name)
-	assert.Equal(t, "anthropic", resp.Provider)
+	assert.Equal(t, "anthropic", resp.Slug)
 	assert.Equal(t, "org-1", resp.OrgID)
 	assert.NotEmpty(t, resp.ID)
 
@@ -182,7 +188,8 @@ func TestOrgCredentials_Create_Success(t *testing.T) {
 	require.NoError(t, err)
 	var decoded secrets.LLMProviderData
 	require.NoError(t, json.Unmarshal(pd, &decoded))
-	assert.Equal(t, "anthropic", decoded.Provider)
+	assert.Equal(t, "anthropic", decoded.Kind)
+	assert.Equal(t, "anthropic", decoded.Slug)
 	assert.Equal(t, "sk-ant-123", decoded.APIKey)
 }
 
@@ -196,7 +203,7 @@ func TestOrgCredentials_Create_NilKEK_503(t *testing.T) {
 	h := NewOrgCredentialsHandler(store, store, provider, &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
-	body := `{"name":"x","provider":"openai","apiKey":"sk-1"}`
+	body := `{"name":"x","kind":"openai","slug":"openai","apiKey":"sk-1"}`
 	req, _ := http.NewRequest("POST", "/api/v1/orgs/org-1/credentials", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -212,7 +219,7 @@ func TestOrgCredentials_Create_MissingAPIKey_400(t *testing.T) {
 	h := NewOrgCredentialsHandler(store, store, mustStaticProv(kek), &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
-	body := `{"name":"x","provider":"openai"}`
+	body := `{"name":"x","kind":"openai","slug":"openai"}`
 	req, _ := http.NewRequest("POST", "/api/v1/orgs/org-1/credentials", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -233,7 +240,7 @@ func TestOrgCredentials_Create_BindFails_Returns201WithWarning(t *testing.T) {
 	h := NewOrgCredentialsHandler(store, store, mustStaticProv(kek), &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
-	body := `{"name":"x","provider":"openai","apiKey":"sk-1"}`
+	body := `{"name":"x","kind":"openai","slug":"openai","apiKey":"sk-1"}`
 	req, _ := http.NewRequest("POST", "/api/v1/orgs/org-1/credentials", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -256,11 +263,11 @@ func TestOrgCredentials_Update_APIKeyRotation_Success(t *testing.T) {
 		kek[i] = byte(i + 1)
 	}
 	// Seed an existing credential encrypted with the org KEK.
-	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "anthropic", APIKey: "old-key"}) //nolint:gosec
+	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Kind: "anthropic", Slug: "anthropic", APIKey: "old-key"}) //nolint:gosec
 	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
 	require.NoError(t, err)
 	store.creds["cred-1"] = &secrets.CredentialRow{
-		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Name: "old-name", Provider: "anthropic",
+		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Name: "old-name", Kind: "anthropic", Slug: "anthropic",
 		Ciphertext: existingCT,
 		KeyVersion: 1,
 	}
@@ -288,7 +295,8 @@ func TestOrgCredentials_Update_APIKeyRotation_Success(t *testing.T) {
 	var decoded secrets.LLMProviderData
 	require.NoError(t, json.Unmarshal(pd, &decoded))
 	assert.Equal(t, "rotated-key", decoded.APIKey)
-	assert.Equal(t, "anthropic", decoded.Provider, "provider must survive rotation")
+	assert.Equal(t, "anthropic", decoded.Kind, "kind must survive rotation")
+	assert.NotEmpty(t, decoded.Slug, "slug must survive rotation")
 }
 
 // TestOrgCredentials_Update_NilKEK_503 verifies that rotating the API key when
@@ -297,11 +305,11 @@ func TestOrgCredentials_Update_APIKeyRotation_Success(t *testing.T) {
 func TestOrgCredentials_Update_NilKEK_503(t *testing.T) {
 	store := newFakeOrgCredStore()
 	kek := make([]byte, 32)
-	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "old"}) //nolint:gosec
+	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Kind: "openai", Slug: "openai", APIKey: "old"}) //nolint:gosec
 	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
 	require.NoError(t, err)
 	store.creds["cred-1"] = &secrets.CredentialRow{
-		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Provider: "openai",
+		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Kind: "openai", Slug: "openai",
 		Ciphertext: existingCT,
 		KeyVersion: 1,
 	}
@@ -346,11 +354,11 @@ func TestOrgCredentials_Update_NotFound_404(t *testing.T) {
 func TestOrgCredentials_Update_NameOnly_NoReEncrypt(t *testing.T) {
 	store := newFakeOrgCredStore()
 	kek := make([]byte, 32)
-	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "kept"}) //nolint:gosec
+	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Kind: "openai", Slug: "openai", APIKey: "kept"}) //nolint:gosec
 	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
 	require.NoError(t, err)
 	store.creds["cred-1"] = &secrets.CredentialRow{
-		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Name: "old", Provider: "openai",
+		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Name: "old", Kind: "openai", Slug: "openai",
 		Ciphertext: existingCT,
 		KeyVersion: 3,
 	}
@@ -379,7 +387,7 @@ func TestOrgCredentials_Update_NameOnly_NoReEncrypt(t *testing.T) {
 func TestOrgCredentials_Update_NameOnly_PreservesLimits(t *testing.T) {
 	store := newFakeOrgCredStore()
 	kek := make([]byte, 32)
-	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "kept"})
+	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Kind: "openai", Slug: "openai", APIKey: "kept"})
 	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
 	require.NoError(t, err)
 	store.creds["cred-1"] = &secrets.CredentialRow{
@@ -387,7 +395,8 @@ func TestOrgCredentials_Update_NameOnly_PreservesLimits(t *testing.T) {
 		OwnerType:          "org",
 		OwnerID:            "org-1",
 		Name:               "old",
-		Provider:           "openai",
+		Kind:               "openai",
+		Slug:               "openai",
 		Ciphertext:         existingCT,
 		KeyVersion:         1,
 		ModelAllowlist:     []string{"glm-5.1"},
@@ -422,10 +431,10 @@ func TestOrgCredentials_Update_CorruptCiphertext_500(t *testing.T) {
 	// or a KEK rotation that lost the old key.
 	differentKEK := make([]byte, 32)
 	corruptCT, err := secrets.EncryptSecret(differentKEK,
-		[]byte(`{"provider":"openai","apiKey":"original"}`))
+		[]byte(`{"kind":"openai","slug":"openai","apiKey":"original"}`))
 	require.NoError(t, err)
 	store.creds["cred-1"] = &secrets.CredentialRow{
-		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Provider: "openai",
+		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Kind: "openai", Slug: "openai",
 		Ciphertext: corruptCT,
 		KeyVersion: 1,
 	}
@@ -467,11 +476,11 @@ func TestOrgCredentials_ProbeModels_NilKEK_503(t *testing.T) {
 	for i := range kek {
 		kek[i] = byte(i + 1)
 	}
-	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "sk-x", BaseURL: "http://localhost:19998/v1"})
+	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Kind: "openai", Slug: "openai", APIKey: "sk-x", BaseURL: "http://localhost:19998/v1"})
 	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
 	require.NoError(t, err)
 	store.creds["cred-1"] = &secrets.CredentialRow{
-		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Provider: "openai",
+		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Kind: "openai", Slug: "openai",
 		Ciphertext: existingCT,
 		KeyVersion: 1,
 	}
@@ -497,7 +506,7 @@ func TestOrgCredentials_ProbeModels_NoBaseURL(t *testing.T) {
 	h := NewOrgCredentialsHandler(store, store, mustStaticProv(kek), &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
-	createBody := `{"name":"native","provider":"anthropic","apiKey":"sk-ant-123"}`
+	createBody := `{"name":"native","kind":"anthropic","slug":"anthropic","apiKey":"sk-ant-123"}`
 	req, _ := http.NewRequest("POST", "/api/v1/orgs/org-1/credentials", bytes.NewBufferString(createBody))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -537,7 +546,8 @@ func TestOrgCredentials_ProbeModels_Success(t *testing.T) {
 
 	createBody, _ := json.Marshal(map[string]interface{}{
 		"name":               "thekao",
-		"provider":           "thekao cloud",
+		"kind":               "openai_compatible",
+		"slug":               "thekao-cloud",
 		"apiKey":             "sk-probe-key",
 		"baseURL":            fakeProvider.URL + "/v1",
 		"modelAllowlist":     []string{"glm-5.1", "glm-5.2"},
@@ -593,12 +603,12 @@ func TestOrgCredentials_List_CamelCaseAndBaseURL(t *testing.T) {
 		{"cred-a", "https://api.example.com/v1", map[string]int{"glm-5.1": 200000}},
 		{"cred-b", "", nil},
 	} {
-		pd := secrets.LLMProviderData{Provider: "custom", APIKey: "sk-" + tc.id, BaseURL: tc.baseURL}
+		pd := secrets.LLMProviderData{Kind: "openai_compatible", Slug: "custom", APIKey: "sk-" + tc.id, BaseURL: tc.baseURL}
 		plain, _ := json.Marshal(pd)
 		ct, err := secrets.EncryptSecret(kek, plain)
 		require.NoError(t, err)
 		store.creds[tc.id] = &secrets.CredentialRow{
-			ID: tc.id, OwnerType: "org", OwnerID: "org-1", Name: tc.id, Provider: "custom", ModelAllowlist: []string{}, ModelContextLimits: tc.limits,
+			ID: tc.id, OwnerType: "org", OwnerID: "org-1", Name: tc.id, Kind: "openai_compatible", Slug: "custom", ModelAllowlist: []string{}, ModelContextLimits: tc.limits,
 			Ciphertext: ct,
 			KeyVersion: 1,
 		}
@@ -625,10 +635,10 @@ func TestOrgCredentials_List_CamelCaseAndBaseURL(t *testing.T) {
 			keys[k] = true
 		}
 	}
-	for _, want := range []string{"id", "orgId", "name", "provider", "baseURL", "modelAllowlist", "modelContextLimits", "modelOutputLimits", "createdAt", "updatedAt"} {
+	for _, want := range []string{"id", "orgId", "name", "kind", "slug", "baseURL", "modelAllowlist", "modelContextLimits", "modelOutputLimits", "createdAt", "updatedAt"} {
 		assert.True(t, keys[want], "List JSON must include camelCase key %q (got %v)", want, keys)
 	}
-	for _, forbidden := range []string{"ID", "OrgID", "ModelAllowlist", "ModelContextLimits", "ModelOutputLimits", "CreatedAt"} {
+	for _, forbidden := range []string{"ID", "OrgID", "Provider", "ModelAllowlist", "ModelContextLimits", "ModelOutputLimits", "CreatedAt"} {
 		assert.False(t, keys[forbidden], "List JSON must NOT include PascalCase key %q", forbidden)
 	}
 
@@ -674,7 +684,8 @@ func TestOrgCredentials_Create_FullResponse(t *testing.T) {
 
 	createBody, _ := json.Marshal(map[string]interface{}{
 		"name":               "thekao",
-		"provider":           "thekao cloud",
+		"kind":               "openai_compatible",
+		"slug":               "thekao-cloud",
 		"apiKey":             "sk-x",
 		"baseURL":            "https://api.example.com/v1",
 		"modelAllowlist":     []string{"glm-5.1"},
@@ -691,7 +702,7 @@ func TestOrgCredentials_Create_FullResponse(t *testing.T) {
 	assert.NotEmpty(t, resp.ID)
 	assert.Equal(t, "org-1", resp.OrgID)
 	assert.Equal(t, "thekao", resp.Name)
-	assert.Equal(t, "thekao cloud", resp.Provider)
+	assert.Equal(t, "thekao-cloud", resp.Slug)
 	assert.Equal(t, "https://api.example.com/v1", resp.BaseURL, "Create response must echo baseURL")
 	assert.Equal(t, []string{"glm-5.1"}, resp.ModelAllowlist)
 	assert.Equal(t, 200000, resp.ModelContextLimits["glm-5.1"])
@@ -708,11 +719,11 @@ func TestOrgCredentials_Update_FullResponse(t *testing.T) {
 	for i := range kek {
 		kek[i] = byte(i + 7)
 	}
-	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "kept", BaseURL: "https://api.openai.com/v1"})
+	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Kind: "openai", Slug: "openai", APIKey: "kept", BaseURL: "https://api.openai.com/v1"})
 	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
 	require.NoError(t, err)
 	store.creds["cred-1"] = &secrets.CredentialRow{
-		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Name: "old", Provider: "openai", ModelAllowlist: []string{}, ModelContextLimits: map[string]int{},
+		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Name: "old", Kind: "openai", Slug: "openai", ModelAllowlist: []string{}, ModelContextLimits: map[string]int{},
 		Ciphertext: existingCT,
 		KeyVersion: 1,
 	}
@@ -731,7 +742,7 @@ func TestOrgCredentials_Update_FullResponse(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "cred-1", resp.ID)
 	assert.Equal(t, "renamed", resp.Name)
-	assert.Equal(t, "openai", resp.Provider)
+	assert.Equal(t, "openai", resp.Slug)
 	assert.Equal(t, "https://api.openai.com/v1", resp.BaseURL, "Update response must decrypt baseURL")
 	assert.Equal(t, []string{"gpt-4o"}, resp.ModelAllowlist)
 	assert.Equal(t, 128000, resp.ModelContextLimits["gpt-4o"])
@@ -746,11 +757,11 @@ func TestOrgCredentials_Update_BaseURLOnly_Persists(t *testing.T) {
 	for i := range kek {
 		kek[i] = byte(i + 8)
 	}
-	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "kept", BaseURL: "https://old.example.com/v1"})
+	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Kind: "openai", Slug: "openai", APIKey: "kept", BaseURL: "https://old.example.com/v1"})
 	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
 	require.NoError(t, err)
 	store.creds["cred-1"] = &secrets.CredentialRow{
-		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Name: "k", Provider: "openai",
+		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Name: "k", Kind: "openai", Slug: "openai",
 		Ciphertext: existingCT,
 		KeyVersion: 1,
 	}
@@ -793,7 +804,7 @@ func TestOrgCredentials_Create_GetFails_GracefulFallback(t *testing.T) {
 	h := NewOrgCredentialsHandler(store, store, mustStaticProv(kek), &mockOrgAuthService{userID: "admin-1"})
 	router := setupOrgCredRouter(h)
 
-	body := `{"name":"x","provider":"openai","apiKey":"sk-1"}`
+	body := `{"name":"x","kind":"openai","slug":"openai","apiKey":"sk-1"}`
 	req, _ := http.NewRequest("POST", "/api/v1/orgs/org-1/credentials", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -813,11 +824,11 @@ func TestOrgCredentials_Create_GetFails_GracefulFallback(t *testing.T) {
 func TestOrgCredentials_Update_GetFails_GracefulFallback(t *testing.T) {
 	store := newFakeOrgCredStore()
 	kek := make([]byte, 32)
-	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "k"})
+	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Kind: "openai", Slug: "openai", APIKey: "k"})
 	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
 	require.NoError(t, err)
 	store.creds["cred-1"] = &secrets.CredentialRow{
-		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Name: "old", Provider: "openai",
+		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Name: "old", Kind: "openai", Slug: "openai",
 		Ciphertext: existingCT,
 		KeyVersion: 1,
 	}
@@ -848,11 +859,11 @@ func TestOrgCredentials_Update_APIKeyAndBaseURL_Combined(t *testing.T) {
 	for i := range kek {
 		kek[i] = byte(i + 9)
 	}
-	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "old-key", BaseURL: "https://old.example.com/v1"})
+	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{Kind: "openai", Slug: "openai", APIKey: "old-key", BaseURL: "https://old.example.com/v1"})
 	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
 	require.NoError(t, err)
 	store.creds["cred-1"] = &secrets.CredentialRow{
-		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Name: "k", Provider: "openai",
+		ID: "cred-1", OwnerType: "org", OwnerID: "org-1", Name: "k", Kind: "openai", Slug: "openai",
 		Ciphertext: existingCT,
 		KeyVersion: 1,
 	}
@@ -889,20 +900,20 @@ func TestOrgCredentials_List_PartialDecryptFailure_NonFatal(t *testing.T) {
 		kek[i] = byte(i + 10)
 	}
 	// cred-good: encrypted with the matching KEK → decrypts, baseURL extracted.
-	goodPlain, _ := json.Marshal(secrets.LLMProviderData{Provider: "openai", APIKey: "k1", BaseURL: "https://good.example.com/v1"})
+	goodPlain, _ := json.Marshal(secrets.LLMProviderData{Kind: "openai", Slug: "openai", APIKey: "k1", BaseURL: "https://good.example.com/v1"})
 	goodCT, err := secrets.EncryptSecret(kek, goodPlain)
 	require.NoError(t, err)
 	store.creds["cred-good"] = &secrets.CredentialRow{
-		ID: "cred-good", OwnerType: "org", OwnerID: "org-1", Name: "good", Provider: "openai",
+		ID: "cred-good", OwnerType: "org", OwnerID: "org-1", Name: "good", Kind: "openai", Slug: "openai",
 		Ciphertext: goodCT,
 		KeyVersion: 1,
 	}
 	// cred-corrupt: ciphertext encrypted with a DIFFERENT key → decrypt fails.
 	otherKEK := make([]byte, 32)
-	corruptCT, err := secrets.EncryptSecret(otherKEK, []byte(`{"provider":"openai","apiKey":"k2","baseURL":"https://corrupt.example.com/v1"}`))
+	corruptCT, err := secrets.EncryptSecret(otherKEK, []byte(`{"kind":"openai","slug":"openai","apiKey":"k2","baseURL":"https://corrupt.example.com/v1"}`))
 	require.NoError(t, err)
 	store.creds["cred-corrupt"] = &secrets.CredentialRow{
-		ID: "cred-corrupt", OwnerType: "org", OwnerID: "org-1", Name: "corrupt", Provider: "openai",
+		ID: "cred-corrupt", OwnerType: "org", OwnerID: "org-1", Name: "corrupt", Kind: "openai", Slug: "openai",
 		Ciphertext: corruptCT,
 		KeyVersion: 1,
 	}
@@ -950,7 +961,8 @@ func TestOrgCredentials_List_OrderIsNewestFirst(t *testing.T) {
 			OwnerType: "org",
 			OwnerID:   "org-1",
 			Name:      tc.id,
-			Provider:  "openai",
+			Kind:      "openai",
+			Slug:      "openai",
 			CreatedAt: ts,
 			UpdatedAt: ts,
 		}
@@ -986,4 +998,205 @@ func TestOrgCredentials_Delete_NotFound_Returns204(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNoContent, w.Code, "deleting a missing credential must be idempotent (204)")
+}
+
+// TestOrgCredentials_Update_SlugRename_PropagatesToCiphertext is the Epic 55
+// regression guard for the stale-ciphertext-on-rename bug. When the org
+// handler updates a credential's slug, the encrypted LLMProviderData blob
+// MUST be re-encrypted with the new slug — otherwise the blob carries the
+// OLD slug, and on injection the materialize path (which keys agent-config.json
+// by pd.Slug pulled from the decrypted blob) emits the OLD slug as the
+// provider-map key. The wire format never sees the rename.
+//
+// Trace pre-fix:
+//  1. PUT /orgs/:id/credentials/:id with {"slug":"new-slug"}.
+//  2. Handler updates row.Slug column but skips re-encrypt (the condition
+//     was `req.APIKey != nil || req.BaseURL != nil`).
+//  3. Ciphertext still decrypts to LLMProviderData{Slug:"old-slug",...}.
+//  4. InjectSecrets -> buildSecretsJSON sets Name: pd.Slug = "old-slug".
+//  5. agent-config.json provider map has the old key.
+//
+// The fix mirrors the admin handler: include Kind/Slug in the re-encrypt
+// condition.
+func TestOrgCredentials_Update_SlugRename_PropagatesToCiphertext(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 1)
+	}
+	// Seed: an existing org credential whose stored ciphertext encodes
+	// slug="old-slug" inside the LLMProviderData blob.
+	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{
+		Kind:   "openai_compatible",
+		Slug:   "old-slug",
+		APIKey: "sk-unchanged",
+	})
+	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
+	require.NoError(t, err)
+	store.creds["cred-1"] = &secrets.CredentialRow{
+		ID: "cred-1", OwnerType: "org", OwnerID: "org-1",
+		Name:       "thekao cloud",
+		Kind:       "openai_compatible",
+		Slug:       "old-slug",
+		Ciphertext: existingCT,
+		KeyVersion: 1,
+	}
+
+	provider := mustStaticProv(kek)
+	h := NewOrgCredentialsHandler(store, store, provider, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	// Rename the slug; do NOT touch apiKey or baseURL.
+	body := `{"slug":"new-slug"}`
+	req, _ := http.NewRequest("PUT", "/api/v1/orgs/org-1/credentials/cred-1", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+
+	// The DB row's slug column must reflect the rename.
+	require.Equal(t, "new-slug", store.creds["cred-1"].Slug, "row column slug must be renamed")
+
+	// Critical: the encrypted blob must ALSO carry the new slug. Otherwise
+	// the materialize path (which reads pd.Slug from the decrypted blob to
+	// key agent-config.json) emits the OLD slug.
+	require.NotEmpty(t, store.lastUpdateCT, "ciphertext must be rewritten on slug rename")
+	require.NotEqual(t, existingCT, store.lastUpdateCT,
+		"ciphertext must change when slug is renamed — the slug lives INSIDE the encrypted blob")
+
+	pd, err := secrets.DecryptSecret(kek, store.lastUpdateCT)
+	require.NoError(t, err)
+	var decoded secrets.LLMProviderData
+	require.NoError(t, json.Unmarshal(pd, &decoded))
+	assert.Equal(t, "new-slug", decoded.Slug,
+		"decrypted slug must be the renamed value — this is what reaches opencode as providerID")
+	assert.Equal(t, "openai_compatible", decoded.Kind, "kind survives the rename")
+	assert.Equal(t, "sk-unchanged", decoded.APIKey, "apiKey survives the rename")
+}
+
+// TestOrgCredentials_Update_KindChange_PropagatesToCiphertext is the same
+// regression for the Kind field. Kind also lives inside the encrypted blob
+// (LLMProviderData.Kind) and is read out during materialization.
+func TestOrgCredentials_Update_KindChange_PropagatesToCiphertext(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 1)
+	}
+	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{
+		Kind:   "openai_compatible",
+		Slug:   "stable-slug",
+		APIKey: "sk-stable",
+	})
+	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
+	require.NoError(t, err)
+	store.creds["cred-1"] = &secrets.CredentialRow{
+		ID: "cred-1", OwnerType: "org", OwnerID: "org-1",
+		Name: "x", Kind: "openai_compatible", Slug: "stable-slug",
+		Ciphertext: existingCT, KeyVersion: 1,
+	}
+
+	provider := mustStaticProv(kek)
+	h := NewOrgCredentialsHandler(store, store, provider, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	body := `{"kind":"anthropic"}`
+	req, _ := http.NewRequest("PUT", "/api/v1/orgs/org-1/credentials/cred-1", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	require.Equal(t, "anthropic", store.creds["cred-1"].Kind, "row column kind must change")
+
+	require.NotEmpty(t, store.lastUpdateCT, "ciphertext must be rewritten on kind change")
+	pd, err := secrets.DecryptSecret(kek, store.lastUpdateCT)
+	require.NoError(t, err)
+	var decoded secrets.LLMProviderData
+	require.NoError(t, json.Unmarshal(pd, &decoded))
+	assert.Equal(t, "anthropic", decoded.Kind, "decrypted kind must be the new value")
+	assert.Equal(t, "stable-slug", decoded.Slug, "slug survives the kind change")
+}
+
+// TestOrgCredentials_Create_InvalidKind_400 — boundary validation for the
+// org handler. The kind value "custom" was the legacy SDK kind for
+// OpenAI-compatible endpoints; Epic 55 replaces it with "openai_compatible"
+// and the validator must reject the old name.
+func TestOrgCredentials_Create_InvalidKind_400(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 1)
+	}
+	provider := mustStaticProv(kek)
+	h := NewOrgCredentialsHandler(store, store, provider, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	body := `{"name":"x","kind":"custom","slug":"x","apiKey":"sk-test"}`
+	req, _ := http.NewRequest("POST", "/api/v1/orgs/org-1/credentials", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code,
+		"invalid kind must surface as 400 from the handler boundary, not 500 from the DB CHECK")
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "kind", resp["field"])
+}
+
+// TestOrgCredentials_Create_InvalidSlug_400 — same for slug.
+func TestOrgCredentials_Create_InvalidSlug_400(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 1)
+	}
+	provider := mustStaticProv(kek)
+	h := NewOrgCredentialsHandler(store, store, provider, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	body := `{"name":"x","kind":"anthropic","slug":"has space","apiKey":"sk-test"}`
+	req, _ := http.NewRequest("POST", "/api/v1/orgs/org-1/credentials", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "slug", resp["field"])
+}
+
+// TestOrgCredentials_Update_InvalidKind_400 — validation also fires on the
+// partial-update path.
+func TestOrgCredentials_Update_InvalidKind_400(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 1)
+	}
+	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{
+		Kind: "openai_compatible", Slug: "valid-slug", APIKey: "sk-existing",
+	})
+	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
+	require.NoError(t, err)
+	store.creds["cred-1"] = &secrets.CredentialRow{
+		ID: "cred-1", OwnerType: "org", OwnerID: "org-1",
+		Name: "x", Kind: "openai_compatible", Slug: "valid-slug",
+		Ciphertext: existingCT, KeyVersion: 1,
+	}
+
+	provider := mustStaticProv(kek)
+	h := NewOrgCredentialsHandler(store, store, provider, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	body := `{"kind":"custom"}`
+	req, _ := http.NewRequest("PUT", "/api/v1/orgs/org-1/credentials/cred-1", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }

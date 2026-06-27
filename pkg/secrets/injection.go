@@ -177,21 +177,25 @@ func (s *SecretService) loadLLMCredentials(ctx context.Context, bindings []Crede
 	adminDecrypt := decryptFnFor(s.adminProvider)
 	orgDecrypt := decryptFnFor(s.orgProvider)
 
+	// Dedup by Slug — Slug is the per-owner unique identity (Epic 55).
+	// Kind is NOT unique per owner (two openai_compatible LiteLLM
+	// endpoints with different slugs both materialize as separate
+	// providers in agent-config.json).
 	seen := make(map[string]bool)
 	var out []LLMProviderData
 	for _, b := range bindings {
-		if seen[b.Provider] {
+		if seen[b.Slug] {
 			continue
 		}
 		pd, err := s.decryptBinding(ctx, b, sessionID, matchedSigningKey, adminDecrypt, orgDecrypt)
 		if err != nil {
 			// Don't set seen — allow fallback to lower-priority binding.
 			s.audit(ctx, userID, "credential_decrypt_failed", nil, &workspaceID,
-				map[string]string{"credentialID": b.ID, "provider": b.Provider, "ownerType": b.OwnerType, "error": err.Error()})
+				map[string]string{"credentialID": b.ID, "slug": b.Slug, "kind": b.Kind, "ownerType": b.OwnerType, "error": err.Error()})
 			continue
 		}
 		s.applyModelAllowlist(&pd, b)
-		seen[b.Provider] = true
+		seen[b.Slug] = true
 		out = append(out, pd)
 	}
 	return out
@@ -209,12 +213,12 @@ func (s *SecretService) loadServerKEKCredentials(ctx context.Context, bindings [
 	seen := make(map[string]bool)
 	var out []LLMProviderData
 	for _, b := range bindings {
-		if seen[b.Provider] {
+		if seen[b.Slug] {
 			continue
 		}
 		if b.OwnerType == "user" {
 			s.audit(ctx, userID, "credential_skipped_no_session", nil, &workspaceID,
-				map[string]string{"credentialID": b.ID, "provider": b.Provider, "ownerType": b.OwnerType})
+				map[string]string{"credentialID": b.ID, "slug": b.Slug, "kind": b.Kind, "ownerType": b.OwnerType})
 			continue
 		}
 		// Sessionless decryption: admin/org only. Pass empty sessionID
@@ -223,11 +227,11 @@ func (s *SecretService) loadServerKEKCredentials(ctx context.Context, bindings [
 		pd, err := s.decryptBinding(ctx, b, "", nil, adminDecrypt, orgDecrypt)
 		if err != nil {
 			s.audit(ctx, userID, "credential_decrypt_failed", nil, &workspaceID,
-				map[string]string{"credentialID": b.ID, "provider": b.Provider, "ownerType": b.OwnerType, "error": err.Error()})
+				map[string]string{"credentialID": b.ID, "slug": b.Slug, "kind": b.Kind, "ownerType": b.OwnerType, "error": err.Error()})
 			continue
 		}
 		s.applyModelAllowlist(&pd, b)
-		seen[b.Provider] = true
+		seen[b.Slug] = true
 		out = append(out, pd)
 	}
 	return out
@@ -432,8 +436,14 @@ func buildSecretsJSON(providerData []LLMProviderData, nonLLM []InjectedSecret) (
 			return nil, err
 		}
 		out = append(out, InjectedSecret{
-			Type:      SecretTypeLLMProvider,
-			Name:      pd.Provider,
+			Type: SecretTypeLLMProvider,
+			// Name on the InjectedSecret is the slug — this becomes the
+			// provider-map key in agent-config.json (Epic 55). Before
+			// Epic 55 this was the SDK kind ("custom", "opencode"),
+			// causing identity collisions when two credentials shared
+			// the same SDK. opencode persists this as `providerID` on
+			// session records.
+			Name:      pd.Slug,
 			Plaintext: string(plaintext),
 		})
 	}

@@ -72,7 +72,7 @@ func setupTestRouter(t *testing.T) (*gin.Engine, *secrets.SecretService, string)
 func TestHandler_CreateSecret_Success(t *testing.T) {
 	router, _, _ := setupTestRouter(t)
 
-	body := `{"name":"my-key","type":"api-key","value":"sk-secret","metadata":{"provider":"openai"}}`
+	body := `{"name":"my-key","type":"api-key","value":"sk-secret","metadata":{"kind":"openai","slug":"openai"}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -126,7 +126,7 @@ func TestHandler_CreateSecret_MissingMetadata(t *testing.T) {
 func TestHandler_CreateSecret_Duplicate(t *testing.T) {
 	router, _, _ := setupTestRouter(t)
 
-	body := `{"name":"dup","type":"api-key","value":"v1","metadata":{"provider":"x"}}`
+	body := `{"name":"dup","type":"api-key","value":"v1","metadata":{"kind":"x","slug":"x"}}`
 	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(body))
 	req1.Header.Set("Content-Type", "application/json")
 	w1 := httptest.NewRecorder()
@@ -151,7 +151,7 @@ func TestHandler_ListSecrets(t *testing.T) {
 
 	// Create two secrets
 	for _, name := range []string{"key-1", "key-2"} {
-		body := `{"name":"` + name + `","type":"api-key","value":"v","metadata":{"provider":"x"}}`
+		body := `{"name":"` + name + `","type":"api-key","value":"v","metadata":{"kind":"x","slug":"x"}}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -191,7 +191,7 @@ func TestHandler_UpdateSecret(t *testing.T) {
 	router, _, _ := setupTestRouter(t)
 
 	// Create
-	createBody := `{"name":"updatable","type":"api-key","value":"old","metadata":{"provider":"x"}}`
+	createBody := `{"name":"updatable","type":"api-key","value":"old","metadata":{"kind":"x","slug":"x"}}`
 	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(createBody))
 	createReq.Header.Set("Content-Type", "application/json")
 	cw := httptest.NewRecorder()
@@ -216,7 +216,7 @@ func TestHandler_DeleteSecret(t *testing.T) {
 	router, _, _ := setupTestRouter(t)
 
 	// Create
-	createBody := `{"name":"deletable","type":"api-key","value":"v","metadata":{"provider":"x"}}`
+	createBody := `{"name":"deletable","type":"api-key","value":"v","metadata":{"kind":"x","slug":"x"}}`
 	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(createBody))
 	createReq.Header.Set("Content-Type", "application/json")
 	cw := httptest.NewRecorder()
@@ -248,7 +248,7 @@ func TestHandler_Bindings(t *testing.T) {
 	router, _, _ := setupTestRouter(t)
 
 	// Create a secret
-	createBody := `{"name":"bindable","type":"api-key","value":"v","metadata":{"provider":"x"}}`
+	createBody := `{"name":"bindable","type":"api-key","value":"v","metadata":{"kind":"x","slug":"x"}}`
 	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(createBody))
 	createReq.Header.Set("Content-Type", "application/json")
 	cw := httptest.NewRecorder()
@@ -288,7 +288,7 @@ func TestHandler_AuditLog(t *testing.T) {
 	router, _, _ := setupTestRouter(t)
 
 	// Create a secret (generates audit entry)
-	body := `{"name":"audited","type":"api-key","value":"v","metadata":{"provider":"x"}}`
+	body := `{"name":"audited","type":"api-key","value":"v","metadata":{"kind":"x","slug":"x"}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()

@@ -244,7 +244,7 @@ func TestE2E_APIKey_WithoutDecryptAccess_SecretsOperation403(t *testing.T) {
 	resp.Body.Close()
 
 	resp = dekDoPost(t, client, base+"/api/v1/secrets",
-		`{"name":"should-fail","type":"api-key","value":"sk-test","metadata":{"provider":"test"}}`, apiKeyResp.Key)
+		`{"name":"should-fail","type":"api-key","value":"sk-test","metadata":{"kind":"test","slug":"test"}}`, apiKeyResp.Key)
 	if resp.StatusCode != 403 {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -269,7 +269,7 @@ func TestE2E_APIKey_WithDecryptAccess_SessionIDConsistency(t *testing.T) {
 	}
 
 	resp := dekDoPost(t, client, base+"/api/v1/secrets",
-		`{"name":"sid-test","type":"api-key","value":"sk-val","metadata":{"provider":"test"}}`, rawAPIKey)
+		`{"name":"sid-test","type":"api-key","value":"sk-val","metadata":{"kind":"test","slug":"test"}}`, rawAPIKey)
 	if resp.StatusCode != 201 {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -304,7 +304,7 @@ func TestE2E_APIKey_DEKUnwrapCorrupt_GracefulDegradation(t *testing.T) {
 	}
 
 	resp := dekDoPost(t, client, base+"/api/v1/secrets",
-		`{"name":"should-fail","type":"api-key","value":"sk-val","metadata":{"provider":"test"}}`, rawAPIKey)
+		`{"name":"should-fail","type":"api-key","value":"sk-val","metadata":{"kind":"test","slug":"test"}}`, rawAPIKey)
 	if resp.StatusCode != 403 {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -371,7 +371,7 @@ func TestE2E_APIKey_RewrapAfterRotation(t *testing.T) {
 	_, rawAPIKey := registerLoginCreateDEK(t, client, base, "rotate@test.com", "pw-123456")
 
 	resp := dekDoPost(t, client, base+"/api/v1/secrets",
-		`{"name":"pre-rotate","type":"api-key","value":"sk-before","metadata":{"provider":"test"}}`, rawAPIKey)
+		`{"name":"pre-rotate","type":"api-key","value":"sk-before","metadata":{"kind":"test","slug":"test"}}`, rawAPIKey)
 	if resp.StatusCode != 201 {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -444,7 +444,7 @@ func TestE2E_APIKey_RewrapAfterRotation(t *testing.T) {
 	loginResp.Body.Close()
 
 	resp = dekDoPost(t, client, base+"/api/v1/secrets",
-		`{"name":"post-rotate","type":"api-key","value":"sk-after","metadata":{"provider":"test"}}`, rawAPIKey)
+		`{"name":"post-rotate","type":"api-key","value":"sk-after","metadata":{"kind":"test","slug":"test"}}`, rawAPIKey)
 	if resp.StatusCode != 201 {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -464,7 +464,7 @@ func TestE2E_APIKey_DEKTTLMatters(t *testing.T) {
 	_, rawAPIKey := registerLoginCreateDEK(t, client, base, "ttl@test.com", "pw-123456")
 
 	resp := dekDoPost(t, client, base+"/api/v1/secrets",
-		`{"name":"first-req","type":"api-key","value":"sk-val","metadata":{"provider":"test"}}`, rawAPIKey)
+		`{"name":"first-req","type":"api-key","value":"sk-val","metadata":{"kind":"test","slug":"test"}}`, rawAPIKey)
 	if resp.StatusCode != 201 {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -481,7 +481,7 @@ func TestE2E_APIKey_DEKTTLMatters(t *testing.T) {
 	delete(dekCache.store, sid)
 
 	resp = dekDoPost(t, client, base+"/api/v1/secrets",
-		`{"name":"ttl-test","type":"api-key","value":"sk-val2","metadata":{"provider":"test"}}`, rawAPIKey)
+		`{"name":"ttl-test","type":"api-key","value":"sk-val2","metadata":{"kind":"test","slug":"test"}}`, rawAPIKey)
 	if resp.StatusCode != 201 {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()

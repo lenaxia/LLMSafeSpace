@@ -180,7 +180,7 @@ func TestPgSecretStore_CRUD(t *testing.T) {
 		Type:       SecretTypeAPIKey,
 		Ciphertext: []byte("encrypted-data-here"),
 		KeyVersion: 1,
-		Metadata:   json.RawMessage(`{"provider":"openai"}`),
+		Metadata:   json.RawMessage(`{"kind":"openai","slug":"openai"}`),
 	}
 	err := store.CreateSecret(ctx, secret)
 	if err != nil {
@@ -388,7 +388,7 @@ func TestPgE2E_FullSecretLifecycle(t *testing.T) {
 	created, err := svc.CreateSecret(ctx, userID, "e2e-session", nil, CreateSecretRequest{
 		Name: "pg-e2e-secret", Type: SecretTypeAPIKey,
 		Value:    `{"apiKey":"sk-real-test-key"}`,
-		Metadata: json.RawMessage(`{"provider":"anthropic"}`),
+		Metadata: json.RawMessage(`{"kind":"anthropic","slug":"anthropic"}`),
 	})
 	if err != nil {
 		t.Fatalf("CreateSecret: %v", err)

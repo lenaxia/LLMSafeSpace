@@ -52,9 +52,10 @@ func TestE2E_ModelEnricher_ModelsLandInAgentConfig(t *testing.T) {
 	// secrets.json with an llm-provider that has BaseURL but no Models.
 	// plaintext must be a JSON STRING (double-encoded) containing the provider JSON.
 	providerJSON, _ := json.Marshal(map[string]any{
-		"provider": "custom-llm",
-		"apiKey":   "sk-enrich-test",
-		"baseURL":  srv.URL,
+		"kind":    "custom-llm",
+		"slug":    "custom-llm",
+		"apiKey":  "sk-enrich-test",
+		"baseURL": srv.URL,
 	})
 	secretsBatch, err := json.Marshal([]map[string]any{{
 		"type":      "llm-provider",
@@ -116,9 +117,10 @@ func TestE2E_ModelEnricher_FetchFail_StillWritesConfig(t *testing.T) {
 	defer srv.Close()
 
 	providerJSON, _ := json.Marshal(map[string]any{
-		"provider": "failing-endpoint",
-		"apiKey":   "sk-still-here",
-		"baseURL":  srv.URL,
+		"kind":    "failing-endpoint",
+		"slug":    "failing-endpoint",
+		"apiKey":  "sk-still-here",
+		"baseURL": srv.URL,
 	})
 	secretsBatch, err := json.Marshal([]map[string]any{{
 		"type":      "llm-provider",

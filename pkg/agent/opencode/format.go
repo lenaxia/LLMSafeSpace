@@ -93,7 +93,12 @@ func FormatOpenCodeConfig(providers []secrets.LLMProviderData) ([]byte, error) {
 			}
 		}
 
-		cfg.Provider[p.Provider] = op
+		// Key the provider map by Slug — this is the literal value
+		// opencode persists as `providerID` on session records. Pre-
+		// Epic-55 this was keyed by Provider (the SDK kind), causing
+		// identity collisions when two credentials of the same SDK
+		// kind existed for the same owner.
+		cfg.Provider[p.Slug] = op
 
 		// First provider with a Default wins.
 		if cfg.Model == "" && p.Default != "" {

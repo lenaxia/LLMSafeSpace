@@ -25,7 +25,7 @@ func TestSecretService_CreateSecret_AllTypes(t *testing.T) {
 			name: "api-key with metadata",
 			req: CreateSecretRequest{
 				Name: "openai", Type: SecretTypeAPIKey, Value: "sk-123",
-				Metadata: json.RawMessage(`{"provider":"openai","model":"gpt-4"}`),
+				Metadata: json.RawMessage(`{"kind":"openai","slug":"openai","model":"gpt-4"}`),
 			},
 		},
 		{
@@ -137,7 +137,7 @@ func TestSecretService_ConcurrentAccess(t *testing.T) {
 			name := "concurrent-" + string(rune('a'+idx))
 			_, errs[idx] = svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 				Name: name, Type: SecretTypeAPIKey, Value: "val",
-				Metadata: json.RawMessage(`{"provider":"x"}`),
+				Metadata: json.RawMessage(`{"kind":"x","slug":"x"}`),
 			})
 		}(i)
 	}
@@ -179,7 +179,7 @@ func TestSecretService_EncryptionIsolation(t *testing.T) {
 	// User 1 creates a secret
 	created, err := svc.CreateSecret(ctx, "user-1", "sess-1", nil, CreateSecretRequest{
 		Name: "private", Type: SecretTypeAPIKey, Value: "user1-secret-key",
-		Metadata: json.RawMessage(`{"provider":"x"}`),
+		Metadata: json.RawMessage(`{"kind":"x","slug":"x"}`),
 	})
 	if err != nil {
 		t.Fatalf("CreateSecret failed: %v", err)
@@ -204,7 +204,7 @@ func TestSecretService_UpdatePreservesEncryption(t *testing.T) {
 
 	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "rotate-test", Type: SecretTypeAPIKey, Value: "original",
-		Metadata: json.RawMessage(`{"provider":"x"}`),
+		Metadata: json.RawMessage(`{"kind":"x","slug":"x"}`),
 	})
 
 	// Get ciphertext before update
@@ -235,7 +235,7 @@ func TestSecretService_BindingMultipleWorkspaces(t *testing.T) {
 	// Create one secret
 	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "shared-key", Type: SecretTypeAPIKey, Value: "v",
-		Metadata: json.RawMessage(`{"provider":"x"}`),
+		Metadata: json.RawMessage(`{"kind":"x","slug":"x"}`),
 	})
 
 	// Bind to multiple workspaces
@@ -261,11 +261,11 @@ func TestSecretService_RebindReplacesExisting(t *testing.T) {
 
 	s1, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "key-1", Type: SecretTypeAPIKey, Value: "v1",
-		Metadata: json.RawMessage(`{"provider":"a"}`),
+		Metadata: json.RawMessage(`{"kind":"a","slug":"a"}`),
 	})
 	s2, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "key-2", Type: SecretTypeAPIKey, Value: "v2",
-		Metadata: json.RawMessage(`{"provider":"b"}`),
+		Metadata: json.RawMessage(`{"kind":"b","slug":"b"}`),
 	})
 
 	// Bind both
@@ -300,7 +300,7 @@ func TestKeyService_PasswordChange_SecretsStillDecryptable(t *testing.T) {
 	// Create a secret
 	created, _ := svc.CreateSecret(ctx, "user-1", "sess-1", nil, CreateSecretRequest{
 		Name: "persist", Type: SecretTypeAPIKey, Value: "my-api-key",
-		Metadata: json.RawMessage(`{"provider":"x"}`),
+		Metadata: json.RawMessage(`{"kind":"x","slug":"x"}`),
 	})
 
 	// Change password

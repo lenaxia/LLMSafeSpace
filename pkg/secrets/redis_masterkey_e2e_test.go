@@ -94,7 +94,7 @@ func TestE2E_MasterKey_FullLifecycle(t *testing.T) {
 		Name:     "e2e-master-key-secret",
 		Type:     SecretTypeAPIKey,
 		Value:    "sk-super-secret-value-that-must-be-encrypted",
-		Metadata: json.RawMessage(`{"provider":"test"}`),
+		Metadata: json.RawMessage(`{"kind":"test","slug":"test"}`),
 	})
 	if err != nil {
 		t.Fatalf("CreateSecret: %v", err)

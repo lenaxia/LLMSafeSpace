@@ -84,12 +84,29 @@ func (h *UserProviderCredentialsHandler) Create(c *gin.Context) {
 		return
 	}
 
-	if strings.TrimSpace(req.Provider) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "provider must not be empty"})
+	if strings.TrimSpace(req.Kind) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "kind must not be empty"})
 		return
 	}
-	req.Provider = strings.TrimSpace(req.Provider)
+	if strings.TrimSpace(req.Slug) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "slug must not be empty"})
+		return
+	}
+	req.Kind = strings.TrimSpace(req.Kind)
+	req.Slug = strings.TrimSpace(req.Slug)
 	req.Name = strings.TrimSpace(req.Name)
+
+	// Boundary validation (Epic 55). Surface invalid kind/slug as 400
+	// with a field-specific message rather than letting the DB CHECK
+	// fire as opaque 500.
+	if err := secrets.ValidateKind(req.Kind); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "field": "kind"})
+		return
+	}
+	if err := secrets.ValidateSlug(req.Slug); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "field": "slug"})
+		return
+	}
 
 	dek, err := h.keys.GetDEK(c.Request.Context(), sessionID, extractMatchedSigningKey(c))
 	if err != nil {
@@ -97,7 +114,7 @@ func (h *UserProviderCredentialsHandler) Create(c *gin.Context) {
 		return
 	}
 
-	ciphertext, err := encryptCredentialData(c.Request.Context(), func(_ context.Context, pt []byte) ([]byte, error) { return secrets.EncryptSecret(dek, pt) }, req.Provider, req.APIKey, req.BaseURL)
+	ciphertext, err := encryptCredentialData(c.Request.Context(), func(_ context.Context, pt []byte) ([]byte, error) { return secrets.EncryptSecret(dek, pt) }, req.Kind, req.Slug, req.APIKey, req.BaseURL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode credential"})
 		return
@@ -114,7 +131,8 @@ func (h *UserProviderCredentialsHandler) Create(c *gin.Context) {
 		ID:                 uuid.New().String(),
 		OwnerID:            userID,
 		Name:               req.Name,
-		Provider:           req.Provider,
+		Kind:               req.Kind,
+		Slug:               req.Slug,
 		Ciphertext:         ciphertext,
 		KeyVersion:         record.KeyVersion,
 		ModelAllowlist:     req.ModelAllowlist,
@@ -134,8 +152,13 @@ func (h *UserProviderCredentialsHandler) Create(c *gin.Context) {
 	}
 
 	if err := h.store.CreateCredential(c.Request.Context(), "user", userID, row); err != nil {
-		if errors.Is(ClassifyPostgresError(err), ErrDuplicateCredential) {
-			c.JSON(http.StatusConflict, gin.H{"error": "credential for this provider already exists"})
+		classified := ClassifyPostgresError(err)
+		if errors.Is(classified, ErrDuplicateCredential) {
+			c.JSON(http.StatusConflict, gin.H{"error": "credential with this slug already exists"})
+			return
+		}
+		if errors.Is(classified, ErrCredentialCheckViolation) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "credential failed validation; kind or slug is invalid"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to store credential"})
@@ -145,7 +168,8 @@ func (h *UserProviderCredentialsHandler) Create(c *gin.Context) {
 	resp := CredentialResponse{
 		ID:                 row.ID,
 		Name:               row.Name,
-		Provider:           row.Provider,
+		Kind:               row.Kind,
+		Slug:               row.Slug,
 		ModelAllowlist:     row.ModelAllowlist,
 		ModelContextLimits: row.ModelContextLimits,
 		ModelOutputLimits:  row.ModelOutputLimits,
@@ -184,7 +208,8 @@ func (h *UserProviderCredentialsHandler) List(c *gin.Context) {
 		r := CredentialResponse{
 			ID:                 row.ID,
 			Name:               row.Name,
-			Provider:           row.Provider,
+			Kind:               row.Kind,
+			Slug:               row.Slug,
 			ModelAllowlist:     row.ModelAllowlist,
 			ModelContextLimits: row.ModelContextLimits,
 			ModelOutputLimits:  row.ModelOutputLimits,
@@ -224,7 +249,8 @@ func (h *UserProviderCredentialsHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, CredentialResponse{
 		ID:                 row.ID,
 		Name:               row.Name,
-		Provider:           row.Provider,
+		Kind:               row.Kind,
+		Slug:               row.Slug,
 		ModelAllowlist:     row.ModelAllowlist,
 		ModelContextLimits: row.ModelContextLimits,
 		ModelOutputLimits:  row.ModelOutputLimits,

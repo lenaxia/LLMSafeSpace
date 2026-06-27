@@ -175,12 +175,12 @@ func buildReloadSecretService(t *testing.T, bindings []reloadBinding, wireAdmin,
 		default:
 			t.Fatalf("unknown ownerType %q", b.ownerType)
 		}
-		plaintext, err := json.Marshal(secrets.LLMProviderData{Provider: b.provider, APIKey: b.apiKey})
+		plaintext, err := json.Marshal(secrets.LLMProviderData{Kind: b.provider, Slug: b.provider, APIKey: b.apiKey})
 		require.NoError(t, err)
 		cipher, err := secrets.EncryptSecret(kek, plaintext)
 		require.NoError(t, err)
 		credBindings = append(credBindings, secrets.CredentialBinding{
-			OwnerType: b.ownerType, Provider: b.provider, Ciphertext: cipher, SourceType: "auto",
+			OwnerType: b.ownerType, Kind: b.provider, Slug: b.provider, Ciphertext: cipher, SourceType: "auto",
 		})
 	}
 	store := &reloadE2EStore{cred: &reloadE2ECredStore{bindings: credBindings}}

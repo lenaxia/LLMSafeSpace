@@ -58,7 +58,7 @@ func TestE2E_PasswordReset_OldDEKCannotDecryptAfterReinit(t *testing.T) {
 	require.Len(t, dek1, 32, "DEK must be 32 bytes")
 
 	// Encrypt a secret under DEK1 (the "pre-reset" ciphertext).
-	oldPlaintext := []byte(`{"provider":"openai","apiKey":"sk-pre-reset-leak"}`)
+	oldPlaintext := []byte(`{"kind":"openai","slug":"openai","apiKey":"sk-pre-reset-leak"}`)
 	oldCiphertext, err := EncryptSecret(dek1, oldPlaintext)
 	require.NoError(t, err)
 

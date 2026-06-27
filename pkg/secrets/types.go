@@ -209,7 +209,13 @@ type LLMModelConfig struct {
 // LLMProviderData holds structured credentials for one LLM provider.
 // The Plaintext value of an "llm-provider" secret is the JSON encoding of this struct.
 //
-// Provider is required (e.g. "anthropic", "openai", "google").
+// Epic 55 identity model:
+//   - Kind is the SDK-class enum (openai, anthropic, openai_compatible, ...).
+//     Required. Determines which adapter opencode loads.
+//   - Slug is the per-owner unique identity AND the literal key used in
+//     agent-config.json's provider map. opencode persists this as
+//     `providerID` on sessions.
+//
 // APIKey is required.
 // BaseURL is optional; when empty the provider's default endpoint is used.
 // Models is an optional allowlist. When empty or nil all models from the
@@ -219,7 +225,8 @@ type LLMModelConfig struct {
 // SmallModel is the model ID used for lightweight/cheap operations
 // (e.g. summarization).
 type LLMProviderData struct {
-	Provider   string           `json:"provider"`
+	Kind       string           `json:"kind"`
+	Slug       string           `json:"slug"`
 	APIKey     string           `json:"apiKey"`
 	BaseURL    string           `json:"baseURL,omitempty"`
 	Models     []LLMModelConfig `json:"models,omitempty"`
@@ -229,8 +236,11 @@ type LLMProviderData struct {
 
 // Validate checks that required fields are set in LLMProviderData.
 func (d LLMProviderData) Validate() error {
-	if d.Provider == "" {
-		return fmt.Errorf("%w: provider is required", ErrInvalidLLMProvider)
+	if d.Kind == "" {
+		return fmt.Errorf("%w: kind is required", ErrInvalidLLMProvider)
+	}
+	if d.Slug == "" {
+		return fmt.Errorf("%w: slug is required", ErrInvalidLLMProvider)
 	}
 	if d.APIKey == "" {
 		return fmt.Errorf("%w: apiKey is required", ErrInvalidLLMProvider)

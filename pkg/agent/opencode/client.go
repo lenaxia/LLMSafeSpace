@@ -205,6 +205,9 @@ func (c *Client) retryWithBackoff(ctx context.Context, maxAttempts int, initialD
 }
 
 // setAuth sends PUT /auth/:providerID with the credential payload.
+// :providerID in the URL is the credential's slug — that is the literal
+// key in agent-config.json's provider map and what opencode persists as
+// `providerID` on session records (Epic 55).
 func (c *Client) setAuth(ctx context.Context, p secrets.LLMProviderData) error {
 	payload := authPayload{
 		Type: "api",
@@ -216,17 +219,17 @@ func (c *Client) setAuth(ctx context.Context, p secrets.LLMProviderData) error {
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("marshal auth payload for %s: %w", p.Provider, err)
+		return fmt.Errorf("marshal auth payload for %s: %w", p.Slug, err)
 	}
 
 	return c.retryWithBackoff(ctx, 3, 1*time.Second, func(attempt int) error {
 		reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 
-		url := c.baseURL + "/auth/" + p.Provider
+		url := c.baseURL + "/auth/" + p.Slug
 		req, err := http.NewRequestWithContext(reqCtx, http.MethodPut, url, bytes.NewReader(body))
 		if err != nil {
-			return fmt.Errorf("create PUT request for %s: %w", p.Provider, err)
+			return fmt.Errorf("create PUT request for %s: %w", p.Slug, err)
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.SetBasicAuth(agentd.AuthUsername, c.password)
@@ -234,29 +237,31 @@ func (c *Client) setAuth(ctx context.Context, p secrets.LLMProviderData) error {
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			c.logger.Warn("PUT /auth failed, will retry",
-				zap.String("provider", p.Provider),
+				zap.String("slug", p.Slug),
+				zap.String("kind", p.Kind),
 				zap.Int("attempt", attempt),
 				zap.Error(err),
 			)
-			return fmt.Errorf("PUT /auth/%s (attempt %d): %w", p.Provider, attempt, err)
+			return fmt.Errorf("PUT /auth/%s (attempt %d): %w", p.Slug, attempt, err)
 		}
 		defer resp.Body.Close() //nolint:errcheck
 		_, _ = io.Copy(io.Discard, resp.Body)
 
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
 			return &nonRetryableError{
-				provider:   p.Provider,
+				provider:   p.Slug,
 				statusCode: resp.StatusCode,
 				attempt:    attempt,
 			}
 		}
 		if resp.StatusCode >= 500 {
 			c.logger.Warn("PUT /auth server error, will retry",
-				zap.String("provider", p.Provider),
+				zap.String("slug", p.Slug),
+				zap.String("kind", p.Kind),
 				zap.Int("attempt", attempt),
 				zap.Int("status", resp.StatusCode),
 			)
-			return fmt.Errorf("PUT /auth/%s (attempt %d): server error: HTTP %d", p.Provider, attempt, resp.StatusCode)
+			return fmt.Errorf("PUT /auth/%s (attempt %d): server error: HTTP %d", p.Slug, attempt, resp.StatusCode)
 		}
 		return nil
 	})

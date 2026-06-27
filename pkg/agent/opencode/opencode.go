@@ -57,7 +57,8 @@ func (a *OpenCodeAgent) FormatProviderConfig(providers []agent.LLMProviderData) 
 			}
 		}
 		secProviders[i] = secrets.LLMProviderData{
-			Provider:   p.Provider,
+			Kind:       p.Kind,
+			Slug:       p.Slug,
 			APIKey:     p.APIKey,
 			BaseURL:    p.BaseURL,
 			Models:     models,
