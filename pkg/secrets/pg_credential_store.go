@@ -183,8 +183,7 @@ func (s *PgSecretStore) BackfillFreeTierBindings(ctx context.Context) (int64, er
 }
 
 // HasUserProviderCredential returns true if the user owns a credential
-// with the given slug. (Epic 55: the parameter name kept for source
-// compatibility but its semantics are slug, not provider/kind.)
+// with the given slug.
 func (s *PgSecretStore) HasUserProviderCredential(ctx context.Context, userID, slug string) (bool, error) {
 	var exists bool
 	err := s.pool.QueryRow(ctx, `

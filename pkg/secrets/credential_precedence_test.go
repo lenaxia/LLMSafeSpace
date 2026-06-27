@@ -799,3 +799,92 @@ func TestCredentialPrecedence_OrgCredential_WrongKEK_FailsAndFallsBack(t *testin
 	llm := filterByType(injected, SecretTypeLLMProvider)
 	assert.Empty(t, llm, "undecryptable org credential must be skipped, not injected")
 }
+
+// TestCredentialPrecedence_SameKind_DifferentSlugs_BothMaterialize is the
+// canonical Epic 55 regression guard. Two credentials of the SAME SDK kind
+// (openai_compatible) with DIFFERENT slugs (litellm-prod, litellm-staging)
+// must both materialize as separate entries in the injected payload — they
+// are NOT collapsed by the dedup loop.
+//
+// Why this matters: pre-Epic-55 the `seen` dedup keyed on Provider (the SDK
+// kind), so two openai_compatible credentials would collide and only one
+// would reach opencode. The whole point of slug-as-identity is that two
+// LiteLLM endpoints, two Bedrock accounts, or two OpenAI staging credentials
+// can coexist. The dedup must key on Slug, not Kind.
+//
+// A regression that reverts the dedup key from `seen[b.Slug]` to
+// `seen[b.Kind]` (or any of `b.Provider`-shaped renames) would silently
+// collapse these two providers into one and the original incident class
+// would reappear. This test fails loudly in that case.
+func TestCredentialPrecedence_SameKind_DifferentSlugs_BothMaterialize(t *testing.T) {
+	keyStore := newMockKeyStore()
+	dekCache := newTestDEKCache()
+	keyService := NewKeyService(keyStore, dekCache)
+
+	secretStore := newMockSecretStore()
+
+	orgKEK := make([]byte, 32)
+	for i := range orgKEK {
+		orgKEK[i] = byte(i + 1)
+	}
+
+	// Two org credentials, same Kind ("openai_compatible"), different Slugs.
+	prodPlain, _ := json.Marshal(LLMProviderData{
+		Kind:    "openai_compatible",
+		Slug:    "litellm-prod",
+		APIKey:  "sk-prod",
+		BaseURL: "https://litellm-prod.example/v1",
+	})
+	prodCipher, err := EncryptSecret(orgKEK, prodPlain)
+	require.NoError(t, err)
+
+	stagingPlain, _ := json.Marshal(LLMProviderData{
+		Kind:    "openai_compatible",
+		Slug:    "litellm-staging",
+		APIKey:  "sk-staging",
+		BaseURL: "https://litellm-staging.example/v1",
+	})
+	stagingCipher, err := EncryptSecret(orgKEK, stagingPlain)
+	require.NoError(t, err)
+
+	mockCredStore := &mockCredentialStore{
+		bindings: []CredentialBinding{
+			{ID: "cred-prod", OwnerType: "org", OwnerID: "org-1",
+				Kind: "openai_compatible", Slug: "litellm-prod",
+				Ciphertext: prodCipher, SourceType: "auto"},
+			{ID: "cred-staging", OwnerType: "org", OwnerID: "org-1",
+				Kind: "openai_compatible", Slug: "litellm-staging",
+				Ciphertext: stagingCipher, SourceType: "auto"},
+		},
+	}
+
+	combinedStore := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCredStore}
+	svc := NewSecretService(keyService, combinedStore)
+	svc.SetAdminProvider(mustStaticProvider(t, orgKEK))
+	svc.SetOrgProvider(mustStaticProvider(t, orgKEK))
+
+	result, err := svc.InjectSecrets(context.Background(), "user-1", "no-session", nil, "ws-1")
+	require.NoError(t, err)
+
+	var injected []InjectedSecret
+	require.NoError(t, json.Unmarshal(result, &injected))
+	llm := filterByType(injected, SecretTypeLLMProvider)
+	require.Len(t, llm, 2,
+		"same-kind, different-slug credentials must BOTH materialize (Epic 55). "+
+			"If this fails with len=1, dedup was reverted to key on Kind instead of Slug.")
+
+	// Verify each slug appears exactly once as the InjectedSecret.Name (which
+	// becomes the agent-config.json provider-map key).
+	slugs := map[string]bool{}
+	for _, s := range llm {
+		slugs[s.Name] = true
+		var pd LLMProviderData
+		require.NoError(t, json.Unmarshal([]byte(s.Plaintext), &pd))
+		require.Equal(t, "openai_compatible", pd.Kind,
+			"both credentials share the same Kind")
+		require.Equal(t, s.Name, pd.Slug,
+			"InjectedSecret.Name must equal the credential's Slug (wire-format key)")
+	}
+	require.True(t, slugs["litellm-prod"], "litellm-prod must be present")
+	require.True(t, slugs["litellm-staging"], "litellm-staging must be present")
+}

@@ -152,6 +152,21 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 	req.Slug = strings.TrimSpace(req.Slug)
 	req.Name = strings.TrimSpace(req.Name)
 
+	// Boundary validation against the SDK-class enum and slug regex.
+	// Without this, an invalid kind/slug reaches the DB and the CHECK
+	// constraint fires, producing an opaque 500 instead of a 400 with
+	// a clear field-specific message (Epic 55 robustness fix). The
+	// validators live in pkg/secrets so the regex and enum are shared
+	// with the DB CHECK declarations via property tests.
+	if err := secrets.ValidateKind(req.Kind); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "field": "kind"})
+		return
+	}
+	if err := secrets.ValidateSlug(req.Slug); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "field": "slug"})
+		return
+	}
+
 	if h.provider == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "master secret not configured"})
 		return
@@ -188,8 +203,15 @@ func (h *AdminProviderCredentialsHandler) Create(c *gin.Context) {
 	}
 
 	if err := h.store.CreateCredential(c.Request.Context(), "admin", "_platform", row); err != nil {
-		if errors.Is(ClassifyPostgresError(err), ErrDuplicateCredential) {
+		classified := ClassifyPostgresError(err)
+		if errors.Is(classified, ErrDuplicateCredential) {
 			c.JSON(http.StatusConflict, gin.H{"error": "credential with this slug already exists"})
+			return
+		}
+		if errors.Is(classified, ErrCredentialCheckViolation) {
+			// Defense in depth: boundary validation should have caught
+			// this. If it didn't, the Go/SQL regex pair has drifted.
+			c.JSON(http.StatusBadRequest, gin.H{"error": "credential failed validation; kind or slug is invalid"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to store credential"})
@@ -257,6 +279,20 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
+	}
+
+	// Validate kind/slug if the caller is updating them.
+	if req.Kind != nil {
+		if err := secrets.ValidateKind(*req.Kind); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "field": "kind"})
+			return
+		}
+	}
+	if req.Slug != nil {
+		if err := secrets.ValidateSlug(*req.Slug); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "field": "slug"})
+			return
+		}
 	}
 
 	// Apply partial updates — only fields present in the request are changed.
@@ -332,8 +368,13 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 	}
 
 	if err := h.store.UpdateCredential(c.Request.Context(), "admin", "_platform", existing.ID, existing); err != nil {
-		if errors.Is(ClassifyPostgresError(err), ErrDuplicateCredential) {
-			c.JSON(http.StatusConflict, gin.H{"error": "a credential for that provider already exists"})
+		classified := ClassifyPostgresError(err)
+		if errors.Is(classified, ErrDuplicateCredential) {
+			c.JSON(http.StatusConflict, gin.H{"error": "a credential with this slug already exists"})
+			return
+		}
+		if errors.Is(classified, ErrCredentialCheckViolation) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "credential failed validation; kind or slug is invalid"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update credential"})

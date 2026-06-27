@@ -96,6 +96,18 @@ func (h *UserProviderCredentialsHandler) Create(c *gin.Context) {
 	req.Slug = strings.TrimSpace(req.Slug)
 	req.Name = strings.TrimSpace(req.Name)
 
+	// Boundary validation (Epic 55). Surface invalid kind/slug as 400
+	// with a field-specific message rather than letting the DB CHECK
+	// fire as opaque 500.
+	if err := secrets.ValidateKind(req.Kind); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "field": "kind"})
+		return
+	}
+	if err := secrets.ValidateSlug(req.Slug); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "field": "slug"})
+		return
+	}
+
 	dek, err := h.keys.GetDEK(c.Request.Context(), sessionID, extractMatchedSigningKey(c))
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "encryption unavailable"})
@@ -140,8 +152,13 @@ func (h *UserProviderCredentialsHandler) Create(c *gin.Context) {
 	}
 
 	if err := h.store.CreateCredential(c.Request.Context(), "user", userID, row); err != nil {
-		if errors.Is(ClassifyPostgresError(err), ErrDuplicateCredential) {
+		classified := ClassifyPostgresError(err)
+		if errors.Is(classified, ErrDuplicateCredential) {
 			c.JSON(http.StatusConflict, gin.H{"error": "credential with this slug already exists"})
+			return
+		}
+		if errors.Is(classified, ErrCredentialCheckViolation) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "credential failed validation; kind or slug is invalid"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to store credential"})

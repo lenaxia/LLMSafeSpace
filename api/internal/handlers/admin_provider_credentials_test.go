@@ -524,7 +524,7 @@ func TestAdminProviderCredentials_ProbeModels_WithBaseURL_CallsProvider(t *testi
 	router := setupAdminCredRouter(h)
 
 	// Create with a baseURL that won't be reachable in tests.
-	createBody := `{"name":"custom","kind":"custom","slug":"custom","apiKey":"sk-test","baseURL":"http://localhost:19999/v1"}`
+	createBody := `{"name":"custom","kind":"openai_compatible","slug":"custom","apiKey":"sk-test","baseURL":"http://localhost:19999/v1"}`
 	req, _ := http.NewRequest("POST", "/api/v1/admin/provider-credentials", bytes.NewBufferString(createBody))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -567,8 +567,8 @@ func TestAdminProviderCredentials_ProbeModels_WithBaseURL_Success(t *testing.T) 
 	// Create with saved context AND output limits for two of the three models.
 	createBody, _ := json.Marshal(map[string]interface{}{
 		"name":               "thekao",
-		"kind":               "thekao cloud",
-		"slug":               "thekao cloud",
+		"kind":               "openai_compatible",
+		"slug":               "thekao-cloud",
 		"apiKey":             "sk-probe-key",
 		"baseURL":            fakeProvider.URL + "/v1",
 		"modelAllowlist":     []string{"glm-5.1", "glm-5.2"},
@@ -639,4 +639,84 @@ func TestAdminProviderCredentials_Response_NoOrgID(t *testing.T) {
 	require.NotEmpty(t, listRaw)
 	_, hasOrgIDList := listRaw[0]["orgId"]
 	assert.False(t, hasOrgIDList, "admin List response must not include orgId")
+}
+
+// TestAdminProviderCredentials_Create_InvalidKind_400 asserts that a request
+// with a kind value not in the enum is rejected at the handler boundary with
+// HTTP 400 and a field-specific message — NOT a 500 from a downstream DB
+// CHECK violation. The field tag in the response body lets the client
+// highlight the offending input. (Epic 55 robustness fix.)
+func TestAdminProviderCredentials_Create_InvalidKind_400(t *testing.T) {
+	store := newFakeAdminCredStore()
+	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(make([]byte, 32)))
+	router := setupAdminCredRouter(h)
+
+	// "custom" was the legacy SDK kind for OpenAI-compatible endpoints —
+	// it is NOT in the post-Epic-55 enum. The handler must reject it.
+	body := `{"name":"x","kind":"custom","slug":"x","apiKey":"sk-test"}`
+	req, _ := http.NewRequest("POST", "/api/v1/admin/provider-credentials", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code,
+		"invalid kind must surface as 400 from the handler boundary, not 500 from the DB CHECK")
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp, "error", "response must carry an error message")
+	assert.Equal(t, "kind", resp["field"], "response must identify the offending field")
+}
+
+// TestAdminProviderCredentials_Create_InvalidSlug_400 asserts the same
+// boundary contract for slug values that don't match the slug-safe regex.
+func TestAdminProviderCredentials_Create_InvalidSlug_400(t *testing.T) {
+	store := newFakeAdminCredStore()
+	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(make([]byte, 32)))
+	router := setupAdminCredRouter(h)
+
+	// Slugs with spaces, slashes, uppercase, or leading/trailing hyphens
+	// are all invalid. Test the most likely accidental input: a slug with
+	// a space (the original incident's "thekao cloud" credential).
+	body := `{"name":"x","kind":"anthropic","slug":"has space","apiKey":"sk-test"}`
+	req, _ := http.NewRequest("POST", "/api/v1/admin/provider-credentials", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code,
+		"invalid slug must surface as 400 from the handler boundary")
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp, "error")
+	assert.Equal(t, "slug", resp["field"])
+}
+
+// TestAdminProviderCredentials_Update_InvalidKind_400 asserts the validation
+// also fires on the partial-update path.
+func TestAdminProviderCredentials_Update_InvalidKind_400(t *testing.T) {
+	store := newFakeAdminCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 1)
+	}
+	// Seed an existing valid credential.
+	existingPT, _ := json.Marshal(secrets.LLMProviderData{Kind: "anthropic", Slug: "anthropic", APIKey: "sk-existing"})
+	existingCT, err := secrets.EncryptSecret(kek, existingPT)
+	require.NoError(t, err)
+	store.creds["id1"] = &secrets.CredentialRow{
+		OwnerType: "admin", OwnerID: "_platform", ID: "id1",
+		Name: "n", Kind: "anthropic", Slug: "anthropic",
+		Ciphertext: existingCT, KeyVersion: 1,
+	}
+
+	h := NewAdminProviderCredentialsHandler(store, mustStaticProv(kek))
+	router := setupAdminCredRouter(h)
+
+	body := `{"kind":"custom"}`
+	req, _ := http.NewRequest("PUT", "/api/v1/admin/provider-credentials/id1", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }

@@ -57,7 +57,20 @@ Existing dev clusters with data WILL need to be wiped and re-bootstrapped. The m
 - Go and TS SDK updates. Tracked as PR-F.
 - Existing-session migration. Per design option C: users re-pick model in any session that was pinned to a defunct provider key.
 
+## Review pass
+
+PR #430 review surfaced three correctness/robustness findings; all addressed in this PR:
+
+1. **Org handler stale-ciphertext on kind/slug rename.** Pre-fix the org `Update` only re-encrypted on apiKey/baseURL changes — kind/slug renames updated the DB column but left the old slug inside the encrypted `LLMProviderData` blob, so the materialize path emitted the OLD slug as the agent-config.json key. Fixed: the re-encrypt condition now includes `req.Kind != nil || req.Slug != nil`, mirroring the admin handler. Two regression tests pin the new behavior (`TestOrgCredentials_Update_SlugRename_PropagatesToCiphertext`, `TestOrgCredentials_Update_KindChange_PropagatesToCiphertext`).
+
+2. **No Go-level validation; DB CHECK violations surfaced as 500.** Added `pkg/secrets/credential_identity.go` with `ValidateKind` (enum of 15 SDK classes) and `ValidateSlug` (regex `^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$`). All three handler Create paths and the admin/org Update paths now call these at the boundary and return 400 with a `field` tag on rejection. Two property tests pin the Go-side regex/enum to the DB CHECK definitions in the migration (cross-layer drift guard). `ClassifyPostgresError` also classifies PG SQLSTATE 23514 → `ErrCredentialCheckViolation` as defense in depth so a Go/SQL regex drift surfaces as 400 rather than 500.
+
+3. **Missing test for canonical Epic 55 scenario.** Added `TestCredentialPrecedence_SameKind_DifferentSlugs_BothMaterialize`: two `openai_compatible` credentials with different slugs (`litellm-prod`, `litellm-staging`) both materialize as separate entries in the injected payload. Trip-wire that fires if dedup ever reverts from `seen[b.Slug]` to `seen[b.Kind]`.
+
+Also fixed two stale comments that claimed the `HasUserProviderCredential` parameter was named "provider" — the parameter is actually `slug` in both the interface and the implementation. Removed legacy `kind:"custom"` from test fixtures (the value is not in the post-Epic-55 enum; tests passed only because in-memory fakes don't enforce CHECK).
+
 ## Refs
 
 - design/stories/epic-55-credential-slug-vs-kind/README.md — full design.
 - worklogs/0552_2026-06-26_provider-not-found-end-to-end.md — diagnosis worklog.
+- PR #430 — this PR.

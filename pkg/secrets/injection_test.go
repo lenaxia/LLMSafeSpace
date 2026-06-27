@@ -345,7 +345,7 @@ func TestSecretService_InjectSecrets_BootstrapPath_NoSession_OrgCredential(t *te
 	for i := range orgKEK {
 		orgKEK[i] = byte(i + 1)
 	}
-	orgPlaintext, _ := json.Marshal(LLMProviderData{Kind: "custom", Slug: "custom", APIKey: "org-key", BaseURL: "https://api.thekao.cloud/v1"})
+	orgPlaintext, _ := json.Marshal(LLMProviderData{Kind: "openai_compatible", Slug: "custom", APIKey: "org-key", BaseURL: "https://api.thekao.cloud/v1"})
 	orgCipher, err := EncryptSecret(orgKEK, orgPlaintext)
 	if err != nil {
 		t.Fatalf("EncryptSecret: %v", err)
@@ -353,7 +353,7 @@ func TestSecretService_InjectSecrets_BootstrapPath_NoSession_OrgCredential(t *te
 
 	mockCred := &mockCredentialStore{
 		bindings: []CredentialBinding{
-			{ID: "cred-org", OwnerType: "org", OwnerID: "org-1", Kind: "custom", Slug: "custom", Ciphertext: orgCipher, ModelAllowlist: []string{"glm-5.2"}, SourceType: "auto"},
+			{ID: "cred-org", OwnerType: "org", OwnerID: "org-1", Kind: "openai_compatible", Slug: "custom", Ciphertext: orgCipher, ModelAllowlist: []string{"glm-5.2"}, SourceType: "auto"},
 		},
 	}
 	combined := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCred}
@@ -555,14 +555,14 @@ func TestSecretService_InjectSecrets_BootstrapPath_DeliversWorkspaceConfigDefaul
 	for i := range orgKEK {
 		orgKEK[i] = byte(i + 1)
 	}
-	orgPlaintext, _ := json.Marshal(LLMProviderData{Kind: "custom", Slug: "custom", APIKey: "org-key"})
+	orgPlaintext, _ := json.Marshal(LLMProviderData{Kind: "openai_compatible", Slug: "custom", APIKey: "org-key"})
 	orgCipher, _ := EncryptSecret(orgKEK, orgPlaintext)
 
 	combined := &combinedTestStore{
 		SecretStore: secretStore,
 		CredentialStore: &mockCredentialStore{
 			bindings: []CredentialBinding{
-				{ID: "cred-org", OwnerType: "org", OwnerID: "org-1", Kind: "custom", Slug: "custom", Ciphertext: orgCipher, SourceType: "auto"},
+				{ID: "cred-org", OwnerType: "org", OwnerID: "org-1", Kind: "openai_compatible", Slug: "custom", Ciphertext: orgCipher, SourceType: "auto"},
 			},
 		},
 	}

@@ -778,8 +778,8 @@ func TestUserProviderCredentials_ProbeModels_WithBaseURL_Success(t *testing.T) {
 
 	createBody, _ := json.Marshal(map[string]interface{}{
 		"name":               "thekao",
-		"kind":               "thekao cloud",
-		"slug":               "thekao cloud",
+		"kind":               "openai_compatible",
+		"slug":               "thekao-cloud",
 		"apiKey":             "sk-probe-key",
 		"baseURL":            fakeProvider.URL + "/v1",
 		"modelAllowlist":     []string{"glm-5.1"},
@@ -827,4 +827,60 @@ func TestUserProviderCredentials_Delete_NotFound_Returns204(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNoContent, w.Code, "deleting a missing credential must be idempotent (204)")
+}
+
+// TestUserProviderCredentials_Create_InvalidKind_400 — boundary validation
+// for the user handler. See AdminProviderCredentials_Create_InvalidKind_400
+// for rationale (Epic 55 robustness fix).
+func TestUserProviderCredentials_Create_InvalidKind_400(t *testing.T) {
+	store := newFakeUserCredStore()
+	dek := make([]byte, 32)
+	dekCache := &testDEKCacheForHandler{cache: map[string][]byte{"sess-1": dek}}
+	keyService := secrets.NewKeyService(&fakeKeyStore{version: 1}, dekCache)
+	h := &UserProviderCredentialsHandler{
+		store:    store,
+		bindings: store,
+		keys:     keyService,
+		keyStore: &fakeKeyStore{version: 1},
+	}
+	router := setupUserCredRouter(h)
+
+	body := `{"name":"x","kind":"custom","slug":"x","apiKey":"sk-test"}`
+	req, _ := http.NewRequest("POST", "/api/v1/provider-credentials", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code,
+		"invalid kind must surface as 400 from the handler boundary, not 500 from the DB CHECK")
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "kind", resp["field"])
+}
+
+// TestUserProviderCredentials_Create_InvalidSlug_400 — boundary validation
+// for slug.
+func TestUserProviderCredentials_Create_InvalidSlug_400(t *testing.T) {
+	store := newFakeUserCredStore()
+	dek := make([]byte, 32)
+	dekCache := &testDEKCacheForHandler{cache: map[string][]byte{"sess-1": dek}}
+	keyService := secrets.NewKeyService(&fakeKeyStore{version: 1}, dekCache)
+	h := &UserProviderCredentialsHandler{
+		store:    store,
+		bindings: store,
+		keys:     keyService,
+		keyStore: &fakeKeyStore{version: 1},
+	}
+	router := setupUserCredRouter(h)
+
+	body := `{"name":"x","kind":"anthropic","slug":"has space","apiKey":"sk-test"}`
+	req, _ := http.NewRequest("POST", "/api/v1/provider-credentials", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "slug", resp["field"])
 }

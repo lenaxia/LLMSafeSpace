@@ -95,6 +95,12 @@ func (f *fakeOrgCredStore) UpdateCredential(_ context.Context, _, _, credID stri
 		c.Name = row.Name
 		f.lastUpdateName = &row.Name
 	}
+	if row.Kind != "" {
+		c.Kind = row.Kind
+	}
+	if row.Slug != "" {
+		c.Slug = row.Slug
+	}
 	if row.Ciphertext != nil {
 		c.Ciphertext = row.Ciphertext
 		c.KeyVersion = row.KeyVersion
@@ -540,8 +546,8 @@ func TestOrgCredentials_ProbeModels_Success(t *testing.T) {
 
 	createBody, _ := json.Marshal(map[string]interface{}{
 		"name":               "thekao",
-		"kind":               "thekao cloud",
-		"slug":               "thekao cloud",
+		"kind":               "openai_compatible",
+		"slug":               "thekao-cloud",
 		"apiKey":             "sk-probe-key",
 		"baseURL":            fakeProvider.URL + "/v1",
 		"modelAllowlist":     []string{"glm-5.1", "glm-5.2"},
@@ -597,12 +603,12 @@ func TestOrgCredentials_List_CamelCaseAndBaseURL(t *testing.T) {
 		{"cred-a", "https://api.example.com/v1", map[string]int{"glm-5.1": 200000}},
 		{"cred-b", "", nil},
 	} {
-		pd := secrets.LLMProviderData{Kind: "custom", Slug: "custom", APIKey: "sk-" + tc.id, BaseURL: tc.baseURL}
+		pd := secrets.LLMProviderData{Kind: "openai_compatible", Slug: "custom", APIKey: "sk-" + tc.id, BaseURL: tc.baseURL}
 		plain, _ := json.Marshal(pd)
 		ct, err := secrets.EncryptSecret(kek, plain)
 		require.NoError(t, err)
 		store.creds[tc.id] = &secrets.CredentialRow{
-			ID: tc.id, OwnerType: "org", OwnerID: "org-1", Name: tc.id, Kind: "custom", Slug: "custom", ModelAllowlist: []string{}, ModelContextLimits: tc.limits,
+			ID: tc.id, OwnerType: "org", OwnerID: "org-1", Name: tc.id, Kind: "openai_compatible", Slug: "custom", ModelAllowlist: []string{}, ModelContextLimits: tc.limits,
 			Ciphertext: ct,
 			KeyVersion: 1,
 		}
@@ -678,8 +684,8 @@ func TestOrgCredentials_Create_FullResponse(t *testing.T) {
 
 	createBody, _ := json.Marshal(map[string]interface{}{
 		"name":               "thekao",
-		"kind":               "thekao cloud",
-		"slug":               "thekao cloud",
+		"kind":               "openai_compatible",
+		"slug":               "thekao-cloud",
 		"apiKey":             "sk-x",
 		"baseURL":            "https://api.example.com/v1",
 		"modelAllowlist":     []string{"glm-5.1"},
@@ -696,7 +702,7 @@ func TestOrgCredentials_Create_FullResponse(t *testing.T) {
 	assert.NotEmpty(t, resp.ID)
 	assert.Equal(t, "org-1", resp.OrgID)
 	assert.Equal(t, "thekao", resp.Name)
-	assert.Equal(t, "thekao cloud", resp.Slug)
+	assert.Equal(t, "thekao-cloud", resp.Slug)
 	assert.Equal(t, "https://api.example.com/v1", resp.BaseURL, "Create response must echo baseURL")
 	assert.Equal(t, []string{"glm-5.1"}, resp.ModelAllowlist)
 	assert.Equal(t, 200000, resp.ModelContextLimits["glm-5.1"])
@@ -992,4 +998,205 @@ func TestOrgCredentials_Delete_NotFound_Returns204(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNoContent, w.Code, "deleting a missing credential must be idempotent (204)")
+}
+
+// TestOrgCredentials_Update_SlugRename_PropagatesToCiphertext is the Epic 55
+// regression guard for the stale-ciphertext-on-rename bug. When the org
+// handler updates a credential's slug, the encrypted LLMProviderData blob
+// MUST be re-encrypted with the new slug — otherwise the blob carries the
+// OLD slug, and on injection the materialize path (which keys agent-config.json
+// by pd.Slug pulled from the decrypted blob) emits the OLD slug as the
+// provider-map key. The wire format never sees the rename.
+//
+// Trace pre-fix:
+//  1. PUT /orgs/:id/credentials/:id with {"slug":"new-slug"}.
+//  2. Handler updates row.Slug column but skips re-encrypt (the condition
+//     was `req.APIKey != nil || req.BaseURL != nil`).
+//  3. Ciphertext still decrypts to LLMProviderData{Slug:"old-slug",...}.
+//  4. InjectSecrets -> buildSecretsJSON sets Name: pd.Slug = "old-slug".
+//  5. agent-config.json provider map has the old key.
+//
+// The fix mirrors the admin handler: include Kind/Slug in the re-encrypt
+// condition.
+func TestOrgCredentials_Update_SlugRename_PropagatesToCiphertext(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 1)
+	}
+	// Seed: an existing org credential whose stored ciphertext encodes
+	// slug="old-slug" inside the LLMProviderData blob.
+	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{
+		Kind:   "openai_compatible",
+		Slug:   "old-slug",
+		APIKey: "sk-unchanged",
+	})
+	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
+	require.NoError(t, err)
+	store.creds["cred-1"] = &secrets.CredentialRow{
+		ID: "cred-1", OwnerType: "org", OwnerID: "org-1",
+		Name:       "thekao cloud",
+		Kind:       "openai_compatible",
+		Slug:       "old-slug",
+		Ciphertext: existingCT,
+		KeyVersion: 1,
+	}
+
+	provider := mustStaticProv(kek)
+	h := NewOrgCredentialsHandler(store, store, provider, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	// Rename the slug; do NOT touch apiKey or baseURL.
+	body := `{"slug":"new-slug"}`
+	req, _ := http.NewRequest("PUT", "/api/v1/orgs/org-1/credentials/cred-1", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+
+	// The DB row's slug column must reflect the rename.
+	require.Equal(t, "new-slug", store.creds["cred-1"].Slug, "row column slug must be renamed")
+
+	// Critical: the encrypted blob must ALSO carry the new slug. Otherwise
+	// the materialize path (which reads pd.Slug from the decrypted blob to
+	// key agent-config.json) emits the OLD slug.
+	require.NotEmpty(t, store.lastUpdateCT, "ciphertext must be rewritten on slug rename")
+	require.NotEqual(t, existingCT, store.lastUpdateCT,
+		"ciphertext must change when slug is renamed — the slug lives INSIDE the encrypted blob")
+
+	pd, err := secrets.DecryptSecret(kek, store.lastUpdateCT)
+	require.NoError(t, err)
+	var decoded secrets.LLMProviderData
+	require.NoError(t, json.Unmarshal(pd, &decoded))
+	assert.Equal(t, "new-slug", decoded.Slug,
+		"decrypted slug must be the renamed value — this is what reaches opencode as providerID")
+	assert.Equal(t, "openai_compatible", decoded.Kind, "kind survives the rename")
+	assert.Equal(t, "sk-unchanged", decoded.APIKey, "apiKey survives the rename")
+}
+
+// TestOrgCredentials_Update_KindChange_PropagatesToCiphertext is the same
+// regression for the Kind field. Kind also lives inside the encrypted blob
+// (LLMProviderData.Kind) and is read out during materialization.
+func TestOrgCredentials_Update_KindChange_PropagatesToCiphertext(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 1)
+	}
+	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{
+		Kind:   "openai_compatible",
+		Slug:   "stable-slug",
+		APIKey: "sk-stable",
+	})
+	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
+	require.NoError(t, err)
+	store.creds["cred-1"] = &secrets.CredentialRow{
+		ID: "cred-1", OwnerType: "org", OwnerID: "org-1",
+		Name: "x", Kind: "openai_compatible", Slug: "stable-slug",
+		Ciphertext: existingCT, KeyVersion: 1,
+	}
+
+	provider := mustStaticProv(kek)
+	h := NewOrgCredentialsHandler(store, store, provider, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	body := `{"kind":"anthropic"}`
+	req, _ := http.NewRequest("PUT", "/api/v1/orgs/org-1/credentials/cred-1", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	require.Equal(t, "anthropic", store.creds["cred-1"].Kind, "row column kind must change")
+
+	require.NotEmpty(t, store.lastUpdateCT, "ciphertext must be rewritten on kind change")
+	pd, err := secrets.DecryptSecret(kek, store.lastUpdateCT)
+	require.NoError(t, err)
+	var decoded secrets.LLMProviderData
+	require.NoError(t, json.Unmarshal(pd, &decoded))
+	assert.Equal(t, "anthropic", decoded.Kind, "decrypted kind must be the new value")
+	assert.Equal(t, "stable-slug", decoded.Slug, "slug survives the kind change")
+}
+
+// TestOrgCredentials_Create_InvalidKind_400 — boundary validation for the
+// org handler. The kind value "custom" was the legacy SDK kind for
+// OpenAI-compatible endpoints; Epic 55 replaces it with "openai_compatible"
+// and the validator must reject the old name.
+func TestOrgCredentials_Create_InvalidKind_400(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 1)
+	}
+	provider := mustStaticProv(kek)
+	h := NewOrgCredentialsHandler(store, store, provider, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	body := `{"name":"x","kind":"custom","slug":"x","apiKey":"sk-test"}`
+	req, _ := http.NewRequest("POST", "/api/v1/orgs/org-1/credentials", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code,
+		"invalid kind must surface as 400 from the handler boundary, not 500 from the DB CHECK")
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "kind", resp["field"])
+}
+
+// TestOrgCredentials_Create_InvalidSlug_400 — same for slug.
+func TestOrgCredentials_Create_InvalidSlug_400(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 1)
+	}
+	provider := mustStaticProv(kek)
+	h := NewOrgCredentialsHandler(store, store, provider, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	body := `{"name":"x","kind":"anthropic","slug":"has space","apiKey":"sk-test"}`
+	req, _ := http.NewRequest("POST", "/api/v1/orgs/org-1/credentials", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "slug", resp["field"])
+}
+
+// TestOrgCredentials_Update_InvalidKind_400 — validation also fires on the
+// partial-update path.
+func TestOrgCredentials_Update_InvalidKind_400(t *testing.T) {
+	store := newFakeOrgCredStore()
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 1)
+	}
+	existingPlaintext, _ := json.Marshal(secrets.LLMProviderData{
+		Kind: "openai_compatible", Slug: "valid-slug", APIKey: "sk-existing",
+	})
+	existingCT, err := secrets.EncryptSecret(kek, existingPlaintext)
+	require.NoError(t, err)
+	store.creds["cred-1"] = &secrets.CredentialRow{
+		ID: "cred-1", OwnerType: "org", OwnerID: "org-1",
+		Name: "x", Kind: "openai_compatible", Slug: "valid-slug",
+		Ciphertext: existingCT, KeyVersion: 1,
+	}
+
+	provider := mustStaticProv(kek)
+	h := NewOrgCredentialsHandler(store, store, provider, &mockOrgAuthService{userID: "admin-1"})
+	router := setupOrgCredRouter(h)
+
+	body := `{"kind":"custom"}`
+	req, _ := http.NewRequest("PUT", "/api/v1/orgs/org-1/credentials/cred-1", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }

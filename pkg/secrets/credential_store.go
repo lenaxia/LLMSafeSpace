@@ -84,8 +84,7 @@ type CredentialStore interface {
 	// HasUserProviderCredential returns true if the user owns a credential
 	// with the given slug. The lookup is per-slug because slug is the
 	// per-owner unique identity (Epic 55); kind alone is not unique per
-	// owner. The parameter name is preserved as "provider" for source
-	// compatibility but its semantics are now "slug".
+	// owner.
 	HasUserProviderCredential(ctx context.Context, userID, slug string) (bool, error)
 }
 
