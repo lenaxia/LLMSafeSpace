@@ -315,4 +315,25 @@ describe("AdminProviderCredentialsTab", () => {
     // Disabled when targetId is empty
     expect(screen.getByText("Add")).toBeDisabled();
   });
+
+  it("create form rejects invalid slug format client-side", async () => {
+    // Epic 55: slug must match ^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$. Client
+    // validation produces a clear message so the user knows what's wrong
+    // before hitting the server's 400.
+    mockList.mockResolvedValue([]);
+    renderTab();
+    await waitFor(() => screen.getByText(/Add credential/));
+    fireEvent.click(screen.getByText(/Add credential/));
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. OpenAI Production"), { target: { value: "Test" } });
+    fireEvent.change(screen.getByDisplayValue("— select SDK kind —"), { target: { value: "openai" } });
+    // Manually override the auto-suggested slug with an invalid value.
+    const slugInput = screen.getByPlaceholderText("thekaocloud");
+    fireEvent.change(slugInput, { target: { value: "has space" } });
+    fireEvent.change(screen.getByPlaceholderText("sk-…"), { target: { value: "sk-test" } });
+
+    fireEvent.click(screen.getByText(/Create & fetch models/));
+    expect(screen.getByText(/Slug must be 1–64 lowercase alphanumeric/)).toBeInTheDocument();
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
 });

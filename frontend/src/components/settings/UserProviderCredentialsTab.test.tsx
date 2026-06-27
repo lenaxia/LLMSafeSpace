@@ -208,4 +208,25 @@ describe("UserProviderCredentialsTab", () => {
     expect(screen.getByText(/Name, kind, slug, and API key are required/)).toBeInTheDocument();
     expect(mockCreate).not.toHaveBeenCalled();
   });
+
+  it("create form rejects invalid slug format client-side", async () => {
+    // Epic 55: slug must match ^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$. Client
+    // validation prevents the server's 400 from being the user's first feedback.
+    mockList.mockResolvedValue([]);
+    renderTab();
+    await waitFor(() => screen.getByText(/Add key/));
+    const [navBtn] = screen.getAllByRole("button", { name: /Add key/ });
+    fireEvent.click(navBtn!);
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. My OpenAI Key"), { target: { value: "Work" } });
+    fireEvent.change(screen.getByDisplayValue("— select SDK kind —"), { target: { value: "openai" } });
+    const slugInput = screen.getByPlaceholderText("my-openai");
+    fireEvent.change(slugInput, { target: { value: "Has Space" } });
+    fireEvent.change(screen.getByPlaceholderText("sk-… or key-…"), { target: { value: "sk-test" } });
+
+    const addBtns = screen.getAllByRole("button", { name: "Add key" });
+    fireEvent.click(addBtns[addBtns.length - 1]!);
+    expect(screen.getByText(/Slug must be 1–64 lowercase alphanumeric/)).toBeInTheDocument();
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
 });

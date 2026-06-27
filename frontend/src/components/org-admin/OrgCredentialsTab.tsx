@@ -246,7 +246,12 @@ function CredentialForm({
   onCancel: () => void;
 }) {
   const [name, setName] = useState(existing?.name ?? "");
-  const [kind, setKind] = useState<string>(existing?.kind ?? "openai");
+  // kind starts empty for new credentials so the user is forced to make an
+  // explicit choice via the dropdown — a silent "openai" default would let a
+  // user accidentally create an openai-kind credential when they meant
+  // openai_compatible (LiteLLM/vLLM). When editing an existing cred, default
+  // to that cred's kind so the dropdown reflects current state.
+  const [kind, setKind] = useState<string>(existing?.kind ?? "");
   const [slug, setSlug] = useState<string>(existing?.slug ?? "");
   const [apiKey, setApiKey] = useState("");
   const [baseURL, setBaseURL] = useState(existing?.baseURL ?? "");

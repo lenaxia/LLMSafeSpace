@@ -134,6 +134,12 @@ describe("OrgCredentialsTab", () => {
     fireEvent.change(screen.getByPlaceholderText(/Name/), {
       target: { value: "New Key" },
     });
+    // Epic 55: org tab now starts with kind="" (empty), forcing the user
+    // to make an explicit SDK-class choice via the dropdown.
+    fireEvent.change(screen.getByDisplayValue("— select SDK kind —"), {
+      target: { value: "openai" },
+    });
+    // Slug auto-populates from name as "new-key".
     fireEvent.change(screen.getByPlaceholderText("API Key"), {
       target: { value: "sk-new" },
     });
@@ -142,7 +148,12 @@ describe("OrgCredentialsTab", () => {
     await waitFor(() => expect(mockCreate).toHaveBeenCalled());
     expect(mockCreate).toHaveBeenCalledWith(
       "org-1",
-      expect.objectContaining({ name: "New Key", apiKey: "sk-new" }),
+      expect.objectContaining({
+        name: "New Key",
+        kind: "openai",
+        slug: "new-key",
+        apiKey: "sk-new",
+      }),
     );
     await waitFor(() => expect(mockList).toHaveBeenCalledTimes(2));
   });
@@ -155,6 +166,31 @@ describe("OrgCredentialsTab", () => {
     expect(
       screen.getByText("Name and API key are required"),
     ).toBeInTheDocument();
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("shows validation error when creating without kind", async () => {
+    renderTab();
+    await waitFor(() => expect(screen.getByText("Team Key")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Add Credential"));
+    fireEvent.change(screen.getByPlaceholderText(/Name/), { target: { value: "New" } });
+    fireEvent.change(screen.getByPlaceholderText("API Key"), { target: { value: "sk-test" } });
+    // Skip the kind dropdown — leaves it at "".
+    fireEvent.click(screen.getByText("Create Credential"));
+    expect(screen.getByText("Kind and slug are required")).toBeInTheDocument();
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid slug format client-side", async () => {
+    renderTab();
+    await waitFor(() => expect(screen.getByText("Team Key")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Add Credential"));
+    fireEvent.change(screen.getByPlaceholderText(/Name/), { target: { value: "New" } });
+    fireEvent.change(screen.getByDisplayValue("— select SDK kind —"), { target: { value: "openai" } });
+    fireEvent.change(screen.getByPlaceholderText(/Slug/), { target: { value: "has space" } });
+    fireEvent.change(screen.getByPlaceholderText("API Key"), { target: { value: "sk-test" } });
+    fireEvent.click(screen.getByText("Create Credential"));
+    expect(screen.getByText(/Slug must be 1–64 lowercase alphanumeric/)).toBeInTheDocument();
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
