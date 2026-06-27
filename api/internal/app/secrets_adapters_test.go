@@ -4,6 +4,8 @@
 package app
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -90,4 +92,77 @@ func TestNewRootKeyProvider_Sealed_NoWarning(t *testing.T) {
 	require.NotNil(t, p, "sealed provider should construct from valid sealed + passphrase files")
 	assert.Equal(t, 0, logs.FilterMessageSnippet(us508StaticWarnSnippet).Len(),
 		"sealed provider must not emit the static deprecation warning")
+}
+
+// TestEnsureFreeTierCredential_PlaintextHasKindAndSlug pins the free-tier
+// credential seed plaintext to the post-Epic-55 shape: it must include
+// kind="opencode" and slug="opencode-free-tier" so that, after decrypt at
+// materialize time, LLMProviderData.Validate() succeeds and the credential
+// reaches opencode as a real provider in agent-config.json.
+//
+// Regression: PR #430 (Epic 55 backend) updated UpsertFreeTierCredential's
+// DAL to insert kind+slug columns, but the bootstrap caller's plaintext
+// (this function) was missed — it still constructed the legacy
+// {"provider":"opencode","apiKey":"public"} JSON. On live cluster, the
+// materialize loop logged
+//
+//	`llm-provider/: skipped — invalid LLM provider data: kind is required`
+//
+// because the decrypted blob's Kind field was empty. This test ensures the
+// plaintext shape stays in sync with LLMProviderData.Validate().
+func TestEnsureFreeTierCredential_PlaintextHasKindAndSlug(t *testing.T) {
+	// Capture the ciphertext that ensureFreeTierCredential generates by
+	// supplying a recording fake seeder.
+	var captured []byte
+	seeder := &recordingFreeTierSeeder{
+		onUpsert: func(_ context.Context, ct []byte) error { captured = ct; return nil },
+	}
+
+	// Use a deterministic static KEK so we can decrypt the captured ciphertext.
+	kek := make([]byte, 32)
+	for i := range kek {
+		kek[i] = byte(i + 1)
+	}
+	prov, err := secrets.NewStaticKeyProvider(kek)
+	require.NoError(t, err)
+
+	logger, _ := logger.NewObserved()
+
+	err = ensureFreeTierCredential(context.Background(), seeder, prov, logger)
+	require.NoError(t, err)
+	require.NotEmpty(t, captured, "ensureFreeTierCredential must have captured ciphertext")
+
+	// Decrypt and inspect the plaintext.
+	plain, err := secrets.DecryptSecret(kek, captured)
+	require.NoError(t, err)
+
+	var pd secrets.LLMProviderData
+	require.NoError(t, json.Unmarshal(plain, &pd))
+
+	// Validate the post-Epic-55 shape.
+	require.NoError(t, pd.Validate(),
+		"free-tier credential plaintext must satisfy LLMProviderData.Validate(); "+
+			"materialize will skip it otherwise")
+	assert.Equal(t, "opencode", pd.Kind,
+		"free-tier credential must declare kind=opencode")
+	assert.Equal(t, "opencode-free-tier", pd.Slug,
+		"free-tier credential must declare slug=opencode-free-tier so it "+
+			"appears in agent-config.json as the 'opencode-free-tier' provider key")
+	assert.Equal(t, "public", pd.APIKey)
+}
+
+// recordingFreeTierSeeder is a credentialSeeder that records the ciphertext
+// passed to UpsertFreeTierCredential without touching any DB.
+type recordingFreeTierSeeder struct {
+	onUpsert func(context.Context, []byte) error
+}
+
+func (r *recordingFreeTierSeeder) UpsertFreeTierCredential(ctx context.Context, ct []byte) error {
+	if r.onUpsert != nil {
+		return r.onUpsert(ctx, ct)
+	}
+	return nil
+}
+func (r *recordingFreeTierSeeder) BackfillFreeTierBindings(ctx context.Context) (int64, error) {
+	return 0, nil
 }
