@@ -46,7 +46,9 @@ func runPrecedence(ctx context.Context, run *canary.Runner, cfg canary.Config) {
 	}
 	found := false
 	for _, cred := range adminCreds {
-		if cred.Provider == "opencode" {
+		// Epic 55: admin free-tier credential has kind=opencode,
+		// slug=opencode-free-tier.
+		if cred.Kind == "opencode" && cred.Slug == "opencode-free-tier" {
 			found = true
 			break
 		}
@@ -54,7 +56,10 @@ func runPrecedence(ctx context.Context, run *canary.Runner, cfg canary.Config) {
 	run.Assert(found, "admin-list: free-tier opencode credential exists", "")
 
 	// P2: User create — create a provider credential via the new endpoint.
-	userCred, err := c.ProviderCredentials.Create(ctx, "canary-precedence", "canary-test", "canary-key-001", "")
+	// Epic 55: kind is the SDK class (must be in the 15-value enum),
+	// slug is the per-owner identity. We use openai_compatible as a
+	// safe kind that doesn't require a real provider account.
+	userCred, err := c.ProviderCredentials.Create(ctx, "canary-precedence", "openai_compatible", "canary-precedence", "canary-key-001", "")
 	if !run.AssertNoError(err, "user-create: no error") {
 		return
 	}
