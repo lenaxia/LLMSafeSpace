@@ -288,6 +288,12 @@ func validatePathParams(c *gin.Context) error {
 }
 
 // getValidationErrorMessage returns a human-readable error message for a validation error
+//
+// DUPLICATION NOTE: This switch is intentionally duplicated with
+// bindingErrorMessage in api/internal/handlers/binding_errors.go. The two
+// paths emit different envelope shapes; collapsing them requires new
+// abstractions. They MUST be kept in sync: if you add or change a case
+// here, update the handlers version too.
 func getValidationErrorMessage(err validator.FieldError, customMessages map[string]string) string {
 	// Check for custom error message
 	if customMessages != nil {
