@@ -315,7 +315,14 @@ func (h *AdminProviderCredentialsHandler) Update(c *gin.Context) {
 		existing.ModelOutputLimits = req.ModelOutputLimits
 	}
 
-	// Re-encrypt only when the caller is changing an encrypted field (apiKey or baseURL).
+	// Re-encrypt whenever any field that lives INSIDE the encrypted
+	// LLMProviderData blob changes. apiKey and baseURL are obvious;
+	// Kind and Slug also live inside the blob (LLMProviderData.Kind/Slug),
+	// and the materialize path reads them out to determine the SDK
+	// adapter and the agent-config.json provider-map key. If the row
+	// column changes but the ciphertext stays stale, the rename never
+	// reaches the wire format (Epic 55 stale-ciphertext class — see
+	// the matching guard in org_credentials.go).
 	if req.APIKey != nil || req.BaseURL != nil || req.Kind != nil || req.Slug != nil {
 		if h.provider == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "master secret not configured"})

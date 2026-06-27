@@ -69,6 +69,21 @@ PR #430 review surfaced three correctness/robustness findings; all addressed in 
 
 Also fixed two stale comments that claimed the `HasUserProviderCredential` parameter was named "provider" — the parameter is actually `slug` in both the interface and the implementation. Removed legacy `kind:"custom"` from test fixtures (the value is not in the post-Epic-55 enum; tests passed only because in-memory fakes don't enforce CHECK).
 
+### Two follow-up fixes after the first re-review
+
+PR-#430 first re-review (commit `b023a405`) caught two CI failures from the migration collapse interacting badly with shared test infrastructure:
+
+1. **Round-trip schema-diff drift across Postgres versions** (commit `40621be8`). The CI runner uses postgres:16 (`'standard public schema'` default comment); my local validation used postgres:17 (empty default). My initial fix tried to restore the comment in the down; that worked on PG17 but broke on PG16. The correct fix is to filter `COMMENT ON SCHEMA public` from the round-trip snapshot — it's PG-version-volatile metadata, not application schema.
+
+2. **Initial schema not idempotent → testharness 'Dirty database version 1'** (commit `7c5239c5`). The integration testharness shares a single Postgres database across tests; every test calls `MigrateUp`. With a pg_dump'd initial schema, the second test hit `function "update_updated_at_column" already exists` and golang-migrate marked schema_migrations as dirty. Made the entire initial schema idempotent: `CREATE TABLE/SEQUENCE/INDEX IF NOT EXISTS`, `CREATE OR REPLACE FUNCTION`, trigger drop-and-recreate, and `ALTER TABLE ADD CONSTRAINT` wrapped in `DO $idempotent$ … EXCEPTION WHEN duplicate_object | invalid_table_definition | …` blocks. The four migration-safety CI jobs (round-trip, idempotency, FK cascade, initial-schema invariants) all act as independent witnesses that the mechanical transformation didn't introduce semantic drift.
+
+### Second re-review feedback
+
+The third review (after the two follow-up fixes) returned **APPROVE** with two non-blocking documentation nits:
+
+- `admin_provider_credentials.go:318` comment said "Re-encrypt only when the caller is changing an encrypted field (apiKey or baseURL)" but the condition also includes Kind/Slug. The matching org handler comment already documents the rationale correctly. Mirrored the org comment to the admin handler.
+- `pg_secret_store.go:707` had `AsyncAuditLogger.HasUserProviderCredential(..., provider string)` while the interface and implementation use `slug`. Renamed for consistency.
+
 ## Refs
 
 - design/stories/epic-55-credential-slug-vs-kind/README.md — full design.
