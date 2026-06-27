@@ -344,7 +344,22 @@ function CredentialForm({
         // Only send baseURL when it changed from the stored value. This avoids
         // triggering a ciphertext re-encryption on every save (baseURL lives in
         // the encrypted blob). Sending "" explicitly clears a previously-set URL.
-        const updateReq: Record<string, unknown> = {
+        //
+        // updateReq is typed to mirror the structured shape that
+        // orgsApi.updateCredential expects (kind?/slug?/name?/apiKey?/baseURL?/
+        // model* — all optional). Rule 1: no Record<string, unknown> for
+        // structured data — the typed signature must not be defeated at the
+        // call site.
+        const updateReq: {
+          name?: string;
+          kind?: string;
+          slug?: string;
+          apiKey?: string;
+          baseURL?: string;
+          modelAllowlist?: string[];
+          modelContextLimits?: Record<string, number>;
+          modelOutputLimits?: Record<string, number>;
+        } = {
           name: name.trim(),
           modelAllowlist: allowlist,
           modelContextLimits: ctxLimits,
