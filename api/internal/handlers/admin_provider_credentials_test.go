@@ -394,7 +394,8 @@ func TestAdminProviderCredentials_AutoApply_NilStore_Returns503(t *testing.T) {
 }
 
 // TestAdminProviderCredentials_Create_ModelContextLimits verifies that
-// modelContextLimits round-trips through create and appears in the response.
+// modelContextLimits AND modelOutputLimits round-trip through create and
+// appear in the response.
 func TestAdminProviderCredentials_Create_ModelContextLimits(t *testing.T) {
 	store := newFakeAdminCredStore()
 	kek := make([]byte, 32)
@@ -405,7 +406,8 @@ func TestAdminProviderCredentials_Create_ModelContextLimits(t *testing.T) {
 		"name":"limits-test","provider":"openai","apiKey":"sk-test",
 		"baseURL":"https://example.com/v1",
 		"modelAllowlist":["glm-5.1","gpt-4o"],
-		"modelContextLimits":{"glm-5.1":200000,"gpt-4o":128000}
+		"modelContextLimits":{"glm-5.1":200000,"gpt-4o":128000},
+		"modelOutputLimits":{"glm-5.1":8192,"gpt-4o":16384}
 	}`
 	req, _ := http.NewRequest("POST", "/api/v1/admin/provider-credentials", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -418,10 +420,12 @@ func TestAdminProviderCredentials_Create_ModelContextLimits(t *testing.T) {
 	require.Equal(t, []string{"glm-5.1", "gpt-4o"}, resp.ModelAllowlist)
 	require.Equal(t, 200000, resp.ModelContextLimits["glm-5.1"])
 	require.Equal(t, 128000, resp.ModelContextLimits["gpt-4o"])
+	require.Equal(t, 8192, resp.ModelOutputLimits["glm-5.1"])
+	require.Equal(t, 16384, resp.ModelOutputLimits["gpt-4o"])
 }
 
 // TestAdminProviderCredentials_Update_ModelContextLimits verifies that
-// modelContextLimits can be updated independently via PUT.
+// modelContextLimits AND modelOutputLimits can be updated independently via PUT.
 func TestAdminProviderCredentials_Update_ModelContextLimits(t *testing.T) {
 	store := newFakeAdminCredStore()
 	kek := make([]byte, 32)
@@ -441,8 +445,12 @@ func TestAdminProviderCredentials_Update_ModelContextLimits(t *testing.T) {
 	var created CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
 
-	// Update context limits.
-	updateBody := `{"modelAllowlist":["glm-5.2"],"modelContextLimits":{"glm-5.2":1000000}}`
+	// Update both limit maps.
+	updateBody := `{
+		"modelAllowlist":["glm-5.2"],
+		"modelContextLimits":{"glm-5.2":1000000},
+		"modelOutputLimits":{"glm-5.2":32768}
+	}`
 	req, _ = http.NewRequest("PUT", "/api/v1/admin/provider-credentials/"+created.ID,
 		bytes.NewBufferString(updateBody))
 	req.Header.Set("Content-Type", "application/json")
@@ -453,6 +461,7 @@ func TestAdminProviderCredentials_Update_ModelContextLimits(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &updated))
 	assert.Equal(t, []string{"glm-5.2"}, updated.ModelAllowlist)
 	assert.Equal(t, 1000000, updated.ModelContextLimits["glm-5.2"])
+	assert.Equal(t, 32768, updated.ModelOutputLimits["glm-5.2"])
 }
 
 // TestAdminProviderCredentials_ProbeModels_NoBaseURL verifies that the probe

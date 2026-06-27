@@ -12,6 +12,12 @@
 // ProviderCredential is the base API response shape for any provider credential.
 // Never includes apiKey. The owner scope (orgId for org credentials) and a
 // possible bindWarning are carried by the per-client response types below.
+//
+// modelContextLimits and modelOutputLimits MUST be set together for a given
+// model to take effect: opencode's published JSON Schema requires both
+// `limit.context` and `limit.output` whenever the `limit` block is present.
+// If only one is set, the formatter omits the entire `limit` block and
+// opencode falls back to built-in defaults.
 export interface ProviderCredential {
   id: string;
   name: string;
@@ -19,6 +25,7 @@ export interface ProviderCredential {
   baseURL?: string;
   modelAllowlist?: string[];
   modelContextLimits?: Record<string, number>;
+  modelOutputLimits?: Record<string, number>;
   createdAt: string;
   updatedAt: string;
 }
@@ -33,6 +40,7 @@ export interface CreateCredentialRequest {
   baseURL?: string;
   modelAllowlist?: string[];
   modelContextLimits?: Record<string, number>;
+  modelOutputLimits?: Record<string, number>;
 }
 
 // UpdateCredentialRequest is the shared partial-update body. Admin and user
@@ -44,6 +52,7 @@ export interface UpdateCredentialRequest {
   baseURL?: string;
   modelAllowlist?: string[];
   modelContextLimits?: Record<string, number>;
+  modelOutputLimits?: Record<string, number>;
 }
 
 // CreateCredentialResponse is the create response carrying an optional
@@ -58,6 +67,7 @@ export interface CreateCredentialResponse extends ProviderCredential {
 export interface ProbeModelEntry {
   id: string;
   contextLimit: number; // 0 = unknown / not yet configured
+  outputLimit: number; // 0 = unknown / not yet configured
 }
 
 // ProbeModelsResponse is the response from GET /:id/models for any owner type.

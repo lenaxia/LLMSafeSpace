@@ -39,6 +39,7 @@ const CRED = {
   baseURL: "https://ai.example.com/v1",
   modelAllowlist: ["glm-5.1"],
   modelContextLimits: {} as Record<string, number>,
+  modelOutputLimits: {} as Record<string, number>,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-02T00:00:00Z",
 };

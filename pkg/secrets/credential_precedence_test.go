@@ -524,7 +524,7 @@ func TestCredentialPrecedence_ModelContextLimits_InjectedIntoLLMModelConfig(t *t
 		adminKEK[i] = byte(i + 10)
 	}
 
-	// Credential has no models in the blob — relies on ModelAllowlist + ModelContextLimits.
+	// Credential has no models in the blob — relies on ModelAllowlist + ModelContextLimits + ModelOutputLimits.
 	adminPlaintext, _ := json.Marshal(LLMProviderData{
 		Provider: "thekao cloud",
 		APIKey:   "sk-test",
@@ -540,7 +540,8 @@ func TestCredentialPrecedence_ModelContextLimits_InjectedIntoLLMModelConfig(t *t
 			SourceType:         "auto",
 			ModelAllowlist:     []string{"glm-5.1", "glm-5.2", "classifier"},
 			ModelContextLimits: map[string]int{"glm-5.1": 200000, "glm-5.2": 1000000},
-			// classifier has no context limit
+			ModelOutputLimits:  map[string]int{"glm-5.1": 8192, "glm-5.2": 16384},
+			// classifier has neither context nor output limit
 		}},
 	}
 
@@ -572,11 +573,19 @@ func TestCredentialPrecedence_ModelContextLimits_InjectedIntoLLMModelConfig(t *t
 		"glm-5.2 context limit must be 1000000 from ModelContextLimits")
 	assert.Equal(t, 0, byID["classifier"].ContextLimit,
 		"classifier has no configured context limit — must remain 0")
+
+	assert.Equal(t, 8192, byID["glm-5.1"].OutputLimit,
+		"glm-5.1 output limit must be 8192 from ModelOutputLimits")
+	assert.Equal(t, 16384, byID["glm-5.2"].OutputLimit,
+		"glm-5.2 output limit must be 16384 from ModelOutputLimits")
+	assert.Equal(t, 0, byID["classifier"].OutputLimit,
+		"classifier has no configured output limit — must remain 0")
 }
 
 // TestCredentialPrecedence_ModelContextLimits_DoesNotOverrideExisting verifies
-// that if a model in LLMProviderData.Models already has a ContextLimit set
-// (e.g. from the relay config), ModelContextLimits does NOT overwrite it.
+// that if a model in LLMProviderData.Models already has a ContextLimit or
+// OutputLimit set (e.g. from the relay config), the binding-level
+// ModelContextLimits / ModelOutputLimits do NOT overwrite them.
 func TestCredentialPrecedence_ModelContextLimits_DoesNotOverrideExisting(t *testing.T) {
 	keyStore := newMockKeyStore()
 	dekCache := newTestDEKCache()
@@ -588,11 +597,11 @@ func TestCredentialPrecedence_ModelContextLimits_DoesNotOverrideExisting(t *test
 		adminKEK[i] = byte(i + 20)
 	}
 
-	// Model in the blob already has ContextLimit=128000.
+	// Model in the blob already has ContextLimit=128000 and OutputLimit=16384.
 	adminPlaintext, _ := json.Marshal(LLMProviderData{
 		Provider: "openai", APIKey: "sk-oai",
 		Models: []LLMModelConfig{
-			{ID: "gpt-4o", ContextLimit: 128000},
+			{ID: "gpt-4o", ContextLimit: 128000, OutputLimit: 16384},
 		},
 	})
 	adminCipher, err := EncryptSecret(adminKEK, adminPlaintext)
@@ -605,6 +614,7 @@ func TestCredentialPrecedence_ModelContextLimits_DoesNotOverrideExisting(t *test
 			SourceType:         "auto",
 			ModelAllowlist:     []string{"gpt-4o"},
 			ModelContextLimits: map[string]int{"gpt-4o": 999999}, // should NOT override
+			ModelOutputLimits:  map[string]int{"gpt-4o": 999999}, // should NOT override
 		}},
 	}
 
@@ -627,6 +637,8 @@ func TestCredentialPrecedence_ModelContextLimits_DoesNotOverrideExisting(t *test
 
 	assert.Equal(t, 128000, pd.Models[0].ContextLimit,
 		"ContextLimit from blob (128000) must NOT be overwritten by ModelContextLimits (999999)")
+	assert.Equal(t, 16384, pd.Models[0].OutputLimit,
+		"OutputLimit from blob (16384) must NOT be overwritten by ModelOutputLimits (999999)")
 }
 
 // TestCredentialPrecedence_OrgCredentialViaServerKEK verifies that an

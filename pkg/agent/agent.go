@@ -45,10 +45,19 @@ type LLMProviderData struct {
 	SmallModel string           `json:"smallModel,omitempty"`
 }
 
-// LLMModelConfig specifies a model identifier and optional display label.
+// LLMModelConfig specifies a model identifier, optional display label, and
+// optional context/output token limits.
+//
+// ContextLimit and OutputLimit MUST be set together (both > 0) to be emitted
+// into opencode's agent-config.json — opencode's published JSON Schema
+// (https://opencode.ai/config.json) requires both `context` and `output` when
+// the `limit` object is present. See pkg/secrets/types.go LLMModelConfig for
+// the authoritative documentation.
 type LLMModelConfig struct {
-	ID    string `json:"id"`
-	Label string `json:"label,omitempty"`
+	ID           string `json:"id"`
+	Label        string `json:"label,omitempty"`
+	ContextLimit int    `json:"contextLimit,omitempty"`
+	OutputLimit  int    `json:"outputLimit,omitempty"`
 }
 
 var (

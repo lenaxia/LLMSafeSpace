@@ -119,6 +119,7 @@ func (h *UserProviderCredentialsHandler) Create(c *gin.Context) {
 		KeyVersion:         record.KeyVersion,
 		ModelAllowlist:     req.ModelAllowlist,
 		ModelContextLimits: req.ModelContextLimits,
+		ModelOutputLimits:  req.ModelOutputLimits,
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	}
@@ -127,6 +128,9 @@ func (h *UserProviderCredentialsHandler) Create(c *gin.Context) {
 	}
 	if row.ModelContextLimits == nil {
 		row.ModelContextLimits = map[string]int{}
+	}
+	if row.ModelOutputLimits == nil {
+		row.ModelOutputLimits = map[string]int{}
 	}
 
 	if err := h.store.CreateCredential(c.Request.Context(), "user", userID, row); err != nil {
@@ -144,6 +148,7 @@ func (h *UserProviderCredentialsHandler) Create(c *gin.Context) {
 		Provider:           row.Provider,
 		ModelAllowlist:     row.ModelAllowlist,
 		ModelContextLimits: row.ModelContextLimits,
+		ModelOutputLimits:  row.ModelOutputLimits,
 		CreatedAt:          row.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:          row.UpdatedAt.Format(time.RFC3339),
 	}
@@ -182,6 +187,7 @@ func (h *UserProviderCredentialsHandler) List(c *gin.Context) {
 			Provider:           row.Provider,
 			ModelAllowlist:     row.ModelAllowlist,
 			ModelContextLimits: row.ModelContextLimits,
+			ModelOutputLimits:  row.ModelOutputLimits,
 			CreatedAt:          row.CreatedAt.Format(time.RFC3339),
 			UpdatedAt:          row.UpdatedAt.Format(time.RFC3339),
 		}
@@ -190,6 +196,9 @@ func (h *UserProviderCredentialsHandler) List(c *gin.Context) {
 		}
 		if r.ModelContextLimits == nil {
 			r.ModelContextLimits = map[string]int{}
+		}
+		if r.ModelOutputLimits == nil {
+			r.ModelOutputLimits = map[string]int{}
 		}
 		resp = append(resp, r)
 	}
@@ -218,6 +227,7 @@ func (h *UserProviderCredentialsHandler) Get(c *gin.Context) {
 		Provider:           row.Provider,
 		ModelAllowlist:     row.ModelAllowlist,
 		ModelContextLimits: row.ModelContextLimits,
+		ModelOutputLimits:  row.ModelOutputLimits,
 		CreatedAt:          row.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:          row.UpdatedAt.Format(time.RFC3339),
 	})

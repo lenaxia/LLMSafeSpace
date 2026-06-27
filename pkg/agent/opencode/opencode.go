@@ -49,7 +49,12 @@ func (a *OpenCodeAgent) FormatProviderConfig(providers []agent.LLMProviderData) 
 	for i, p := range providers {
 		models := make([]secrets.LLMModelConfig, len(p.Models))
 		for j, m := range p.Models {
-			models[j] = secrets.LLMModelConfig{ID: m.ID, Label: m.Label}
+			models[j] = secrets.LLMModelConfig{
+				ID:           m.ID,
+				Label:        m.Label,
+				ContextLimit: m.ContextLimit,
+				OutputLimit:  m.OutputLimit,
+			}
 		}
 		secProviders[i] = secrets.LLMProviderData{
 			Provider:   p.Provider,

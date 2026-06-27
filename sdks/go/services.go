@@ -324,14 +324,24 @@ func (s *AccountService) Recover(ctx context.Context, userID, recoveryKey, newPa
 // --- Provider Credentials (Epic 30) ---
 
 // ProviderCredentialResponse is the API response for a provider credential.
+//
+// ModelContextLimits and ModelOutputLimits map model IDs to per-model token
+// limits. Both maps MUST be populated together for a given model id for the
+// limit to take effect in the running workspace: opencode's config JSON Schema
+// requires both `limit.context` and `limit.output` to be set whenever the
+// `limit` block is present. If only one is set, the server stores the value
+// but agent-config.json omits the entire limit block for that model and
+// opencode falls back to built-in defaults.
 type ProviderCredentialResponse struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name"`
-	Provider       string   `json:"provider"`
-	BaseURL        string   `json:"baseURL,omitempty"`
-	ModelAllowlist []string `json:"modelAllowlist"`
-	CreatedAt      string   `json:"createdAt"`
-	UpdatedAt      string   `json:"updatedAt"`
+	ID                 string         `json:"id"`
+	Name               string         `json:"name"`
+	Provider           string         `json:"provider"`
+	BaseURL            string         `json:"baseURL,omitempty"`
+	ModelAllowlist     []string       `json:"modelAllowlist"`
+	ModelContextLimits map[string]int `json:"modelContextLimits"`
+	ModelOutputLimits  map[string]int `json:"modelOutputLimits"`
+	CreatedAt          string         `json:"createdAt"`
+	UpdatedAt          string         `json:"updatedAt"`
 }
 
 // ProviderCredentialsService handles user provider credential operations.

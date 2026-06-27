@@ -92,7 +92,7 @@ func TestProbeModelsAnon_Success(t *testing.T) {
 		BaseURL string `json:"baseURL"`
 	}{APIKey: "sk-probe-test", BaseURL: fakeProvider.URL + "/v1"}
 	plaintext, _ := json.Marshal(pd)
-	resp := probeCredentialModels(context.Background(), plaintext, nil)
+	resp := probeCredentialModels(context.Background(), plaintext, probeCredentialLimits{})
 
 	assert.Empty(t, resp.Warning)
 	require.Len(t, resp.Models, 2)
@@ -115,10 +115,48 @@ func TestProbeModelsAnon_ProviderError(t *testing.T) {
 		BaseURL string `json:"baseURL"`
 	}{APIKey: "sk-bad", BaseURL: fakeProvider.URL + "/v1"}
 	plaintext, _ := json.Marshal(pd)
-	resp := probeCredentialModels(context.Background(), plaintext, nil)
+	resp := probeCredentialModels(context.Background(), plaintext, probeCredentialLimits{})
 
 	assert.NotEmpty(t, resp.Warning, "provider error must produce a warning")
 	assert.Empty(t, resp.Models, "no models expected on provider error")
+}
+
+// TestProbeCredentialModels_MergesBothSavedLimits verifies that when the
+// caller passes saved per-model context AND output limits, the probe response
+// surfaces both for each model returned by the provider. The UI relies on this
+// to pre-populate its model-config table after a credential is fetched.
+func TestProbeCredentialModels_MergesBothSavedLimits(t *testing.T) {
+	fakeProvider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"glm-5.1"},{"id":"glm-5.2"},{"id":"classifier"}]}`))
+	}))
+	defer fakeProvider.Close()
+
+	pd := struct {
+		APIKey  string `json:"apiKey"`
+		BaseURL string `json:"baseURL"`
+	}{APIKey: "sk-probe", BaseURL: fakeProvider.URL + "/v1"}
+	plaintext, _ := json.Marshal(pd)
+
+	saved := probeCredentialLimits{
+		Context: map[string]int{"glm-5.1": 200000, "glm-5.2": 1000000},
+		Output:  map[string]int{"glm-5.1": 8192, "glm-5.2": 16384},
+	}
+	resp := probeCredentialModels(context.Background(), plaintext, saved)
+
+	assert.Empty(t, resp.Warning)
+	require.Len(t, resp.Models, 3)
+
+	byID := map[string]ProbeModelEntry{}
+	for _, m := range resp.Models {
+		byID[m.ID] = m
+	}
+	assert.Equal(t, 200000, byID["glm-5.1"].ContextLimit)
+	assert.Equal(t, 8192, byID["glm-5.1"].OutputLimit)
+	assert.Equal(t, 1000000, byID["glm-5.2"].ContextLimit)
+	assert.Equal(t, 16384, byID["glm-5.2"].OutputLimit)
+	assert.Equal(t, 0, byID["classifier"].ContextLimit, "unsaved model: contextLimit zero")
+	assert.Equal(t, 0, byID["classifier"].OutputLimit, "unsaved model: outputLimit zero")
 }
 
 // TestValidateProbeBaseURL_PrivateRanges exercises the SSRF validation function

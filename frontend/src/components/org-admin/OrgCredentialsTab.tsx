@@ -177,15 +177,26 @@ export function OrgCredentialsTab() {
                       </p>
                     )}
                   </div>
-                  {Object.keys(c.modelContextLimits ?? {}).length > 0 && (
+                  {(Object.keys(c.modelContextLimits ?? {}).length > 0 ||
+                    Object.keys(c.modelOutputLimits ?? {}).length > 0) && (
                     <div>
-                      <p className="text-xs font-medium text-muted-foreground">Context limits</p>
+                      <p className="text-xs font-medium text-muted-foreground">Per-model limits</p>
                       <ul className="mt-1 space-y-0.5 text-xs font-mono">
-                        {Object.entries(c.modelContextLimits).map(([m, lim]) => (
-                          <li key={m}>
-                            {m}: {lim.toLocaleString()} tokens
-                          </li>
-                        ))}
+                        {Array.from(
+                          new Set([
+                            ...Object.keys(c.modelContextLimits ?? {}),
+                            ...Object.keys(c.modelOutputLimits ?? {}),
+                          ]),
+                        ).map((m) => {
+                          const ctx = c.modelContextLimits?.[m];
+                          const out = c.modelOutputLimits?.[m];
+                          return (
+                            <li key={m}>
+                              {m}: ctx {ctx ? ctx.toLocaleString() : "—"} / out{" "}
+                              {out ? out.toLocaleString() : "—"}
+                            </li>
+                          );
+                        })}
                       </ul>
                     </div>
                   )}
@@ -240,19 +251,18 @@ function CredentialForm({
   const [error, setError] = useState("");
   const [modelRows, setModelRows] = useState<ModelRow[]>(() => {
     if (!existing) return [];
-    const limits = existing.modelContextLimits ?? {};
+    const ctxLimits = existing.modelContextLimits ?? {};
+    const outLimits = existing.modelOutputLimits ?? {};
     const allow = existing.modelAllowlist ?? [];
-    const rows: ModelRow[] = Object.keys(limits).map((id) => ({
+    const ids = Array.from(
+      new Set([...Object.keys(ctxLimits), ...Object.keys(outLimits), ...allow]),
+    );
+    return ids.map((id) => ({
       id,
       enabled: allow.includes(id),
-      contextLimit: String(limits[id]),
+      contextLimit: ctxLimits[id] ? String(ctxLimits[id]) : "",
+      outputLimit: outLimits[id] ? String(outLimits[id]) : "",
     }));
-    for (const id of allow) {
-      if (!rows.some((r) => r.id === id)) {
-        rows.push({ id, enabled: true, contextLimit: "" });
-      }
-    }
-    return rows;
   });
   const [fetchWarning, setFetchWarning] = useState("");
 
@@ -264,12 +274,17 @@ function CredentialForm({
     try {
       const result = await orgsApi.probeCredentialModels(orgId, credId);
       if (result.warning) setFetchWarning(result.warning);
-      const existingLimits: Record<string, string> = {};
-      for (const r of modelRows) existingLimits[r.id] = r.contextLimit;
+      const existingCtx: Record<string, string> = {};
+      const existingOut: Record<string, string> = {};
+      for (const r of modelRows) {
+        existingCtx[r.id] = r.contextLimit;
+        existingOut[r.id] = r.outputLimit;
+      }
       const rows: ModelRow[] = (result.models ?? []).map((m) => ({
         id: m.id,
         enabled: true,
-        contextLimit: existingLimits[m.id] ?? (m.contextLimit > 0 ? String(m.contextLimit) : ""),
+        contextLimit: existingCtx[m.id] ?? (m.contextLimit > 0 ? String(m.contextLimit) : ""),
+        outputLimit: existingOut[m.id] ?? (m.outputLimit > 0 ? String(m.outputLimit) : ""),
       }));
       setModelRows(rows);
     } catch (e) {
@@ -290,11 +305,17 @@ function CredentialForm({
     setError("");
     try {
       const allowlist = modelRows.filter((r) => r.enabled).map((r) => r.id);
-      const limits: Record<string, number> = {};
+      const ctxLimits: Record<string, number> = {};
+      const outLimits: Record<string, number> = {};
       for (const r of modelRows) {
-        if (r.enabled && r.contextLimit.trim() !== "") {
+        if (!r.enabled) continue;
+        if (r.contextLimit.trim() !== "") {
           const n = Number(r.contextLimit);
-          if (Number.isFinite(n) && n > 0) limits[r.id] = n;
+          if (Number.isFinite(n) && n > 0) ctxLimits[r.id] = n;
+        }
+        if (r.outputLimit.trim() !== "") {
+          const n = Number(r.outputLimit);
+          if (Number.isFinite(n) && n > 0) outLimits[r.id] = n;
         }
       }
       if (isEdit) {
@@ -304,7 +325,8 @@ function CredentialForm({
         const updateReq: Record<string, unknown> = {
           name: name.trim(),
           modelAllowlist: allowlist,
-          modelContextLimits: limits,
+          modelContextLimits: ctxLimits,
+          modelOutputLimits: outLimits,
         };
         if (apiKey.trim()) updateReq.apiKey = apiKey.trim();
         const prevBaseURL = existing?.baseURL ?? "";
@@ -322,7 +344,8 @@ function CredentialForm({
         apiKey: apiKey.trim(),
         baseURL: baseURL.trim() || undefined,
         modelAllowlist: allowlist,
-        modelContextLimits: limits,
+        modelContextLimits: ctxLimits,
+        modelOutputLimits: outLimits,
       });
       setName("");
       setApiKey("");
@@ -432,7 +455,7 @@ function OrgModelConfigTable({
   const addManual = () => {
     const id = window.prompt("Model ID");
     if (id && id.trim() && !rows.some((r) => r.id === id.trim())) {
-      onChange([...rows, { id: id.trim(), enabled: true, contextLimit: "" }]);
+      onChange([...rows, { id: id.trim(), enabled: true, contextLimit: "", outputLimit: "" }]);
     }
   };
 

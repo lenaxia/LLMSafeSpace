@@ -25,11 +25,12 @@ export type {
 // ---------------------------------------------------------------------------
 
 // AdminProviderCredential is ProviderCredential with the fields the admin API
-// always returns as non-optional (modelAllowlist / modelContextLimits are
-// guaranteed present for admin creds).
+// always returns as non-optional (modelAllowlist / modelContextLimits /
+// modelOutputLimits are guaranteed present for admin creds).
 export interface AdminProviderCredential extends ProviderCredential {
   modelAllowlist: string[];
   modelContextLimits: Record<string, number>;
+  modelOutputLimits: Record<string, number>;
 }
 
 // CreateAdminCredentialRequest is identical to the shared CreateCredentialRequest

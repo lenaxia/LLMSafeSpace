@@ -107,6 +107,9 @@ func (f *fakeOrgCredStore) UpdateCredential(_ context.Context, _, _, credID stri
 	if row.ModelContextLimits != nil {
 		c.ModelContextLimits = row.ModelContextLimits
 	}
+	if row.ModelOutputLimits != nil {
+		c.ModelOutputLimits = row.ModelOutputLimits
+	}
 	return nil
 }
 
@@ -618,10 +621,10 @@ func TestOrgCredentials_List_CamelCaseAndBaseURL(t *testing.T) {
 			keys[k] = true
 		}
 	}
-	for _, want := range []string{"id", "orgId", "name", "provider", "baseURL", "modelAllowlist", "modelContextLimits", "createdAt", "updatedAt"} {
+	for _, want := range []string{"id", "orgId", "name", "provider", "baseURL", "modelAllowlist", "modelContextLimits", "modelOutputLimits", "createdAt", "updatedAt"} {
 		assert.True(t, keys[want], "List JSON must include camelCase key %q (got %v)", want, keys)
 	}
-	for _, forbidden := range []string{"ID", "OrgID", "ModelAllowlist", "ModelContextLimits", "CreatedAt"} {
+	for _, forbidden := range []string{"ID", "OrgID", "ModelAllowlist", "ModelContextLimits", "ModelOutputLimits", "CreatedAt"} {
 		assert.False(t, keys[forbidden], "List JSON must NOT include PascalCase key %q", forbidden)
 	}
 
