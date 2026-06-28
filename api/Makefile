@@ -37,11 +37,17 @@ generate:
 	go generate ./...
 
 # Database migrations
+# Use the libpq KV connection-string form, NOT a postgres:// URL. Make's
+# $(VAR) substitution is literal with no URL-encoding, so a URL embeds the
+# password raw and breaks when DB_PASSWORD contains URL-reserved chars
+# (/ ? # @ : % + =) — common when exported from `openssl rand -base64`.
+# The KV form splits on whitespace and '=' and never needs encoding.
+# Same fix as the Helm chart's migration Job (PR #437, issue #424).
 migrate-up:
-	migrate -path ./migrations -database "postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable" up
+	migrate -path ./migrations -database "host=$(DB_HOST) port=$(DB_PORT) user=$(DB_USER) password=$(DB_PASSWORD) dbname=$(DB_NAME) sslmode=disable" up
 
 migrate-down:
-	migrate -path ./migrations -database "postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=disable" down
+	migrate -path ./migrations -database "host=$(DB_HOST) port=$(DB_PORT) user=$(DB_USER) password=$(DB_PASSWORD) dbname=$(DB_NAME) sslmode=disable" down
 
 # Help
 help:
