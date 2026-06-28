@@ -69,6 +69,11 @@ sdks/canary/go/cmd/seed-accounts/seed-accounts
 # Generated build artifacts — never track (regenerable, large, host-specific).
 # Caught after a stray `git add -A` swept 76MB into PR #276 (worklog 0389).
 controller/bin/
+
+# Root-level CLI binaries built from cmd/ (redact, tools). Regenerable via
+# `go build`; committed by accident — never track.
+/redact
+/tools
 cmd/workspace-agentd/workspace-agentd
 sdks/java/target/
 
