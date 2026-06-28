@@ -3,23 +3,26 @@
 
 package makefile_test
 
-// Regression test for the api/Makefile migrate connection string.
+// Regression tests for migrate connection strings in the api/ dev tooling.
 //
-// Same class of bug as issue #424 (and PR #437): the migrate-up / migrate-down
-// targets built the database argument as a postgres:// URL with the password
-// interpolated via make's $(DB_PASSWORD). Make substitution is a literal
-// string replace with no URL-encoding, so a password containing URL-reserved
-// chars (/ ? # @ : % + =) breaks the migrate CLI URL parser and the target
-// fails. The repro is common: a developer exports DB_PASSWORD from
-// `openssl rand -base64 32` (which produces slashes) and runs `make migrate-up`.
+// Same class of bug as issue #424 (and PR #437): a connection string built as
+// a postgres:// URL with the password interpolated via shell/make variable
+// substitution. Both make's $(VAR) and bash's ${VAR} are literal string
+// replaces with no URL-encoding, so a password containing URL-reserved chars
+// (/ ? # @ : % + =) breaks the migrate CLI URL parser. The repro is common:
+// a developer exports DB_PASSWORD from `openssl rand -base64 32` (which
+// produces slashes) and runs `make migrate-up` or `./scripts/migrate.sh`.
 //
-// Fix: use the libpq KV connection-string form, which splits on whitespace
-// and '=' and never needs encoding — the same fix applied to the Helm chart's
-// migration Job in PR #437.
+// Two live sites had the bug:
+//   - api/Makefile migrate-up / migrate-down targets (make $(VAR))
+//   - api/scripts/migrate.sh (bash ${VAR})
 //
-// This test parses the Makefile and asserts the migrate targets use the KV
-// form, not a postgres:// URL with the password inline. It fails against the
-// original URL-form targets.
+// Fix for both: use the libpq KV connection-string form, which splits on
+// whitespace and '=' and never needs encoding — the same fix applied to the
+// Helm chart's migration Job in PR #437.
+//
+// These tests parse each file and assert the connection string uses the KV
+// form, not a password-bearing URL. They fail against the original URL-form.
 
 import (
 	"os"
@@ -32,55 +35,92 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func makefilePath(t *testing.T) string {
+// extractConnectionStrings scans file content for migrate -database arguments
+// (quoted strings) and returns the set of arguments found.
+func extractConnectionStrings(t *testing.T, content string) []string {
+	t.Helper()
+	// Matches: -database "..."  (Makefile and shell both quote the value).
+	dbArgRe := regexp.MustCompile("-database\\s+\"([^\"]*)\"")
+	var out []string
+	for _, m := range dbArgRe.FindAllStringSubmatch(content, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
+// assertNoURLForm requires that none of the given connection strings is a
+// postgres:// URL (the password-bearing form that breaks on URL-reserved chars).
+func assertNoURLForm(t *testing.T, source string, args []string) {
+	t.Helper()
+	var urlArgs []string
+	for _, a := range args {
+		if strings.HasPrefix(a, "postgres://") || strings.HasPrefix(a, "postgresql://") {
+			urlArgs = append(urlArgs, a)
+		}
+	}
+	require.Emptyf(t, urlArgs,
+		"%s must NOT use a postgres:// URL with the password interpolated "+
+			"(variable substitution is literal with no URL-encoding; a password "+
+			"with a URL-reserved char breaks the migrate CLI — same class as "+
+			"issue #424). Found URL-form args: %v", source, urlArgs)
+}
+
+// assertKVFormWithPassword requires that every connection string uses the
+// libpq KV form and interpolates the password (no hard-coded value).
+func assertKVFormWithPassword(t *testing.T, source, passwordVar string, args []string) {
+	t.Helper()
+	require.NotEmptyf(t, args, "%s must contain at least one migrate -database argument", source)
+	for _, arg := range args {
+		assert.Containsf(t, arg, "password="+passwordVar,
+			"%s KV database arg must interpolate the password from %s: %q", source, passwordVar, arg)
+		assert.Containsf(t, arg, "sslmode=",
+			"%s KV database arg must include sslmode: %q", source, arg)
+	}
+}
+
+func absPath(t *testing.T, rel string) string {
 	t.Helper()
 	wd, err := os.Getwd()
 	require.NoError(t, err)
-	return filepath.Join(wd, "Makefile")
+	return filepath.Join(wd, rel)
 }
 
-// TestMigrateTargets_UseLibpqKVNotURL parses api/Makefile, extracts the
-// migrate-up and migrate-down recipe lines, and asserts each uses the
+// TestMigrateMakefileTargets_UseLibpqKVNotURL parses api/Makefile, extracts
+// the migrate-up and migrate-down recipe lines, and asserts each uses the
 // libpq KV connection-string form rather than a password-bearing URL.
-func TestMigrateTargets_UseLibpqKVNotURL(t *testing.T) {
-	data, err := os.ReadFile(makefilePath(t))
+func TestMigrateMakefileTargets_UseLibpqKVNotURL(t *testing.T) {
+	data, err := os.ReadFile(absPath(t, "Makefile"))
 	require.NoError(t, err)
 
-	// Extract the database argument from every migrate recipe line.
-	dbArgRe := regexp.MustCompile(`-database\s+"([^"]*)"`)
-	urlTargets := []string{}
-	kvTargets := map[string]bool{}
-	for _, line := range strings.Split(string(data), "\n") {
-		if !strings.Contains(line, "migrate") {
-			continue
-		}
-		m := dbArgRe.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-		dbArg := m[1]
-		if strings.HasPrefix(dbArg, "postgres://") || strings.HasPrefix(dbArg, "postgresql://") {
-			urlTargets = append(urlTargets, dbArg)
-			continue
-		}
-		kvTargets[dbArg] = true
-	}
+	args := extractConnectionStrings(t, string(data))
+	assertNoURLForm(t, "api/Makefile", args)
+	assertKVFormWithPassword(t, "api/Makefile", "$(DB_PASSWORD)", args)
+}
 
-	require.Empty(t, urlTargets,
-		"migrate targets must NOT use a postgres:// URL with the password interpolated "+
-			"(make $(VAR) substitution is literal with no URL-encoding; a password with "+
-			"a URL-reserved char breaks the migrate CLI — same class as issue #424). "+
-			"Found URL-form args: %v", urlTargets)
+// TestMigrateShellScript_UseLibpqKVNotURL parses api/scripts/migrate.sh and
+// asserts its connection string uses the libpq KV form rather than a
+// password-bearing URL. Same class of bug as the Makefile targets.
+//
+// migrate.sh builds the connection string in an intermediate CONNECTION_STRING
+// variable, so this test scans the file content directly for the bug signature
+// (postgres:// with interpolated password) and the fix signature (KV form).
+func TestMigrateShellScript_UseLibpqKVNotURL(t *testing.T) {
+	data, err := os.ReadFile(absPath(t, filepath.Join("scripts", "migrate.sh")))
+	require.NoError(t, err)
+	content := string(data)
 
-	// At least one KV-form database arg must exist (both migrate-up and
-	// migrate-down). KV form must interpolate the password from $(DB_PASSWORD),
-	// not a hard-coded value.
-	require.NotEmpty(t, kvTargets,
-		"expected at least one migrate target using the libpq KV form")
-	for arg := range kvTargets {
-		assert.Contains(t, arg, "password=$(DB_PASSWORD)",
-			"KV database arg must interpolate the password from $(DB_PASSWORD): %q", arg)
-		assert.Contains(t, arg, "sslmode=",
-			"KV database arg must include sslmode (use the existing sslmode value): %q", arg)
-	}
+	// Bug signature: a postgres:// URL with the password interpolated.
+	assert.NotContainsf(t, content, "postgres://${DB_USER}:${DB_PASSWORD}",
+		"api/scripts/migrate.sh must NOT build a postgres:// URL with the password "+
+			"interpolated (bash ${VAR} substitution is literal with no URL-encoding; "+
+			"a password with a URL-reserved char breaks the migrate CLI — same class "+
+			"as issue #424)")
+
+	// Fix signature: the libpq KV form interpolating the password.
+	assert.Containsf(t, content, "password=${DB_PASSWORD}",
+		"api/scripts/migrate.sh must use the libpq KV form with password=${DB_PASSWORD}")
+	assert.Containsf(t, content, "host=${DB_HOST}",
+		"api/scripts/migrate.sh must use the libpq KV form with host=${DB_HOST}")
+	assert.Containsf(t, content, "sslmode=",
+		"api/scripts/migrate.sh KV connection string must include sslmode")
 }
