@@ -7,7 +7,7 @@ package chart_test
 //
 // The PodMonitor CRD from prometheus-operator defines its per-port scrape
 // list under spec.podMetricsEndpoints. spec.endpoints is the ServiceMonitor
-// analogue. Writing `endpoints` on a PodMonitor is rejected by Prometheus
+// analog. Writing `endpoints` on a PodMonitor is rejected by Prometheus
 // Operator CRD validation under strict structural-schema enforcement
 // (every current release), surfacing as:
 //
