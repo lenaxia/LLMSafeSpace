@@ -193,6 +193,20 @@ func TestSetPlatform_DBError_Returns500(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }
 
+func TestSetPlatform_AuditEmissionFailure_StillReturns200(t *testing.T) {
+	store := new(mockPromptHandlerStore)
+	logger := &stubPolicyLogger{}
+	h := NewPromptHandler(store, nil, stubOrgAuth{userID: "admin-1"}, logger)
+
+	store.On("SetPlatformSetting", mock.Anything, types.SettingSysPromptPlatform, mock.Anything, "admin-1").Return(nil)
+	store.On("LogAuditEvent", mock.Anything, "admin", "admin-1", "prompt.platform.set", "sys_prompt_platform", (*string)(nil), mock.Anything).Return(errors.New("audit db down"))
+
+	rr := doRoleRequest(t, http.MethodPut, "/admin/prompt", "/admin/prompt", h.SetPlatform, map[string]string{"prompt": "New rules"})
+
+	assert.Equal(t, http.StatusOK, rr.Code, "audit failure must not block the write — handler returns 200")
+	assert.NotEmpty(t, logger.warns, "audit failure must be logged via policyLogger.Warn")
+}
+
 // --- GetOrg ---
 
 func TestGetOrg_ReturnsPromptAndToggle(t *testing.T) {
@@ -295,6 +309,22 @@ func TestSetOrg_DBError_Returns500(t *testing.T) {
 	rr := doRoleRequest(t, http.MethodPut, "/orgs/:id/prompt", "/orgs/org-1/prompt", h.SetOrg, body)
 
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+}
+
+func TestSetOrg_OnlyToggle_PromptUnchanged(t *testing.T) {
+	store := new(mockPromptHandlerStore)
+	h := newPromptHandlerTest(store, "admin-1", nil)
+
+	allowUser := true
+	store.On("SetOrgPolicy", mock.Anything, "org-1", types.PolicyAllowUserPrompt, mock.Anything, "admin-1").Return(nil)
+	store.On("LogOrgEvent", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	body := setOrgPromptRequest{AllowUserPrompt: &allowUser}
+	rr := doRoleRequest(t, http.MethodPut, "/orgs/:id/prompt", "/orgs/org-1/prompt", h.SetOrg, body)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	store.AssertNumberOfCalls(t, "SetOrgPolicy", 1)
+	store.AssertCalled(t, "SetOrgPolicy", mock.Anything, "org-1", types.PolicyAllowUserPrompt, mock.Anything, "admin-1")
 }
 
 // --- GetWorkspacePrompt ---

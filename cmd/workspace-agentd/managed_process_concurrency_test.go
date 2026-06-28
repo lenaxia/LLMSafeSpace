@@ -19,6 +19,8 @@ package main
 // was previously untested.
 
 import (
+	"os"
+	"os/exec"
 	"strconv"
 	"sync"
 	"testing"
@@ -151,19 +153,23 @@ func TestManagedProcess_ConcurrentRestartAndPIDReads(t *testing.T) {
 }
 
 // TestManagedProcess_RestartWithSlowChild_SIGKILLFallback exercises the
-// SIGKILL fallback timer inside restart(): the child catches SIGTERM and
-// ignores it for longer than the 5s grace period. The killTimer closure
-// (which captures pid by value) must fire syscall.Kill(pid, SIGKILL) so the
-// supervisor can reap the child and spawn a replacement. This path was
-// noted as untested in the #422 review.
+// SIGKILL fallback timer inside restart(): the child IGNORES SIGTERM
+// entirely (only SIGKILL can terminate it). The killTimer closure (which
+// captures pid by value) must fire syscall.Kill(pid, SIGKILL) so the
+// supervisor can reap the child and spawn a replacement.
+//
+// Discrimination: if the killTimer is removed from restart(), the child
+// never exits (it ignores SIGTERM and only SIGKILL can kill it), so
+// restart() would hang on <-upCh forever and the test would time out.
 func TestManagedProcess_RestartWithSlowChild_SIGKILLFallback(t *testing.T) {
 	if testing.Short() {
 		t.Skip("SIGKILL fallback requires >5s (the hardcoded grace)")
 	}
 	withTestLogger(t)
 	port := freeTCPPort(t)
-	// 8s SIGTERM delay > 5s SIGKILL grace → the killTimer must fire.
-	p := newTestManagedProcess(t, port, 8000)
+	// IGNORE_SIGTERM=1: child catches and discards SIGTERM in a loop.
+	// Only the killTimer's SIGKILL at 5s can terminate it.
+	p := newIgnoreSIGTERMManagedProcess(t, port)
 	p.start()
 	defer p.stop()
 	requireFakeReachable(t, port, 2*time.Second)
@@ -205,13 +211,16 @@ func TestManagedProcess_RestartWithSlowChild_SIGKILLFallback(t *testing.T) {
 // TestManagedProcess_StopWithSlowChild_SIGKILLFallback exercises the same
 // SIGKILL fallback path in stop(): a child that ignores SIGTERM must be
 // force-killed so the supervisor can exit and stop() can return.
+//
+// Discrimination: if the killTimer is removed from stop(), the child never
+// exits and stop() hangs on <-doneCh forever.
 func TestManagedProcess_StopWithSlowChild_SIGKILLFallback(t *testing.T) {
 	if testing.Short() {
 		t.Skip("SIGKILL fallback requires >5s (the hardcoded grace)")
 	}
 	withTestLogger(t)
 	port := freeTCPPort(t)
-	p := newTestManagedProcess(t, port, 8000)
+	p := newIgnoreSIGTERMManagedProcess(t, port)
 	p.start()
 	requireFakeReachable(t, port, 2*time.Second)
 
@@ -268,4 +277,28 @@ func TestManagedProcess_DoubleStopIsIdempotent(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("concurrent stop() calls deadlocked")
 	}
+}
+
+// newIgnoreSIGTERMManagedProcess builds a managedProcess whose child ignores
+// SIGTERM entirely (catches and discards in a loop). Only SIGKILL can
+// terminate the child, so the SIGKILL-fallback timer in restart()/stop() is
+// the sole mechanism that lets those methods complete. If the killTimer is
+// removed, tests using this factory hang.
+func newIgnoreSIGTERMManagedProcess(t *testing.T, port int) *managedProcess {
+	t.Helper()
+	p := &managedProcess{}
+	p.cmdFactory = func() *exec.Cmd {
+		//nolint:gosec // os.Args[0] is the trusted test binary path
+		cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess")
+		cmd.Env = []string{
+			"GO_TEST_FAKE_OPENCODE=1",
+			"FAKE_PORT=" + strconv.Itoa(port),
+			"IGNORE_SIGTERM=1",
+		}
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd
+	}
+	p.healthCheckURL = "http://127.0.0.1:" + strconv.Itoa(port) + "/v1/readyz"
+	return p
 }

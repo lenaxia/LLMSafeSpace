@@ -92,8 +92,19 @@ func runFakeOpencode() {
 	// managedProcess.restart() to wait for the old process to fully
 	// exit before binding a new port — the regression behavior for
 	// Bug 2 (worklog 0125).
+	//
+	// IGNORE_SIGTERM=1: the process catches and discards SIGTERM/SIGINT
+	// in a loop, never exiting on signal. Only SIGKILL can terminate it.
+	// Used by the SIGKILL-fallback tests to prove the killTimer is what
+	// kills the child (not a natural exit).
 	delayMS, _ := strconv.Atoi(os.Getenv("SIGTERM_DELAY_MS"))
-	if delayMS > 0 {
+	if os.Getenv("IGNORE_SIGTERM") == "1" {
+		ch := make(chan os.Signal, 1)
+		signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
+		for range ch {
+			// discard — only SIGKILL (uncatchable) terminates us
+		}
+	} else if delayMS > 0 {
 		ch := make(chan os.Signal, 1)
 		signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
 		<-ch
