@@ -12,6 +12,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 from canary import (
+    jwt_login,
     Runner,
     Config,
     config_from_env,
@@ -27,7 +28,7 @@ def run(r: Runner, cfg: Config) -> None:
         r.ok("model-set: skipped (no LLM API key or model)")
         return
 
-    c = LLMSafeSpaces(cfg.api_url, api_key=cfg.api_key, timeout=120.0)
+    c = LLMSafeSpaces(cfg.api_url, api_key=jwt_login(cfg), timeout=120.0)
     ws_id = None
     cred_id = None
     try:
@@ -47,7 +48,11 @@ def run(r: Runner, cfg: Config) -> None:
             return
 
         cred_value = json.dumps(
-            {"kind": cfg.llm_provider, "slug": "canary-py-model-set", "apiKey": cfg.llm_api_key}
+            {
+                "kind": cfg.llm_provider,
+                "slug": "canary-py-model-set",
+                "apiKey": cfg.llm_api_key,
+            }
         )
         ok_cred, cred = r.assert_no_error(
             lambda: c.secrets.create(

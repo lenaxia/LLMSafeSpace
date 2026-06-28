@@ -11,12 +11,12 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
-from canary import Runner, Config, config_from_env, wait_active
+from canary import jwt_login, Runner, Config, config_from_env, wait_active
 from llmsafespaces import LLMSafeSpaces
 
 
 def run(r: Runner, cfg: Config) -> None:
-    c = LLMSafeSpaces(cfg.api_url, api_key=cfg.api_key, timeout=60.0)
+    c = LLMSafeSpaces(cfg.api_url, api_key=jwt_login(cfg), timeout=60.0)
     ws_id = None
     cred_id = None
     try:

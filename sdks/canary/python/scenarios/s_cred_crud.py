@@ -7,12 +7,12 @@ from __future__ import annotations
 import json, sys, os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
-from canary import Runner, Config, config_from_env
+from canary import jwt_login, Runner, Config, config_from_env
 from llmsafespaces import LLMSafeSpaces
 
 
 def run(r: Runner, cfg: Config) -> None:
-    c = LLMSafeSpaces(cfg.api_url, api_key=cfg.api_key, timeout=20.0)
+    c = LLMSafeSpaces(cfg.api_url, api_key=jwt_login(cfg), timeout=20.0)
     cred_id = None
     cred_value = json.dumps(
         {"kind": cfg.llm_provider, "slug": "canary-py-cred", "apiKey": "sk-canary-placeholder-00000000"}

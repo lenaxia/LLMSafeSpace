@@ -3,10 +3,10 @@
 // D-CRED-BIND canary — TypeScript SDK
 
 import { LLMSafeSpaces } from '../../src/index.js';
-import { Runner, Config, configFromEnv, nodeFetch, waitActive, waitPhase } from '../canary.js';
+import { jwtLogin, Runner, Config, configFromEnv, nodeFetch, waitActive, waitPhase } from '../canary.js';
 
 async function run(r: Runner, cfg: Config): Promise<void> {
-  const c = new LLMSafeSpaces({ baseUrl: cfg.apiUrl, apiKey: cfg.apiKey, timeout: 60000, fetch: nodeFetch as any });
+  const c = new LLMSafeSpaces({ baseUrl: cfg.apiUrl, apiKey: await jwtLogin(cfg), timeout: 60000, fetch: nodeFetch as any });
   let wsId: string | null = null, credId: string | null = null;
   try {
     const [ok, ws] = await r.assertNoError(
