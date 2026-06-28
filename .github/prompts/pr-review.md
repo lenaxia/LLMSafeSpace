@@ -8,15 +8,53 @@ CORRECTNESS
 - Are error paths handled and errors propagated correctly?
 - Are all new exported functions/types documented?
 
-TESTS
-- Does the PR include tests for the new behaviour?
-- Are both happy-path and unhappy-path cases covered?
-- Do the tests actually exercise the changed code (not just pass trivially)?
-- If tests are missing or thin, flag it — TDD is required per README-LLM.md.
-- Identify missing test cases: read the changed code carefully and enumerate concrete scenarios
-  that are not covered by the existing tests. For each candidate missing test, ask yourself:
-  "Would this test catch a real bug or regression that the current tests would miss?" Only
-  include it if the answer is yes. Discard trivial, redundant, or low-value cases.
+TESTS — COMPREHENSIVE COVERAGE IS REQUIRED (this is a hard gate, not guidance)
+TDD is mandatory per README-LLM.md Rule 0. A behaviour-changing PR without the tests
+below is incomplete and MUST be REQUEST CHANGES, regardless of correctness. Unit tests
+alone are never sufficient. Every test level below is mandatory; none substitutes for
+another.
+
+For the changed behaviour, verify EACH of the following is present. If any is missing or
+thin, REQUEST CHANGES and name the concrete scenario that goes uncaught:
+
+1. Unit tests — comprehensive coverage of every changed function/type:
+   - Multiple happy-path cases
+   - Multiple unhappy-path cases (errors, invalid inputs, boundary failures, dependency
+     failures)
+   - Edge cases
+   - Table-driven where there is more than one input case
+
+2. Integration tests — exercises the real wiring of the changed code (router → service →
+   store / K8s / Redis, or their fakes). Unit tests in isolation do not satisfy this.
+   "It compiles" or "unit tests pass" is NOT sufficient.
+
+3. End-to-end (e2e) tests — for EVERY affected workflow (user-facing or system), BOTH:
+   - Happy path(s) — the expected success scenario(s)
+   - Unhappy path(s) — failures, invalid input, dependency failures, partial failures,
+     timeouts, and adversarial input
+   A workflow with only happy-path e2e coverage is NOT comprehensively tested. Every
+   affected workflow must have unhappy-path e2e coverage in addition to the happy path.
+
+REGRESSION PREVENTION — bug fixes
+- If this PR is a bug fix (any commit message starting with fix:), it MUST include at
+  least one test that:
+  a. REPRODUCES the bug first (fails without the fix — red), AND
+  b. PASSES after the fix (green)
+- This test must target the ROOT CAUSE, not a symptom. A test that passes both with and
+  without the fix is not a regression test — flag it and require a real one.
+- A bug-fix PR with no reproducing regression test is incomplete: the identical bug can be
+  reintroduced undetected. REQUEST CHANGES. "It's a small fix" / "the change is obvious"
+  are NOT exemptions.
+- Also check that the fix does not regress adjacent behaviour — are the surrounding code
+  paths still covered by passing tests?
+
+When assessing tests, read the changed code carefully and enumerate concrete scenarios that
+are NOT covered by existing tests. For each candidate missing test, ask: "Would this test
+catch a real bug or regression that the current tests would miss?" Only include it if the
+answer is yes. Discard trivial, redundant, or low-value cases.
+
+Do the tests actually exercise the changed code (not just pass trivially)? If a test would
+pass against the pre-PR code unchanged, it is not exercising the change — flag it.
 
 ROBUSTNESS
 - Identify specific points in the design or implementation that are weak, fragile, or prone
@@ -59,10 +97,21 @@ Output format — post a PR review with this structure:
 [findings or ✓ No issues]
 
 ### Tests
-[findings or ✓ Adequate coverage]
+[Report each test level separately. STATE EXPLICITLY which are present and which are
+missing/thin:]
+
+- Unit tests (happy + unhappy + edge): [PRESENT / MISSING / THIN — with detail]
+- Integration tests (real wiring): [PRESENT / MISSING / THIN — with detail]
+- E2E tests — happy paths: [PRESENT / MISSING / THIN — with detail]
+- E2E tests — unhappy paths: [PRESENT / MISSING / THIN — with detail]
+- Regression test (bug-fix PRs only): [N/A — not a bug fix / PRESENT / MISSING — if missing,
+  this is a hard REQUEST CHANGES]
+
+[findings or ✓ All required levels present with happy + unhappy coverage]
 
 #### Missing test cases
-[List only meaningful, impactful missing tests that would catch real bugs — or "None identified"]
+[List only meaningful, impactful missing tests that would catch real bugs or regressions —
+or "None identified"]
 
 ### Robustness
 [List only validated weaknesses confirmed to be real and reachable — or ✓ No concerns]
@@ -78,3 +127,7 @@ Output format — post a PR review with this structure:
 
 ### Verdict
 [APPROVE / REQUEST CHANGES / COMMENT] — [one sentence reason]
+NOTE: REQUEST CHANGES is mandatory if any required test level (unit / integration / e2e
+happy / e2e unhappy) is missing or thin for the changed behaviour, OR if this is a bug-fix
+PR without a reproducing regression test. Do not APPROVE in those cases regardless of
+correctness.
