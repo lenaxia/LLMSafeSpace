@@ -11,7 +11,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +23,7 @@ import (
 	"github.com/lenaxia/llmsafespaces/api/internal/services/msgqueue"
 	apitypes "github.com/lenaxia/llmsafespaces/api/internal/types"
 	"github.com/lenaxia/llmsafespaces/pkg/agentd"
+	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
 func (h *ProxyHandler) CreateSession(c *gin.Context) {
@@ -85,13 +88,411 @@ func (h *ProxyHandler) SendPromptAsync(c *gin.Context) {
 	h.proxyToWorkspace(c, "/session/"+sid+"/prompt_async", true, sid)
 }
 
+// historyPageDefaultLimit is the default page size when ?limit= is omitted.
+// Mirrors the value the frontend (api/messages.ts) already requests.
+const historyPageDefaultLimit = 50
+
+// historyPageMaxLimit caps ?limit= so a misbehaving client cannot force
+// the API to materialize an unbounded message slice in memory.
+const historyPageMaxLimit = 200
+
+// upstreamHistoryBodyCap bounds how much we'll read from opencode's
+// /session/{id}/message endpoint. opencode returns the entire history
+// array in one shot; 16 MiB covers ~10k typical text-only messages and
+// leaves headroom before we'd OOM the API pod.
+const upstreamHistoryBodyCap = 16 * 1024 * 1024
+
+// GetHistory returns a chronological page of displayable messages for a
+// session.
+//
+// Query parameters:
+//   - limit: page size (default 50, max 200). Counts displayable messages
+//     only — system-role messages and messages whose parts collapse to
+//     nothing visible (e.g. only step-start/step-finish) do not count
+//     against the limit. Rejecting invalid limits (<=0 or non-numeric)
+//     surfaces client bugs early.
+//   - before: opaque cursor — the message id of the OLDEST message in the
+//     previously-rendered page. Returns messages strictly older than
+//     this cursor. Absent => return the newest `limit` messages.
+//
+// Response:
+//   - body: JSON array of opencode message objects, oldest-first within
+//     the page. Schema preserved as-is so the frontend's transformHistory
+//     keeps working.
+//   - X-Next-Cursor header: present iff more (older) messages exist; its
+//     value is the id of the OLDEST message in the returned page. Absent
+//     means there are no more messages to fetch.
+//
+// The handler fetches the FULL upstream array from opencode (which does
+// not paginate), filters to displayable messages server-side, then
+// slices. Filtering server-side prevents jumpy page sizes that would
+// otherwise happen if the frontend filtered after receiving the page.
 func (h *ProxyHandler) GetHistory(c *gin.Context) {
 	sid := c.Param("sessionId")
 	if err := validateSessionID(sid); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid sessionId: " + err.Error()})
 		return
 	}
-	h.proxyToWorkspace(c, "/session/"+sid+"/message", false, sid)
+
+	// Parse + validate pagination params before touching the cluster — a
+	// malformed ?limit shouldn't waste a connection slot or a k8s API call.
+	limit, err := parseHistoryLimit(c.Query("limit"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	before := c.Query("before")
+
+	// Fetch upstream history. We need the FULL body (opencode doesn't
+	// paginate), so go through fetchUpstreamHistory rather than the
+	// streaming proxyToWorkspace path.
+	body, status, fetchErr := h.fetchUpstreamHistory(c, sid)
+	if fetchErr != nil {
+		// fetchUpstreamHistory has already written the error response.
+		return
+	}
+	if status >= 400 {
+		// Pass the upstream status through; do NOT mask as 200 empty page.
+		c.Data(status, "application/json", body)
+		return
+	}
+
+	page, nextCursor, parseErr := paginateOpencodeHistory(body, limit, before)
+	if parseErr != nil {
+		h.logger.Error("Failed to parse opencode history", parseErr,
+			"sessionID", sid, "size", len(body))
+		c.JSON(http.StatusBadGateway, gin.H{"error": "malformed upstream history"})
+		return
+	}
+
+	if nextCursor != "" {
+		c.Header("X-Next-Cursor", nextCursor)
+	}
+	c.Data(http.StatusOK, "application/json", page)
+}
+
+// parseHistoryLimit normalises the ?limit query parameter. An empty
+// string falls back to the default; any other value must parse to a
+// strictly positive integer. The result is capped at historyPageMaxLimit.
+func parseHistoryLimit(raw string) (int, error) {
+	if raw == "" {
+		return historyPageDefaultLimit, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid limit %q: must be a positive integer", raw)
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("invalid limit %d: must be > 0", n)
+	}
+	if n > historyPageMaxLimit {
+		n = historyPageMaxLimit
+	}
+	return n, nil
+}
+
+// fetchUpstreamHistory is a non-streaming GET of opencode's
+// /session/{id}/message. Returns (body, status, err). On err, the
+// handler has already written a 4xx/5xx to the client and the caller
+// should just return.
+//
+// This duplicates parts of proxyToWorkspaceWithErrBody intentionally:
+// the streaming proxy path doesn't allow us to inspect+slice the
+// response body, which is what pagination requires.
+func (h *ProxyHandler) fetchUpstreamHistory(c *gin.Context, sessionID string) ([]byte, int, error) {
+	workspaceID := c.Param("id")
+	if workspaceID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "workspace ID required"})
+		return nil, 0, fmt.Errorf("missing workspace id")
+	}
+
+	var workspace *v1.Workspace
+	if cached, exists := c.Get("workspace"); exists {
+		if sb, ok := cached.(*v1.Workspace); ok {
+			workspace = sb
+		}
+	}
+	if workspace == nil {
+		v1Client, vErr := h.k8sClient.LlmsafespacesV1()
+		if vErr != nil {
+			h.logger.Error("Failed to get LLMSafespacesV1 client", vErr, "workspaceID", workspaceID)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			return nil, 0, vErr
+		}
+		var getErr error
+		workspace, getErr = v1Client.Workspaces(h.namespace).Get(c.Request.Context(), workspaceID, metav1.GetOptions{})
+		if getErr != nil {
+			h.logger.Error("Failed to get workspace CRD", getErr, "workspaceID", workspaceID)
+			c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
+			return nil, 0, getErr
+		}
+	}
+	if workspace.Status.Phase != phaseActive || workspace.Status.PodIP == "" {
+		c.Header("Retry-After", fmt.Sprintf("%d", retryAfterSec))
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error":      "workspace not ready",
+			"phase":      workspace.Status.Phase,
+			"retryAfter": retryAfterSec,
+		})
+		return nil, 0, fmt.Errorf("workspace not ready")
+	}
+
+	password, err := h.getPassword(c.Request.Context(), workspaceID)
+	if err != nil {
+		h.logger.Error("Failed to get workspace password", err, "workspaceID", workspaceID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to retrieve workspace credentials"})
+		return nil, 0, err
+	}
+
+	if !h.acquireConnection(workspaceID) {
+		c.Header("Retry-After", fmt.Sprintf("%d", retryAfterSec))
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"error":      "connection limit reached",
+			"retryAfter": retryAfterSec,
+		})
+		return nil, 0, fmt.Errorf("connection limit")
+	}
+	defer h.releaseConnection(workspaceID)
+
+	// Forward only non-pagination query params to opencode. The
+	// pagination contract (limit/before) is owned by the API, not
+	// opencode — opencode currently ignores them but forwarding them is
+	// noise at best, future breakage at worst.
+	upstreamQuery := stripPaginationQuery(stripVerboseQuery(c.Request.URL.RawQuery))
+
+	podIP := workspace.Status.PodIP
+	body, status, doErr := h.doHistoryRequest(c.Request.Context(), podIP, sessionID, password, upstreamQuery, c.ClientIP())
+
+	// Stale-IP retry: if the first attempt failed with a connection error,
+	// the pod may have been rescheduled to a new IP since the CRD was last
+	// read from cache. Refetch the workspace and try once more if the IP
+	// actually changed. Mirrors the same recovery in proxy.go:290-302.
+	if doErr != nil && isConnectionError(doErr) {
+		freshWS, getErr := func() (*v1.Workspace, error) {
+			v1Client, vErr := h.k8sClient.LlmsafespacesV1()
+			if vErr != nil {
+				return nil, vErr
+			}
+			return v1Client.Workspaces(h.namespace).Get(c.Request.Context(), workspaceID, metav1.GetOptions{})
+		}()
+		if getErr == nil && freshWS.Status.PodIP != "" && freshWS.Status.PodIP != podIP && freshWS.Status.Phase == phaseActive {
+			h.logger.Info("Retrying history with fresh pod IP",
+				"workspaceID", workspaceID, "oldIP", podIP, "newIP", freshWS.Status.PodIP)
+			body, status, doErr = h.doHistoryRequest(c.Request.Context(), freshWS.Status.PodIP, sessionID, password, upstreamQuery, c.ClientIP())
+		}
+	}
+
+	if doErr != nil {
+		if isConnectionError(doErr) {
+			h.logger.Warn("History upstream connection error", "error", doErr, "workspaceID", workspaceID)
+			c.Header("Retry-After", fmt.Sprintf("%d", retryAfterSec))
+			// 503 (not 502) preserves the contract asserted by
+			// TestProxyBuffer_GETHistoryNotBufferedReturns503: read-only
+			// GETs against a non-bufferable upstream return 503 with a
+			// "workspace connection failed" body so the frontend can
+			// distinguish a transient pod-restart from a malformed history
+			// (which surfaces as 502). The 503 is a fast-fail, not a
+			// buffered retry — buffering is reserved for writes.
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"error":      "workspace connection failed",
+				"retryAfter": retryAfterSec,
+			})
+			return nil, 0, doErr
+		}
+		h.logger.Error("History upstream request failed", doErr, "workspaceID", workspaceID)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "upstream request failed"})
+		return nil, 0, doErr
+	}
+
+	return body, status, nil
+}
+
+// doHistoryRequest performs one round-trip against opencode's
+// /session/{id}/message endpoint and returns (body, status, error).
+// Extracted from fetchUpstreamHistory so the stale-IP retry path can
+// reuse it without duplicating header / body-cap handling.
+func (h *ProxyHandler) doHistoryRequest(ctx context.Context, podIP, sessionID, password, query, clientIP string) ([]byte, int, error) {
+	upstreamURL := fmt.Sprintf("http://%s:%d/session/%s/message", podIP, opencodePort, sessionID)
+	if query != "" {
+		upstreamURL += "?" + query
+	}
+
+	req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, upstreamURL, nil)
+	if reqErr != nil {
+		return nil, 0, fmt.Errorf("build upstream history request: %w", reqErr)
+	}
+	req.SetBasicAuth("opencode", password)
+	req.Header.Set("X-Forwarded-For", clientIP)
+
+	resp, doErr := h.httpClient.Do(req)
+	if doErr != nil {
+		return nil, 0, doErr
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	limited := io.LimitReader(resp.Body, upstreamHistoryBodyCap+1)
+	body, readErr := io.ReadAll(limited)
+	if readErr != nil {
+		return nil, 0, fmt.Errorf("read upstream history body: %w", readErr)
+	}
+	if len(body) > upstreamHistoryBodyCap {
+		return nil, 0, fmt.Errorf("upstream history body > %d bytes", upstreamHistoryBodyCap)
+	}
+	return body, resp.StatusCode, nil
+}
+
+// stripPaginationQuery removes the limit and before parameters that
+// the API consumes for itself. This is a complement to stripVerboseQuery
+// which removes the API's verbose/workspace/directory flags.
+func stripPaginationQuery(rawQuery string) string {
+	if rawQuery == "" {
+		return ""
+	}
+	v, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return rawQuery
+	}
+	v.Del("limit")
+	v.Del("before")
+	return v.Encode()
+}
+
+// paginateOpencodeHistory parses an opencode message array body, filters
+// out non-displayable messages, and slices the result into one page.
+//
+// Contract (mirrors the test file proxy_history_pagination_test.go):
+//   - Input body is a JSON array of opencode message objects, oldest-first.
+//   - Output is a JSON array of the same shape (preserving opencode's
+//     schema), oldest-first within the page.
+//   - If `before` is empty: return the LAST `limit` displayable messages.
+//   - If `before` is set: return up to `limit` displayable messages that
+//     appear strictly before the message whose info.id == before. If the
+//     cursor isn't found, return an empty array (defensive — better than
+//     accidentally returning the head of history).
+//   - Returns (pageBytes, nextCursor, error). nextCursor is the info.id of
+//     the OLDEST message in the returned page; it is empty if there are
+//     no older displayable messages remaining.
+func paginateOpencodeHistory(body []byte, limit int, before string) ([]byte, string, error) {
+	var arr []json.RawMessage
+	if err := json.Unmarshal(body, &arr); err != nil {
+		return nil, "", fmt.Errorf("decode upstream array: %w", err)
+	}
+
+	// Walk once, capture (idx, id) pairs for displayable messages.
+	type entry struct {
+		raw json.RawMessage
+		id  string
+	}
+	displayable := make([]entry, 0, len(arr))
+	for _, raw := range arr {
+		id, ok := messageIsDisplayable(raw)
+		if !ok {
+			continue
+		}
+		displayable = append(displayable, entry{raw: raw, id: id})
+	}
+
+	// Determine the inclusive end of the slice (exclusive of the cursor
+	// itself, which the client already has).
+	endExclusive := len(displayable)
+	if before != "" {
+		idx := -1
+		for i, e := range displayable {
+			if e.id == before {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			// Unknown cursor: empty page, no cursor. The frontend will
+			// treat this as end-of-history.
+			return []byte("[]"), "", nil
+		}
+		endExclusive = idx
+	}
+
+	// Take the last `limit` entries up to endExclusive.
+	start := endExclusive - limit
+	if start < 0 {
+		start = 0
+	}
+	pageEntries := displayable[start:endExclusive]
+
+	// Build the JSON array of raw messages, oldest-first within the page.
+	out := make([]json.RawMessage, len(pageEntries))
+	for i, e := range pageEntries {
+		out[i] = e.raw
+	}
+	pageBytes, err := json.Marshal(out)
+	if err != nil {
+		return nil, "", fmt.Errorf("encode page: %w", err)
+	}
+
+	// Emit a cursor IFF there are older displayable messages we did not
+	// include in this page. The cursor value is the OLDEST id we just
+	// returned — passing it as ?before= yields the next-older page.
+	nextCursor := ""
+	if start > 0 && len(pageEntries) > 0 {
+		nextCursor = pageEntries[0].id
+	}
+	return pageBytes, nextCursor, nil
+}
+
+// messageIsDisplayable returns the message id and true iff the message
+// is one a user would see in the chat transcript:
+//   - role must be "user" or "assistant" (system messages are hidden)
+//   - parts must contain at least one part whose type is text, thinking,
+//     reasoning, or tool. Pure step-start/step-finish/patch messages do
+//     not count as displayable.
+//
+// Returns ("", false) for anything not displayable. The id is sourced
+// from info.id with a fallback to top-level id (mirrors the frontend's
+// transformHistory).
+func messageIsDisplayable(raw json.RawMessage) (string, bool) {
+	var probe struct {
+		Info struct {
+			Role string `json:"role"`
+			ID   string `json:"id"`
+		} `json:"info"`
+		ID    string `json:"id"`
+		Role  string `json:"role"`
+		Parts []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"parts"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return "", false
+	}
+	role := probe.Info.Role
+	if role == "" {
+		role = probe.Role
+	}
+	if role != "user" && role != "assistant" {
+		return "", false
+	}
+	hasDisplayable := false
+	for _, p := range probe.Parts {
+		switch p.Type {
+		case "text", "thinking", "reasoning":
+			if p.Text != "" {
+				hasDisplayable = true
+			}
+		case "tool":
+			hasDisplayable = true
+		}
+		if hasDisplayable {
+			break
+		}
+	}
+	if !hasDisplayable {
+		return "", false
+	}
+	id := probe.Info.ID
+	if id == "" {
+		id = probe.ID
+	}
+	return id, true
 }
 
 func (h *ProxyHandler) GetSession(c *gin.Context) {

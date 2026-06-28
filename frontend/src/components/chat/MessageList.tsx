@@ -126,12 +126,16 @@ export function MessageList({ messages, streaming, streamingBubble, trailingProm
       >
         <div className="flex flex-col gap-2 p-2">
           {hasOlderMessages && (
-            <div className="flex justify-center py-3">
+            <div
+              data-testid="load-earlier-anchor"
+              className="sticky top-0 z-10 flex justify-center py-3 bg-background/80 backdrop-blur-sm"
+            >
               {loadingOlder ? (
                 <Spinner size="sm" />
               ) : (
                 <button
                   onClick={onLoadEarlier}
+                  aria-label="Load earlier messages"
                   className="rounded-md border border-border bg-background px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent transition-colors"
                 >
                   Load earlier messages

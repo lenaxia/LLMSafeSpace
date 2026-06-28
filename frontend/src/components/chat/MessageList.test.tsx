@@ -138,6 +138,50 @@ describe("MessageList", () => {
     expect(document.querySelector(".animate-spin")).toBeInTheDocument();
   });
 
+  describe("load-earlier discoverability (#440)", () => {
+    // The button is rendered at the top of the (potentially very long)
+    // scrolled message list. On a fresh load the view auto-scrolls to the
+    // bottom — so without a sticky/visible cue, users with long histories
+    // never see the affordance and believe earlier messages are missing.
+    it("renders the load-earlier button inside the scroll container at the top", () => {
+      const { container } = render(
+        <MessageList messages={messages} hasOlderMessages={true} />,
+      );
+      const log = container.querySelector("[role='log']") as HTMLElement;
+      const btn = screen.getByText("Load earlier messages");
+      // Must live inside the scroll container so it scrolls into view
+      // when the user reaches the top, AND must be the FIRST interactive
+      // element in render order so screen readers reach it before history.
+      expect(log.contains(btn)).toBe(true);
+      const firstButtonInLog = log.querySelector("button");
+      expect(firstButtonInLog).toBe(btn.closest("button"));
+    });
+
+    it("button is announced to assistive tech via accessible label", () => {
+      render(<MessageList messages={messages} hasOlderMessages={true} />);
+      // getByRole('button', {name:...}) verifies accessible name.
+      const btn = screen.getByRole("button", { name: /load earlier messages/i });
+      expect(btn).toBeInTheDocument();
+    });
+
+    it("button container is sticky at top of scroll viewport when older history exists", () => {
+      const { container } = render(
+        <MessageList messages={messages} hasOlderMessages={true} />,
+      );
+      // Sticky positioning ensures the affordance remains visible while the
+      // user is anywhere in the upper portion of the conversation.
+      const stickyEl = container.querySelector("[data-testid='load-earlier-anchor']");
+      expect(stickyEl).not.toBeNull();
+      expect(stickyEl!.className).toMatch(/sticky/);
+      expect(stickyEl!.className).toMatch(/top-0/);
+    });
+
+    it("does not render the sticky anchor when hasOlderMessages is false", () => {
+      const { container } = render(<MessageList messages={messages} />);
+      expect(container.querySelector("[data-testid='load-earlier-anchor']")).toBeNull();
+    });
+  });
+
   describe("new messages divider (US-37.7)", () => {
     const messagesWithTimestamps: Message[] = [
       { id: "1", role: "user", parts: [{ type: "text", text: "Old message" }], createdAt: "2026-06-10T10:00:00Z" },
