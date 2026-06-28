@@ -84,6 +84,22 @@ spec:
       ports:
         - protocol: TCP
           port: 5432
+    {{- if .Values.dbInit.enabled }}
+    # Allow the db-init Job (component=db-init) to reach Postgres when the
+    # optional bootstrap hook is enabled. The db-init pod connects as the
+    # Postgres superuser to CREATE ROLE / CREATE DATABASE before the
+    # migration Job runs. Without this rule the datastore NetworkPolicy
+    # (default-deny ingress) silently blocks the hook pod and the install
+    # stalls — exactly the failure mode the hook exists to prevent.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: db-init
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - protocol: TCP
+          port: 5432
+    {{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

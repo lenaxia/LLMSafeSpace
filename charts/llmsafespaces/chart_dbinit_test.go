@@ -160,6 +160,105 @@ func TestDBInit_RunsIdempotentCreateSQL(t *testing.T) {
 	// (which connects as the app role) has DDL privileges.
 	assert.Contains(t, script, "OWNER",
 		"CREATE DATABASE must set OWNER to the application role")
+
+	// set -o pipefail so a failing psql in the existence-check pipeline is
+	// surfaced rather than masked by grep's exit code.
+	assert.Contains(t, script, "pipefail",
+		"db-init shell must set pipefail so psql connection errors are not masked by grep")
+	// SQL single-quote escaping so a ' in the password cannot break the
+	// statement (the password comes from a Secret the chart does not control).
+	assert.Contains(t, script, "sed",
+		"db-init shell must SQL-escape interpolated values (sed-based single-quote doubling)")
+}
+
+// TestDBInit_PostgresNetworkPolicyAllowsHook verifies that enabling dbInit
+// extends the chart's Postgres ingress NetworkPolicy to permit the db-init
+// pod. Without this rule the datastore NetworkPolicy (default-deny ingress)
+// silently blocks the hook pod and the install stalls — the exact failure
+// mode the hook exists to prevent. This is the critical regression: it
+// catches the original #438 review finding.
+func TestDBInit_PostgresNetworkPolicyAllowsHook(t *testing.T) {
+	// When enabled: the postgres-ingress NetworkPolicy MUST include a rule
+	// allowing component=db-init.
+	docs := helmTemplate(t, "dbInit:\n  enabled: true\n  superuserSecret:\n    name: pg-superuser\n")
+	rule := findIngressRuleForComponent(t, docs, "test-release-llmsafespaces-postgres-ingress", "db-init")
+	require.NotNil(t, rule,
+		"postgres-ingress NetworkPolicy must include a rule for component=db-init when dbInit.enabled=true")
+	ports, _ := rule["ports"].([]any)
+	require.NotEmpty(t, ports, "db-init rule must allow port 5432")
+	pm, _ := ports[0].(map[string]any)
+	assert.EqualValues(t, 5432, pm["port"],
+		"db-init ingress rule must allow TCP 5432")
+
+	// When disabled: the db-init rule MUST be absent (and the migrate rule
+	// still present so migrations themselves are not broken).
+	docsDisabled := helmTemplate(t, "")
+	ruleDisabled := findIngressRuleForComponent(t, docsDisabled, "test-release-llmsafespaces-postgres-ingress", "db-init")
+	require.Nil(t, ruleDisabled,
+		"postgres-ingress NetworkPolicy must NOT include a db-init rule when dbInit.enabled=false")
+	migrateRule := findIngressRuleForComponent(t, docsDisabled, "test-release-llmsafespaces-postgres-ingress", "migrate")
+	require.NotNil(t, migrateRule,
+		"postgres-ingress NetworkPolicy must still allow component=migrate when dbInit is disabled")
+}
+
+// TestDBInit_SetsSSLMode verifies the db-init pod propagates the configured
+// sslMode via PGSSLMODE. Without it, an operator setting sslMode=require
+// would see the hook use psql's default (prefer) and fail against a
+// Postgres that rejects non-SSL connections — the same install-blocking
+// class as the role/DB bootstrap bug. Mirrors how the migration Job threads
+// DB_SSLMODE.
+func TestDBInit_SetsSSLMode(t *testing.T) {
+	docs := helmTemplate(t, "dbInit:\n  enabled: true\n  superuserSecret:\n    name: pg-superuser\npostgresql:\n  sslMode: require\n")
+	job := findDBInitJob(t, docs)
+	require.NotNil(t, job)
+
+	env := dbInitContainerEnv(t, job, "db-init")
+	var found bool
+	for _, e := range env {
+		em, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		if name, _ := em["name"].(string); name == "PGSSLMODE" {
+			found = true
+			assert.Equal(t, "require", em["value"],
+				"PGSSLMODE must read from postgresql.sslMode")
+		}
+	}
+	assert.True(t, found, "db-init container must define PGSSLMODE env var")
+}
+
+// findIngressRuleForComponent searches a named NetworkPolicy for an ingress
+// rule whose from-podSelector matches app.kubernetes.io/component=<comp>.
+// Returns nil if no such rule exists.
+func findIngressRuleForComponent(t *testing.T, docs []map[string]any, npName, comp string) map[string]any {
+	t.Helper()
+	for _, d := range findByKind(docs, "NetworkPolicy") {
+		if metaName(d) != npName {
+			continue
+		}
+		spec, _ := d["spec"].(map[string]any)
+		ingress, _ := spec["ingress"].([]any)
+		for _, r := range ingress {
+			rm, ok := r.(map[string]any)
+			if !ok {
+				continue
+			}
+			from, _ := rm["from"].([]any)
+			for _, f := range from {
+				fm, ok := f.(map[string]any)
+				if !ok {
+					continue
+				}
+				podSel, _ := fm["podSelector"].(map[string]any)
+				labels, _ := podSel["matchLabels"].(map[string]any)
+				if labels["app.kubernetes.io/component"] == comp {
+					return rm
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // TestDBInit_RequiresSuperuserSecretName verifies that enabling dbInit
