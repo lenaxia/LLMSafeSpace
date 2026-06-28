@@ -106,6 +106,14 @@ func newTestEnv(t *testing.T) *testEnv {
 		assert.Equal(t, "test-password", pass)
 
 		w.Header().Set("Content-Type", "application/json")
+		// GET .../message must return a JSON array — that's what opencode
+		// returns and what the paginated GetHistory handler expects to
+		// decode. Tests that don't care about body content can leave it
+		// empty; tests that DO care set up their own backend handler.
+		if r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/message") {
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"method": r.Method,
 			"path":   r.URL.Path,
@@ -621,6 +629,13 @@ func TestProxy_EndpointMapping(t *testing.T) {
 			env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
 				capturedPath = r.URL.Path
 				w.WriteHeader(http.StatusOK)
+				// GET history must respond with a JSON array — opencode's
+				// /session/{id}/message endpoint returns an array, and the
+				// API's paginated GetHistory handler decodes one.
+				if r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/message") {
+					_, _ = w.Write([]byte(`[]`))
+					return
+				}
 				json.NewEncoder(w).Encode(map[string]string{"path": r.URL.Path})
 			})
 			env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
@@ -653,8 +668,9 @@ func TestProxy_E2E_FullFlow(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 				json.NewEncoder(w).Encode(map[string]string{"status": "streaming"})
 			} else {
+				// GET history must be a JSON array — that's the opencode contract.
 				w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(map[string]interface{}{"messages": []string{"msg1"}})
+				_, _ = w.Write([]byte(`[]`))
 			}
 		case "/session/sess-1/prompt_async":
 			w.WriteHeader(http.StatusNoContent)
