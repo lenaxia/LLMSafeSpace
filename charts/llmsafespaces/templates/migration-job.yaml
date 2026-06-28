@@ -45,9 +45,16 @@ spec:
               drop:
                 - ALL
           # The migrate image's entrypoint is `migrate`. Pass everything as args.
+          # Use the libpq KV connection-string form, NOT a postgres:// URL.
+          # K8s $(VAR) substitution is a literal string replace with no
+          # URL-encoding, so a postgres:// URL embeds the password raw and
+          # breaks when it contains URL-reserved chars (/ ? # @ : % + =) —
+          # which is common (e.g. `openssl rand -base64`). The KV form splits
+          # on whitespace and '=' and never needs encoding. See issue #424.
           args:
             - -path=/migrations
-            - -database=postgres://$(DB_USER):$(DB_PASSWORD)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)?sslmode=$(DB_SSLMODE)
+            - -database
+            - host=$(DB_HOST) port=$(DB_PORT) user=$(DB_USER) password=$(DB_PASSWORD) dbname=$(DB_NAME) sslmode=$(DB_SSLMODE)
             - up
           env:
             - name: DB_HOST
