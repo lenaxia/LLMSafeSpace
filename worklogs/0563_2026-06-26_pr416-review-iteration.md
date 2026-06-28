@@ -78,5 +78,5 @@ cmd/workspace-agentd/agent_config_writer.go
 frontend/src/api/agentRoles.ts
 frontend/src/components/chat/RoleSelector.tsx
 pkg/agentd/types.go
-worklogs/NNNN_2026-06-26_pr416-review-iteration.md
+worklogs/0563_2026-06-26_pr416-review-iteration.md
 ```
