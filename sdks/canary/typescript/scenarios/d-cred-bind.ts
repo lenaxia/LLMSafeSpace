@@ -19,7 +19,7 @@ async function run(r: Runner, cfg: Config): Promise<void> {
     r.assert(phase === 'Active', 'reach-active', `got "${phase}"`);
     if (phase !== 'Active') return;
 
-    const credValue = JSON.stringify({ provider: cfg.llmProvider, apiKey: 'sk-canary-placeholder' });
+    const credValue = JSON.stringify({ kind: cfg.llmProvider, slug: "canary-ts-bind", apiKey: 'sk-canary-placeholder' });
     const [ok2, cred] = await r.assertNoError(
       () => c.secrets.create({ name: 'canary-ts-cred-bind-s', type: 'llm-provider', value: credValue }),
       'create-cred: no error');

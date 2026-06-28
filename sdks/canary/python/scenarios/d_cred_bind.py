@@ -31,7 +31,7 @@ def run(r: Runner, cfg: Config) -> None:
             return
 
         cred_value = json.dumps(
-            {"provider": cfg.llm_provider, "apiKey": "sk-canary-placeholder"}
+            {"kind": cfg.llm_provider, "slug": "canary-py-bind", "apiKey": "sk-canary-placeholder"}
         )
         ok2, cred = r.assert_no_error(
             lambda: c.secrets.create(

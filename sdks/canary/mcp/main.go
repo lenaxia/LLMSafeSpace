@@ -417,7 +417,8 @@ func runMCPInputNeg(ctx context.Context, r *Runner, client *stdioClient) {
 func runMCPCredCRUD(ctx context.Context, r *Runner, client *stdioClient) {
 	// P1: credential_create
 	tr, err := client.callTool("credential_create", map[string]any{
-		"provider": "anthropic",
+		"kind":     "anthropic",
+		"slug":     "canary-mcp-anthropic",
 		"api_key":  "sk-canary-placeholder-00000000",
 		"name":     "canary-mcp-cred",
 	})
@@ -466,7 +467,8 @@ func runMCPCredCRUD(ctx context.Context, r *Runner, client *stdioClient) {
 	}
 
 	// N2: missing api_key
-	trN2, _ := client.callTool("credential_create", map[string]any{"provider": "anthropic"})
+	trN2, _ := client.callTool("credential_create", map[string]any{"kind":     "anthropic",
+		"slug":     "canary-mcp-anthropic"})
 	if trN2 != nil {
 		r.assert(trN2.IsError, "cred_create-missing-key: isError=true", "")
 	}

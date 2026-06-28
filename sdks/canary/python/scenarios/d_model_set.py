@@ -47,7 +47,7 @@ def run(r: Runner, cfg: Config) -> None:
             return
 
         cred_value = json.dumps(
-            {"provider": cfg.llm_provider, "apiKey": cfg.llm_api_key}
+            {"kind": cfg.llm_provider, "slug": "canary-py-model-set", "apiKey": cfg.llm_api_key}
         )
         ok_cred, cred = r.assert_no_error(
             lambda: c.secrets.create(

@@ -15,7 +15,7 @@ def run(r: Runner, cfg: Config) -> None:
     c = LLMSafeSpaces(cfg.api_url, api_key=cfg.api_key, timeout=20.0)
     cred_id = None
     cred_value = json.dumps(
-        {"provider": cfg.llm_provider, "apiKey": "sk-canary-placeholder-00000000"}
+        {"kind": cfg.llm_provider, "slug": "canary-py-cred", "apiKey": "sk-canary-placeholder-00000000"}
     )
     try:
         ok, cred = r.assert_no_error(

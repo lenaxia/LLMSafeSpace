@@ -7,7 +7,7 @@ import { Runner, Config, configFromEnv, nodeFetch } from '../canary.js';
 
 async function run(r: Runner, cfg: Config): Promise<void> {
   const c = new LLMSafeSpaces({ baseUrl: cfg.apiUrl, apiKey: cfg.apiKey, timeout: 20000, fetch: nodeFetch as any });
-  const credValue = JSON.stringify({ provider: cfg.llmProvider, apiKey: 'sk-canary-placeholder-00000000' });
+  const credValue = JSON.stringify({ kind: cfg.llmProvider, slug: "canary-ts-cred", apiKey: 'sk-canary-placeholder-00000000' });
   let credId: string | null = null;
   try {
     const [ok, cred] = await r.assertNoError(

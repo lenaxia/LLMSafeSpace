@@ -39,7 +39,7 @@ func main() {
 }
 
 func runCredBind(ctx context.Context, run *canary.Runner, cfg canary.Config) {
-	c := cfg.Client()
+	c := cfg.JWTClient()
 
 	// Create workspace and wait for Active
 	ws, err := c.Workspaces.Create(ctx, llm.CreateWorkspaceRequest{
@@ -59,7 +59,8 @@ func runCredBind(ctx context.Context, run *canary.Runner, cfg canary.Config) {
 
 	// Create credential
 	credValue, _ := json.Marshal(map[string]string{
-		"provider": cfg.LLMProvider,
+		"kind":    cfg.LLMProvider,
+		"slug":    "canary-bind-llm",
 		"apiKey":   "sk-canary-placeholder-key",
 	})
 	cred, err := c.Secrets.Create(ctx, "canary-cred-to-bind", "llm-provider", string(credValue))
