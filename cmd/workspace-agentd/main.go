@@ -140,26 +140,20 @@ func readAgentPassword() string {
 }
 
 // startManagedProcess builds and starts the opencode supervisor when
-// agentd is invoked with --supervise; returns nil otherwise. The
-// onStart callback aborts stale busy sessions after every opencode
-// (re)start, once opencode is healthy (bounded by a 30s deadline
-// inside abortStaleSessionsAfterStart).
+// agentd is invoked with --supervise; returns nil otherwise.
 //
-// The client is constructed before the supervisor so onStart can close
-// over it and be set in the struct literal — before start() spawns the
-// supervisor goroutine. Assigning onStart after start() races with the
-// supervisor's mutex-protected read in supervise(): on the initial boot
-// the supervisor could observe onStart == nil and silently skip the
-// stale-session cleanup, defeating the entire fix.
-func startManagedProcess(rootCtx context.Context, supervise bool, client *OpenCodeClient) *managedProcess {
+// The client argument is retained in the signature for caller symmetry
+// but is not currently used: the previous onStart callback
+// (abortStaleSessionsAfterStart) was removed — it solved a non-problem
+// (no busy flag persists in opencode's SQLite at v1.15.12; every
+// "abort" on an idle session is a no-op) and imposed a 30s health-check
+// stall via a misconfigured probe. The onStart field on managedProcess
+// is retained for future use; nil is a documented no-op.
+func startManagedProcess(_ context.Context, supervise bool, _ *OpenCodeClient) *managedProcess {
 	if !supervise {
 		return nil
 	}
-	proc := &managedProcess{
-		onStart: func() {
-			abortStaleSessionsAfterStart(rootCtx, client, log)
-		},
-	}
+	proc := &managedProcess{}
 	proc.start()
 	return proc
 }

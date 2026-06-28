@@ -688,13 +688,20 @@ export function ChatPage() {
     }
   }, [queryClient, workspaceId, sessionId, parseStreamEvent, notifySessionIdle, reconcileOnIdle, queue, addPendingQuestion, addPendingPermission, removePendingAction, clearSessionPendingPrompts, clearStreamTimedOut]);
 
-  // US-15.2: On SSE reconnect, re-poll status to catch missed transitions
+  // US-15.2: On SSE reconnect, re-poll status to catch missed transitions.
+  // Also resync the transcript: opencode history is authoritative after an
+  // SSE gap (e.g. in-place opencode restart for credential reload, OOM, or
+  // crash). reconcileOnIdle refetches history and clears stale local state;
+  // idempotent if the transcript is already current. Closes issue 440's
+  // "silent hang" symptom — the reconnect now actively recovers rather than
+  // leaving the user on a stale, possibly-interrupted transcript.
   const handleSSEReconnect = useCallback(() => {
     if (workspaceId) {
       queryClient.invalidateQueries({ queryKey: ["workspace-status", workspaceId] });
     }
     void queue.refreshQueue();
-  }, [queryClient, workspaceId, queue]);
+    void reconcileOnIdle();
+  }, [queryClient, workspaceId, queue, reconcileOnIdle]);
 
   // Connect SSE unconditionally (even before workspace is Active) so we can
   // detect the Pending→Active phase transition and auto-create a session.
@@ -899,7 +906,7 @@ export function ChatPage() {
 
       {isReady && agentDied && (
         <div role="alert" className="flex items-center gap-2 border-b border-yellow-200 bg-yellow-50 px-4 py-2 text-xs text-yellow-800 dark:border-yellow-800 dark:bg-yellow-950 dark:text-yellow-200">
-          <span>⚠ Agent was terminated unexpectedly (OOM, crash, or restart). If mid-task, the session will recover or show as idle shortly.</span>
+          <span>⚠ Agent is restarting (credential change, OOM, or crash) — reconnecting…</span>
           <button
             className="ml-auto shrink-0 underline hover:no-underline"
             onClick={() => setAgentDied(false)}

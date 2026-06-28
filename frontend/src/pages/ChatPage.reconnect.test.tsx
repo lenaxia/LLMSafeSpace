@@ -980,4 +980,29 @@ describe("ChatPage auto-abort stuck input sessions", () => {
       expect(callsAfter).toBeGreaterThan(callsBefore);
     });
   });
+
+  it("refetches message history on SSE reconnect (issue 440 — transcript resync)", async () => {
+    // Issue 440: an in-place opencode restart (credential reload / OOM / crash)
+    // cuts the SSE stream. On reconnect the transcript must be resynced from
+    // authoritative opencode history, otherwise the user sees a stale or
+    // partially-interrupted transcript with no recovery. handleSSEReconnect
+    // now calls reconcileOnIdle, which refetches the messages query (backed
+    // by getHistoryPage).
+    const qc = makeQueryClient();
+    qc.setQueryData(["workspace-status", "ws-1"], { phase: "Active", sessions: [{ id: "ses_1", status: "idle" }] });
+    qc.setQueryData(["messages", "ws-1", "ses_1"], { pages: [{ messages: [] }], pageParams: [undefined] });
+    renderChat(qc, "/chat/ws-1/ses_1");
+
+    await waitFor(() => expect(capturedSSEHandler).not.toBeNull());
+
+    const callsBefore = (messagesApi.getHistoryPage as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    triggerReconnect();
+
+    // reconcileOnIdle refetches the messages query → getHistoryPage is called.
+    await waitFor(() => {
+      const callsAfter = (messagesApi.getHistoryPage as ReturnType<typeof vi.fn>).mock.calls.length;
+      expect(callsAfter).toBeGreaterThan(callsBefore);
+    });
+  });
 });

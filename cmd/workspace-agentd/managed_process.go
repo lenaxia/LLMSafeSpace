@@ -103,9 +103,24 @@ type managedProcess struct {
 }
 
 const (
-	maxBackoffSec  = 30
-	healthCheckURL = "http://localhost:4096/v1/readyz"
+	maxBackoffSec = 30
+	// healthCheckURL targets agentd's own /v1/readyz on the admin port,
+	// NOT opencode's :4096 (which serves the SPA and requires HTTP basic
+	// auth on every endpoint — so the previous :4096 URL always failed).
+	// agentd's readyz reflects opencode liveness (it polls opencode's
+	// /global/health behind a cache). When AGENTD_ADMIN_TOKEN is set the
+	// endpoint is Bearer-gated (server.go requireBearerToken); the probe
+	// attaches the token from the same env var.
+	//
+	// Port literal must match agentd.AgentdAdminPort (4098). If the admin
+	// port constant changes, update this string to match.
+	healthCheckURL = "http://localhost:4098/v1/readyz"
 )
+
+// Compile-time guard: healthCheckURL hardcodes 4098, which must equal
+// agentd.AgentdAdminPort. The array size is negative (invalid) if they
+// diverge, breaking the build.
+var _ [agentd.AgentdAdminPort - 4098]byte
 
 // start spawns the supervisor goroutine. Calling start() more than
 // once is a no-op (it does NOT restart — use restart() for that).
@@ -375,6 +390,11 @@ func (p *managedProcess) healthProbeAfterRestart() {
 		if err != nil {
 			log.Warn("health check request build failed", zap.Error(err))
 			return
+		}
+		// readyz is Bearer-gated when AGENTD_ADMIN_TOKEN is set (server.go
+		// requireBearerToken). Empty token = no auth required (dev/kind).
+		if tok := os.Getenv("AGENTD_ADMIN_TOKEN"); tok != "" {
+			req.Header.Set("Authorization", "Bearer "+tok)
 		}
 		resp, err := client.Do(req)
 		if err == nil && resp.StatusCode == 200 {

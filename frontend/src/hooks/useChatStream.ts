@@ -7,6 +7,14 @@ import type { Message } from "../api/types";
 // back to getHistory after this many ms.
 const IDLE_WAIT_TIMEOUT_MS = 60_000;
 
+// When the workspace is restarting (opencode down for a credential reload,
+// OOM recovery, crash, or relay injection), the proxy returns 503 with a
+// retryAfter hint. The restart window is ~5-10s. Bounded auto-retry keeps
+// the user's message instead of dropping it silently (issue 440's "hang").
+const SEND_MAX_503_RETRIES = 3;
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 export function useChatStream(workspaceId: string | undefined, sessionId: string | undefined, serverBusy = false) {
   const [localStreaming, setLocalStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,10 +62,29 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
           }
         };
 
-        await messagesApi.sendAsync(workspaceId, sessionId, {
-          parts: [{ type: "text", text }],
-          ...(model && { model }),
-        });
+        // Retry loop: the proxy returns 503+retryAfter during an in-place
+        // opencode restart (credential reload / OOM / crash / relay). The
+        // window is transient; drop the user's message only if it persists
+        // across the bounded retry count.
+        let lastErr: unknown;
+        for (let attempt = 0; attempt <= SEND_MAX_503_RETRIES; attempt++) {
+          try {
+            await messagesApi.sendAsync(workspaceId, sessionId, {
+              parts: [{ type: "text", text }],
+              ...(model && { model }),
+            });
+            lastErr = null;
+            break;
+          } catch (err: unknown) {
+            lastErr = err;
+            const is503 = err instanceof ApiClientError && err.status === 503;
+            if (!is503 || attempt === SEND_MAX_503_RETRIES) throw err;
+            const body = ((err as ApiClientError).body as unknown) as Record<string, unknown> | undefined;
+            const retryAfter = Number(body?.retryAfter ?? 10);
+            await sleep(Math.min(isNaN(retryAfter) ? 10 : retryAfter, 30) * 1000);
+          }
+        }
+        if (lastErr) throw lastErr;
 
         // Wait for session.status=idle SSE OR a timeout fallback.
         // The SSE path is preferred (real-time), but if the connection drops

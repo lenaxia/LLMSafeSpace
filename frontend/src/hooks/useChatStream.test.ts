@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useChatStream } from "./useChatStream";
+import { ApiClientError } from "../api/client";
 
 vi.mock("../api/messages", () => ({
   messagesApi: {
@@ -174,6 +175,74 @@ describe("useChatStream", () => {
     expect(result.current.error).toBe("network error");
     expect(result.current.streaming).toBe(false);
     expect(onComplete).not.toHaveBeenCalled();
+  });
+
+  describe("503 workspace-restart retry (issue 440)", () => {
+    it("retries sendAsync on 503 (workspace restarting) then succeeds", async () => {
+      // Issue 440: a credential-add triggers an in-place opencode restart;
+      // the proxy returns 503+retryAfter during the ~10s window. The send
+      // must retry rather than drop the user's message.
+      // Real timers with a 1ms retryAfter keeps the test fast without the
+      // microtask-flush fragility of fake timers + promise rejection.
+      // retryAfter is sent in the 503 body (proxy.go) but not on the ApiError
+      // TS type; cast mirrors the production 429 read path.
+      const err503 = new ApiClientError(503, { error: "workspace_restarting", retryAfter: 1 } as unknown as ConstructorParameters<typeof ApiClientError>[1]);
+      (messagesApi.sendAsync as ReturnType<typeof vi.fn>)
+        .mockRejectedValueOnce(err503)
+        .mockResolvedValueOnce(undefined);
+      (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+      const { result } = renderHook(() => useChatStream("sb-1", "sess-1"));
+      const onComplete = vi.fn();
+
+      let sendPromise!: Promise<void>;
+      act(() => { sendPromise = result.current.send("hi", onComplete); });
+      // Wait for the retry to land (2nd call = success), then signal idle
+      // so send() completes instead of waiting the full 60s idle timeout.
+      // The 1s retryAfter sleep means waitFor must tolerate ≥1s.
+      await vi.waitFor(() => expect(messagesApi.sendAsync).toHaveBeenCalledTimes(2), { timeout: 3000 });
+      act(() => { result.current.notifySessionIdle("sess-1"); });
+      await act(async () => { await sendPromise; });
+
+      expect(messagesApi.sendAsync).toHaveBeenCalledTimes(2);
+      expect(result.current.error).toBeNull();
+      expect(result.current.streaming).toBe(false);
+    });
+
+    it("gives up after SEND_MAX_503_RETRIES and surfaces the 503 as an error", async () => {
+      // After the bounded retry count the message is dropped with a visible
+      // error so the loop cannot spin forever on a wedged workspace.
+      const err503 = new ApiClientError(503, { error: "workspace_restarting", retryAfter: 1 } as unknown as ConstructorParameters<typeof ApiClientError>[1]);
+      (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockRejectedValue(err503);
+      (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+      const { result } = renderHook(() => useChatStream("sb-1", "sess-1"));
+      const onComplete = vi.fn();
+
+      // The bounded loop exhausts retries then throws; no idle signal is
+      // expected since the send never succeeds.
+      await act(async () => { await result.current.send("hi", onComplete); });
+
+      // Initial attempt + 3 retries = 4 calls.
+      expect(messagesApi.sendAsync).toHaveBeenCalledTimes(4);
+      expect(result.current.streaming).toBe(false);
+      expect(onComplete).not.toHaveBeenCalled();
+    });
+
+    it("does not retry on 429 (handled by the separate at-cap path)", async () => {
+      // Sanity: only 503 is a transient restart signal. 429 must NOT enter
+      // the 503 retry loop — it surfaces via atCapRetryAfter instead.
+      const err429 = new ApiClientError(429, { error: "rate limited", retryAfter: 5 } as unknown as ConstructorParameters<typeof ApiClientError>[1]);
+      (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockRejectedValue(err429);
+
+      const { result } = renderHook(() => useChatStream("sb-1", "sess-1"));
+      const onComplete = vi.fn();
+
+      await act(async () => { await result.current.send("hi", onComplete); });
+
+      expect(messagesApi.sendAsync).toHaveBeenCalledTimes(1);
+      expect(result.current.atCapRetryAfter).toBe(5);
+    });
   });
 
   it("sets error when getHistory rejects after idle signal", async () => {
