@@ -188,7 +188,7 @@ func mustMarshalBool(b *bool) []byte {
 	return []byte("false")
 }
 
-// missCache faithfully reproduces the real cache.Service miss behaviour:
+// missCache faithfully reproduces the real cache.Service miss behavior:
 // GetObject returns a nil error (redis.Nil is swallowed internally) and does
 // NOT touch the caller's value pointer — so it stays nil. Before the fix,
 // ResolveEffective treated nil-error as a hit and returned the zero-value
