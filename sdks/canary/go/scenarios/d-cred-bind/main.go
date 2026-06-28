@@ -59,9 +59,9 @@ func runCredBind(ctx context.Context, run *canary.Runner, cfg canary.Config) {
 
 	// Create credential
 	credValue, _ := json.Marshal(map[string]string{
-		"kind":    cfg.LLMProvider,
-		"slug":    "canary-bind-llm",
-		"apiKey":   "sk-canary-placeholder-key",
+		"kind":   cfg.LLMProvider,
+		"slug":   "canary-bind-llm",
+		"apiKey": "sk-canary-placeholder-key",
 	})
 	cred, err := c.Secrets.Create(ctx, "canary-cred-to-bind", "llm-provider", string(credValue))
 	if !run.AssertNoError(err, "create-cred: no error") {

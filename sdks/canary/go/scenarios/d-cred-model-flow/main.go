@@ -91,9 +91,9 @@ func runCredModelFlow(ctx context.Context, run *canary.Runner, cfg canary.Config
 
 	// Step 2: Create LLM credential
 	credValue, _ := json.Marshal(map[string]string{
-		"kind":    cfg.LLMProvider,
-		"slug":    "canary-model-flow",
-		"apiKey":   cfg.LLMAPIKey,
+		"kind":   cfg.LLMProvider,
+		"slug":   "canary-model-flow",
+		"apiKey": cfg.LLMAPIKey,
 	})
 	cred, err := c.Secrets.Create(ctx, "canary-flow-cred", "llm-provider", string(credValue))
 	if !run.AssertNoError(err, "create-cred: no error") {

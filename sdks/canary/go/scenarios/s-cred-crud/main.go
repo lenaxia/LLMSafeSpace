@@ -41,9 +41,9 @@ func runCredCRUD(ctx context.Context, run *canary.Runner, cfg canary.Config) {
 
 	// Build a valid llm-provider JSON value (placeholder key)
 	credValue, _ := json.Marshal(map[string]string{
-		"kind":    cfg.LLMProvider,
-		"slug":    "canary-llm-cred",
-		"apiKey":   "sk-canary-placeholder-key-00000000",
+		"kind":   cfg.LLMProvider,
+		"slug":   "canary-llm-cred",
+		"apiKey": "sk-canary-placeholder-key-00000000",
 	})
 
 	// P1: Create
