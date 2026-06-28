@@ -40,7 +40,7 @@ Resolve issue 440: a credential add to a running workspace with an active sessio
 
 ### Frontend — close the two recovery gaps
 
-- **A: 503 with `retryAfter` now retries the send.** `frontend/src/hooks/useChatStream.ts` previously caught only 429 (rate-cap) and dropped every other status with `setError("Failed to send message")` — including the workspace-restart 503. Added a 503 branch mirroring the 429 path: read `retryAfter`, set a transient banner state, retry the send after the delay. Bounded to a small max-attempt count so the loop cannot spin forever.
+- **A: 503 with `retryAfter` now retries the send.** `frontend/src/hooks/useChatStream.ts` previously caught only 429 (rate-cap) and dropped every other status with `setError("Failed to send message")` — including the workspace-restart 503. Added a 503 branch: read `retryAfter` from the response body, `sleep` the delay, and retry `sendAsync` (while the spinner stays up via the existing `localStreaming` flag). No transient banner state is set during retries — the send stays visibly in-progress until it succeeds or exhausts the bounded max-attempt count (3), at which point the error surfaces via the standard `setError` path.
 - **B: SSE reconnect now resyncs the transcript.** `handleSSEReconnect` in `frontend/src/pages/ChatPage.tsx` previously only invalidated workspace-status and refreshed the queue — it did not reconcile the message transcript. opencode history is authoritative (validated #2 above), so reconnect now calls the existing `reconcileOnIdle()` to refetch history and clear stale local state. Idempotent by design.
 - **Softened the `agent_died` banner copy** since reconnect now actively recovers: "Agent is restarting — reconnecting…" replaces the passive "will recover or show as idle shortly" wording.
 
@@ -74,7 +74,7 @@ Resolve issue 440: a credential add to a running workspace with an active sessio
 ## Adversarial Review (Rule 11)
 
 - **Could the 503 retry loop spin forever?** Bounded to a small max-attempt count (mirrors the spirit of the existing `streamTimedOut` cap). After exhaustion, surfaces a hard error.
-- **Does removing `onStart` lose a needed hook?** `onStart` currently only runs `abortStaleSessionsAfterStart` (`main.go:159-161`). The hook field stays on `managedProcess` for future use; nil is a documented no-op.
+- **Removing `onStart` entirely: did anything depend on it?** `onStart` previously only ran `abortStaleSessionsAfterStart`. Its three tests were deleted with `stale_sessions_test.go`, and a grep confirmed no other consumer. With no consumer, keeping the field + firing code would be speculative retention (Rule 5). It was removed wholesale; `probeWg` is retained because it still tracks `healthProbeAfterRestart` goroutines. If a future consumer needs a post-start hook, the mechanism can be re-added with its own tests.
 - **Is `agent_died` reliable enough to drive recovery?** Emitted on SSE EOF (US-44.1, tested). The one accepted false-positive (clean SSE close) triggers a harmless idempotent reconnect+resync.
 - **Non-bufferable SSE cut mid-token?** Irrecoverable for that stream (tokens already sent are kept in opencode history; the turn is partial-but-persisted). The reconciled history surfaces the partial turn. Acceptable — matches opencode's own interruption semantics.
 

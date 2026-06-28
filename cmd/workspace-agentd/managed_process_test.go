@@ -370,8 +370,9 @@ func TestHealthProbeAfterRestart_BearerTokenAttachment(t *testing.T) {
 	t.Setenv("AGENTD_ADMIN_TOKEN", token)
 
 	// Construct a minimal managedProcess with only the fields the probe
-	// reads (healthCheckURL + a closed doneCh so the probe runs its poll
-	// loop rather than aborting immediately).
+	// reads (healthCheckURL + an open, never-closed doneCh). An open
+	// doneCh means the probe's `<-doneCh` select case never fires, so the
+	// probe runs its full poll loop rather than aborting immediately.
 	p := &managedProcess{
 		healthCheckURL: srv.URL + "/v1/readyz",
 	}
@@ -401,6 +402,7 @@ func TestHealthProbeAfterRestart_BearerTokenMissingFails(t *testing.T) {
 
 	t.Setenv("AGENTD_ADMIN_TOKEN", "wrong-token")
 
+	// Open, never-closed doneCh — probe runs its full retry loop.
 	p := &managedProcess{
 		healthCheckURL: srv.URL + "/v1/readyz",
 	}
