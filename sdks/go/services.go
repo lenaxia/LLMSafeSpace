@@ -325,6 +325,14 @@ func (s *AccountService) Recover(ctx context.Context, userID, recoveryKey, newPa
 
 // ProviderCredentialResponse is the API response for a provider credential.
 //
+// Epic 55 identity model:
+//   - Kind: SDK-class enum (openai, anthropic, openai_compatible, ...).
+//     Determines which adapter opencode loads.
+//   - Slug: per-owner unique identity AND the literal key in
+//     agent-config.json's provider map. opencode persists this as
+//     `providerID` on session records.
+//   - Name: free-form UX display label.
+//
 // ModelContextLimits and ModelOutputLimits map model IDs to per-model token
 // limits. Both maps MUST be populated together for a given model id for the
 // limit to take effect in the running workspace: opencode's config JSON Schema
@@ -335,7 +343,8 @@ func (s *AccountService) Recover(ctx context.Context, userID, recoveryKey, newPa
 type ProviderCredentialResponse struct {
 	ID                 string         `json:"id"`
 	Name               string         `json:"name"`
-	Provider           string         `json:"provider"`
+	Kind               string         `json:"kind"`
+	Slug               string         `json:"slug"`
 	BaseURL            string         `json:"baseURL,omitempty"`
 	ModelAllowlist     []string       `json:"modelAllowlist"`
 	ModelContextLimits map[string]int `json:"modelContextLimits"`
@@ -347,8 +356,12 @@ type ProviderCredentialResponse struct {
 // ProviderCredentialsService handles user provider credential operations.
 type ProviderCredentialsService struct{ c *Client }
 
-func (s *ProviderCredentialsService) Create(ctx context.Context, name, provider, apiKey, baseURL string) (*ProviderCredentialResponse, error) {
-	body := map[string]string{"name": name, "provider": provider, "apiKey": apiKey}
+// Create posts a new user-scoped provider credential. Kind selects the SDK
+// class (e.g. "openai", "anthropic", "openai_compatible"); slug is a
+// slug-safe per-owner identity that becomes the agent-config.json provider
+// key. Slug must match ^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$.
+func (s *ProviderCredentialsService) Create(ctx context.Context, name, kind, slug, apiKey, baseURL string) (*ProviderCredentialResponse, error) {
+	body := map[string]string{"name": name, "kind": kind, "slug": slug, "apiKey": apiKey}
 	if baseURL != "" {
 		body["baseURL"] = baseURL
 	}
