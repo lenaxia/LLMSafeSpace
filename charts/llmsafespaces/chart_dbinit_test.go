@@ -81,7 +81,7 @@ func TestDBInit_EnabledRendersPreInstallHook(t *testing.T) {
 
 	// Must run BEFORE the migration Job (-5) so the role/DB exist when the
 	// migrator connects. Must run AFTER the credentials Secret (-15) so the
-	// app-user password it sets is already materialised.
+	// app-user password it sets is already materialized.
 	weight, _ := ann["helm.sh/hook-weight"].(string)
 	assert.Equal(t, "-10", weight,
 		"db-init hook-weight must be -10 (before migrations -5, after Secret -15); got %q", weight)
