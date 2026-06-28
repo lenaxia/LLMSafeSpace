@@ -5,6 +5,7 @@ package prompt
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -285,3 +286,100 @@ func TestResolveRoleSystemPrompt_InheritsFromParent(t *testing.T) {
 }
 
 func roleStrPtr(s string) *string { return &s }
+
+// TestResolveRoleSystemPrompt_CycleTerminates: a circular extends chain
+// (A → B → A) must not loop forever — the visited map breaks the cycle and
+// returns false (no system prompt found).
+func TestResolveRoleSystemPrompt_CycleTerminates(t *testing.T) {
+	store := new(mockPromptStore)
+	store.On("GetAgentRole", mock.Anything, "a").Return(&types.AgentRole{
+		ID: "a", Extends: roleStrPtr("b"),
+	}, nil)
+	store.On("GetAgentRole", mock.Anything, "b").Return(&types.AgentRole{
+		ID: "b", Extends: roleStrPtr("a"),
+	}, nil)
+
+	svc := New(store, nil)
+
+	done := make(chan struct{})
+	var got string
+	var ok bool
+	go func() {
+		got, ok = svc.resolveRoleSystemPrompt(context.Background(), "a")
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("resolveRoleSystemPrompt did not terminate on cycle — infinite loop")
+	}
+
+	assert.False(t, ok, "no system prompt in a cycle → false")
+	assert.Empty(t, got)
+}
+
+// TestResolveRoleSystemPrompt_DeepChainRespectsDepthLimit: a chain longer
+// than maxChainDepth (10) with no system prompt at any node must terminate
+// via the depth guard, not by walking forever.
+func TestResolveRoleSystemPrompt_DeepChainRespectsDepthLimit(t *testing.T) {
+	store := new(mockPromptStore)
+	// Build a 15-deep chain: r0 → r1 → ... → r14, none with a system prompt.
+	for i := 0; i < 15; i++ {
+		id := "r" + strconv.Itoa(i)
+		next := "r" + strconv.Itoa(i+1)
+		if i == 14 {
+			next = ""
+		}
+		store.On("GetAgentRole", mock.Anything, id).Return(&types.AgentRole{
+			ID: id, Extends: roleStrPtr(next),
+		}, nil).Once()
+	}
+
+	svc := New(store, nil)
+
+	done := make(chan struct{})
+	var ok bool
+	go func() {
+		_, ok = svc.resolveRoleSystemPrompt(context.Background(), "r0")
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("resolveRoleSystemPrompt did not terminate on deep chain")
+	}
+
+	assert.False(t, ok, "no system prompt in chain → false")
+	// maxChainDepth is 10, so at most 10 GetAgentRole calls should fire.
+	store.AssertNumberOfCalls(t, "GetAgentRole", 10)
+}
+
+// TestResolveRoleSystemPrompt_LeafWithoutExtends_ReturnsFalse: a role with
+// no system prompt and no extends is a terminal leaf — must return false
+// without error.
+func TestResolveRoleSystemPrompt_LeafWithoutExtends_ReturnsFalse(t *testing.T) {
+	store := new(mockPromptStore)
+	store.On("GetAgentRole", mock.Anything, "leaf").Return(&types.AgentRole{
+		ID: "leaf", Extends: nil,
+	}, nil)
+
+	svc := New(store, nil)
+	got, ok := svc.resolveRoleSystemPrompt(context.Background(), "leaf")
+
+	assert.False(t, ok)
+	assert.Empty(t, got)
+}
+
+// TestResolveRoleSystemPrompt_StoreError_ReturnsFalse: a DB error when
+// loading a role must cause the walk to abort with false (not panic).
+func TestResolveRoleSystemPrompt_StoreError_ReturnsFalse(t *testing.T) {
+	store := new(mockPromptStore)
+	store.On("GetAgentRole", mock.Anything, "r1").Return((*types.AgentRole)(nil), assert.AnError)
+
+	svc := New(store, nil)
+	_, ok := svc.resolveRoleSystemPrompt(context.Background(), "r1")
+
+	assert.False(t, ok)
+}
