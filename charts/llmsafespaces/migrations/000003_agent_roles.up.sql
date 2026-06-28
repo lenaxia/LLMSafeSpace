@@ -43,7 +43,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_roles_extends ON agent_roles(extends);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_roles_org_default
     ON agent_roles(org_id) WHERE scope = 'org' AND is_default = true;
 
--- Add agent_role_id column to workspace_prompts (deferred from migration 000046)
+-- Add agent_role_id column to workspace_prompts (deferred from migration 000002)
 ALTER TABLE workspace_prompts
     ADD COLUMN IF NOT EXISTS agent_role_id UUID REFERENCES agent_roles(id) ON DELETE SET NULL;
 
