@@ -174,6 +174,28 @@ def raw_do(
     return resp.status_code, resp.content
 
 
+def jwt_login(cfg: "Config") -> str:
+    """Log in via email/password and return the JWT bearer token.
+
+    Some endpoints (user-credential CRUD, user-secret CRUD) require the
+    session-scoped DEK that only JWT login produces (post-Epic-56). API-key
+    auth alone returns 403 ``encryption key not available; re-authenticate``
+    on those paths. Scenarios that exercise user-DEK-encrypted writes must
+    use the JWT token returned here as ``api_key`` for subsequent calls.
+
+    Raises ``RuntimeError`` if login fails.
+    """
+    body = json.dumps({"email": cfg.email, "password": cfg.password}).encode()
+    status, content = raw_do("POST", f"{cfg.api_url}/api/v1/auth/login", body=body)
+    if status != 200:
+        raise RuntimeError(f"jwt login failed: status={status} body={content[:200]!r}")
+    obj = json.loads(content)
+    token = obj.get("token")
+    if not token:
+        raise RuntimeError(f"jwt login: no token in response: {obj}")
+    return token
+
+
 def has_error_field(body: bytes) -> bool:
     try:
         obj = json.loads(body)
