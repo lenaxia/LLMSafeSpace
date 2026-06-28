@@ -184,7 +184,7 @@ func TestManagedProcess_RestartWithSlowChild_SIGKILLFallback(t *testing.T) {
 
 	// restart() must return within the killTimer bound (5s) + startup
 	// overhead. If the SIGKILL path is broken, restart() hangs on <-upCh
-	// until the child's own 8s delay expires.
+	// forever (the child ignores SIGTERM and never exits).
 	doneCh := make(chan struct{})
 	go func() {
 		p.restart()
@@ -244,9 +244,10 @@ func TestManagedProcess_StopWithSlowChild_SIGKILLFallback(t *testing.T) {
 }
 
 // TestManagedProcess_DoubleStopIsIdempotent verifies stop() can be called
-// concurrently from multiple goroutines without panic or deadlock. The
-// doneCh-nil guard makes it idempotent; concurrent callers must not race on
-// doneCh being set to nil (it's read under mu).
+// concurrently from multiple goroutines without panic or deadlock. After the
+// first stop() returns, doneCh is closed; subsequent callers unblock
+// immediately on the closed channel. Pre-start calls are no-op'd by the
+// doneCh-nil guard.
 func TestManagedProcess_DoubleStopIsIdempotent(t *testing.T) {
 	withTestLogger(t)
 	port := freeTCPPort(t)

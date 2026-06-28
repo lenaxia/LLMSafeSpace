@@ -24,9 +24,11 @@ package main
 // os/exec/exec_test.go in the standard library): the test re-execs
 // itself with a marker env var so the subprocess runs `runFakeOpencode`
 // instead of the test binary. The fake binds a TCP port (configurable
-// via env var so concurrent tests don't collide) and ignores SIGTERM
-// for a configurable duration, which faithfully reproduces the slow-
-// shutdown timing that triggered Bug 2.
+// via env var so concurrent tests don't collide) and has three
+// signal-handling modes:
+//   - IGNORE_SIGTERM=1: catch+discard SIGTERM in a loop (only SIGKILL kills)
+//   - SIGTERM_DELAY_MS=N: catch SIGTERM, sleep N ms, then exit
+//   - default: block forever until killed (SIGKILL)
 //
 // The managedProcess code under test is decoupled from the literal
 // `opencode serve` argv via a commandFactory func; production wires
