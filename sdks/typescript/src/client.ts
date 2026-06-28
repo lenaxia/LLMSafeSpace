@@ -44,6 +44,8 @@ export class LLMSafeSpaces {
   public readonly terminal: TerminalAPI;
   public readonly userSettings: UserSettingsAPI;
   public readonly account: AccountAPI;
+  public readonly prompts: PromptsAPI;
+  public readonly agentRoles: AgentRolesAPI;
 
   constructor(options: ClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
@@ -59,6 +61,8 @@ export class LLMSafeSpaces {
     this.terminal = new TerminalAPI(this);
     this.userSettings = new UserSettingsAPI(this);
     this.account = new AccountAPI(this);
+    this.prompts = new PromptsAPI(this);
+    this.agentRoles = new AgentRolesAPI(this);
   }
 
   /** Internal: make an authenticated request. */
@@ -329,4 +333,88 @@ function extractTextContent(raw: unknown): string {
     .filter((p) => p.type === "text" && p.text)
     .map((p) => p.text!)
     .join("");
+}
+
+class PromptsAPI {
+  constructor(private client: LLMSafeSpaces) {}
+
+  getPlatform() {
+    return this.client.request<{ prompt: string }>("GET", "/admin/prompt");
+  }
+
+  setPlatform(prompt: string) {
+    return this.client.request<void>("PUT", "/admin/prompt", { prompt });
+  }
+
+  getOrg(orgId: string) {
+    return this.client.request<{ prompt: string; allowUserPrompt: boolean }>("GET", `/orgs/${orgId}/prompt`);
+  }
+
+  setOrg(orgId: string, body: { prompt?: string; allowUserPrompt?: boolean }) {
+    return this.client.request<void>("PUT", `/orgs/${orgId}/prompt`, body);
+  }
+
+  getWorkspace(workspaceId: string) {
+    return this.client.request<{ prompt: string }>("GET", `/workspaces/${workspaceId}/prompt`);
+  }
+
+  setWorkspace(workspaceId: string, prompt: string) {
+    return this.client.request<void>("PUT", `/workspaces/${workspaceId}/prompt`, { prompt });
+  }
+}
+
+class AgentRolesAPI {
+  constructor(private client: LLMSafeSpaces) {}
+
+  listPlatform() {
+    return this.client.request<unknown[]>("GET", "/admin/agent-roles");
+  }
+
+  createPlatform(body: Record<string, unknown>) {
+    return this.client.request<unknown>("POST", "/admin/agent-roles", body);
+  }
+
+  getPlatform(roleId: string) {
+    return this.client.request<unknown>("GET", `/admin/agent-roles/${roleId}`);
+  }
+
+  updatePlatform(roleId: string, body: Record<string, unknown>) {
+    return this.client.request<unknown>("PUT", `/admin/agent-roles/${roleId}`, body);
+  }
+
+  deletePlatform(roleId: string) {
+    return this.client.request<void>("DELETE", `/admin/agent-roles/${roleId}`);
+  }
+
+  listOrg(orgId: string) {
+    return this.client.request<unknown[]>("GET", `/orgs/${orgId}/agent-roles`);
+  }
+
+  createOrg(orgId: string, body: Record<string, unknown>) {
+    return this.client.request<unknown>("POST", `/orgs/${orgId}/agent-roles`, body);
+  }
+
+  getOrg(orgId: string, roleId: string) {
+    return this.client.request<unknown>("GET", `/orgs/${orgId}/agent-roles/${roleId}`);
+  }
+
+  updateOrg(orgId: string, roleId: string, body: Record<string, unknown>) {
+    return this.client.request<unknown>("PUT", `/orgs/${orgId}/agent-roles/${roleId}`, body);
+  }
+
+  deleteOrg(orgId: string, roleId: string) {
+    return this.client.request<void>("DELETE", `/orgs/${orgId}/agent-roles/${roleId}`);
+  }
+
+  getWorkspaceRole(workspaceId: string) {
+    return this.client.request<unknown | null>("GET", `/workspaces/${workspaceId}/agent-role`);
+  }
+
+  setWorkspaceRole(workspaceId: string, roleId: string) {
+    return this.client.request<void>("PUT", `/workspaces/${workspaceId}/agent-role`, { roleId });
+  }
+
+  getEffectiveWorkspaceRole(workspaceId: string) {
+    return this.client.request<unknown>("GET", `/workspaces/${workspaceId}/effective-agent-role`);
+  }
 }

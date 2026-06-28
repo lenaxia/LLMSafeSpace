@@ -179,6 +179,7 @@ func (m *mockCache) SetNX(context.Context, string, string, time.Duration) (bool,
 	return true, nil
 }
 func (m *mockCache) Delete(context.Context, string) error                                { return nil }
+func (m *mockCache) DeleteByPrefix(context.Context, string) error                        { return nil }
 func (m *mockCache) GetObject(context.Context, string, interface{}) error                { return nil }
 func (m *mockCache) SetObject(context.Context, string, interface{}, time.Duration) error { return nil }
 func (m *mockCache) GetSession(context.Context, string) (*types.CachedSession, error) {

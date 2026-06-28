@@ -39,6 +39,12 @@ const RelayTab = lazy(() => import("./components/settings/RelayTab").then((m) =>
 const AdminSettingsPage = lazy(() =>
   import("./pages/AdminSettingsPage").then((m) => ({ default: m.AdminSettingsPage })),
 );
+const PlatformAgentConfigTab = lazy(() =>
+  import("./components/settings/PlatformAgentConfigTab").then((m) => ({ default: m.PlatformAgentConfigTab })),
+);
+const OrgAgentConfigTab = lazy(() =>
+  import("./components/org-admin/OrgAgentConfigTab").then((m) => ({ default: m.OrgAgentConfigTab })),
+);
 const PlatformAuditTab = lazy(() =>
   import("./components/settings/PlatformAuditTab").then((m) => ({ default: m.PlatformAuditTab })),
 );
@@ -95,6 +101,7 @@ export const router = createBrowserRouter([
           { path: "audit", element: <OrgAuditTab /> },
           { path: "billing", element: <OrgBillingTab /> },
           { path: "sso", element: <OrgSSOTab /> },
+          { path: "agent-config", element: <OrgAgentConfigTab /> },
         ],
       },
       {
@@ -111,6 +118,7 @@ export const router = createBrowserRouter([
           { path: "credentials", element: <AdminProviderCredentialsTab /> },
           { path: "relay", element: <RelayTab /> },
           { path: "settings", element: <AdminSettingsPage /> },
+          { path: "agent-config", element: <PlatformAgentConfigTab /> },
           { path: "audit", element: <PlatformAuditTab /> },
         ],
       },

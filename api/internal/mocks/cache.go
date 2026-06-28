@@ -41,6 +41,10 @@ func (m *MockCacheService) Delete(ctx context.Context, key string) error {
 	return m.Called(ctx, key).Error(0)
 }
 
+func (m *MockCacheService) DeleteByPrefix(ctx context.Context, prefix string) error {
+	return m.Called(ctx, prefix).Error(0)
+}
+
 func (m *MockCacheService) GetObject(ctx context.Context, key string, value interface{}) error {
 	return m.Called(ctx, key, value).Error(0)
 }

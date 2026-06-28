@@ -58,6 +58,8 @@ class AsyncLLMSafeSpaces:
         self.account = _AsyncAccountAPI(self)
         self.secrets = _AsyncSecretsAPI(self)
         self.terminal = _AsyncTerminalAPI(self)
+        self.prompts = _AsyncPromptsAPI(self)
+        self.agent_roles = _AsyncAgentRolesAPI(self)
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -379,3 +381,77 @@ def _extract_text(raw: Any) -> str:
         for p in parts
         if isinstance(p, dict) and p.get("type") == "text"
     )
+
+
+class _AsyncPromptsAPI:
+    def __init__(self, client: AsyncLLMSafeSpaces):
+        self._c = client
+
+    async def get_platform(self) -> dict[str, Any]:
+        return await self._c._request("GET", "/admin/prompt")
+
+    async def set_platform(self, prompt: str) -> None:
+        await self._c._request("PUT", "/admin/prompt", json={"prompt": prompt})
+
+    async def get_org(self, org_id: str) -> dict[str, Any]:
+        return await self._c._request("GET", f"/orgs/{org_id}/prompt")
+
+    async def set_org(self, org_id: str, prompt: str | None = None, allow_user_prompt: bool | None = None) -> None:
+        body: dict[str, Any] = {}
+        if prompt is not None:
+            body["prompt"] = prompt
+        if allow_user_prompt is not None:
+            body["allowUserPrompt"] = allow_user_prompt
+        await self._c._request("PUT", f"/orgs/{org_id}/prompt", json=body)
+
+    async def get_workspace(self, workspace_id: str) -> dict[str, Any]:
+        return await self._c._request("GET", f"/workspaces/{workspace_id}/prompt")
+
+    async def set_workspace(self, workspace_id: str, prompt: str) -> None:
+        await self._c._request("PUT", f"/workspaces/{workspace_id}/prompt", json={"prompt": prompt})
+
+
+class _AsyncAgentRolesAPI:
+    def __init__(self, client: AsyncLLMSafeSpaces):
+        self._c = client
+
+    async def list_platform(self) -> list[dict[str, Any]]:
+        data = await self._c._request("GET", "/admin/agent-roles")
+        return data if isinstance(data, list) else data.get("items", [])
+
+    async def create_platform(self, **kwargs: Any) -> dict[str, Any]:
+        return await self._c._request("POST", "/admin/agent-roles", json=kwargs)
+
+    async def get_platform(self, role_id: str) -> dict[str, Any]:
+        return await self._c._request("GET", f"/admin/agent-roles/{role_id}")
+
+    async def update_platform(self, role_id: str, **kwargs: Any) -> dict[str, Any]:
+        return await self._c._request("PUT", f"/admin/agent-roles/{role_id}", json=kwargs)
+
+    async def delete_platform(self, role_id: str) -> None:
+        await self._c._request("DELETE", f"/admin/agent-roles/{role_id}")
+
+    async def list_org(self, org_id: str) -> list[dict[str, Any]]:
+        data = await self._c._request("GET", f"/orgs/{org_id}/agent-roles")
+        return data if isinstance(data, list) else data.get("items", [])
+
+    async def create_org(self, org_id: str, **kwargs: Any) -> dict[str, Any]:
+        return await self._c._request("POST", f"/orgs/{org_id}/agent-roles", json=kwargs)
+
+    async def get_org(self, org_id: str, role_id: str) -> dict[str, Any]:
+        return await self._c._request("GET", f"/orgs/{org_id}/agent-roles/{role_id}")
+
+    async def update_org(self, org_id: str, role_id: str, **kwargs: Any) -> dict[str, Any]:
+        return await self._c._request("PUT", f"/orgs/{org_id}/agent-roles/{role_id}", json=kwargs)
+
+    async def delete_org(self, org_id: str, role_id: str) -> None:
+        await self._c._request("DELETE", f"/orgs/{org_id}/agent-roles/{role_id}")
+
+    async def get_workspace_role(self, workspace_id: str) -> dict[str, Any] | None:
+        return await self._c._request("GET", f"/workspaces/{workspace_id}/agent-role")
+
+    async def set_workspace_role(self, workspace_id: str, role_id: str) -> None:
+        await self._c._request("PUT", f"/workspaces/{workspace_id}/agent-role", json={"roleId": role_id})
+
+    async def get_effective_workspace_role(self, workspace_id: str) -> dict[str, Any]:
+        return await self._c._request("GET", f"/workspaces/{workspace_id}/effective-agent-role")

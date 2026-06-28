@@ -39,6 +39,7 @@ export interface WorkspaceListItem {
   id: string;
   name: string;
   userId: string;
+  orgId?: string;
   runtime: string;
   storageSize: string;
   createdAt: string;

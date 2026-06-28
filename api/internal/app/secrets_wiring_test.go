@@ -305,7 +305,7 @@ func TestPodBootstrapHandler_LoggerWired(t *testing.T) {
 	fakeClientset := k8sfake.NewSimpleClientset()
 	dbSvc := &fakeAppDBLookup{}
 	h := handlers.NewPodBootstrapHandlerFromClientset(
-		fakeClientset, secretService, dbSvc, "test-namespace",
+		fakeClientset, secretService, dbSvc, nil, "test-namespace",
 	)
 	if h.HasLogger() {
 		t.Fatalf("freshly-constructed PodBootstrapHandler must not have a logger before SetLogger is called")

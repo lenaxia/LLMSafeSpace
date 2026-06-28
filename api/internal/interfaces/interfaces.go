@@ -104,6 +104,7 @@ type CacheService interface {
 	Set(ctx context.Context, key string, value string, expiration time.Duration) error
 	SetNX(ctx context.Context, key string, value string, expiration time.Duration) (bool, error)
 	Delete(ctx context.Context, key string) error
+	DeleteByPrefix(ctx context.Context, prefix string) error
 	GetObject(ctx context.Context, key string, value interface{}) error
 	SetObject(ctx context.Context, key string, value interface{}, expiration time.Duration) error
 	GetSession(ctx context.Context, sessionID string) (*types.CachedSession, error)

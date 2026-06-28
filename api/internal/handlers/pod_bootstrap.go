@@ -16,6 +16,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/lenaxia/llmsafespaces/api/internal/services/prompt"
 	"github.com/lenaxia/llmsafespaces/pkg/interfaces"
 	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
@@ -83,6 +84,7 @@ func (r *k8sTokenReviewer) Review(ctx context.Context, token string) (string, er
 type bootstrapAPIResponse struct {
 	Secrets         json.RawMessage `json:"secrets"`
 	WorkspaceConfig json.RawMessage `json:"workspaceConfig,omitempty"`
+	AdminPrompt     string          `json:"adminPrompt,omitempty"`
 }
 
 // PodBootstrapHandler handles POST /internal/v1/pod-bootstrap — the
@@ -97,6 +99,7 @@ type PodBootstrapHandler struct {
 	tokenReviewer     TokenReviewer
 	injector          bootstrapInjector
 	lookup            bootstrapWorkspaceLookup
+	promptSvc         *prompt.Service
 	expectedNamespace string
 	logger            interfaces.LoggerInterface
 }
@@ -105,19 +108,26 @@ type PodBootstrapHandler struct {
 // *k8sTokenReviewer wrapping the API's K8s clientset. expectedNamespace is the
 // K8s namespace where workspace ServiceAccounts live — validated against the
 // SA namespace in the TokenReview username (S1 defense-in-depth).
-func NewPodBootstrapHandler(reviewer TokenReviewer, injector bootstrapInjector, lookup bootstrapWorkspaceLookup, expectedNamespace string) *PodBootstrapHandler {
+func NewPodBootstrapHandler(reviewer TokenReviewer, injector bootstrapInjector, lookup bootstrapWorkspaceLookup, promptSvc *prompt.Service, expectedNamespace string) *PodBootstrapHandler {
 	return &PodBootstrapHandler{
 		tokenReviewer:     reviewer,
 		injector:          injector,
 		lookup:            lookup,
+		promptSvc:         promptSvc,
 		expectedNamespace: expectedNamespace,
 	}
 }
 
 // NewPodBootstrapHandlerFromClientset is the production constructor that wraps
 // a kubernetes.Interface into a k8sTokenReviewer.
-func NewPodBootstrapHandlerFromClientset(clientset kubernetes.Interface, injector bootstrapInjector, lookup bootstrapWorkspaceLookup, expectedNamespace string) *PodBootstrapHandler {
-	return NewPodBootstrapHandler(&k8sTokenReviewer{clientset: clientset}, injector, lookup, expectedNamespace)
+func NewPodBootstrapHandlerFromClientset(clientset kubernetes.Interface, injector bootstrapInjector, lookup bootstrapWorkspaceLookup, promptSvc *prompt.Service, expectedNamespace string) *PodBootstrapHandler {
+	return NewPodBootstrapHandler(&k8sTokenReviewer{clientset: clientset}, injector, lookup, promptSvc, expectedNamespace)
+}
+
+// SetPromptService wires the prompt resolution service after construction.
+// Used when the prompt service is built later in the startup sequence.
+func (h *PodBootstrapHandler) SetPromptService(svc *prompt.Service) {
+	h.promptSvc = svc
 }
 
 // SetLogger installs a structured logger so the handler can emit
@@ -214,13 +224,20 @@ func (h *PodBootstrapHandler) Bootstrap(c *gin.Context) {
 	if ws.DefaultModel != "" {
 		cfgJSON, err := json.Marshal(types.WorkspaceConfig{DefaultModel: ws.DefaultModel})
 		if err != nil {
-			// ST2: WorkspaceConfig has a single string field; json.Marshal can
-			// only fail on invalid UTF-8 (which Go replaces with U+FFFD). If
-			// it does fail, omit workspaceConfig rather than failing the boot.
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "workspace config marshal failed"})
 			return
 		}
 		resp.WorkspaceConfig = cfgJSON
+	}
+
+	// Resolve effective admin prompt (platform → org → user). Failures are
+	// non-fatal — the pod boots without admin instructions. agentd writes
+	// an empty file and opencode treats it as "no prompt configured".
+	if h.promptSvc != nil {
+		effective, err := h.promptSvc.ResolveEffective(c.Request.Context(), req.WorkspaceID)
+		if err == nil && effective != nil && effective.Resolved != "" {
+			resp.AdminPrompt = effective.Resolved
+		}
 	}
 
 	c.JSON(http.StatusOK, resp)

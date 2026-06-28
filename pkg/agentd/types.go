@@ -12,6 +12,7 @@ package agentd
 const (
 	SecretsEnvPath  = "/sandbox-runtime/secrets-env"
 	AgentConfigPath = "/sandbox-runtime/agent-config.json"
+	AdminPromptPath = "/tmp/admin-prompt.md"
 	PasswordPath    = "/sandbox-cfg/password"
 	SecretsBasePath = "/sandbox-runtime/rt/secrets"
 	WorkspacePath   = "/workspace"
