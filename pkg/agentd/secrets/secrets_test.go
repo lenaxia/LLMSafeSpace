@@ -671,7 +671,7 @@ func TestLLMProvider_Valid(t *testing.T) {
 	res, err := m.Materialize([]Secret{{
 		Type:      "llm-provider",
 		Name:      "anthropic",
-		Plaintext: `{"provider":"anthropic","apiKey":"sk-ant-123","default":"anthropic/claude-sonnet-4-5"}`,
+		Plaintext: `{"kind":"anthropic","slug":"anthropic","apiKey":"sk-ant-123","default":"anthropic/claude-sonnet-4-5"}`,
 	}})
 	require.NoError(t, err)
 	require.Len(t, res.Results, 1)
@@ -681,7 +681,7 @@ func TestLLMProvider_Valid(t *testing.T) {
 	require.Empty(t, fs.contents["/sandbox-runtime/agent-config.json"],
 		"provider must not be written until FlushProviders is called")
 	require.Len(t, m.stagedProviders, 1)
-	require.Equal(t, "anthropic", m.stagedProviders[0].Provider)
+	require.Equal(t, "anthropic", m.stagedProviders[0].Slug)
 }
 
 // TestLLMProvider_Valid_Minimal materializes a minimal llm-provider (just provider + apiKey).
@@ -690,7 +690,7 @@ func TestLLMProvider_Valid_Minimal(t *testing.T) {
 	res, err := m.Materialize([]Secret{{
 		Type:      "llm-provider",
 		Name:      "openai",
-		Plaintext: `{"provider":"openai","apiKey":"sk-..."}`,
+		Plaintext: `{"kind":"openai","slug":"openai","apiKey":"sk-..."}`,
 	}})
 	require.NoError(t, err)
 	require.Equal(t, OutcomeMaterialized, res.Results[0].Outcome)
@@ -730,7 +730,7 @@ func TestLLMProvider_MissingAPIKey(t *testing.T) {
 	res, err := m.Materialize([]Secret{{
 		Type:      "llm-provider",
 		Name:      "x",
-		Plaintext: `{"provider":"anthropic"}`,
+		Plaintext: `{"kind":"anthropic","slug":"anthropic"}`,
 	}})
 	require.NoError(t, err)
 	require.Equal(t, OutcomeSkipped, res.Results[0].Outcome)
@@ -757,7 +757,7 @@ func TestLLMProvider_BadNameIsAllowed(t *testing.T) {
 	res, err := m.Materialize([]Secret{{
 		Type:      "llm-provider",
 		Name:      "", // empty name would fail validateName
-		Plaintext: `{"provider":"anthropic","apiKey":"sk-..."}`,
+		Plaintext: `{"kind":"anthropic","slug":"anthropic","apiKey":"sk-..."}`,
 	}})
 	require.NoError(t, err)
 	require.Equal(t, OutcomeMaterialized, res.Results[0].Outcome,
@@ -769,8 +769,8 @@ func TestLLMProvider_BadNameIsAllowed(t *testing.T) {
 func TestLLMProvider_MultipleProviders_AllStaged(t *testing.T) {
 	m, _ := newFixture(t)
 	res, err := m.Materialize([]Secret{
-		{Type: "llm-provider", Name: "anthropic", Plaintext: `{"provider":"anthropic","apiKey":"sk-ant-123"}`},
-		{Type: "llm-provider", Name: "openai", Plaintext: `{"provider":"openai","apiKey":"sk-openai-456"}`},
+		{Type: "llm-provider", Name: "anthropic", Plaintext: `{"kind":"anthropic","slug":"anthropic","apiKey":"sk-ant-123"}`},
+		{Type: "llm-provider", Name: "openai", Plaintext: `{"kind":"openai","slug":"openai","apiKey":"sk-openai-456"}`},
 	})
 	require.NoError(t, err)
 	require.Len(t, res.Results, 2)
@@ -784,9 +784,9 @@ func TestLLMProvider_MultipleProviders_AllStaged(t *testing.T) {
 func TestLLMProvider_MixedWithOtherTypes(t *testing.T) {
 	m, fs := newFixture(t)
 	res, err := m.Materialize([]Secret{
-		{Type: "llm-provider", Name: "p1", Plaintext: `{"provider":"anthropic","apiKey":"sk-1"}`},
+		{Type: "llm-provider", Name: "p1", Plaintext: `{"kind":"anthropic","slug":"anthropic","apiKey":"sk-1"}`},
 		{Type: "env-secret", Name: "e1", Metadata: map[string]string{"var_name": "VAR"}, Plaintext: "val"},
-		{Type: "llm-provider", Name: "p2", Plaintext: `{"provider":"openai","apiKey":"sk-2"}`},
+		{Type: "llm-provider", Name: "p2", Plaintext: `{"kind":"openai","slug":"openai","apiKey":"sk-2"}`},
 	})
 	require.NoError(t, err)
 	require.Len(t, res.Results, 3)
@@ -806,7 +806,7 @@ func TestLLMProvider_FlushProviders_CallsFormatter(t *testing.T) {
 	_, err := m.Materialize([]Secret{{
 		Type:      "llm-provider",
 		Name:      "anthropic",
-		Plaintext: `{"provider":"anthropic","apiKey":"sk-ant-123","default":"anthropic/claude-sonnet-4-5"}`,
+		Plaintext: `{"kind":"anthropic","slug":"anthropic","apiKey":"sk-ant-123","default":"anthropic/claude-sonnet-4-5"}`,
 	}})
 	require.NoError(t, err)
 	require.Len(t, m.stagedProviders, 1)
@@ -815,8 +815,8 @@ func TestLLMProvider_FlushProviders_CallsFormatter(t *testing.T) {
 		if len(providers) != 1 {
 			t.Fatalf("expected 1 provider, got %d", len(providers))
 		}
-		if providers[0].Provider != "anthropic" {
-			t.Errorf("expected provider 'anthropic', got %q", providers[0].Provider)
+		if providers[0].Slug != "anthropic" {
+			t.Errorf("expected provider 'anthropic', got %q", providers[0].Slug)
 		}
 		return []byte(`{"formatted":true}`), nil
 	})
@@ -850,7 +850,7 @@ func TestLLMProvider_FlushProviders_NilFormatter(t *testing.T) {
 	_, err := m.Materialize([]Secret{{
 		Type:      "llm-provider",
 		Name:      "anthropic",
-		Plaintext: `{"provider":"anthropic","apiKey":"sk-..."}`,
+		Plaintext: `{"kind":"anthropic","slug":"anthropic","apiKey":"sk-..."}`,
 	}})
 	require.NoError(t, err)
 	require.Len(t, m.stagedProviders, 1)
@@ -866,7 +866,7 @@ func TestLLMProvider_FlushProviders_FormatterError(t *testing.T) {
 	_, err := m.Materialize([]Secret{{
 		Type:      "llm-provider",
 		Name:      "anthropic",
-		Plaintext: `{"provider":"anthropic","apiKey":"sk-..."}`,
+		Plaintext: `{"kind":"anthropic","slug":"anthropic","apiKey":"sk-..."}`,
 	}})
 	require.NoError(t, err)
 
@@ -886,7 +886,7 @@ func TestG20_LLMProvider_Mode0600(t *testing.T) {
 	_, err := m.Materialize([]Secret{{
 		Type:      "llm-provider",
 		Name:      "anthropic",
-		Plaintext: `{"provider":"anthropic","apiKey":"sk-..."}`,
+		Plaintext: `{"kind":"anthropic","slug":"anthropic","apiKey":"sk-..."}`,
 	}})
 	require.NoError(t, err)
 
@@ -954,17 +954,17 @@ func TestStagedProviders_Accessor(t *testing.T) {
 	require.Nil(t, m.StagedProviders())
 
 	_, err := m.Materialize([]Secret{
-		{Type: "llm-provider", Name: "anthropic", Plaintext: `{"provider":"anthropic","apiKey":"sk-ant-123","baseURL":"https://custom.endpoint"}`},
-		{Type: "llm-provider", Name: "openai", Plaintext: `{"provider":"openai","apiKey":"sk-oai-456"}`},
+		{Type: "llm-provider", Name: "anthropic", Plaintext: `{"kind":"anthropic","slug":"anthropic","apiKey":"sk-ant-123","baseURL":"https://custom.endpoint"}`},
+		{Type: "llm-provider", Name: "openai", Plaintext: `{"kind":"openai","slug":"openai","apiKey":"sk-oai-456"}`},
 	})
 	require.NoError(t, err)
 
 	staged := m.StagedProviders()
 	require.Len(t, staged, 2)
-	require.Equal(t, "anthropic", staged[0].Provider)
+	require.Equal(t, "anthropic", staged[0].Slug)
 	require.Equal(t, "sk-ant-123", staged[0].APIKey)
 	require.Equal(t, "https://custom.endpoint", staged[0].BaseURL)
-	require.Equal(t, "openai", staged[1].Provider)
+	require.Equal(t, "openai", staged[1].Slug)
 	require.Equal(t, "sk-oai-456", staged[1].APIKey)
 }
 

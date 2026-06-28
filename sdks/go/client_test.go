@@ -207,3 +207,163 @@ func TestClient_DeleteSession_NotFound(t *testing.T) {
 		t.Errorf("expected NotFound, got: %v", err)
 	}
 }
+
+// TestProviderCredentialsService_Create_WireFormat pins the Epic 55 JSON
+// shape that the SDK's Create method sends to the API. A revert that
+// puts `provider` back, or a typo in the kind/slug JSON tags, would
+// be caught by this test.
+//
+// This is a wire-format unit test — distinct from the canary scenario
+// (which is a live-cluster smoke test). The canary asserts behavior on
+// real DBs; this test asserts that the SDK speaks the right protocol.
+func TestProviderCredentialsService_Create_WireFormat(t *testing.T) {
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/api/v1/provider-credentials" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		// Return a credential response that exercises the read path too.
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]any{
+			"id":                 "cred-1",
+			"name":               "Test Cred",
+			"kind":               "openai_compatible",
+			"slug":               "test-cred",
+			"baseURL":            "https://api.example.com/v1",
+			"modelAllowlist":     []string{},
+			"modelContextLimits": map[string]int{},
+			"modelOutputLimits":  map[string]int{},
+			"createdAt":          "2026-06-27T00:00:00Z",
+			"updatedAt":          "2026-06-27T00:00:00Z",
+		})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, WithAPIKey("lsp_test"))
+	resp, err := c.ProviderCredentials.Create(
+		context.Background(),
+		"Test Cred",
+		"openai_compatible",
+		"test-cred",
+		"sk-abc",
+		"https://api.example.com/v1",
+	)
+	if err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+
+	// Wire-format invariants: the body MUST send the Epic 55 fields and
+	// MUST NOT send the legacy `provider` field.
+	if captured["name"] != "Test Cred" {
+		t.Errorf("name: got %v, want %q", captured["name"], "Test Cred")
+	}
+	if captured["kind"] != "openai_compatible" {
+		t.Errorf("kind: got %v, want %q", captured["kind"], "openai_compatible")
+	}
+	if captured["slug"] != "test-cred" {
+		t.Errorf("slug: got %v, want %q", captured["slug"], "test-cred")
+	}
+	if captured["apiKey"] != "sk-abc" {
+		t.Errorf("apiKey: got %v, want %q", captured["apiKey"], "sk-abc")
+	}
+	if captured["baseURL"] != "https://api.example.com/v1" {
+		t.Errorf("baseURL: got %v, want %q", captured["baseURL"], "https://api.example.com/v1")
+	}
+	if _, present := captured["provider"]; present {
+		t.Errorf("legacy `provider` field must NOT be in the request body (got: %v)", captured["provider"])
+	}
+
+	// Read path: the decoded response struct exposes Kind+Slug.
+	if resp.Kind != "openai_compatible" {
+		t.Errorf("resp.Kind: got %q, want openai_compatible", resp.Kind)
+	}
+	if resp.Slug != "test-cred" {
+		t.Errorf("resp.Slug: got %q, want test-cred", resp.Slug)
+	}
+	if resp.Name != "Test Cred" {
+		t.Errorf("resp.Name: got %q, want Test Cred", resp.Name)
+	}
+}
+
+// TestProviderCredentialsService_Create_OmitsEmptyBaseURL verifies the
+// SDK omits the baseURL field entirely (not "" — actually missing from
+// the JSON) when the caller passes an empty string. The server uses
+// JSON-key-presence rather than empty-string to distinguish "not set"
+// from "explicitly cleared", so this is a real wire-format invariant.
+func TestProviderCredentialsService_Create_OmitsEmptyBaseURL(t *testing.T) {
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&captured)
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]any{
+			"id":   "cred-1",
+			"name": "X",
+			"kind": "openai",
+			"slug": "x",
+		})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, WithAPIKey("lsp_test"))
+	_, err := c.ProviderCredentials.Create(
+		context.Background(),
+		"X",
+		"openai",
+		"x",
+		"sk-abc",
+		"", // empty baseURL — must be omitted from request body
+	)
+	if err != nil {
+		t.Fatalf("Create error: %v", err)
+	}
+	if _, present := captured["baseURL"]; present {
+		t.Errorf("baseURL must be omitted from request body when empty; got: %v", captured["baseURL"])
+	}
+}
+
+// TestAdminProviderCredentialsService_List_WireFormat exercises the
+// response decode path used by the canary scenario. Free-tier seed has
+// kind="opencode" and slug="opencode-free-tier"; the canary depends on
+// being able to find that exact pair in the list response.
+func TestAdminProviderCredentialsService_List_WireFormat(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/admin/provider-credentials" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode([]map[string]any{
+			{
+				"id":                 "cred-free",
+				"name":               "opencode-free-tier",
+				"kind":               "opencode",
+				"slug":               "opencode-free-tier",
+				"modelAllowlist":     []string{},
+				"modelContextLimits": map[string]int{},
+				"modelOutputLimits":  map[string]int{},
+				"createdAt":          "2026-06-27T00:00:00Z",
+				"updatedAt":          "2026-06-27T00:00:00Z",
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, WithAPIKey("lsp_test"))
+	list, err := c.AdminProviderCredentials.List(context.Background())
+	if err != nil {
+		t.Fatalf("List error: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("len: got %d, want 1", len(list))
+	}
+	if list[0].Kind != "opencode" {
+		t.Errorf("Kind: got %q, want opencode", list[0].Kind)
+	}
+	if list[0].Slug != "opencode-free-tier" {
+		t.Errorf("Slug: got %q, want opencode-free-tier", list[0].Slug)
+	}
+}

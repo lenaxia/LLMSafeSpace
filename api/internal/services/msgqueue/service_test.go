@@ -329,3 +329,37 @@ func TestPeekAllWorkspace_Empty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, msgs)
 }
+
+func TestPeekAllGlobal_MultiWorkspace(t *testing.T) {
+	svc, _, cleanup := setupTestService(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	id1, err := svc.Enqueue(ctx, "ws-1", "ses-A", "msg1")
+	require.NoError(t, err)
+	id2, err := svc.Enqueue(ctx, "ws-2", "ses-B", "msg2")
+	require.NoError(t, err)
+	id3, err := svc.Enqueue(ctx, "ws-1", "ses-A", "msg3")
+	require.NoError(t, err)
+
+	msgs, err := svc.PeekAllGlobal(ctx)
+	require.NoError(t, err)
+	assert.Len(t, msgs, 3)
+
+	ids := map[string]bool{}
+	for _, m := range msgs {
+		ids[m.ID] = true
+	}
+	assert.True(t, ids[id1])
+	assert.True(t, ids[id2])
+	assert.True(t, ids[id3])
+}
+
+func TestPeekAllGlobal_Empty(t *testing.T) {
+	svc, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	msgs, err := svc.PeekAllGlobal(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, msgs)
+}

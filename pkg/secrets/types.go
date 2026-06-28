@@ -176,31 +176,46 @@ type AuditQuery struct {
 	Offset      int
 }
 
-// LLMModelConfig specifies a model identifier and optional display label
-// for model visibility allowlisting.
+// LLMModelConfig declares an allowlisted model and its display/limit metadata.
+// At minimum, ID is required. Label is shown in pickers when set.
 //
-// ContextLimit is the context window size in tokens. When non-zero it is
-// written into the opencode agent-config.json as limit.context, which
-// makes ModelContextLimit() return a non-zero value and causes the
-// contextTotal field in agentd statusz / workspace CRD status to be
-// populated. Without it, custom provider models (e.g. thekao cloud / glm-5.x)
-// show "Unknown" in the context usage bar because /v1/models returns only
-// {id, object, created, owned_by} — no context window data.
+// ContextLimit and OutputLimit drive the opencode `limit` block in
+// agent-config.json. opencode's published JSON Schema
+// (https://opencode.ai/config.json) declares the model `limit` object with
+// `"required": ["context", "output"]` and `"additionalProperties": false`.
+// Therefore FormatOpenCodeConfig emits a `limit` block ONLY when BOTH are
+// non-zero — emitting a partial block (only context, or only output) makes
+// opencode 1.15.12 reject the entire config with
+// SchemaError: Missing key, which causes every endpoint that calls
+// Config.state() (including POST /session) to return 500.
 //
-// This value cannot be auto-discovered from the provider API (the
-// LiteLLM /v1/models endpoint does not expose it and /v1/model/info
-// requires elevated key permissions that standard LLM keys don't have).
-// It must be configured explicitly by the workspace owner.
+// ContextLimit is the total context window size in tokens. When set together
+// with OutputLimit it is written into agent-config.json as limit.context,
+// which makes opencode's /config/providers return ctx=N, which feeds
+// ModelContextLimit() in agentd → context.total_tokens in /v1/statusz →
+// CRD status.contextTotal → the frontend's "used / total" context bar.
+//
+// OutputLimit is the maximum response tokens for the model. opencode uses
+// this for compaction sizing. Like ContextLimit it cannot be auto-discovered
+// from a provider's /v1/models endpoint and must be configured explicitly
+// by the workspace/credential owner.
 type LLMModelConfig struct {
 	ID           string `json:"id"`
 	Label        string `json:"label,omitempty"`
 	ContextLimit int    `json:"contextLimit,omitempty"`
+	OutputLimit  int    `json:"outputLimit,omitempty"`
 }
 
 // LLMProviderData holds structured credentials for one LLM provider.
 // The Plaintext value of an "llm-provider" secret is the JSON encoding of this struct.
 //
-// Provider is required (e.g. "anthropic", "openai", "google").
+// Epic 55 identity model:
+//   - Kind is the SDK-class enum (openai, anthropic, openai_compatible, ...).
+//     Required. Determines which adapter opencode loads.
+//   - Slug is the per-owner unique identity AND the literal key used in
+//     agent-config.json's provider map. opencode persists this as
+//     `providerID` on sessions.
+//
 // APIKey is required.
 // BaseURL is optional; when empty the provider's default endpoint is used.
 // Models is an optional allowlist. When empty or nil all models from the
@@ -210,7 +225,8 @@ type LLMModelConfig struct {
 // SmallModel is the model ID used for lightweight/cheap operations
 // (e.g. summarization).
 type LLMProviderData struct {
-	Provider   string           `json:"provider"`
+	Kind       string           `json:"kind"`
+	Slug       string           `json:"slug"`
 	APIKey     string           `json:"apiKey"`
 	BaseURL    string           `json:"baseURL,omitempty"`
 	Models     []LLMModelConfig `json:"models,omitempty"`
@@ -220,8 +236,11 @@ type LLMProviderData struct {
 
 // Validate checks that required fields are set in LLMProviderData.
 func (d LLMProviderData) Validate() error {
-	if d.Provider == "" {
-		return fmt.Errorf("%w: provider is required", ErrInvalidLLMProvider)
+	if d.Kind == "" {
+		return fmt.Errorf("%w: kind is required", ErrInvalidLLMProvider)
+	}
+	if d.Slug == "" {
+		return fmt.Errorf("%w: slug is required", ErrInvalidLLMProvider)
 	}
 	if d.APIKey == "" {
 		return fmt.Errorf("%w: apiKey is required", ErrInvalidLLMProvider)

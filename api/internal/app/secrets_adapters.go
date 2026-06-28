@@ -707,7 +707,13 @@ func ensureFreeTierCredential(ctx context.Context, seeder credentialSeeder, prov
 	if provider == nil {
 		return fmt.Errorf("admin RootKeyProvider not configured; skipping free-tier credential seed")
 	}
-	plaintext := []byte(`{"provider":"opencode","apiKey":"public"}`)
+	// Epic 55 plaintext shape: kind + slug instead of provider. The slug
+	// MUST match the value the DAL inserts into provider_credentials.slug
+	// (see UpsertFreeTierCredential's INSERT in pkg/secrets/pg_credential_store.go)
+	// so the column-level identity and the encrypted-blob identity agree.
+	// LLMProviderData.Validate() rejects the credential at materialize time
+	// otherwise, with `kind is required` — see TestEnsureFreeTierCredential_PlaintextHasKindAndSlug.
+	plaintext := []byte(`{"kind":"opencode","slug":"opencode-free-tier","apiKey":"public"}`)
 	ciphertext, err := provider.Encrypt(ctx, plaintext)
 	if err != nil {
 		return fmt.Errorf("encrypt free-tier key: %w", err)

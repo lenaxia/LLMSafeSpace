@@ -119,7 +119,7 @@ func TestE2E_RealAuth_SecretCRUD(t *testing.T) {
 
 	// === Create secret (THIS is what failed with BUG 2) ===
 	resp = doPost(t, client, base+"/api/v1/secrets",
-		`{"name":"my-key","type":"api-key","value":"sk-secret-123","metadata":{"provider":"openai"}}`, token)
+		`{"name":"my-key","type":"api-key","value":"sk-secret-123","metadata":{"kind":"openai","slug":"openai"}}`, token)
 	if resp.StatusCode != 201 {
 		body := make([]byte, 512)
 		n, _ := resp.Body.Read(body)

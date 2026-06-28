@@ -3,7 +3,8 @@ import type { ReactNode } from "react";
 import type { Message } from "../../api/types";
 import type { ModelInfo } from "../../api/workspaces";
 import { MessageBubble } from "./MessageBubble";
-import { ArrowDown, Loader2 } from "lucide-react";
+import { ArrowDown } from "lucide-react";
+import { Spinner } from "../ui/Spinner";
 
 interface Props {
   messages: Message[];
@@ -127,7 +128,7 @@ export function MessageList({ messages, streaming, streamingBubble, trailingProm
           {hasOlderMessages && (
             <div className="flex justify-center py-3">
               {loadingOlder ? (
-                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                <Spinner size="sm" />
               ) : (
                 <button
                   onClick={onLoadEarlier}

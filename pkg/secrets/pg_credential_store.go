@@ -15,8 +15,8 @@ import (
 // ordered by: (source_type='explicit') DESC, within_priority DESC, created_at ASC.
 func (s *PgSecretStore) GetWorkspaceCredentials(ctx context.Context, workspaceID string) ([]CredentialBinding, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT pc.id, pc.owner_type, pc.owner_id, pc.provider, pc.ciphertext,
-		       pc.key_version, pc.model_allowlist, pc.model_context_limits, wcb.source_type, wcb.within_priority
+		SELECT pc.id, pc.owner_type, pc.owner_id, pc.kind, pc.slug, pc.ciphertext,
+		       pc.key_version, pc.model_allowlist, pc.model_context_limits, pc.model_output_limits, wcb.source_type, wcb.within_priority
 		FROM workspace_credential_bindings wcb
 		JOIN provider_credentials pc ON pc.id = wcb.credential_id
 		WHERE wcb.workspace_id = $1
@@ -31,13 +31,16 @@ func (s *PgSecretStore) GetWorkspaceCredentials(ctx context.Context, workspaceID
 	for rows.Next() {
 		var b CredentialBinding
 		if err := rows.Scan(
-			&b.ID, &b.OwnerType, &b.OwnerID, &b.Provider, &b.Ciphertext,
-			&b.KeyVersion, &b.ModelAllowlist, &b.ModelContextLimits, &b.SourceType, &b.WithinPriority,
+			&b.ID, &b.OwnerType, &b.OwnerID, &b.Kind, &b.Slug, &b.Ciphertext,
+			&b.KeyVersion, &b.ModelAllowlist, &b.ModelContextLimits, &b.ModelOutputLimits, &b.SourceType, &b.WithinPriority,
 		); err != nil {
 			return nil, fmt.Errorf("scan credential binding: %w", err)
 		}
 		if b.ModelContextLimits == nil {
 			b.ModelContextLimits = map[string]int{}
+		}
+		if b.ModelOutputLimits == nil {
+			b.ModelOutputLimits = map[string]int{}
 		}
 		bindings = append(bindings, b)
 	}
@@ -55,9 +58,9 @@ func (s *PgSecretStore) UpsertFreeTierCredential(ctx context.Context, ciphertext
 
 	var credID string
 	err = tx.QueryRow(ctx, `
-		INSERT INTO provider_credentials (owner_type, owner_id, name, provider, ciphertext)
-		VALUES ('admin', '_platform', 'opencode-free-tier', 'opencode', $1)
-		ON CONFLICT (owner_type, owner_id, provider)
+		INSERT INTO provider_credentials (owner_type, owner_id, name, kind, slug, ciphertext)
+		VALUES ('admin', '_platform', 'opencode-free-tier', 'opencode', 'opencode-free-tier', $1)
+		ON CONFLICT (owner_type, owner_id, slug)
 		DO UPDATE SET ciphertext = EXCLUDED.ciphertext, updated_at = now()
 		RETURNING id
 	`, ciphertext).Scan(&credID)
@@ -166,7 +169,7 @@ func (s *PgSecretStore) BackfillFreeTierBindings(ctx context.Context) (int64, er
 		SELECT pc.id, w.id, 'auto', 0
 		FROM provider_credentials pc
 		CROSS JOIN workspaces w
-		WHERE pc.owner_type = 'admin' AND pc.owner_id = '_platform' AND pc.provider = 'opencode'
+		WHERE pc.owner_type = 'admin' AND pc.owner_id = '_platform' AND pc.slug = 'opencode-free-tier'
 		  AND NOT EXISTS (
 		    SELECT 1 FROM workspace_credential_bindings wcb
 		    WHERE wcb.credential_id = pc.id AND wcb.workspace_id = w.id
@@ -179,17 +182,18 @@ func (s *PgSecretStore) BackfillFreeTierBindings(ctx context.Context) (int64, er
 	return tag.RowsAffected(), nil
 }
 
-// HasUserProviderCredential returns true if the user owns a credential for the given provider.
-func (s *PgSecretStore) HasUserProviderCredential(ctx context.Context, userID, provider string) (bool, error) {
+// HasUserProviderCredential returns true if the user owns a credential
+// with the given slug.
+func (s *PgSecretStore) HasUserProviderCredential(ctx context.Context, userID, slug string) (bool, error) {
 	var exists bool
 	err := s.pool.QueryRow(ctx, `
 		SELECT EXISTS(
 			SELECT 1 FROM provider_credentials
-			WHERE owner_type = 'user' AND owner_id = $1 AND provider = $2
+			WHERE owner_type = 'user' AND owner_id = $1 AND slug = $2
 		)
-	`, userID, provider).Scan(&exists)
+	`, userID, slug).Scan(&exists)
 	if err != nil {
-		return false, fmt.Errorf("check user provider credential: %w", err)
+		return false, fmt.Errorf("check user credential by slug: %w", err)
 	}
 	return exists, nil
 }
@@ -199,16 +203,25 @@ func (s *PgSecretStore) HasUserProviderCredential(ctx context.Context, userID, p
 // scope ("admin", "user", "org") and owner_id the concrete owner
 // ("_platform", a user id, or an org id). Defined here to avoid an import
 // cycle (handlers → secrets → handlers).
+//
+// Epic 55 identity model:
+//   - Kind is the SDK-class enum (openai, anthropic, openai_compatible, ...).
+//     Multiple credentials of the same Kind can exist per owner.
+//   - Slug is the per-owner unique identity AND the literal provider-map key
+//     in agent-config.json. Slug-safe regex enforced by the DB CHECK.
+//   - Name is the free-form display label shown in the UI.
 type CredentialRow struct {
 	ID                 string
 	OwnerType          string
 	OwnerID            string
-	Name               string
-	Provider           string
+	Name               string // display label, free-form
+	Kind               string // SDK-class enum
+	Slug               string // per-owner unique identity; reaches opencode as providerID
 	Ciphertext         []byte
 	KeyVersion         int
 	ModelAllowlist     []string
 	ModelContextLimits map[string]int // model_id → context window size in tokens
+	ModelOutputLimits  map[string]int // model_id → max response tokens
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }
@@ -220,10 +233,13 @@ func (s *PgSecretStore) CreateCredential(ctx context.Context, ownerType, ownerID
 	if row.ModelContextLimits == nil {
 		row.ModelContextLimits = map[string]int{}
 	}
+	if row.ModelOutputLimits == nil {
+		row.ModelOutputLimits = map[string]int{}
+	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO provider_credentials (id, owner_type, owner_id, name, provider, ciphertext, key_version, model_allowlist, model_context_limits, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-	`, row.ID, ownerType, ownerID, row.Name, row.Provider, row.Ciphertext, row.KeyVersion, row.ModelAllowlist, row.ModelContextLimits, row.CreatedAt, row.UpdatedAt)
+		INSERT INTO provider_credentials (id, owner_type, owner_id, name, kind, slug, ciphertext, key_version, model_allowlist, model_context_limits, model_output_limits, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+	`, row.ID, ownerType, ownerID, row.Name, row.Kind, row.Slug, row.Ciphertext, row.KeyVersion, row.ModelAllowlist, row.ModelContextLimits, row.ModelOutputLimits, row.CreatedAt, row.UpdatedAt)
 	return err
 }
 
@@ -231,7 +247,7 @@ func (s *PgSecretStore) CreateCredential(ctx context.Context, ownerType, ownerID
 // ordered by created_at ASC.
 func (s *PgSecretStore) ListCredentials(ctx context.Context, ownerType, ownerID string) ([]*CredentialRow, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, owner_type, owner_id, name, provider, ciphertext, key_version, model_allowlist, model_context_limits, created_at, updated_at
+		SELECT id, owner_type, owner_id, name, kind, slug, ciphertext, key_version, model_allowlist, model_context_limits, model_output_limits, created_at, updated_at
 		FROM provider_credentials WHERE owner_type = $1 AND owner_id = $2
 		ORDER BY created_at ASC
 	`, ownerType, ownerID)
@@ -243,11 +259,14 @@ func (s *PgSecretStore) ListCredentials(ctx context.Context, ownerType, ownerID 
 	var out []*CredentialRow
 	for rows.Next() {
 		var r CredentialRow
-		if err := rows.Scan(&r.ID, &r.OwnerType, &r.OwnerID, &r.Name, &r.Provider, &r.Ciphertext, &r.KeyVersion, &r.ModelAllowlist, &r.ModelContextLimits, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.OwnerType, &r.OwnerID, &r.Name, &r.Kind, &r.Slug, &r.Ciphertext, &r.KeyVersion, &r.ModelAllowlist, &r.ModelContextLimits, &r.ModelOutputLimits, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if r.ModelContextLimits == nil {
 			r.ModelContextLimits = map[string]int{}
+		}
+		if r.ModelOutputLimits == nil {
+			r.ModelOutputLimits = map[string]int{}
 		}
 		out = append(out, &r)
 	}
@@ -260,9 +279,9 @@ func (s *PgSecretStore) ListCredentials(ctx context.Context, ownerType, ownerID 
 func (s *PgSecretStore) GetCredential(ctx context.Context, ownerType, ownerID, credID string) (*CredentialRow, error) {
 	var r CredentialRow
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, owner_type, owner_id, name, provider, ciphertext, key_version, model_allowlist, model_context_limits, created_at, updated_at
+		SELECT id, owner_type, owner_id, name, kind, slug, ciphertext, key_version, model_allowlist, model_context_limits, model_output_limits, created_at, updated_at
 		FROM provider_credentials WHERE id = $1 AND owner_type = $2 AND owner_id = $3
-	`, credID, ownerType, ownerID).Scan(&r.ID, &r.OwnerType, &r.OwnerID, &r.Name, &r.Provider, &r.Ciphertext, &r.KeyVersion, &r.ModelAllowlist, &r.ModelContextLimits, &r.CreatedAt, &r.UpdatedAt)
+	`, credID, ownerType, ownerID).Scan(&r.ID, &r.OwnerType, &r.OwnerID, &r.Name, &r.Kind, &r.Slug, &r.Ciphertext, &r.KeyVersion, &r.ModelAllowlist, &r.ModelContextLimits, &r.ModelOutputLimits, &r.CreatedAt, &r.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
@@ -272,17 +291,21 @@ func (s *PgSecretStore) GetCredential(ctx context.Context, ownerType, ownerID, c
 	if r.ModelContextLimits == nil {
 		r.ModelContextLimits = map[string]int{}
 	}
+	if r.ModelOutputLimits == nil {
+		r.ModelOutputLimits = map[string]int{}
+	}
 	return &r, nil
 }
 
 // UpdateCredential updates an existing credential scoped to (ownerType, ownerID).
 //
-// It uses COALESCE for model_allowlist and model_context_limits so a nil value
-// means "don't change this column" — the org handler relies on this: a nil
-// modelContextLimits must reach the DB as SQL NULL so COALESCE preserves the
-// existing column value. An empty slice/map is a valid "clear the column" value
-// and is written as-is. Do NOT normalize nil → {} here (it would convert a
-// "don't change" into a "clear all" via COALESCE).
+// It uses COALESCE for model_allowlist, model_context_limits, and
+// model_output_limits so a nil value means "don't change this column" — the
+// org handler relies on this: a nil modelContextLimits/modelOutputLimits must
+// reach the DB as SQL NULL so COALESCE preserves the existing column value.
+// An empty slice/map is a valid "clear the column" value and is written as-is.
+// Do NOT normalize nil → {} here (it would convert a "don't change" into a
+// "clear all" via COALESCE).
 //
 // For the admin handler (which allows provider changes and re-encrypts up-front),
 // the caller passes the fully-resolved row with non-nil fields; COALESCE is a
@@ -293,14 +316,16 @@ func (s *PgSecretStore) UpdateCredential(ctx context.Context, ownerType, ownerID
 	return s.pool.QueryRow(ctx, `
 		UPDATE provider_credentials
 		SET name = COALESCE(NULLIF($4, ''), name),
-		    provider = COALESCE(NULLIF($5, ''), provider),
-		    ciphertext = CASE WHEN $6::bytea IS NOT NULL THEN $6 ELSE ciphertext END,
-		    key_version = $7,
-		    model_allowlist = COALESCE($8, model_allowlist),
-		    model_context_limits = COALESCE($9, model_context_limits)
+		    kind = COALESCE(NULLIF($5, ''), kind),
+		    slug = COALESCE(NULLIF($6, ''), slug),
+		    ciphertext = CASE WHEN $7::bytea IS NOT NULL THEN $7 ELSE ciphertext END,
+		    key_version = $8,
+		    model_allowlist = COALESCE($9, model_allowlist),
+		    model_context_limits = COALESCE($10, model_context_limits),
+		    model_output_limits = COALESCE($11, model_output_limits)
 		WHERE id = $1 AND owner_type = $2 AND owner_id = $3
 		RETURNING updated_at
-	`, credID, ownerType, ownerID, row.Name, row.Provider, row.Ciphertext, row.KeyVersion, row.ModelAllowlist, row.ModelContextLimits).Scan(&row.UpdatedAt)
+	`, credID, ownerType, ownerID, row.Name, row.Kind, row.Slug, row.Ciphertext, row.KeyVersion, row.ModelAllowlist, row.ModelContextLimits, row.ModelOutputLimits).Scan(&row.UpdatedAt)
 }
 
 // DeleteCredential deletes a credential by ID scoped to (ownerType, ownerID).

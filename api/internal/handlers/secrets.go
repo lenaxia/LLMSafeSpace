@@ -124,7 +124,7 @@ func (h *SecretsHandler) CreateSecret(c *gin.Context) {
 		return
 	}
 
-	resp, err := h.svc.CreateSecret(c.Request.Context(), userID, sessionID, req)
+	resp, err := h.svc.CreateSecret(c.Request.Context(), userID, sessionID, extractMatchedSigningKey(c), req)
 	if err != nil {
 		handleSecretError(c, err)
 		return
@@ -186,7 +186,7 @@ func (h *SecretsHandler) UpdateSecret(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.UpdateSecret(c.Request.Context(), userID, sessionID, secretID, req); err != nil {
+	if err := h.svc.UpdateSecret(c.Request.Context(), userID, sessionID, extractMatchedSigningKey(c), secretID, req); err != nil {
 		handleSecretError(c, err)
 		return
 	}
@@ -254,7 +254,7 @@ func (h *SecretsHandler) RevealSecret(c *gin.Context) {
 		return
 	}
 
-	plaintext, err := h.svc.DecryptSecretValue(c.Request.Context(), userID, sessionID, secretID)
+	plaintext, err := h.svc.DecryptSecretValue(c.Request.Context(), userID, sessionID, extractMatchedSigningKey(c), secretID)
 	if err != nil {
 		// Log every reveal failure with full context so operators can correlate
 		// user reports with audit log entries. ErrCiphertextDecryptFailed and
@@ -365,7 +365,7 @@ func (h *SecretsHandler) ReloadSecrets(c *gin.Context) {
 	}
 
 	workspaceID := c.Param("id")
-	secretsJSON, err := h.svc.InjectSecrets(c.Request.Context(), userID, sessionID, workspaceID)
+	secretsJSON, err := h.svc.InjectSecrets(c.Request.Context(), userID, sessionID, extractMatchedSigningKey(c), workspaceID)
 	if err != nil {
 		handleSecretError(c, err)
 		return
@@ -430,7 +430,7 @@ func (h *SecretsHandler) pushSecretsToAgent(c *gin.Context, userID, workspaceID 
 	_, sessionID := extractAuth(c)
 	ctx := c.Request.Context()
 
-	secretsJSON, err := h.svc.InjectSecrets(ctx, userID, sessionID, workspaceID)
+	secretsJSON, err := h.svc.InjectSecrets(ctx, userID, sessionID, extractMatchedSigningKey(c), workspaceID)
 	if err != nil {
 		h.warn("secret injection failed",
 			"workspaceID", workspaceID, "error", err.Error())
@@ -702,6 +702,24 @@ func extractAuth(c *gin.Context) (userID, sessionID string) {
 		}
 	}
 	return userID, sessionID
+}
+
+// extractMatchedSigningKey returns the JWT signing key that validated
+// the caller's token, as set by AuthMiddleware (Epic 56). Returns nil
+// for API-key auth, legacy-cache hits, or any handler reached without
+// going through AuthMiddleware (tests).
+//
+// Pass the return value into KeyService.GetDEK so the rehydrate path
+// can derive the per-session KEK from the same key the JWT validated
+// under. nil is a valid input — GetDEK falls through to ErrDEKUnavailable
+// which triggers soft-unlock at the UI.
+func extractMatchedSigningKey(c *gin.Context) []byte {
+	if v, ok := c.Get("jwt_signing_key"); ok {
+		if b, ok := v.([]byte); ok {
+			return b
+		}
+	}
+	return nil
 }
 
 // handleSecretError maps domain errors to HTTP responses. US-46.4: the

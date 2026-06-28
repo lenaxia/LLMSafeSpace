@@ -5,6 +5,7 @@ import {
   type OrgCredential,
   type OrgResponse,
 } from "../../api/orgs";
+import { SDK_KINDS, SLUG_REGEX, slugFromName } from "../../api/providerCredentialTypes";
 import { useToast } from "../../providers/ToastProvider";
 import { Button } from "../ui/Button";
 import { Badge } from "../ui/Badge";
@@ -16,12 +17,9 @@ interface CredentialsContext {
   isAdmin: boolean;
 }
 
-const PROVIDERS = [
-  { id: "openai", label: "OpenAI" },
-  { id: "anthropic", label: "Anthropic" },
-  { id: "google", label: "Google" },
-  { id: "custom", label: "Custom" },
-];
+// PROVIDERS used to list SDK kinds for the dropdown. Now sourced from the
+// canonical SDK_KINDS constant in providerCredentialTypes.ts (Epic 55) so
+// the frontend choices stay in lockstep with the DB CHECK enum.
 
 export function OrgCredentialsTab() {
   const { org } = useOutletContext<CredentialsContext>();
@@ -134,9 +132,14 @@ export function OrgCredentialsTab() {
                 <div className="flex items-center gap-2">
                   <KeyRound className="h-4 w-4 text-muted-foreground" />
                   <div>
-                    <p className="font-medium">{c.name}</p>
+                    <p className="font-medium">
+                      {c.name}
+                      <span className="ml-2 rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground" title={`SDK kind: ${c.kind}`}>
+                        {c.slug}
+                      </span>
+                    </p>
                     <p className="text-xs text-muted-foreground">
-                      {c.provider}
+                      {c.kind}
                       {c.baseURL ? ` · ${c.baseURL}` : ""}
                     </p>
                   </div>
@@ -177,15 +180,26 @@ export function OrgCredentialsTab() {
                       </p>
                     )}
                   </div>
-                  {Object.keys(c.modelContextLimits ?? {}).length > 0 && (
+                  {(Object.keys(c.modelContextLimits ?? {}).length > 0 ||
+                    Object.keys(c.modelOutputLimits ?? {}).length > 0) && (
                     <div>
-                      <p className="text-xs font-medium text-muted-foreground">Context limits</p>
+                      <p className="text-xs font-medium text-muted-foreground">Per-model limits</p>
                       <ul className="mt-1 space-y-0.5 text-xs font-mono">
-                        {Object.entries(c.modelContextLimits).map(([m, lim]) => (
-                          <li key={m}>
-                            {m}: {lim.toLocaleString()} tokens
-                          </li>
-                        ))}
+                        {Array.from(
+                          new Set([
+                            ...Object.keys(c.modelContextLimits ?? {}),
+                            ...Object.keys(c.modelOutputLimits ?? {}),
+                          ]),
+                        ).map((m) => {
+                          const ctx = c.modelContextLimits?.[m];
+                          const out = c.modelOutputLimits?.[m];
+                          return (
+                            <li key={m}>
+                              {m}: ctx {ctx ? ctx.toLocaleString() : "—"} / out{" "}
+                              {out ? out.toLocaleString() : "—"}
+                            </li>
+                          );
+                        })}
                       </ul>
                     </div>
                   )}
@@ -232,7 +246,13 @@ function CredentialForm({
   onCancel: () => void;
 }) {
   const [name, setName] = useState(existing?.name ?? "");
-  const [provider, setProvider] = useState(existing?.provider ?? "openai");
+  // kind starts empty for new credentials so the user is forced to make an
+  // explicit choice via the dropdown — a silent "openai" default would let a
+  // user accidentally create an openai-kind credential when they meant
+  // openai_compatible (LiteLLM/vLLM). When editing an existing cred, default
+  // to that cred's kind so the dropdown reflects current state.
+  const [kind, setKind] = useState<string>(existing?.kind ?? "");
+  const [slug, setSlug] = useState<string>(existing?.slug ?? "");
   const [apiKey, setApiKey] = useState("");
   const [baseURL, setBaseURL] = useState(existing?.baseURL ?? "");
   const [loading, setLoading] = useState(false);
@@ -240,19 +260,18 @@ function CredentialForm({
   const [error, setError] = useState("");
   const [modelRows, setModelRows] = useState<ModelRow[]>(() => {
     if (!existing) return [];
-    const limits = existing.modelContextLimits ?? {};
+    const ctxLimits = existing.modelContextLimits ?? {};
+    const outLimits = existing.modelOutputLimits ?? {};
     const allow = existing.modelAllowlist ?? [];
-    const rows: ModelRow[] = Object.keys(limits).map((id) => ({
+    const ids = Array.from(
+      new Set([...Object.keys(ctxLimits), ...Object.keys(outLimits), ...allow]),
+    );
+    return ids.map((id) => ({
       id,
       enabled: allow.includes(id),
-      contextLimit: String(limits[id]),
+      contextLimit: ctxLimits[id] ? String(ctxLimits[id]) : "",
+      outputLimit: outLimits[id] ? String(outLimits[id]) : "",
     }));
-    for (const id of allow) {
-      if (!rows.some((r) => r.id === id)) {
-        rows.push({ id, enabled: true, contextLimit: "" });
-      }
-    }
-    return rows;
   });
   const [fetchWarning, setFetchWarning] = useState("");
 
@@ -264,12 +283,17 @@ function CredentialForm({
     try {
       const result = await orgsApi.probeCredentialModels(orgId, credId);
       if (result.warning) setFetchWarning(result.warning);
-      const existingLimits: Record<string, string> = {};
-      for (const r of modelRows) existingLimits[r.id] = r.contextLimit;
+      const existingCtx: Record<string, string> = {};
+      const existingOut: Record<string, string> = {};
+      for (const r of modelRows) {
+        existingCtx[r.id] = r.contextLimit;
+        existingOut[r.id] = r.outputLimit;
+      }
       const rows: ModelRow[] = (result.models ?? []).map((m) => ({
         id: m.id,
         enabled: true,
-        contextLimit: existingLimits[m.id] ?? (m.contextLimit > 0 ? String(m.contextLimit) : ""),
+        contextLimit: existingCtx[m.id] ?? (m.contextLimit > 0 ? String(m.contextLimit) : ""),
+        outputLimit: existingOut[m.id] ?? (m.outputLimit > 0 ? String(m.outputLimit) : ""),
       }));
       setModelRows(rows);
     } catch (e) {
@@ -286,25 +310,60 @@ function CredentialForm({
       setError(isEdit ? "Name is required" : "Name and API key are required");
       return;
     }
+    if (!isEdit) {
+      if (!kind.trim() || !slug.trim()) {
+        setError("Kind and slug are required");
+        return;
+      }
+      if (!SLUG_REGEX.test(slug.trim())) {
+        setError(
+          "Slug must be 1–64 lowercase alphanumeric characters and hyphens, " +
+          "starting and ending with alphanumeric (e.g. \"team-openai\")",
+        );
+        return;
+      }
+    }
     setLoading(true);
     setError("");
     try {
       const allowlist = modelRows.filter((r) => r.enabled).map((r) => r.id);
-      const limits: Record<string, number> = {};
+      const ctxLimits: Record<string, number> = {};
+      const outLimits: Record<string, number> = {};
       for (const r of modelRows) {
-        if (r.enabled && r.contextLimit.trim() !== "") {
+        if (!r.enabled) continue;
+        if (r.contextLimit.trim() !== "") {
           const n = Number(r.contextLimit);
-          if (Number.isFinite(n) && n > 0) limits[r.id] = n;
+          if (Number.isFinite(n) && n > 0) ctxLimits[r.id] = n;
+        }
+        if (r.outputLimit.trim() !== "") {
+          const n = Number(r.outputLimit);
+          if (Number.isFinite(n) && n > 0) outLimits[r.id] = n;
         }
       }
       if (isEdit) {
         // Only send baseURL when it changed from the stored value. This avoids
         // triggering a ciphertext re-encryption on every save (baseURL lives in
         // the encrypted blob). Sending "" explicitly clears a previously-set URL.
-        const updateReq: Record<string, unknown> = {
+        //
+        // updateReq is typed to mirror the structured shape that
+        // orgsApi.updateCredential expects (kind?/slug?/name?/apiKey?/baseURL?/
+        // model* — all optional). Rule 1: no Record<string, unknown> for
+        // structured data — the typed signature must not be defeated at the
+        // call site.
+        const updateReq: {
+          name?: string;
+          kind?: string;
+          slug?: string;
+          apiKey?: string;
+          baseURL?: string;
+          modelAllowlist?: string[];
+          modelContextLimits?: Record<string, number>;
+          modelOutputLimits?: Record<string, number>;
+        } = {
           name: name.trim(),
           modelAllowlist: allowlist,
-          modelContextLimits: limits,
+          modelContextLimits: ctxLimits,
+          modelOutputLimits: outLimits,
         };
         if (apiKey.trim()) updateReq.apiKey = apiKey.trim();
         const prevBaseURL = existing?.baseURL ?? "";
@@ -318,11 +377,13 @@ function CredentialForm({
       }
       await orgsApi.createCredential(orgId, {
         name: name.trim(),
-        provider,
+        kind: kind.trim(),
+        slug: slug.trim(),
         apiKey: apiKey.trim(),
         baseURL: baseURL.trim() || undefined,
         modelAllowlist: allowlist,
-        modelContextLimits: limits,
+        modelContextLimits: ctxLimits,
+        modelOutputLimits: outLimits,
       });
       setName("");
       setApiKey("");
@@ -346,21 +407,38 @@ function CredentialForm({
         className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm"
         placeholder="Name (e.g. Team OpenAI Key)"
         value={name}
-        onChange={(e) => setName(e.target.value)}
+        onChange={(e) => {
+          const v = e.target.value;
+          setName(v);
+          // Auto-suggest slug from name while slug is empty or matches the auto-suggested value.
+          if (!isEdit && (!slug || slug === slugFromName(name))) {
+            setSlug(slugFromName(v));
+          }
+        }}
       />
       {!isEdit && (
-        <select
-          className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm"
-          value={provider}
-          onChange={(e) => setProvider(e.target.value)}
-          disabled={isEdit}
-        >
-          {PROVIDERS.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.label}
-            </option>
-          ))}
-        </select>
+        <>
+          <select
+            className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm"
+            value={kind}
+            onChange={(e) => setKind(e.target.value)}
+          >
+            <option value="">— select SDK kind —</option>
+            {SDK_KINDS.map((k) => (
+              <option key={k} value={k}>{k}</option>
+            ))}
+          </select>
+          <input
+            className="w-full rounded border border-border bg-background px-3 py-1.5 font-mono text-sm"
+            placeholder="Slug (lowercase alphanumeric + hyphens, e.g. team-openai)"
+            value={slug}
+            onChange={(e) => setSlug(e.target.value)}
+            pattern={SLUG_REGEX.source}
+          />
+          <p className="text-[10px] text-muted-foreground">
+            Slug is the per-org identity. It appears in agent-config.json as the provider-map key (opencode persists it as <code>providerID</code>).
+          </p>
+        </>
       )}
       <input
         className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm"
@@ -432,7 +510,7 @@ function OrgModelConfigTable({
   const addManual = () => {
     const id = window.prompt("Model ID");
     if (id && id.trim() && !rows.some((r) => r.id === id.trim())) {
-      onChange([...rows, { id: id.trim(), enabled: true, contextLimit: "" }]);
+      onChange([...rows, { id: id.trim(), enabled: true, contextLimit: "", outputLimit: "" }]);
     }
   };
 

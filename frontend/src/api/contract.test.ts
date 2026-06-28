@@ -3,8 +3,8 @@ import fixtures from "./contract-fixtures.json";
 import type {
   AuthConfig,
   ActivateWorkspaceResponse,
-  SessionListItem,
   ActiveSessionsResponse,
+  SessionListItem,
   WorkspaceListItem,
   AuthResponse,
   QuestionRequest,
@@ -33,6 +33,12 @@ describe("Go↔TS contract", () => {
     expect(data.suspended).toBe("ws-old");
   });
 
+  it("ActiveSessionsResponse matches Go shape", () => {
+    const data: ActiveSessionsResponse = fixtures.ActiveSessionsResponse;
+    expect(data.active).toEqual(["sess-1", "sess-2"]);
+    expect(data.maxActive).toBe(5);
+  });
+
   it("SessionListItem matches Go shape", () => {
     const data: SessionListItem = fixtures.SessionListItem;
     expect(data.id).toBe("sess-1");
@@ -43,12 +49,6 @@ describe("Go↔TS contract", () => {
     expect(data.lastSeenAt).toBeDefined();
     expect(data.hasUnread).toBe(true);
     expect(data.contextUsed).toBe(12500);
-  });
-
-  it("ActiveSessionsResponse matches Go shape", () => {
-    const data: ActiveSessionsResponse = fixtures.ActiveSessionsResponse;
-    expect(data.active).toEqual(["sess-1", "sess-2"]);
-    expect(data.maxActive).toBe(5);
   });
 
   it("WorkspaceListItem matches Go shape", () => {
@@ -76,8 +76,8 @@ describe("Go↔TS contract", () => {
 
   it("all fixture keys have corresponding tests", () => {
     const testedKeys = [
-      "AuthConfig", "ActivateWorkspaceResponse", "SessionListItem",
-      "ActiveSessionsResponse", "WorkspaceListItem", "AuthResponse",
+      "AuthConfig", "ActivateWorkspaceResponse", "ActiveSessionsResponse",
+      "SessionListItem", "WorkspaceListItem", "AuthResponse",
       "QuestionRequest", "PermissionRequest",
     ];
     const fixtureKeys = Object.keys(fixtures);

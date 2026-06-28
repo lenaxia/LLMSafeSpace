@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { SessionActivityProvider, useIsSessionBusy, useIsSessionUnread, useWorkspaceBusyCount, useClearPendingUnread, useIsSessionPendingAction, useAddPendingAction, useRemovePendingAction, useSessionPendingActions, useAddPendingQuestion, useAddPendingPermission, usePendingQuestionsForSession, usePendingPermissionsForSession, useClearSessionPendingPrompts } from "./SessionActivityProvider";
+import { SessionActivityProvider, useIsSessionBusy, useIsSessionUnread, useWorkspaceBusyCount, useClearPendingUnread, useIsSessionPendingAction, useAddPendingAction, useRemovePendingAction, useSessionPendingActions, useAddPendingQuestion, useAddPendingPermission, usePendingQuestionsForSession, usePendingPermissionsForSession, useClearSessionPendingPrompts, resolveSessionStatus } from "./SessionActivityProvider";
 import type { QuestionRequest, PermissionRequest } from "../api/types";
 
 let capturedOnEvent: ((data: unknown) => void) | undefined;
@@ -1385,5 +1385,386 @@ describe("SessionActivityProvider — pending prompt content", () => {
     renderProvider(<Display sessionId="sess-A" />);
     act(() => screen.getByTestId("add").click());
     expect(screen.getByTestId("count").textContent).toBe("1");
+  });
+});
+
+describe("resolveSessionStatus", () => {
+  it("returns pending_input when busy AND pending (the bug that F7 missed)", () => {
+    expect(resolveSessionStatus({ isPendingInput: true, isBusy: true, isUnread: false })).toBe("pending_input");
+  });
+
+  it("returns pending_input when idle AND pending", () => {
+    expect(resolveSessionStatus({ isPendingInput: true, isBusy: false, isUnread: false })).toBe("pending_input");
+  });
+
+  it("returns pending_input when pending AND unread (pending outranks unread)", () => {
+    expect(resolveSessionStatus({ isPendingInput: true, isBusy: false, isUnread: true })).toBe("pending_input");
+  });
+
+  it("returns busy when busy, not pending", () => {
+    expect(resolveSessionStatus({ isPendingInput: false, isBusy: true, isUnread: false })).toBe("busy");
+  });
+
+  it("returns busy when busy AND unread (busy outranks unread)", () => {
+    expect(resolveSessionStatus({ isPendingInput: false, isBusy: true, isUnread: true })).toBe("busy");
+  });
+
+  it("returns unread when idle, unread, not pending", () => {
+    expect(resolveSessionStatus({ isPendingInput: false, isBusy: false, isUnread: true })).toBe("unread");
+  });
+
+  it("returns idle when all false", () => {
+    expect(resolveSessionStatus({ isPendingInput: false, isBusy: false, isUnread: false })).toBe("idle");
+  });
+});
+
+describe("US-55.3: provider onEvent input-event handling", () => {
+  function PendingIndicator({ sessionId }: { sessionId: string }) {
+    const isPending = useIsSessionPendingAction(sessionId);
+    return <span data-testid="pending">{isPending ? "yes" : "no"}</span>;
+  }
+
+  it("handles agent.question on user stream → addPendingAction", () => {
+    renderProvider(<PendingIndicator sessionId="ses-1" />);
+    expect(screen.getByTestId("pending").textContent).toBe("no");
+
+    act(() => {
+      capturedOnEvent!({
+        type: "agent.question",
+        workspace_id: "ws-1",
+        session_id: "ses-1",
+        request_id: "que_1",
+      });
+    });
+
+    expect(screen.getByTestId("pending").textContent).toBe("yes");
+  });
+
+  it("handles agent.permission on user stream → addPendingAction", () => {
+    renderProvider(<PendingIndicator sessionId="ses-1" />);
+    expect(screen.getByTestId("pending").textContent).toBe("no");
+
+    act(() => {
+      capturedOnEvent!({
+        type: "agent.permission",
+        workspace_id: "ws-1",
+        session_id: "ses-1",
+        request_id: "per_1",
+      });
+    });
+
+    expect(screen.getByTestId("pending").textContent).toBe("yes");
+  });
+
+  it("handles agent.question.resolved → removePendingAction", () => {
+    renderProvider(<PendingIndicator sessionId="ses-1" />);
+
+    act(() => {
+      capturedOnEvent!({
+        type: "agent.question",
+        workspace_id: "ws-1",
+        session_id: "ses-1",
+        request_id: "que_1",
+      });
+    });
+    expect(screen.getByTestId("pending").textContent).toBe("yes");
+
+    act(() => {
+      capturedOnEvent!({
+        type: "agent.question.resolved",
+        workspace_id: "ws-1",
+        session_id: "ses-1",
+        request_id: "que_1",
+      });
+    });
+    expect(screen.getByTestId("pending").textContent).toBe("no");
+  });
+
+  it("handles agent.permission.resolved → removePendingAction", () => {
+    renderProvider(<PendingIndicator sessionId="ses-1" />);
+
+    act(() => {
+      capturedOnEvent!({
+        type: "agent.permission",
+        workspace_id: "ws-1",
+        session_id: "ses-1",
+        request_id: "per_1",
+      });
+    });
+    expect(screen.getByTestId("pending").textContent).toBe("yes");
+
+    act(() => {
+      capturedOnEvent!({
+        type: "agent.permission.resolved",
+        workspace_id: "ws-1",
+        session_id: "ses-1",
+        request_id: "per_1",
+      });
+    });
+    expect(screen.getByTestId("pending").textContent).toBe("no");
+  });
+
+  it("does NOT wipe pendingActions on onReconnect (D9 — no flicker)", () => {
+    renderProvider(<PendingIndicator sessionId="ses-1" />);
+
+    act(() => {
+      capturedOnEvent!({
+        type: "agent.question",
+        workspace_id: "ws-1",
+        session_id: "ses-1",
+        request_id: "que_1",
+      });
+    });
+    expect(screen.getByTestId("pending").textContent).toBe("yes");
+
+    act(() => {
+      capturedOnReconnect!();
+    });
+    expect(screen.getByTestId("pending").textContent).toBe("yes");
+  });
+
+  it("marker commit clears ghost entries (resolved during disconnect)", () => {
+    renderProvider(<PendingIndicator sessionId="ses-1" />);
+
+    // Q1 is pending
+    act(() => {
+      capturedOnEvent!({
+        type: "agent.question",
+        workspace_id: "ws-1",
+        session_id: "ses-1",
+        request_id: "que_ghost",
+      });
+    });
+    expect(screen.getByTestId("pending").textContent).toBe("yes");
+
+    // Reconnect: no wipe (D9). Then snapshot fires for ws-1 with NO events
+    // (Q1 was resolved during disconnect — pod doesn't list it).
+    // Marker fires with empty snapshot → pendingActions[ws-1 sessions] cleared.
+    act(() => {
+      capturedOnReconnect!();
+    });
+    // Still pending — marker hasn't arrived yet
+    expect(screen.getByTestId("pending").textContent).toBe("yes");
+
+    act(() => {
+      capturedOnEvent!({
+        type: "agent.input.snapshot_complete",
+        workspace_id: "ws-1",
+      });
+    });
+    // Ghost cleared by marker commit
+    expect(screen.getByTestId("pending").textContent).toBe("no");
+  });
+
+  it("marker commit preserves live entries (still pending on pod)", () => {
+    renderProvider(<PendingIndicator sessionId="ses-1" />);
+
+    // Q1 is pending
+    act(() => {
+      capturedOnEvent!({
+        type: "agent.question",
+        workspace_id: "ws-1",
+        session_id: "ses-1",
+        request_id: "que_live",
+      });
+    });
+    expect(screen.getByTestId("pending").textContent).toBe("yes");
+
+    // Reconnect → snapshot re-emits Q1 (still pending on pod) → marker
+    act(() => {
+      capturedOnReconnect!();
+    });
+
+    act(() => {
+      capturedOnEvent!({
+        type: "agent.question",
+        workspace_id: "ws-1",
+        session_id: "ses-1",
+        request_id: "que_live",
+      });
+    });
+
+    act(() => {
+      capturedOnEvent!({
+        type: "agent.input.snapshot_complete",
+        workspace_id: "ws-1",
+      });
+    });
+    // Still pending — marker commit preserves it (re-emitted in snapshot)
+    expect(screen.getByTestId("pending").textContent).toBe("yes");
+  });
+
+  it("marker commit adds new entries from snapshot", () => {
+    renderProvider(<PendingIndicator sessionId="ses-2" />);
+
+    // No pending initially
+    expect(screen.getByTestId("pending").textContent).toBe("no");
+
+    // Snapshot delivers Q2 for a different session
+    act(() => {
+      capturedOnEvent!({
+        type: "agent.question",
+        workspace_id: "ws-1",
+        session_id: "ses-2",
+        request_id: "que_new",
+      });
+    });
+    expect(screen.getByTestId("pending").textContent).toBe("yes");
+
+    act(() => {
+      capturedOnEvent!({
+        type: "agent.input.snapshot_complete",
+        workspace_id: "ws-1",
+      });
+    });
+    // Still pending — marker commit includes it
+    expect(screen.getByTestId("pending").textContent).toBe("yes");
+  });
+
+  it("live resolve during snapshot window is respected by marker commit", () => {
+    renderProvider(<PendingIndicator sessionId="ses-1" />);
+
+    // Q1 pending
+    act(() => {
+      capturedOnEvent!({
+        type: "agent.question",
+        workspace_id: "ws-1",
+        session_id: "ses-1",
+        request_id: "que_race",
+      });
+    });
+    expect(screen.getByTestId("pending").textContent).toBe("yes");
+
+    // Reconnect → snapshot re-emits Q1 (still pending) → then live resolve arrives
+    act(() => {
+      capturedOnReconnect!();
+    });
+
+    act(() => {
+      capturedOnEvent!({
+        type: "agent.question",
+        workspace_id: "ws-1",
+        session_id: "ses-1",
+        request_id: "que_race",
+      });
+    });
+
+    // Live resolve: removePendingAction fires
+    act(() => {
+      capturedOnEvent!({
+        type: "agent.question.resolved",
+        workspace_id: "ws-1",
+        session_id: "ses-1",
+        request_id: "que_race",
+      });
+    });
+    expect(screen.getByTestId("pending").textContent).toBe("no");
+
+    // Marker fires — should NOT re-add que_race (it was resolved before marker)
+    act(() => {
+      capturedOnEvent!({
+        type: "agent.input.snapshot_complete",
+        workspace_id: "ws-1",
+      });
+    });
+    expect(screen.getByTestId("pending").textContent).toBe("no");
+  });
+
+  it("marker commit prunes prompt content for ghosted requestIds", () => {
+    function ContentDisplay({ sessionId }: { sessionId: string }) {
+      const addQuestion = useAddPendingQuestion();
+      const questions = usePendingQuestionsForSession(sessionId);
+      return (
+        <>
+          <span data-testid="q-count">{questions.length}</span>
+          <button data-testid="add-q" onClick={() => addQuestion("ws-1", makeQuestion("que_content", "ses-1"))}>add</button>
+        </>
+      );
+    }
+
+    renderProvider(<ContentDisplay sessionId="ses-1" />);
+
+    // Add content via addPendingQuestion
+    act(() => { screen.getByTestId("add-q").click(); });
+    expect(screen.getByTestId("q-count").textContent).toBe("1");
+
+    // Reconnect then marker fires with empty staging (question resolved during disconnect)
+    act(() => { capturedOnReconnect!(); });
+
+    act(() => {
+      capturedOnEvent!({
+        type: "agent.input.snapshot_complete",
+        workspace_id: "ws-1",
+      });
+    });
+
+    // Content should be pruned — no ghost prompt card
+    expect(screen.getByTestId("q-count").textContent).toBe("0");
+  });
+});
+
+describe("agent_died handler", () => {
+  function BusyIndicator({ sessionId }: { sessionId: string }) {
+    const isBusy = useIsSessionBusy(sessionId);
+    return <span data-testid="busy">{isBusy ? "yes" : "no"}</span>;
+  }
+
+  it("clears busy state for the workspace on agent_died", () => {
+    renderProvider(<BusyIndicator sessionId="ses-1" />);
+
+    act(() => {
+      capturedOnEvent!({
+        type: "session.status",
+        workspace_id: "ws-1",
+        session_id: "ses-1",
+        status: "busy",
+      });
+    });
+    expect(screen.getByTestId("busy").textContent).toBe("yes");
+
+    act(() => {
+      capturedOnEvent!({
+        type: "agent_died",
+        workspace_id: "ws-1",
+      });
+    });
+    expect(screen.getByTestId("busy").textContent).toBe("no");
+  });
+
+  it("does not clear busy state for other workspaces on agent_died", () => {
+    renderProvider(
+      <>
+        <BusyIndicator sessionId="ses-1" />
+        <BusyIndicator sessionId="ses-2" />
+      </>,
+    );
+
+    act(() => {
+      capturedOnEvent!({
+        type: "session.status",
+        workspace_id: "ws-1",
+        session_id: "ses-1",
+        status: "busy",
+      });
+    });
+    act(() => {
+      capturedOnEvent!({
+        type: "session.status",
+        workspace_id: "ws-2",
+        session_id: "ses-2",
+        status: "busy",
+      });
+    });
+
+    act(() => {
+      capturedOnEvent!({
+        type: "agent_died",
+        workspace_id: "ws-1",
+      });
+    });
+
+    const busyIndicators = screen.getAllByTestId("busy");
+    expect(busyIndicators[0]!.textContent).toBe("no"); // ws-1 cleared
+    expect(busyIndicators[1]!.textContent).toBe("yes"); // ws-2 untouched
   });
 });

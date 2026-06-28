@@ -16,10 +16,10 @@ func TestIntegration_SecretCRUD_FullStack(t *testing.T) {
 	ctx := context.Background()
 
 	// Create
-	created, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	created, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "integration-test", Type: SecretTypeAPIKey,
-		Value:    `{"apiKey":"sk-test-123","provider":"openai"}`,
-		Metadata: json.RawMessage(`{"provider":"openai","model":"gpt-4o"}`),
+		Value:    `{"apiKey":"sk-test-123","kind":"openai","slug":"openai"}`,
+		Metadata: json.RawMessage(`{"kind":"openai","slug":"openai","model":"gpt-4o"}`),
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -41,28 +41,28 @@ func TestIntegration_SecretCRUD_FullStack(t *testing.T) {
 	}
 
 	// Decrypt (verify value is correct)
-	plaintext, err := svc.DecryptSecretValue(ctx, "user-1", sessionID, created.ID)
+	plaintext, err := svc.DecryptSecretValue(ctx, "user-1", sessionID, nil, created.ID)
 	if err != nil {
 		t.Fatalf("Decrypt: %v", err)
 	}
-	if string(plaintext) != `{"apiKey":"sk-test-123","provider":"openai"}` {
+	if string(plaintext) != `{"apiKey":"sk-test-123","kind":"openai","slug":"openai"}` {
 		t.Errorf("Decrypted value wrong: %s", string(plaintext))
 	}
 
 	// Update
-	err = svc.UpdateSecret(ctx, "user-1", sessionID, created.ID, UpdateSecretRequest{
-		Value: `{"apiKey":"sk-new-456","provider":"openai"}`,
+	err = svc.UpdateSecret(ctx, "user-1", sessionID, nil, created.ID, UpdateSecretRequest{
+		Value: `{"apiKey":"sk-new-456","kind":"openai","slug":"openai"}`,
 	})
 	if err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 
 	// Verify updated value
-	plaintext2, err := svc.DecryptSecretValue(ctx, "user-1", sessionID, created.ID)
+	plaintext2, err := svc.DecryptSecretValue(ctx, "user-1", sessionID, nil, created.ID)
 	if err != nil {
 		t.Fatalf("Decrypt after update: %v", err)
 	}
-	if string(plaintext2) != `{"apiKey":"sk-new-456","provider":"openai"}` {
+	if string(plaintext2) != `{"apiKey":"sk-new-456","kind":"openai","slug":"openai"}` {
 		t.Errorf("Updated value wrong: %s", string(plaintext2))
 	}
 
@@ -88,9 +88,9 @@ func TestIntegration_BindingLifecycle(t *testing.T) {
 	ids := make([]string, 3)
 	for i := 0; i < 3; i++ {
 		name := []string{"key-a", "key-b", "key-c"}[i]
-		s, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+		s, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 			Name: name, Type: SecretTypeAPIKey, Value: "val-" + name,
-			Metadata: json.RawMessage(`{"provider":"x"}`),
+			Metadata: json.RawMessage(`{"kind":"x","slug":"x"}`),
 		})
 		ids[i] = s.ID
 	}
@@ -157,8 +157,8 @@ func TestIntegration_MultiSession(t *testing.T) {
 
 	// Both DEKs should be the same (same user, same key version)
 	keySvc.UnlockDEK(ctx, "user-1", password, "sess-C", time.Hour)
-	dekB, _ := keySvc.GetDEK(ctx, "sess-B")
-	dekC, _ := keySvc.GetDEK(ctx, "sess-C")
+	dekB, _ := keySvc.GetDEK(ctx, "sess-B", nil)
+	dekC, _ := keySvc.GetDEK(ctx, "sess-C", nil)
 	if !bytesEq(dekB, dekC) {
 		t.Error("Same user same version should produce same DEK across sessions")
 	}
@@ -169,14 +169,14 @@ func TestIntegration_InjectionAfterUpdate(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	s, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	s, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "mutable", Type: SecretTypeEnvSecret, Value: "original",
 		Metadata: json.RawMessage(`{"var_name":"MY_VAR"}`),
 	})
 	_, _ = svc.SetBindings(ctx, "user-1", "ws-1", []string{s.ID})
 
 	// Inject — should get "original"
-	data, _ := svc.InjectSecrets(ctx, "user-1", sessionID, "ws-1")
+	data, _ := svc.InjectSecrets(ctx, "user-1", sessionID, nil, "ws-1")
 	var injected []InjectedSecret
 	json.Unmarshal(data, &injected)
 	if injected[0].Plaintext != "original" {
@@ -184,10 +184,10 @@ func TestIntegration_InjectionAfterUpdate(t *testing.T) {
 	}
 
 	// Update
-	svc.UpdateSecret(ctx, "user-1", sessionID, s.ID, UpdateSecretRequest{Value: "updated"})
+	svc.UpdateSecret(ctx, "user-1", sessionID, nil, s.ID, UpdateSecretRequest{Value: "updated"})
 
 	// Inject again — should get "updated"
-	data, _ = svc.InjectSecrets(ctx, "user-1", sessionID, "ws-1")
+	data, _ = svc.InjectSecrets(ctx, "user-1", sessionID, nil, "ws-1")
 	json.Unmarshal(data, &injected)
 	if injected[0].Plaintext != "updated" {
 		t.Errorf("Expected 'updated', got '%s'", injected[0].Plaintext)
@@ -205,19 +205,19 @@ func TestIntegration_AuditCompleteness(t *testing.T) {
 	store.mu.Unlock()
 
 	// Create
-	s, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	s, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "audit-complete", Type: SecretTypeAPIKey, Value: "v",
-		Metadata: json.RawMessage(`{"provider":"x"}`),
+		Metadata: json.RawMessage(`{"kind":"x","slug":"x"}`),
 	})
 
 	// Update
-	svc.UpdateSecret(ctx, "user-1", sessionID, s.ID, UpdateSecretRequest{Value: "v2"})
+	svc.UpdateSecret(ctx, "user-1", sessionID, nil, s.ID, UpdateSecretRequest{Value: "v2"})
 
 	// Bind
 	_, _ = svc.SetBindings(ctx, "user-1", "ws-1", []string{s.ID})
 
 	// Inject
-	svc.InjectSecrets(ctx, "user-1", sessionID, "ws-1")
+	svc.InjectSecrets(ctx, "user-1", sessionID, nil, "ws-1")
 
 	// Delete
 	svc.DeleteSecret(ctx, "user-1", s.ID)
@@ -251,9 +251,9 @@ func TestIntegration_RecoveryKeyFullFlow(t *testing.T) {
 	keySvc.UnlockDEK(ctx, "user-1", password, "sess-1", time.Hour)
 
 	// Create a secret
-	created, _ := svc.CreateSecret(ctx, "user-1", "sess-1", CreateSecretRequest{
+	created, _ := svc.CreateSecret(ctx, "user-1", "sess-1", nil, CreateSecretRequest{
 		Name: "precious", Type: SecretTypeAPIKey, Value: "my-precious-key",
-		Metadata: json.RawMessage(`{"provider":"x"}`),
+		Metadata: json.RawMessage(`{"kind":"x","slug":"x"}`),
 	})
 
 	// Simulate "forgot password" — use recovery key
@@ -273,7 +273,7 @@ func TestIntegration_RecoveryKeyFullFlow(t *testing.T) {
 	keySvc.UnlockDEK(ctx, "user-1", newPassword, "sess-2", time.Hour)
 
 	// Secret should still be decryptable
-	plaintext, err := svc.DecryptSecretValue(ctx, "user-1", "sess-2", created.ID)
+	plaintext, err := svc.DecryptSecretValue(ctx, "user-1", "sess-2", nil, created.ID)
 	if err != nil {
 		t.Fatalf("Decrypt after recovery: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestIntegration_SecretTypeSpecificMetadata(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+			s, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 				Name: tt.secretName, Type: tt.secType, Value: "secret-val",
 				Metadata: json.RawMessage(tt.metadata),
 			})

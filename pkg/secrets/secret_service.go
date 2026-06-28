@@ -52,7 +52,7 @@ func (s *SecretService) SetOrgProvider(p RootKeyProvider) {
 }
 
 // CreateSecret encrypts and stores a new secret.
-func (s *SecretService) CreateSecret(ctx context.Context, userID, sessionID string, req CreateSecretRequest) (*SecretResponse, error) {
+func (s *SecretService) CreateSecret(ctx context.Context, userID, sessionID string, matchedSigningKey []byte, req CreateSecretRequest) (*SecretResponse, error) {
 	if !ValidSecretTypes[req.Type] {
 		return nil, fmt.Errorf("%w: %s (valid: %s)",
 			ErrInvalidSecretType, req.Type, formatSecretTypes(ValidSecretTypesList()))
@@ -75,7 +75,7 @@ func (s *SecretService) CreateSecret(ctx context.Context, userID, sessionID stri
 		return nil, err
 	}
 
-	dek, err := s.keys.GetDEK(ctx, sessionID)
+	dek, err := s.keys.GetDEK(ctx, sessionID, matchedSigningKey)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrDEKUnavailable, err)
 	}
@@ -182,7 +182,7 @@ func (s *SecretService) ListSecrets(ctx context.Context, userID string) ([]*Secr
 }
 
 // UpdateSecret re-encrypts and updates a secret's value.
-func (s *SecretService) UpdateSecret(ctx context.Context, userID, sessionID, secretID string, req UpdateSecretRequest) error {
+func (s *SecretService) UpdateSecret(ctx context.Context, userID, sessionID string, matchedSigningKey []byte, secretID string, req UpdateSecretRequest) error {
 	secret, err := s.store.GetSecret(ctx, userID, secretID)
 	if err != nil {
 		return err
@@ -191,7 +191,7 @@ func (s *SecretService) UpdateSecret(ctx context.Context, userID, sessionID, sec
 		return ErrSecretNotFound
 	}
 
-	dek, err := s.keys.GetDEK(ctx, sessionID)
+	dek, err := s.keys.GetDEK(ctx, sessionID, matchedSigningKey)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrDEKUnavailable, err)
 	}
@@ -246,7 +246,7 @@ func (s *SecretService) DeleteSecret(ctx context.Context, userID, secretID strin
 }
 
 // DecryptSecretValue decrypts a secret's value (used for pod injection).
-func (s *SecretService) DecryptSecretValue(ctx context.Context, userID, sessionID, secretID string) ([]byte, error) {
+func (s *SecretService) DecryptSecretValue(ctx context.Context, userID, sessionID string, matchedSigningKey []byte, secretID string) ([]byte, error) {
 	secret, err := s.store.GetSecret(ctx, userID, secretID)
 	if err != nil {
 		return nil, err
@@ -255,7 +255,7 @@ func (s *SecretService) DecryptSecretValue(ctx context.Context, userID, sessionI
 		return nil, ErrSecretNotFound
 	}
 
-	dek, err := s.keys.GetDEK(ctx, sessionID)
+	dek, err := s.keys.GetDEK(ctx, sessionID, matchedSigningKey)
 	if err != nil {
 		// DEK is unavailable from cache (session expired, user not logged in,
 		// or Redis flushed). Audit so operators can correlate user reports.

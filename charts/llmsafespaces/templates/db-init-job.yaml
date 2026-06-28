@@ -1,0 +1,96 @@
+{{- if .Values.dbInit.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "llmsafespaces.fullname" . }}-db-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "llmsafespaces.labels" . | nindent 4 }}
+    app.kubernetes.io/component: db-init
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.dbInit.backoffLimit }}
+  ttlSecondsAfterFinished: {{ .Values.dbInit.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "llmsafespaces.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: db-init
+    spec:
+      restartPolicy: OnFailure
+      {{- with .Values.api.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: db-init
+          image: "{{ .Values.dbInit.image.repository | default "postgres" }}:{{ .Values.dbInit.image.tag | default "16-alpine" }}"
+          imagePullPolicy: {{ .Values.dbInit.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: PGHOST
+              value: {{ .Values.postgresql.host | quote }}
+            - name: PGPORT
+              value: {{ .Values.postgresql.port | quote }}
+            - name: PGSSLMODE
+              value: {{ .Values.postgresql.sslMode | quote }}
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "dbInit.superuserSecret.name is required when dbInit.enabled=true" .Values.dbInit.superuserSecret.name | quote }}
+                  key: {{ .Values.dbInit.superuserSecret.userKey | default "username" | quote }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "dbInit.superuserSecret.name is required when dbInit.enabled=true" .Values.dbInit.superuserSecret.name | quote }}
+                  key: {{ .Values.dbInit.superuserSecret.passwordKey | default "password" | quote }}
+            - name: APP_USER
+              value: {{ .Values.postgresql.user | quote }}
+            - name: APP_DB
+              value: {{ .Values.postgresql.database | quote }}
+            - name: APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "llmsafespaces.secretName" . }}
+                  key: postgres-password
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eo pipefail
+              # Escape single quotes for SQL by doubling them (standard SQL
+              # literal escape), so a ' in APP_PASSWORD / APP_USER / APP_DB
+              # cannot terminate the statement early or allow injection.
+              # Uses sed for portability across busybox ash / dash / bash.
+              APP_PASSWORD_ESC=$(printf '%s' "$APP_PASSWORD" | sed "s/'/''/g")
+              APP_USER_ESC=$(printf '%s' "$APP_USER" | sed "s/'/''/g")
+              APP_DB_ESC=$(printf '%s' "$APP_DB" | sed "s/'/''/g")
+              if psql -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='$APP_USER_ESC'" | grep -q 1; then
+                psql -d postgres -c "ALTER ROLE \"$APP_USER_ESC\" WITH PASSWORD '$APP_PASSWORD_ESC'"
+              else
+                psql -d postgres -c "CREATE ROLE \"$APP_USER_ESC\" LOGIN PASSWORD '$APP_PASSWORD_ESC'"
+              fi
+              if psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$APP_DB_ESC'" | grep -q 1; then
+                psql -d postgres -c "ALTER DATABASE \"$APP_DB_ESC\" OWNER TO \"$APP_USER_ESC\""
+              else
+                psql -d postgres -c "CREATE DATABASE \"$APP_DB_ESC\" OWNER \"$APP_USER_ESC\""
+              fi
+          resources:
+            {{- toYaml .Values.dbInit.resources | nindent 12 }}
+{{- end }}

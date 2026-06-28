@@ -704,9 +704,9 @@ func (l *AsyncAuditLogger) BindCredentialToAllUserWorkspaces(ctx context.Context
 	return fmt.Errorf("inner store does not implement CredentialStore")
 }
 
-func (l *AsyncAuditLogger) HasUserProviderCredential(ctx context.Context, userID, provider string) (bool, error) {
+func (l *AsyncAuditLogger) HasUserProviderCredential(ctx context.Context, userID, slug string) (bool, error) {
 	if cs, ok := l.store.(CredentialStore); ok {
-		return cs.HasUserProviderCredential(ctx, userID, provider)
+		return cs.HasUserProviderCredential(ctx, userID, slug)
 	}
 	return false, nil
 }

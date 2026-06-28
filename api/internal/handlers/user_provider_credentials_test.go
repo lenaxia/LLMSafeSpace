@@ -202,7 +202,7 @@ func TestUserProviderCredentials_Create_Success(t *testing.T) {
 
 	router := setupUserCredRouter(h)
 
-	body := `{"name":"my-anthropic","provider":"anthropic","apiKey":"sk-ant-123"}`
+	body := `{"name":"my-anthropic","kind":"anthropic","slug":"anthropic","apiKey":"sk-ant-123"}`
 	req, _ := http.NewRequest("POST", "/api/v1/provider-credentials", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -212,7 +212,7 @@ func TestUserProviderCredentials_Create_Success(t *testing.T) {
 	var resp CredentialResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, "my-anthropic", resp.Name)
-	assert.Equal(t, "anthropic", resp.Provider)
+	assert.Equal(t, "anthropic", resp.Slug)
 }
 
 func TestUserProviderCredentials_Create_MissingAPIKey(t *testing.T) {
@@ -220,7 +220,7 @@ func TestUserProviderCredentials_Create_MissingAPIKey(t *testing.T) {
 	h := &UserProviderCredentialsHandler{store: store, bindings: store}
 	router := setupUserCredRouter(h)
 
-	body := `{"name":"my-anthropic","provider":"anthropic"}`
+	body := `{"name":"my-anthropic","kind":"anthropic","slug":"anthropic"}`
 	req, _ := http.NewRequest("POST", "/api/v1/provider-credentials", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -241,7 +241,7 @@ func TestUserProviderCredentials_Create_EmptyProvider(t *testing.T) {
 	}
 	router := setupUserCredRouter(h)
 
-	body := `{"name":"test","provider":"  ","apiKey":"key"}`
+	body := `{"name":"test","kind":"  ","slug":"  ","apiKey":"key"}`
 	req, _ := http.NewRequest("POST", "/api/v1/provider-credentials", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -263,7 +263,7 @@ func TestUserProviderCredentials_Create_Duplicate(t *testing.T) {
 	}
 	router := setupUserCredRouter(h)
 
-	body := `{"name":"test","provider":"anthropic","apiKey":"key"}`
+	body := `{"name":"test","kind":"anthropic","slug":"anthropic","apiKey":"key"}`
 	req, _ := http.NewRequest("POST", "/api/v1/provider-credentials", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -274,7 +274,7 @@ func TestUserProviderCredentials_Create_Duplicate(t *testing.T) {
 
 func TestUserProviderCredentials_List(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "user-1", Name: "test", Provider: "openai", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "user-1", Name: "test", Kind: "openai", Slug: "openai", CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	h := &UserProviderCredentialsHandler{store: store, bindings: store}
 	router := setupUserCredRouter(h)
 
@@ -302,7 +302,7 @@ func TestUserProviderCredentials_Get_NotFound(t *testing.T) {
 
 func TestUserProviderCredentials_Get_WrongOwner(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "other-user", Name: "test", Provider: "openai"}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "other-user", Name: "test", Kind: "openai", Slug: "openai"}
 	h := &UserProviderCredentialsHandler{store: store, bindings: store}
 	router := setupUserCredRouter(h)
 
@@ -315,7 +315,7 @@ func TestUserProviderCredentials_Get_WrongOwner(t *testing.T) {
 
 func TestUserProviderCredentials_Bind_OwnershipCheck(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "user-1", Name: "test", Provider: "openai"}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "user-1", Name: "test", Kind: "openai", Slug: "openai"}
 	h := &UserProviderCredentialsHandler{
 		store:    store,
 		bindings: store,
@@ -334,7 +334,7 @@ func TestUserProviderCredentials_Bind_OwnershipCheck(t *testing.T) {
 
 func TestUserProviderCredentials_Bind_CredentialNotOwned(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "other-user", Name: "test", Provider: "openai"}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "other-user", Name: "test", Kind: "openai", Slug: "openai"}
 	h := &UserProviderCredentialsHandler{store: store, bindings: store}
 	router := setupUserCredRouter(h)
 
@@ -347,7 +347,7 @@ func TestUserProviderCredentials_Bind_CredentialNotOwned(t *testing.T) {
 
 func TestUserProviderCredentials_Bind_Success(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "user-1", Name: "test", Provider: "openai"}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "user-1", Name: "test", Kind: "openai", Slug: "openai"}
 	h := &UserProviderCredentialsHandler{
 		store:    store,
 		bindings: store,
@@ -367,7 +367,7 @@ func TestUserProviderCredentials_Bind_Success(t *testing.T) {
 
 func TestUserProviderCredentials_Delete(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "user-1", Name: "test", Provider: "openai"}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "user-1", Name: "test", Kind: "openai", Slug: "openai"}
 	h := &UserProviderCredentialsHandler{store: store, bindings: store}
 	router := setupUserCredRouter(h)
 
@@ -381,7 +381,7 @@ func TestUserProviderCredentials_Delete(t *testing.T) {
 
 func TestUserProviderCredentials_ListBindings_ReturnsWorkspaceIDs(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "user-1", Name: "test", Provider: "openai"}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "user-1", Name: "test", Kind: "openai", Slug: "openai"}
 	store.bindings["c1"] = []string{"ws-1", "ws-2"}
 	h := &UserProviderCredentialsHandler{store: store, bindings: store}
 	router := setupUserCredRouter(h)
@@ -406,7 +406,7 @@ func TestUserProviderCredentials_ListBindings_ReturnsWorkspaceIDs(t *testing.T) 
 // panel to show every workspace as "Bind" regardless of actual binding state.
 func TestUserProviderCredentials_ListBindings_JSONShape_CamelCase(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "user-1", Name: "test", Provider: "openai"}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "user-1", Name: "test", Kind: "openai", Slug: "openai"}
 	store.bindings["c1"] = []string{"ws-explicit"}
 	// ws-auto is in autoBinds so GetCredentialBindingsWithSource returns sourceType="auto"
 	store.autoBinds["ws-auto"] = true
@@ -461,7 +461,7 @@ func TestUserProviderCredentials_ListBindings_JSONShape_CamelCase(t *testing.T) 
 
 func TestUserProviderCredentials_ListBindings_EmptyWhenNoneBound(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "user-1", Name: "test", Provider: "openai"}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "user-1", Name: "test", Kind: "openai", Slug: "openai"}
 	h := &UserProviderCredentialsHandler{store: store, bindings: store}
 	router := setupUserCredRouter(h)
 
@@ -479,7 +479,7 @@ func TestUserProviderCredentials_ListBindings_EmptyWhenNoneBound(t *testing.T) {
 
 func TestUserProviderCredentials_ListBindings_NotFoundForWrongOwner(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "other-user", Name: "test", Provider: "openai"}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "other-user", Name: "test", Kind: "openai", Slug: "openai"}
 	h := &UserProviderCredentialsHandler{store: store, bindings: store}
 	router := setupUserCredRouter(h)
 
@@ -492,7 +492,7 @@ func TestUserProviderCredentials_ListBindings_NotFoundForWrongOwner(t *testing.T
 
 func TestUserProviderCredentials_Unbind_RemovesBinding(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "user-1", Name: "test", Provider: "openai"}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "user-1", Name: "test", Kind: "openai", Slug: "openai"}
 	store.bindings["c1"] = []string{"ws-1", "ws-2"}
 	h := &UserProviderCredentialsHandler{
 		store:        store,
@@ -514,7 +514,7 @@ func TestUserProviderCredentials_Unbind_RemovesBinding(t *testing.T) {
 // auto-bindings (seeded by SeedWorkspaceCredentials) return 409, not 204.
 func TestUserProviderCredentials_Unbind_RejectsAutoBinding(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "user-1", Name: "test", Provider: "openai"}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "user-1", Name: "test", Kind: "openai", Slug: "openai"}
 	store.bindings["c1"] = []string{"ws-auto"}
 	store.autoBinds["ws-auto"] = true // simulate auto-bound
 	h := &UserProviderCredentialsHandler{
@@ -535,7 +535,7 @@ func TestUserProviderCredentials_Unbind_RejectsAutoBinding(t *testing.T) {
 // deleting a credential marks all previously-bound workspaces as credential-changed.
 func TestUserProviderCredentials_Delete_NotifiesBoundWorkspaces(t *testing.T) {
 	store := newFakeUserCredStore()
-	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "user-1", Name: "test", Provider: "openai"}
+	store.creds["c1"] = &secrets.CredentialRow{ID: "c1", OwnerType: "user", OwnerID: "user-1", Name: "test", Kind: "openai", Slug: "openai"}
 	store.bindings["c1"] = []string{"ws-1", "ws-2"}
 
 	notified := make(map[string]bool)
@@ -573,7 +573,7 @@ func TestUserProviderCredentials_Create_Returns207OnBindFailure(t *testing.T) {
 	}
 	router := setupUserCredRouter(h)
 
-	body := `{"name":"my-openai","provider":"openai","apiKey":"sk-test"}`
+	body := `{"name":"my-openai","kind":"openai","slug":"openai","apiKey":"sk-test"}`
 	req, _ := http.NewRequest("POST", "/api/v1/provider-credentials", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -635,7 +635,7 @@ func TestUserProviderCredentials_AuthGuards_Return401(t *testing.T) {
 	h := &UserProviderCredentialsHandler{store: store, bindings: store}
 	router := setupUserCredRouterUnauthenticated(h)
 
-	createBody := bytes.NewBufferString(`{"provider":"anthropic","apiKey":"k"}`)
+	createBody := bytes.NewBufferString(`{"kind":"anthropic","slug":"anthropic","apiKey":"k"}`)
 	cases := []struct {
 		name   string
 		method string
@@ -684,7 +684,7 @@ func TestUserProviderCredentials_Create_RequiresSessionID(t *testing.T) {
 	})
 	r.POST("/api/v1/provider-credentials", h.Create)
 
-	body := `{"provider":"anthropic","apiKey":"k"}`
+	body := `{"kind":"anthropic","slug":"anthropic","apiKey":"k"}`
 	req, _ := http.NewRequest(http.MethodPost, "/api/v1/provider-credentials", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -731,7 +731,7 @@ func TestUserProviderCredentials_ProbeModels_NoBaseURL(t *testing.T) {
 	router := setupUserCredRouter(h)
 
 	// Create a credential without baseURL.
-	body := `{"name":"native","provider":"anthropic","apiKey":"sk-ant-test"}`
+	body := `{"name":"native","kind":"anthropic","slug":"anthropic","apiKey":"sk-ant-test"}`
 	req, _ := http.NewRequest("POST", "/api/v1/provider-credentials", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -778,7 +778,8 @@ func TestUserProviderCredentials_ProbeModels_WithBaseURL_Success(t *testing.T) {
 
 	createBody, _ := json.Marshal(map[string]interface{}{
 		"name":               "thekao",
-		"provider":           "thekao cloud",
+		"kind":               "openai_compatible",
+		"slug":               "thekao-cloud",
 		"apiKey":             "sk-probe-key",
 		"baseURL":            fakeProvider.URL + "/v1",
 		"modelAllowlist":     []string{"glm-5.1"},
@@ -826,4 +827,60 @@ func TestUserProviderCredentials_Delete_NotFound_Returns204(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNoContent, w.Code, "deleting a missing credential must be idempotent (204)")
+}
+
+// TestUserProviderCredentials_Create_InvalidKind_400 — boundary validation
+// for the user handler. See AdminProviderCredentials_Create_InvalidKind_400
+// for rationale (Epic 55 robustness fix).
+func TestUserProviderCredentials_Create_InvalidKind_400(t *testing.T) {
+	store := newFakeUserCredStore()
+	dek := make([]byte, 32)
+	dekCache := &testDEKCacheForHandler{cache: map[string][]byte{"sess-1": dek}}
+	keyService := secrets.NewKeyService(&fakeKeyStore{version: 1}, dekCache)
+	h := &UserProviderCredentialsHandler{
+		store:    store,
+		bindings: store,
+		keys:     keyService,
+		keyStore: &fakeKeyStore{version: 1},
+	}
+	router := setupUserCredRouter(h)
+
+	body := `{"name":"x","kind":"custom","slug":"x","apiKey":"sk-test"}`
+	req, _ := http.NewRequest("POST", "/api/v1/provider-credentials", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code,
+		"invalid kind must surface as 400 from the handler boundary, not 500 from the DB CHECK")
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "kind", resp["field"])
+}
+
+// TestUserProviderCredentials_Create_InvalidSlug_400 — boundary validation
+// for slug.
+func TestUserProviderCredentials_Create_InvalidSlug_400(t *testing.T) {
+	store := newFakeUserCredStore()
+	dek := make([]byte, 32)
+	dekCache := &testDEKCacheForHandler{cache: map[string][]byte{"sess-1": dek}}
+	keyService := secrets.NewKeyService(&fakeKeyStore{version: 1}, dekCache)
+	h := &UserProviderCredentialsHandler{
+		store:    store,
+		bindings: store,
+		keys:     keyService,
+		keyStore: &fakeKeyStore{version: 1},
+	}
+	router := setupUserCredRouter(h)
+
+	body := `{"name":"x","kind":"anthropic","slug":"has space","apiKey":"sk-test"}`
+	req, _ := http.NewRequest("POST", "/api/v1/provider-credentials", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "slug", resp["field"])
 }

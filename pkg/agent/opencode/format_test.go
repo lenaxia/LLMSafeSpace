@@ -42,7 +42,7 @@ import (
 
 func TestFormatOpenCodeConfig_SingleProvider_Minimal(t *testing.T) {
 	providers := []secrets.LLMProviderData{
-		{Provider: "anthropic", APIKey: "sk-ant-123"},
+		{Kind: "anthropic", Slug: "anthropic", APIKey: "sk-ant-123"},
 	}
 
 	out, err := FormatOpenCodeConfig(providers)
@@ -76,10 +76,10 @@ func TestFormatOpenCodeConfig_SingleProvider_Minimal(t *testing.T) {
 func TestFormatOpenCodeConfig_SingleProvider_AllFields(t *testing.T) {
 	providers := []secrets.LLMProviderData{
 		{
-			Provider: "anthropic",
-			APIKey:   "sk-ant-123",
-			BaseURL:  "https://custom.anthropic.com/v1",
-			Default:  "anthropic/claude-sonnet-4-5",
+			Kind: "anthropic", Slug: "anthropic",
+			APIKey:  "sk-ant-123",
+			BaseURL: "https://custom.anthropic.com/v1",
+			Default: "anthropic/claude-sonnet-4-5",
 			Models: []secrets.LLMModelConfig{
 				{ID: "claude-sonnet-4-5", Label: "Claude Sonnet 4.5"},
 				{ID: "claude-haiku-4-5"},
@@ -122,8 +122,8 @@ func TestFormatOpenCodeConfig_SingleProvider_AllFields(t *testing.T) {
 
 func TestFormatOpenCodeConfig_MultipleProviders_FirstDefaultWins(t *testing.T) {
 	providers := []secrets.LLMProviderData{
-		{Provider: "anthropic", APIKey: "sk-ant", Default: "anthropic/claude-sonnet-4-5"},
-		{Provider: "openai", APIKey: "sk-oai", Default: "openai/gpt-4o"},
+		{Kind: "anthropic", Slug: "anthropic", APIKey: "sk-ant", Default: "anthropic/claude-sonnet-4-5"},
+		{Kind: "openai", Slug: "openai", APIKey: "sk-oai", Default: "openai/gpt-4o"},
 	}
 
 	out, err := FormatOpenCodeConfig(providers)
@@ -141,8 +141,8 @@ func TestFormatOpenCodeConfig_MultipleProviders_FirstDefaultWins(t *testing.T) {
 
 func TestFormatOpenCodeConfig_MultipleProviders_SecondHasDefault(t *testing.T) {
 	providers := []secrets.LLMProviderData{
-		{Provider: "anthropic", APIKey: "sk-ant"},
-		{Provider: "openai", APIKey: "sk-oai", Default: "openai/gpt-4o"},
+		{Kind: "anthropic", Slug: "anthropic", APIKey: "sk-ant"},
+		{Kind: "openai", Slug: "openai", APIKey: "sk-oai", Default: "openai/gpt-4o"},
 	}
 
 	out, err := FormatOpenCodeConfig(providers)
@@ -156,8 +156,8 @@ func TestFormatOpenCodeConfig_MultipleProviders_SecondHasDefault(t *testing.T) {
 
 func TestFormatOpenCodeConfig_MultipleProviders_NoneHasDefault(t *testing.T) {
 	providers := []secrets.LLMProviderData{
-		{Provider: "anthropic", APIKey: "sk-ant"},
-		{Provider: "openai", APIKey: "sk-oai"},
+		{Kind: "anthropic", Slug: "anthropic", APIKey: "sk-ant"},
+		{Kind: "openai", Slug: "openai", APIKey: "sk-oai"},
 	}
 
 	out, err := FormatOpenCodeConfig(providers)
@@ -178,7 +178,7 @@ func TestFormatOpenCodeConfig_MultipleProviders_NoneHasDefault(t *testing.T) {
 // place opencode 1.15.12 reads it from.
 func TestFormatOpenCodeConfig_BaseURL_LivesInOptions(t *testing.T) {
 	providers := []secrets.LLMProviderData{
-		{Provider: "openai", APIKey: "sk-oai", BaseURL: "https://litellm.example/v1"},
+		{Kind: "openai", Slug: "openai", APIKey: "sk-oai", BaseURL: "https://litellm.example/v1"},
 	}
 
 	out, err := FormatOpenCodeConfig(providers)
@@ -205,7 +205,7 @@ func TestFormatOpenCodeConfig_BaseURL_LivesInOptions(t *testing.T) {
 // ConfigInvalidError, blocking opencode boot.
 func TestFormatOpenCodeConfig_TopLevelKey_IsProviderSingular(t *testing.T) {
 	providers := []secrets.LLMProviderData{
-		{Provider: "openai", APIKey: "sk-oai"},
+		{Kind: "openai", Slug: "openai", APIKey: "sk-oai"},
 	}
 
 	out, err := FormatOpenCodeConfig(providers)
@@ -229,7 +229,7 @@ func TestFormatOpenCodeConfig_TopLevelKey_IsProviderSingular(t *testing.T) {
 // shape is options.apiKey directly.
 func TestFormatOpenCodeConfig_Options_NoAisdkWrapper(t *testing.T) {
 	providers := []secrets.LLMProviderData{
-		{Provider: "openai", APIKey: "sk-oai"},
+		{Kind: "openai", Slug: "openai", APIKey: "sk-oai"},
 	}
 
 	out, err := FormatOpenCodeConfig(providers)
@@ -253,8 +253,8 @@ func TestFormatOpenCodeConfig_Options_NoAisdkWrapper(t *testing.T) {
 func TestFormatOpenCodeConfig_ModelsWithAndWithoutLabels(t *testing.T) {
 	providers := []secrets.LLMProviderData{
 		{
-			Provider: "openai",
-			APIKey:   "sk-oai",
+			Kind: "openai", Slug: "openai",
+			APIKey: "sk-oai",
 			Models: []secrets.LLMModelConfig{
 				{ID: "gpt-4o", Label: "GPT-4o"},
 				{ID: "gpt-4o-mini"},
@@ -282,9 +282,9 @@ func TestFormatOpenCodeConfig_ModelsWithAndWithoutLabels(t *testing.T) {
 
 func TestFormatOpenCodeConfig_Deterministic(t *testing.T) {
 	providers := []secrets.LLMProviderData{
-		{Provider: "openai", APIKey: "sk-oai"},
-		{Provider: "anthropic", APIKey: "sk-ant"},
-		{Provider: "google", APIKey: "sk-goog"},
+		{Kind: "openai", Slug: "openai", APIKey: "sk-oai"},
+		{Kind: "anthropic", Slug: "anthropic", APIKey: "sk-ant"},
+		{Kind: "google", Slug: "google", APIKey: "sk-goog"},
 	}
 
 	out1, err := FormatOpenCodeConfig(providers)
@@ -307,7 +307,7 @@ func TestFormatOpenCodeConfig_EmptyInput_Error(t *testing.T) {
 
 func TestFormatOpenCodeConfig_OutputIsValidJSON(t *testing.T) {
 	providers := []secrets.LLMProviderData{
-		{Provider: "anthropic", APIKey: "sk-ant-with-special-chars-!@#$%"},
+		{Kind: "anthropic", Slug: "anthropic", APIKey: "sk-ant-with-special-chars-!@#$%"},
 	}
 
 	out, err := FormatOpenCodeConfig(providers)
@@ -331,10 +331,10 @@ func TestFormatOpenCodeConfig_OutputIsValidJSON(t *testing.T) {
 func TestFormatOpenCodeConfig_ExactSnapshot(t *testing.T) {
 	providers := []secrets.LLMProviderData{
 		{
-			Provider: "openai",
-			APIKey:   "sk-test-key",
-			BaseURL:  "https://litellm.example/v1",
-			Default:  "openai/deepseek-v3-chat",
+			Kind: "openai", Slug: "openai",
+			APIKey:  "sk-test-key",
+			BaseURL: "https://litellm.example/v1",
+			Default: "openai/deepseek-v3-chat",
 			Models: []secrets.LLMModelConfig{
 				{ID: "deepseek-v3-chat", Label: "DeepSeek V3 Chat"},
 			},
@@ -375,9 +375,9 @@ func TestFormatOpenCodeConfig_ExactSnapshot(t *testing.T) {
 func TestFormatOpenCodeConfig_NoNPMWhenNoBaseURL(t *testing.T) {
 	providers := []secrets.LLMProviderData{
 		{
-			Provider: "openai",
-			APIKey:   "sk-realkey",
-			BaseURL:  "", // no custom endpoint
+			Kind: "openai", Slug: "openai",
+			APIKey:  "sk-realkey",
+			BaseURL: "", // no custom endpoint
 		},
 	}
 
@@ -394,29 +394,32 @@ func TestFormatOpenCodeConfig_NoNPMWhenNoBaseURL(t *testing.T) {
 	assert.False(t, hasNPM, "npm must not be set for providers without a custom BaseURL")
 }
 
-// TestFormatOpenCodeConfig_ContextLimit_WrittenAsLimitContext is the core test
-// for the contextTotal fix (worklog 0263).
+// TestFormatOpenCodeConfig_LimitEmission_RequiresBothContextAndOutput is the
+// core schema-compliance test.
 //
-// When LLMModelConfig.ContextLimit is non-zero, FormatOpenCodeConfig must write
-// it as limit.context in the model entry. opencode reads this via /config/providers,
-// which feeds ModelContextLimit() in agentd, which feeds context.total_tokens in
-// /v1/statusz, which feeds the CRD status.contextTotal, which is what the frontend
-// shows as the denominator in the context usage bar.
+// opencode's published JSON Schema (https://opencode.ai/config.json) declares
+// the model `limit` object with `"required": ["context", "output"]` and
+// `"additionalProperties": false`. Empirically verified on opencode 1.15.12:
+// emitting a `limit` block with only `context` set returns
+// `SchemaError: Missing key at [...]["limit"]["output"]` from Config.state(),
+// causing every endpoint that touches config (including POST /session) to
+// return 500. The reverse (only `output`) fails the same way for `context`.
 //
-// Proven by live experiment: writing limit.context=200000 into agent-config.json
-// caused /config/providers to return ctx=200000 for thekao cloud models, and
-// agentd statusz to report context.total_tokens=200000. CRD updated within 35s
-// (one controller poll cycle). Frontend showed "114k/200k" correctly.
-func TestFormatOpenCodeConfig_ContextLimit_WrittenAsLimitContext(t *testing.T) {
+// Therefore: emit `limit` ONLY when BOTH ContextLimit > 0 AND OutputLimit > 0.
+// If either is unknown, omit the entire `limit` block — opencode then falls
+// back to its built-in defaults, which is correct and harmless.
+func TestFormatOpenCodeConfig_LimitEmission_RequiresBothContextAndOutput(t *testing.T) {
 	providers := []secrets.LLMProviderData{
 		{
-			Provider: "thekao cloud",
-			APIKey:   "sk-test",
-			BaseURL:  "https://ai.thekao.cloud/v1",
+			Kind: "thekao cloud", Slug: "thekao cloud",
+			APIKey:  "sk-test",
+			BaseURL: "https://ai.thekao.cloud/v1",
 			Models: []secrets.LLMModelConfig{
-				{ID: "glm-5.1", ContextLimit: 200000},
-				{ID: "glm-5.2", Label: "GLM 5.2", ContextLimit: 200000},
-				{ID: "classifier"}, // no ContextLimit — must NOT get a limit object
+				{ID: "glm-5.1", ContextLimit: 200000, OutputLimit: 8192},
+				{ID: "glm-5.2", Label: "GLM 5.2", ContextLimit: 200000, OutputLimit: 16384},
+				{ID: "classifier"},                         // neither — omit limit
+				{ID: "context-only", ContextLimit: 100000}, // context only — omit limit
+				{ID: "output-only", OutputLimit: 4096},     // output only — omit limit
 			},
 		},
 	}
@@ -431,39 +434,53 @@ func TestFormatOpenCodeConfig_ContextLimit_WrittenAsLimitContext(t *testing.T) {
 	p := provs["thekao cloud"].(map[string]interface{})
 	models := p["models"].(map[string]interface{})
 
-	// Model WITH ContextLimit must have limit.context set.
+	// Model with BOTH ContextLimit and OutputLimit must have limit with both keys.
 	glm51 := models["glm-5.1"].(map[string]interface{})
 	limit51, hasLimit := glm51["limit"]
-	require.True(t, hasLimit, "model with ContextLimit=200000 must have a 'limit' field")
+	require.True(t, hasLimit, "model with both ContextLimit and OutputLimit must have a 'limit' field")
 	limitObj := limit51.(map[string]interface{})
-	assert.Equal(t, float64(200000), limitObj["context"],
-		"limit.context must match ContextLimit value")
+	assert.Equal(t, float64(200000), limitObj["context"], "limit.context must match ContextLimit")
+	assert.Equal(t, float64(8192), limitObj["output"], "limit.output must match OutputLimit")
 
-	// Model WITH ContextLimit and a label.
+	// Model with both + label.
 	glm52 := models["glm-5.2"].(map[string]interface{})
 	assert.Equal(t, "GLM 5.2", glm52["name"])
 	limit52 := glm52["limit"].(map[string]interface{})
 	assert.Equal(t, float64(200000), limit52["context"])
+	assert.Equal(t, float64(16384), limit52["output"])
 
-	// Model WITHOUT ContextLimit must NOT have a limit field.
+	// Model with NEITHER limit must NOT have a limit field.
 	classifier := models["classifier"].(map[string]interface{})
 	_, hasClassifierLimit := classifier["limit"]
-	assert.False(t, hasClassifierLimit,
-		"model without ContextLimit must NOT have a 'limit' field — "+
-			"opencode returns limit.context=0 for missing fields, same as absent")
+	assert.False(t, hasClassifierLimit, "model with neither limit must NOT have a 'limit' field")
+
+	// Model with ContextLimit but no OutputLimit must NOT have a limit field —
+	// opencode schema rejects partial limit blocks (SchemaError: Missing key).
+	contextOnly := models["context-only"].(map[string]interface{})
+	_, hasContextOnlyLimit := contextOnly["limit"]
+	assert.False(t, hasContextOnlyLimit,
+		"model with ContextLimit but no OutputLimit must omit 'limit' entirely — "+
+			"opencode rejects partial limit blocks with SchemaError")
+
+	// Model with OutputLimit but no ContextLimit must NOT have a limit field.
+	outputOnly := models["output-only"].(map[string]interface{})
+	_, hasOutputOnlyLimit := outputOnly["limit"]
+	assert.False(t, hasOutputOnlyLimit,
+		"model with OutputLimit but no ContextLimit must omit 'limit' entirely — "+
+			"opencode rejects partial limit blocks with SchemaError")
 }
 
-// TestFormatOpenCodeConfig_ContextLimit_Zero_NoLimitField verifies that
-// ContextLimit=0 (the zero value) does not produce a limit field in the output.
-// This avoids noise in the config for models where the context window is unknown.
-func TestFormatOpenCodeConfig_ContextLimit_Zero_NoLimitField(t *testing.T) {
+// TestFormatOpenCodeConfig_LimitFields_ZeroValues_OmitLimit verifies that
+// when both ContextLimit and OutputLimit are 0 (the zero values, signaling
+// "unknown"), no limit field is emitted.
+func TestFormatOpenCodeConfig_LimitFields_ZeroValues_OmitLimit(t *testing.T) {
 	providers := []secrets.LLMProviderData{
 		{
-			Provider: "openai",
-			APIKey:   "sk-test",
-			BaseURL:  "https://example.com/v1",
+			Kind: "openai", Slug: "openai",
+			APIKey:  "sk-test",
+			BaseURL: "https://example.com/v1",
 			Models: []secrets.LLMModelConfig{
-				{ID: "gpt-5", ContextLimit: 0},
+				{ID: "gpt-5", ContextLimit: 0, OutputLimit: 0},
 			},
 		},
 	}
@@ -480,21 +497,22 @@ func TestFormatOpenCodeConfig_ContextLimit_Zero_NoLimitField(t *testing.T) {
 	gpt5 := models["gpt-5"].(map[string]interface{})
 
 	_, hasLimit := gpt5["limit"]
-	assert.False(t, hasLimit, "ContextLimit=0 must produce no 'limit' field")
+	assert.False(t, hasLimit, "both limits zero must produce no 'limit' field")
 }
 
-// TestFormatOpenCodeConfig_ExactSnapshot_WithContextLimit updates the snapshot
-// to include limit.context when a model has ContextLimit set. This is the
-// serialized form that opencode reads from agent-config.json.
-func TestFormatOpenCodeConfig_ExactSnapshot_WithContextLimit(t *testing.T) {
+// TestFormatOpenCodeConfig_ExactSnapshot_WithBothLimits is the canonical
+// wire-format snapshot of agent-config.json content. opencode reads this
+// JSON at startup and validates against its published schema. The shape
+// MUST match exactly.
+func TestFormatOpenCodeConfig_ExactSnapshot_WithBothLimits(t *testing.T) {
 	providers := []secrets.LLMProviderData{
 		{
-			Provider: "openai",
-			APIKey:   "sk-test-key",
-			BaseURL:  "https://litellm.example/v1",
-			Default:  "openai/deepseek-v3-chat",
+			Kind: "openai", Slug: "openai",
+			APIKey:  "sk-test-key",
+			BaseURL: "https://litellm.example/v1",
+			Default: "openai/deepseek-v3-chat",
 			Models: []secrets.LLMModelConfig{
-				{ID: "deepseek-v3-chat", Label: "DeepSeek V3 Chat", ContextLimit: 128000},
+				{ID: "deepseek-v3-chat", Label: "DeepSeek V3 Chat", ContextLimit: 128000, OutputLimit: 8192},
 			},
 		},
 	}
@@ -515,7 +533,8 @@ func TestFormatOpenCodeConfig_ExactSnapshot_WithContextLimit(t *testing.T) {
         "deepseek-v3-chat": {
           "name": "DeepSeek V3 Chat",
           "limit": {
-            "context": 128000
+            "context": 128000,
+            "output": 8192
           }
         }
       }

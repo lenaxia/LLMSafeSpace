@@ -328,6 +328,7 @@ func setupOrgTestRouter(t *testing.T, store *mockOrgStore) (*gin.Engine, *OrgsHa
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set("userID", "admin-1")
+		c.Set("userRole", "admin")
 		c.Next()
 	})
 
@@ -733,3 +734,337 @@ type warnCaptureLogger struct {
 }
 
 func (c *warnCaptureLogger) Warn(_ string, _ ...any) { c.warned = true }
+
+// --- Create tests ---------------------------------------------------------
+
+// TestOrgsHandler_Create_HyphenatedSlug verifies that the slug validator
+// accepts URL-safe hyphenated slugs. The frontend's slugify() produces
+// hyphens from multi-word names (e.g. "My Org" -> "my-org") and the previous
+// `binding:"alphanum"` tag rejected those, producing an opaque 400 on every
+// real-world org creation.
+func TestOrgsHandler_Create_HyphenatedSlug(t *testing.T) {
+	store := newMockOrgStore()
+	store.usersByEmail["owner@example.com"] = "owner-1"
+	router, _ := setupOrgTestRouter(t, store)
+
+	body := `{"name":"My Org","slug":"my-org","ownerEmail":"owner@example.com","planId":"enterprise"}`
+	w := doRequest(router, "POST", "/api/v1/orgs", body)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp types.CreateOrgResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.Slug != "my-org" {
+		t.Errorf("expected slug 'my-org', got %q", resp.Slug)
+	}
+}
+
+// TestOrgsHandler_Create_SlugValidation enumerates accepted and rejected slug
+// shapes. The canonical slug format is lowercase letters, digits, and single
+// hyphens between segments (no leading/trailing or consecutive hyphens).
+func TestOrgsHandler_Create_SlugValidation(t *testing.T) {
+	cases := []struct {
+		slug      string
+		wantValid bool
+	}{
+		{"myorg", true},
+		{"my-org", true},
+		{"my-org-1", true},
+		{"abc123", true},
+		{"123", true},
+		{"a1", true},
+		{"My-Org", true},                 // uppercase accepted; lowercased server-side
+		{"my_org", false},                // underscore rejected
+		{"my org", false},                // space rejected
+		{"-myorg", false},                // leading hyphen rejected
+		{"myorg-", false},                // trailing hyphen rejected
+		{"my--org", false},               // consecutive hyphens rejected
+		{"a", false},                     // below min length
+		{"", false},                      // empty
+		{strings.Repeat("a", 51), false}, // above max length
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.slug, func(t *testing.T) {
+			store := newMockOrgStore()
+			store.usersByEmail["owner@example.com"] = "owner-1"
+			router, _ := setupOrgTestRouter(t, store)
+
+			b, _ := json.Marshal(map[string]any{
+				"name":       "Test Org",
+				"slug":       tc.slug,
+				"ownerEmail": "owner@example.com",
+				"planId":     "enterprise",
+			})
+			w := doRequest(router, "POST", "/api/v1/orgs", string(b))
+
+			if tc.wantValid {
+				if w.Code != http.StatusCreated {
+					t.Fatalf("slug %q: expected 201, got %d: %s", tc.slug, w.Code, w.Body.String())
+				}
+			} else {
+				if w.Code != http.StatusBadRequest {
+					t.Fatalf("slug %q: expected 400, got %d: %s", tc.slug, w.Code, w.Body.String())
+				}
+			}
+		})
+	}
+}
+
+// TestOrgsHandler_Create_ValidationDetails verifies the handler returns
+// per-field validation details in the response body so the client can show
+// the user which field is wrong, instead of the opaque "invalid request body".
+func TestOrgsHandler_Create_ValidationDetails(t *testing.T) {
+	store := newMockOrgStore()
+	router, _ := setupOrgTestRouter(t, store)
+
+	// Bad slug: contains uppercase + underscore + leading hyphen
+	body := `{"name":"My Org","slug":"-Bad_Slug","ownerEmail":"owner@example.com","planId":"enterprise"}`
+	w := doRequest(router, "POST", "/api/v1/orgs", body)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	details, ok := resp["details"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected details object in response, got: %s", w.Body.String())
+	}
+	if _, ok := details["slug"]; !ok {
+		t.Errorf("expected details.slug field-level error, got: %s", w.Body.String())
+	}
+}
+
+// TestOrgsHandler_Create_ValidationDetails_BadEmail verifies that a bad email
+// surfaces as an ownerEmail-keyed details entry.
+func TestOrgsHandler_Create_ValidationDetails_BadEmail(t *testing.T) {
+	store := newMockOrgStore()
+	router, _ := setupOrgTestRouter(t, store)
+
+	body := `{"name":"My Org","slug":"my-org","ownerEmail":"not-an-email","planId":"enterprise"}`
+	w := doRequest(router, "POST", "/api/v1/orgs", body)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	details, ok := resp["details"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected details object in response, got: %s", w.Body.String())
+	}
+	if _, ok := details["ownerEmail"]; !ok {
+		t.Errorf("expected details.ownerEmail field-level error, got: %s", w.Body.String())
+	}
+}
+
+// TestOrgsHandler_Create_MalformedJSON returns 400 with a generic body-level
+// error (not a per-field map) because the request never bound to the struct.
+func TestOrgsHandler_Create_MalformedJSON(t *testing.T) {
+	store := newMockOrgStore()
+	router, _ := setupOrgTestRouter(t, store)
+
+	w := doRequest(router, "POST", "/api/v1/orgs", `{not json`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestOrgsHandler_Create_NonPlatformAdminForbidden builds a router that does
+// NOT set userRole=admin and verifies the 403 path still works (the new
+// validation path must not have moved the platform-admin guard earlier or
+// later in a way that breaks this).
+func TestOrgsHandler_Create_NonPlatformAdminForbidden(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := newMockOrgStore()
+	handler := NewOrgsHandler(store, &mockOrgAuthService{userID: "user-1"})
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("userID", "user-1")
+		// userRole intentionally not set -> not a platform admin
+		c.Next()
+	})
+	router.POST("/api/v1/orgs", handler.Create)
+
+	body := `{"name":"My Org","slug":"my-org","ownerEmail":"owner@example.com","planId":"enterprise"}`
+	w := doRequest(router, "POST", "/api/v1/orgs", body)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// --- Update tests ---------------------------------------------------------
+//
+// These mirror the Create slug tests on the Update handler path. Update has
+// historically had no handler-level tests (the existing suite only covers
+// it indirectly via the route registration). The Update path was actively
+// modified by this PR (the alphanum -> slug binding tag swap) so per Rule 5
+// we must validate that path explicitly.
+
+// TestOrgsHandler_Update_HyphenatedSlug verifies the Update handler accepts
+// hyphenated slugs — the same regression Create suffered from.
+func TestOrgsHandler_Update_HyphenatedSlug(t *testing.T) {
+	store := newMockOrgStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1", Slug: "old-slug"}
+	router, _ := setupOrgTestRouter(t, store)
+
+	body := `{"slug":"my-new-org"}`
+	w := doRequest(router, "PUT", "/api/v1/orgs/org-1", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if store.orgs["org-1"].Slug != "my-new-org" {
+		t.Errorf("expected stored slug 'my-new-org', got %q", store.orgs["org-1"].Slug)
+	}
+}
+
+// TestOrgsHandler_Update_BadSlugReturnsDetails verifies the Update handler
+// rejects invalid slugs with per-field details, mirroring the Create path.
+func TestOrgsHandler_Update_BadSlugReturnsDetails(t *testing.T) {
+	store := newMockOrgStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1", Slug: "old-slug"}
+	router, _ := setupOrgTestRouter(t, store)
+
+	body := `{"slug":"bad_slug"}`
+	w := doRequest(router, "PUT", "/api/v1/orgs/org-1", body)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	details, ok := resp["details"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected details object, got: %s", w.Body.String())
+	}
+	if _, ok := details["slug"]; !ok {
+		t.Errorf("expected details.slug, got: %s", w.Body.String())
+	}
+	// Ensure the bad input did not reach the store.
+	if store.orgs["org-1"].Slug != "old-slug" {
+		t.Errorf("invalid slug must not have been persisted; got %q", store.orgs["org-1"].Slug)
+	}
+}
+
+// TestOrgsHandler_Update_SlugLowercased mirrors
+// TestCreateOrg_Admin_SlugLowercased on the Update path. The handler must
+// lowercase mixed-case slugs before persistence so case-insensitive
+// uniqueness (enforced by idx_orgs_slug_lower_active in migration 000030)
+// and display consistency hold across both Create and Update.
+func TestOrgsHandler_Update_SlugLowercased(t *testing.T) {
+	store := newMockOrgStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1", Slug: "acme"}
+	router, _ := setupOrgTestRouter(t, store)
+
+	body := `{"slug":"My-New-Org"}`
+	w := doRequest(router, "PUT", "/api/v1/orgs/org-1", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if store.orgs["org-1"].Slug != "my-new-org" {
+		t.Errorf("slug should be lowercased to 'my-new-org', got %q", store.orgs["org-1"].Slug)
+	}
+}
+
+// --- AddMember + ChangeMemberRole validation-detail tests ----------------
+//
+// The PR wired bindingErrorResponse() into AddMember and ChangeMemberRole.
+// The helper is unit-tested in binding_errors_test.go and the integration
+// pattern is verified for Create/Update — these tests close the remaining
+// gap (flagged in PR #427 review iteration 2) by exercising the helper
+// through these two handlers' real request types.
+
+// TestOrgsHandler_AddMember_MissingUserIdReturnsDetails verifies that
+// AddMember returns per-field validation details when a required field is
+// omitted, rather than the legacy opaque "invalid request body" message.
+func TestOrgsHandler_AddMember_MissingUserIdReturnsDetails(t *testing.T) {
+	store := newMockOrgStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.members["org-1"] = []*types.OrgMember{
+		{OrgID: "org-1", UserID: "admin-1", Role: types.OrgRoleAdmin},
+	}
+	router, _ := setupOrgTestRouter(t, store)
+
+	// userId omitted; role present and valid
+	w := doRequest(router, "POST", "/api/v1/orgs/org-1/members", `{"role":"member"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	details, ok := resp["details"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected details object, got: %s", w.Body.String())
+	}
+	if _, ok := details["userId"]; !ok {
+		t.Errorf("expected details.userId, got: %s", w.Body.String())
+	}
+}
+
+// TestOrgsHandler_AddMember_MissingRoleReturnsDetails covers the other
+// required field on AddOrgMemberRequest.
+func TestOrgsHandler_AddMember_MissingRoleReturnsDetails(t *testing.T) {
+	store := newMockOrgStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.members["org-1"] = []*types.OrgMember{
+		{OrgID: "org-1", UserID: "admin-1", Role: types.OrgRoleAdmin},
+	}
+	router, _ := setupOrgTestRouter(t, store)
+
+	w := doRequest(router, "POST", "/api/v1/orgs/org-1/members", `{"userId":"new-user"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	details, ok := resp["details"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected details object, got: %s", w.Body.String())
+	}
+	if _, ok := details["role"]; !ok {
+		t.Errorf("expected details.role, got: %s", w.Body.String())
+	}
+}
+
+// TestOrgsHandler_ChangeMemberRole_MissingRoleReturnsDetails verifies the
+// PUT /orgs/:id/members/:userID handler returns per-field details for an
+// empty body. The only required field is role.
+func TestOrgsHandler_ChangeMemberRole_MissingRoleReturnsDetails(t *testing.T) {
+	store := newMockOrgStore()
+	store.orgs["org-1"] = &types.Organization{ID: "org-1"}
+	store.members["org-1"] = []*types.OrgMember{
+		{OrgID: "org-1", UserID: "admin-1", Role: types.OrgRoleAdmin},
+		{OrgID: "org-1", UserID: "member-1", Role: types.OrgRoleMember},
+	}
+	router, _ := setupOrgTestRouter(t, store)
+
+	w := doRequest(router, "PUT", "/api/v1/orgs/org-1/members/member-1", `{}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	details, ok := resp["details"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected details object, got: %s", w.Body.String())
+	}
+	if _, ok := details["role"]; !ok {
+		t.Errorf("expected details.role, got: %s", w.Body.String())
+	}
+}

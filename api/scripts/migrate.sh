@@ -20,8 +20,14 @@ if ! command -v migrate &> /dev/null; then
     exit 1
 fi
 
-# Build connection string
-CONNECTION_STRING="postgres://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?sslmode=disable"
+# Build connection string.
+# Use the libpq KV connection-string form, NOT a postgres:// URL. Bash ${VAR}
+# expansion is literal with no URL-encoding, so a URL embeds the password raw
+# and breaks when DB_PASSWORD contains URL-reserved chars (/ ? # @ : % + =) —
+# common when exported from `openssl rand -base64`. The KV form splits on
+# whitespace and '=' and never needs encoding. Same fix as the Helm chart's
+# migration Job (PR #437, issue #424) and api/Makefile.
+CONNECTION_STRING="host=${DB_HOST} port=${DB_PORT} user=${DB_USER} password=${DB_PASSWORD} dbname=${DB_NAME} sslmode=disable"
 
 # Run migration
 echo "Running migration command: ${COMMAND}"

@@ -280,14 +280,14 @@ func encryptE2EBinding(t *testing.T, b e2eProviderBinding) secrets.CredentialBin
 	default:
 		t.Fatalf("unknown ownerType %q", b.ownerType)
 	}
-	plaintext, err := json.Marshal(secrets.LLMProviderData{Provider: b.provider, APIKey: b.apiKey})
+	plaintext, err := json.Marshal(secrets.LLMProviderData{Kind: b.provider, Slug: b.provider, APIKey: b.apiKey})
 	require.NoError(t, err)
 	cipher, err := secrets.EncryptSecret(kek, plaintext)
 	require.NoError(t, err)
 	return secrets.CredentialBinding{
-		OwnerType:  b.ownerType,
-		OwnerID:    b.ownerID,
-		Provider:   b.provider,
+		OwnerType: b.ownerType,
+		OwnerID:   b.ownerID,
+		Kind:      b.provider, Slug: b.provider,
 		Ciphertext: cipher,
 		SourceType: "auto",
 	}

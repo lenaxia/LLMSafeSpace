@@ -42,17 +42,17 @@ func TestE2E_FullSecretLifecycle(t *testing.T) {
 	}
 
 	// === Phase 3: Create secrets of all types ===
-	llmSecret, err := svc.CreateSecret(ctx, userID, sessionID, CreateSecretRequest{
+	llmSecret, err := svc.CreateSecret(ctx, userID, sessionID, nil, CreateSecretRequest{
 		Name:     "anthropic-prod",
 		Type:     SecretTypeAPIKey,
-		Value:    `{"apiKey":"sk-ant-api03-xxx","provider":"anthropic","model":"claude-sonnet-4-20250514"}`,
-		Metadata: json.RawMessage(`{"provider":"anthropic"}`),
+		Value:    `{"apiKey":"sk-ant-api03-xxx","kind":"anthropic","slug":"anthropic","model":"claude-sonnet-4-20250514"}`,
+		Metadata: json.RawMessage(`{"kind":"anthropic","slug":"anthropic"}`),
 	})
 	if err != nil {
 		t.Fatalf("Create LLM secret: %v", err)
 	}
 
-	sshSecret, err := svc.CreateSecret(ctx, userID, sessionID, CreateSecretRequest{
+	sshSecret, err := svc.CreateSecret(ctx, userID, sessionID, nil, CreateSecretRequest{
 		Name:     "github-deploy-key",
 		Type:     SecretTypeSSHKey,
 		Value:    "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEA...",
@@ -62,7 +62,7 @@ func TestE2E_FullSecretLifecycle(t *testing.T) {
 		t.Fatalf("Create SSH secret: %v", err)
 	}
 
-	gitSecret, err := svc.CreateSecret(ctx, userID, sessionID, CreateSecretRequest{
+	gitSecret, err := svc.CreateSecret(ctx, userID, sessionID, nil, CreateSecretRequest{
 		Name:     "github-pat",
 		Type:     SecretTypeGitCredential,
 		Value:    "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
@@ -72,7 +72,7 @@ func TestE2E_FullSecretLifecycle(t *testing.T) {
 		t.Fatalf("Create git secret: %v", err)
 	}
 
-	envSecret, err := svc.CreateSecret(ctx, userID, sessionID, CreateSecretRequest{
+	envSecret, err := svc.CreateSecret(ctx, userID, sessionID, nil, CreateSecretRequest{
 		Name:     "database-url",
 		Type:     SecretTypeEnvSecret,
 		Value:    "postgres://admin:secret@db.internal:5432/myapp",
@@ -82,7 +82,7 @@ func TestE2E_FullSecretLifecycle(t *testing.T) {
 		t.Fatalf("Create env secret: %v", err)
 	}
 
-	fileSecret, err := svc.CreateSecret(ctx, userID, sessionID, CreateSecretRequest{
+	fileSecret, err := svc.CreateSecret(ctx, userID, sessionID, nil, CreateSecretRequest{
 		Name:     "tls-cert",
 		Type:     SecretTypeSecretFile,
 		Value:    "-----BEGIN CERTIFICATE-----\nMIIBxTCCAW...",
@@ -118,7 +118,7 @@ func TestE2E_FullSecretLifecycle(t *testing.T) {
 	}
 
 	// === Phase 6: Prepare injection (simulates workspace activation) ===
-	injectionData, err := svc.InjectSecrets(ctx, userID, sessionID, workspaceID)
+	injectionData, err := svc.InjectSecrets(ctx, userID, sessionID, nil, workspaceID)
 	if err != nil {
 		t.Fatalf("InjectSecrets: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestE2E_FullSecretLifecycle(t *testing.T) {
 		t.Error("DEK should be available after rotation")
 	}
 	for _, sr := range []string{envSecret.ID, sshSecret.ID, gitSecret.ID, fileSecret.ID, llmSecret.ID} {
-		if _, derr := svc.DecryptSecretValue(ctx, userID, sessionID, sr); derr != nil {
+		if _, derr := svc.DecryptSecretValue(ctx, userID, sessionID, nil, sr); derr != nil {
 			t.Fatalf("post-rotation reveal of %s: %v — Bug 9 has regressed", sr, derr)
 		}
 	}

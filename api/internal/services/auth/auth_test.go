@@ -460,6 +460,78 @@ func TestRevokeAllUserSessions_NoTrackedSessions_Noop(t *testing.T) {
 	mockCacheService.AssertNotCalled(t, "Delete", mock.Anything, mock.Anything)
 }
 
+// TestRevokeAllUserSessions_CascadesToDurableSessions pins the Epic 56
+// auth-layer wiring: when the auth service revokes a user's Redis-tracked
+// sessions, it MUST also cascade into the durable jwt_sessions store via
+// keyService.DeleteDurableSessionsForUser. Without this, an attacker who
+// has the victim's old JWT could rehydrate the old DEK from PG after the
+// victim "logged out everywhere" — exactly the rehydrate path Epic 56 added.
+//
+// PR #421 review pass 2 noted that the three KeyService-level revocation
+// paths (EvictDEK, ChangePassword, RotateKeyWithPassword) all had
+// key_service_revocation_test.go coverage, but the fourth — the
+// auth-layer call at auth.go:1112 — was exercised only via stub mocks
+// that didn't record the call. A regression that deletes that one line
+// would have silently passed every other test. This regression test
+// uses the fakeKeyService's deleteDurableSessionsForUserIDs recorder
+// to assert the call IS made with the correct userID.
+func TestRevokeAllUserSessions_CascadesToDurableSessions(t *testing.T) {
+	log, _ := logger.New(true, "debug", "console")
+	cfg := &config.Config{}
+	cfg.Auth.JWTSecret = "test-secret"
+	cfg.Auth.TokenDuration = 24 * time.Hour
+
+	mockDbService := new(mocks.MockDatabaseService)
+	mockCacheService := new(mocks.MockCacheService)
+	service, err := New(cfg, log, mockDbService, mockCacheService)
+	require.NoError(t, err)
+
+	ks := &fakeKeyService{}
+	service.SetKeyService(ks)
+
+	userID := "user-cascade"
+	entries := []string{"jti-1|token:hash-1"}
+	mockCacheService.On("GetObject", mock.Anything, "user-sessions:"+userID, mock.Anything).
+		Run(func(args mock.Arguments) {
+			dst := args.Get(2).(*[]string)
+			*dst = entries
+		}).Return(nil)
+	mockCacheService.On("Set", mock.Anything, mock.Anything, "revoked", mock.Anything).Return(nil)
+	mockCacheService.On("Delete", mock.Anything, "user-sessions:"+userID).Return(nil)
+
+	require.NoError(t, service.RevokeAllUserSessions(context.Background(), userID))
+
+	// The contract: exactly one DeleteDurableSessionsForUser call with
+	// the same userID we revoked.
+	require.Len(t, ks.deleteDurableSessionsForUserIDs, 1,
+		"RevokeAllUserSessions must cascade to durable jwt_sessions store")
+	assert.Equal(t, userID, ks.deleteDurableSessionsForUserIDs[0],
+		"cascade must be scoped to the correct user")
+}
+
+// TestRevokeAllUserSessions_CascadesToDurableSessions_NoKeyService verifies
+// the cascade is a no-op when no key service is wired (the auth service is
+// usable without a key service for callers that don't care about
+// user-DEK content). Belt-and-braces for nil-safety.
+func TestRevokeAllUserSessions_CascadesToDurableSessions_NoKeyService(t *testing.T) {
+	log, _ := logger.New(true, "debug", "console")
+	cfg := &config.Config{}
+	cfg.Auth.JWTSecret = "test-secret"
+	cfg.Auth.TokenDuration = 24 * time.Hour
+
+	mockDbService := new(mocks.MockDatabaseService)
+	mockCacheService := new(mocks.MockCacheService)
+	service, err := New(cfg, log, mockDbService, mockCacheService)
+	require.NoError(t, err)
+	// Intentionally do NOT call SetKeyService.
+
+	mockCacheService.On("GetObject", mock.Anything, mock.Anything, mock.Anything).
+		Return(errors.New("redis: nil"))
+
+	require.NoError(t, service.RevokeAllUserSessions(context.Background(), "u-no-ks"),
+		"must be nil-safe when no key service is wired")
+}
+
 // TestRevokeAllUserSessions_UsesMaxTTL verifies the revocation TTL covers
 // remember-me tokens (30d), not just the default tokenDuration (24h).
 func TestRevokeAllUserSessions_UsesMaxTTL(t *testing.T) {
@@ -964,12 +1036,13 @@ func TestRegister_CreateUserError(t *testing.T) {
 // fakeKeyService is a minimal in-process KeyServiceInterface for asserting
 // on the Register/Login DEK lifecycle without spinning up a real key service.
 type fakeKeyService struct {
-	initCalls   []fakeKeyInitCall
-	unlockCalls []fakeKeyUnlockCall
-	hasKeysFn   func(ctx context.Context, userID string) (bool, error)
-	initErr     error
-	unlockErr   error
-	recoveryKey string
+	initCalls                       []fakeKeyInitCall
+	unlockCalls                     []fakeKeyUnlockCall
+	deleteDurableSessionsForUserIDs []string // Epic 56: records userIDs of every DeleteDurableSessionsForUser call
+	hasKeysFn                       func(ctx context.Context, userID string) (bool, error)
+	initErr                         error
+	unlockErr                       error
+	recoveryKey                     string
 }
 
 type fakeKeyInitCall struct {
@@ -1005,6 +1078,18 @@ func (f *fakeKeyService) UnlockDEK(ctx context.Context, userID string, password 
 	return f.unlockErr
 }
 
+func (f *fakeKeyService) UnlockDEKWithSigningKey(ctx context.Context, userID string, password []byte, sessionID string, ttl time.Duration, _ []byte) error {
+	return f.UnlockDEK(ctx, userID, password, sessionID, ttl)
+}
+
+func (f *fakeKeyService) DeleteDurableSessionsForUser(_ context.Context, userID string) error {
+	// Epic 56: records the call so RevokeAllUserSessions tests can
+	// assert that the auth-layer revocation correctly cascades into
+	// the durable jwt_sessions store.
+	f.deleteDurableSessionsForUserIDs = append(f.deleteDurableSessionsForUserIDs, userID)
+	return nil
+}
+
 func (f *fakeKeyService) HasKeys(ctx context.Context, userID string) (bool, error) {
 	if f.hasKeysFn != nil {
 		return f.hasKeysFn(ctx, userID)
@@ -1012,7 +1097,7 @@ func (f *fakeKeyService) HasKeys(ctx context.Context, userID string) (bool, erro
 	return true, nil
 }
 
-func (f *fakeKeyService) GetDEK(ctx context.Context, sessionID string) ([]byte, error) {
+func (f *fakeKeyService) GetDEK(ctx context.Context, sessionID string, matchedSigningKey []byte) ([]byte, error) {
 	return nil, errors.New("not implemented in fake")
 }
 
@@ -1284,7 +1369,7 @@ func TestCreateAPIKey_Success(t *testing.T) {
 		return k.UserID == "user-1" && k.Name == "my-key" && k.Active && len(k.Key) > 4
 	})).Return(nil)
 
-	apiKey, err := svc.CreateAPIKey(ctx, "user-1", types.CreateAPIKeyRequest{Name: "my-key"}, "")
+	apiKey, err := svc.CreateAPIKey(ctx, "user-1", types.CreateAPIKeyRequest{Name: "my-key"}, "", nil)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, apiKey)
@@ -1300,7 +1385,7 @@ func TestCreateAPIKey_DBError(t *testing.T) {
 
 	mockDb.On("CreateAPIKey", ctx, mock.Anything).Return(errors.New("db error"))
 
-	apiKey, err := svc.CreateAPIKey(ctx, "user-1", types.CreateAPIKeyRequest{Name: "my-key"}, "")
+	apiKey, err := svc.CreateAPIKey(ctx, "user-1", types.CreateAPIKeyRequest{Name: "my-key"}, "", nil)
 
 	assert.Error(t, err)
 	assert.Nil(t, apiKey)

@@ -77,7 +77,7 @@ func TestSecretsWiring_E2E(t *testing.T) {
 	wsGroup.GET("/:id/bindings", secretsHandler.GetBindings)
 
 	// === Test: Create secret ===
-	body := `{"name":"wiring-test","type":"api-key","value":"sk-wired-123","metadata":{"provider":"openai"}}`
+	body := `{"name":"wiring-test","type":"api-key","value":"sk-wired-123","metadata":{"kind":"openai","slug":"openai"}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()

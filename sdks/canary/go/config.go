@@ -60,6 +60,22 @@ func (cfg Config) NewClient(apiKey string) *llm.Client {
 	)
 }
 
+// JWTClient returns a client using email/password JWT authentication.
+//
+// Some endpoints (user-credential CRUD, secret CRUD with user-DEK
+// encryption) require a session-scoped DEK that is only derived during
+// JWT login. API-key auth alone returns 403 "encryption key not
+// available; re-authenticate" on these paths. Scenarios that exercise
+// such endpoints MUST use JWTClient instead of Client().
+//
+// Requires LLMSAFESPACES_EMAIL + LLMSAFESPACES_PASSWORD env vars.
+func (cfg Config) JWTClient() *llm.Client {
+	return llm.New(cfg.APIURL,
+		llm.WithCredentials(cfg.Email, cfg.Password),
+		llm.WithTimeout(60*time.Second),
+	)
+}
+
 // Client returns a client using the primary API key.
 func (cfg Config) Client() *llm.Client {
 	return cfg.NewClient(cfg.APIKey)

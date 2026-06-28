@@ -83,6 +83,15 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
   const [pendingQuestionContent, setPendingQuestionContent] = useState<Map<string, QuestionRequest>>(new Map());
   const [pendingPermissionContent, setPendingPermissionContent] = useState<Map<string, PermissionRequest>>(new Map());
 
+  // D9: Per-workspace staging buffer for snapshot anti-entropy.
+  // Keyed by workspaceId → Map<requestId, sessionId>. Uses requestId as key
+  // (not an object) so unstage is O(1) and not affected by reference equality.
+  const stagingRef = useRef(new Map<string, Map<string, string>>());
+
+  // D9: Workspaces whose snapshot marker has been received since the last reconnect.
+  // Events for committed workspaces go live; events for uncommitted workspaces stage.
+  const committedWsRef = useRef(new Set<string>());
+
   useEffect(() => {
     const queryCache = queryClient.getQueryCache();
     const seeded = seededRef.current;
@@ -198,15 +207,125 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
     onReconnect: () => {
       seededRef.current.clear();
       setBusySessions(new Map());
+      // D9: do NOT wipe pendingActions — rebuild is async via per-workspace
+      // snapshot markers. A global wipe would blank all ?s until the slowest
+      // pod fetch completes (visible flicker).
+      stagingRef.current.clear();
+      committedWsRef.current.clear();
     },
     onEvent: (data) => {
       const evt = data as {
         type: string;
         workspace_id?: string;
+        request_id?: string;
         session_id?: string;
         status?: string;
         phase?: string;
       };
+
+      if (evt.type === "agent.question" || evt.type === "agent.permission") {
+        if (evt.workspace_id && evt.session_id && evt.request_id) {
+          const wsId = evt.workspace_id;
+          const sessionId = evt.session_id;
+          const requestId = evt.request_id;
+          // Always apply optimistically for responsiveness.
+          addPendingAction(wsId, sessionId, requestId);
+          // Stage if workspace snapshot hasn't committed yet (D9 anti-entropy).
+          if (!committedWsRef.current.has(wsId)) {
+            let staged = stagingRef.current.get(wsId);
+            if (!staged) {
+              staged = new Map();
+              stagingRef.current.set(wsId, staged);
+            }
+            staged.set(requestId, sessionId);
+          }
+        }
+        return;
+      }
+
+      if (evt.type === "agent.question.resolved" || evt.type === "agent.permission.resolved") {
+        if (evt.request_id) {
+          const requestId = evt.request_id;
+          const wsId = evt.workspace_id;
+          // Unstage BEFORE removePendingAction — removePendingAction deletes
+          // from requestToSessionRef, so we must capture the sessionId first.
+          if (wsId && !committedWsRef.current.has(wsId)) {
+            const staged = stagingRef.current.get(wsId);
+            if (staged) {
+              staged.delete(requestId);
+            }
+          }
+          // Always remove optimistically.
+          removePendingAction(requestId);
+        }
+        return;
+      }
+
+      // D9: Per-workspace marker commit. On receiving the marker for wsId,
+      // authoritatively replace pendingActions for that workspace's sessions
+      // with the staged set. This clears ghost entries (questions resolved
+      // during disconnect that the pod no longer lists) without flickering.
+      if (evt.type === "agent.input.snapshot_complete") {
+        const wsId = evt.workspace_id;
+        if (!wsId) return;
+        const staged = stagingRef.current.get(wsId);
+        stagingRef.current.delete(wsId);
+        committedWsRef.current.add(wsId);
+
+        // Compute doomed requestIds from the CURRENT pendingActions snapshot
+        // in the closure — NOT inside the setPendingActions updater (which
+        // React runs asynchronously during render, so the array would be empty
+        // at the content-pruning call). Mirrors clearWorkspacePendingActions.
+        const stagedRequestIds = new Set(staged?.keys() ?? []);
+        const doomedRequestIds: string[] = [];
+        for (const [sessionId, rids] of pendingActions) {
+          if (pendingActionWsRef.current.get(sessionId) === wsId) {
+            for (const rid of rids) {
+              if (!stagedRequestIds.has(rid)) {
+                doomedRequestIds.push(rid);
+              }
+            }
+          }
+        }
+
+        setPendingActions((prev) => {
+          const next = new Map(prev);
+          for (const [sessionId] of next) {
+            if (pendingActionWsRef.current.get(sessionId) === wsId) {
+              next.delete(sessionId);
+            }
+          }
+          if (staged) {
+            for (const [requestId, sessionId] of staged) {
+              const existing = next.get(sessionId);
+              const set = new Set(existing ?? []);
+              set.add(requestId);
+              next.set(sessionId, set);
+              requestToSessionRef.current.set(requestId, sessionId);
+              pendingActionWsRef.current.set(sessionId, wsId);
+            }
+          }
+          return next;
+        });
+
+        // Prune content maps for dropped requestIds via the setters (React state).
+        if (doomedRequestIds.length > 0) {
+          for (const rid of doomedRequestIds) {
+            requestToSessionRef.current.delete(rid);
+          }
+          setPendingQuestionContent((prev) => {
+            const next = new Map(prev);
+            for (const rid of doomedRequestIds) next.delete(rid);
+            return next;
+          });
+          setPendingPermissionContent((prev) => {
+            const next = new Map(prev);
+            for (const rid of doomedRequestIds) next.delete(rid);
+            return next;
+          });
+        }
+        return;
+      }
 
       if (evt.type === "session.status" && evt.session_id && evt.workspace_id) {
         if (evt.status === "busy") {
@@ -277,6 +396,18 @@ export function SessionActivityProvider({ children }: { children: ReactNode }) {
             }
           }
         }
+      }
+
+      if (evt.type === "agent_died" && evt.workspace_id) {
+        const wsId = evt.workspace_id;
+        setBusySessions((prev) => {
+          const next = new Map();
+          for (const [sid, wid] of prev) {
+            if (wid !== wsId) next.set(sid, wid);
+          }
+          return next;
+        });
+        clearWorkspacePendingActions(wsId);
       }
 
       if (evt.type === "workspace.phase" && evt.workspace_id && evt.phase) {
@@ -598,4 +729,25 @@ export function useClearSessionPendingPrompts(): (sessionId: string) => void {
   const ctx = useContext(SessionActivityContext);
   if (!ctx) return () => {};
   return ctx.clearSessionPendingPrompts;
+}
+
+export type SessionDisplayStatus =
+  | "pending_input" | "busy" | "unread" | "idle";
+
+export function resolveSessionStatus(input: {
+  isPendingInput: boolean;
+  isBusy: boolean;
+  isUnread: boolean;
+}): SessionDisplayStatus {
+  if (input.isPendingInput) return "pending_input";
+  if (input.isBusy) return "busy";
+  if (input.isUnread) return "unread";
+  return "idle";
+}
+
+export function useSessionStatus(sessionId: string): SessionDisplayStatus {
+  const isBusy = useIsSessionBusy(sessionId);
+  const isUnread = useIsSessionUnread(sessionId);
+  const isPendingInput = useIsSessionPendingAction(sessionId);
+  return resolveSessionStatus({ isPendingInput, isBusy, isUnread });
 }

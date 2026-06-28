@@ -3,7 +3,7 @@ import { screen, act } from "@testing-library/react";
 import { render } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { SessionActivityProvider, useIsSessionBusy, useIsSessionUnread, useClearPendingUnread } from "../../providers/SessionActivityProvider";
+import { SessionActivityProvider, useIsSessionBusy, useIsSessionUnread, useClearPendingUnread, useIsSessionPendingAction, useSessionStatus } from "../../providers/SessionActivityProvider";
 
 let capturedOnEvent: ((data: unknown) => void) | undefined;
 
@@ -282,5 +282,189 @@ describe("Integration: SSE → SessionActivityProvider → UI (#36-39)", () => {
 
     expect(screen.getByTestId("unread-sess-unread").textContent).toBe("unread");
     expect(screen.getByTestId("unread-sess-read").textContent).toBe("read");
+  });
+});
+
+describe("Integration: US-55 input events → provider → status resolution (#35)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedOnEvent = undefined;
+  });
+
+  it("#35: agent.question on user stream → provider → useSessionStatus pending_input", async () => {
+    function StatusIndicator({ sessionId }: { sessionId: string }) {
+      const status = useSessionStatus(sessionId);
+      return <span data-testid={`status-${sessionId}`}>{status}</span>;
+    }
+
+    render(
+      <IntegrationShell>
+        <StatusIndicator sessionId="ses-1" />
+      </IntegrationShell>,
+    );
+
+    expect(screen.getByTestId("status-ses-1").textContent).toBe("idle");
+
+    // Simulate session going busy
+    await act(async () => {
+      capturedOnEvent!({ type: "session.status", workspace_id: "ws-1", session_id: "ses-1", status: "busy" });
+    });
+    expect(screen.getByTestId("status-ses-1").textContent).toBe("busy");
+
+    // Simulate agent.question arriving on the user stream with D10 wire format
+    // (request_id, session_id, workspace_id as top-level fields)
+    await act(async () => {
+      capturedOnEvent!({
+        type: "agent.question",
+        workspace_id: "ws-1",
+        session_id: "ses-1",
+        request_id: "que_abc",
+        data: {
+          id: "que_abc",
+          session_id: "ses-1",
+          questions: [{ header: "Lang", question: "Pick?", options: [{ label: "Go", description: "" }] }],
+        },
+      });
+    });
+
+    // The status should be pending_input, NOT busy — the bug that F7 caught.
+    expect(screen.getByTestId("status-ses-1").textContent).toBe("pending_input");
+  });
+
+  it("#35b: agent.question.resolved clears pending_input back to busy", async () => {
+    function StatusIndicator({ sessionId }: { sessionId: string }) {
+      const status = useSessionStatus(sessionId);
+      return <span data-testid={`status-${sessionId}`}>{status}</span>;
+    }
+
+    render(
+      <IntegrationShell>
+        <StatusIndicator sessionId="ses-1" />
+      </IntegrationShell>,
+    );
+
+    // Session busy
+    await act(async () => {
+      capturedOnEvent!({ type: "session.status", workspace_id: "ws-1", session_id: "ses-1", status: "busy" });
+    });
+
+    // Question fires
+    await act(async () => {
+      capturedOnEvent!({
+        type: "agent.question",
+        workspace_id: "ws-1",
+        session_id: "ses-1",
+        request_id: "que_resolve",
+      });
+    });
+    expect(screen.getByTestId("status-ses-1").textContent).toBe("pending_input");
+
+    // Resolved
+    await act(async () => {
+      capturedOnEvent!({
+        type: "agent.question.resolved",
+        workspace_id: "ws-1",
+        session_id: "ses-1",
+        request_id: "que_resolve",
+      });
+    });
+    // Back to busy (session is still processing)
+    expect(screen.getByTestId("status-ses-1").textContent).toBe("busy");
+  });
+
+  it("#35c: agent.permission on user stream → provider → pending_input", async () => {
+    function StatusIndicator({ sessionId }: { sessionId: string }) {
+      const status = useSessionStatus(sessionId);
+      return <span data-testid={`status-${sessionId}`}>{status}</span>;
+    }
+
+    render(
+      <IntegrationShell>
+        <StatusIndicator sessionId="ses-1" />
+      </IntegrationShell>,
+    );
+
+    await act(async () => {
+      capturedOnEvent!({ type: "session.status", workspace_id: "ws-1", session_id: "ses-1", status: "busy" });
+    });
+
+    await act(async () => {
+      capturedOnEvent!({
+        type: "agent.permission",
+        workspace_id: "ws-1",
+        session_id: "ses-1",
+        request_id: "per_xyz",
+        data: { id: "per_xyz", session_id: "ses-1", permission: "edit", patterns: ["file.go"] },
+      });
+    });
+
+    expect(screen.getByTestId("status-ses-1").textContent).toBe("pending_input");
+  });
+
+  it("#35d: cross-workspace — question on ws-2 shows pending for ws-2 session", async () => {
+    function StatusIndicator({ sessionId }: { sessionId: string }) {
+      const status = useSessionStatus(sessionId);
+      return <span data-testid={`status-${sessionId}`}>{status}</span>;
+    }
+
+    render(
+      <IntegrationShell>
+        <StatusIndicator sessionId="sess-ws1" />
+        <StatusIndicator sessionId="sess-ws2" />
+      </IntegrationShell>,
+    );
+
+    // ws-1 session busy
+    await act(async () => {
+      capturedOnEvent!({ type: "session.status", workspace_id: "ws-1", session_id: "sess-ws1", status: "busy" });
+    });
+    // ws-2 session gets a question
+    await act(async () => {
+      capturedOnEvent!({
+        type: "agent.question",
+        workspace_id: "ws-2",
+        session_id: "sess-ws2",
+        request_id: "que_cross",
+      });
+    });
+
+    // ws-1 session: still busy (not pending)
+    expect(screen.getByTestId("status-sess-ws1").textContent).toBe("busy");
+    // ws-2 session: pending (cross-workspace visibility works)
+    expect(screen.getByTestId("status-sess-ws2").textContent).toBe("pending_input");
+  });
+
+  it("duplicate agent.question (same requestId) is idempotent — does not double-add", async () => {
+    function PendingIndicator({ sessionId }: { sessionId: string }) {
+      const isPending = useIsSessionPendingAction(sessionId);
+      return <span data-testid={`pending-${sessionId}`}>{isPending ? "yes" : "no"}</span>;
+    }
+
+    render(
+      <IntegrationShell>
+        <PendingIndicator sessionId="ses-1" />
+      </IntegrationShell>,
+    );
+
+    await act(async () => {
+      capturedOnEvent!({
+        type: "agent.question",
+        workspace_id: "ws-1",
+        session_id: "ses-1",
+        request_id: "que_dedup",
+      });
+    });
+    expect(screen.getByTestId("pending-ses-1").textContent).toBe("yes");
+
+    // Same requestId again — idempotent (addPendingAction deduplicates)
+    await act(async () => {
+      capturedOnEvent!({
+        type: "agent.question",
+        workspace_id: "ws-1",
+        session_id: "ses-1",
+        request_id: "que_dedup",
+      });
+    });
+    expect(screen.getByTestId("pending-ses-1").textContent).toBe("yes");
   });
 });

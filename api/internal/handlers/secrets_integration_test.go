@@ -25,7 +25,7 @@ func TestHandler_E2E_CreateListGetDeleteRoundTrip(t *testing.T) {
 	router, _, _ := setupTestRouter(t)
 
 	// Create
-	createBody := `{"name":"e2e-secret","type":"api-key","value":"sk-e2e-test-key","metadata":{"provider":"openai","model":"gpt-4o"}}`
+	createBody := `{"name":"e2e-secret","type":"api-key","value":"sk-e2e-test-key","metadata":{"kind":"openai","slug":"openai","model":"gpt-4o"}}`
 	cReq := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(createBody))
 	cReq.Header.Set("Content-Type", "application/json")
 	cw := httptest.NewRecorder()
@@ -136,7 +136,7 @@ func TestHandler_E2E_BindingFullCycle(t *testing.T) {
 	// Create 2 secrets
 	ids := make([]string, 2)
 	for i, name := range []string{"bind-a", "bind-b"} {
-		body := `{"name":"` + name + `","type":"api-key","value":"v","metadata":{"provider":"x"}}`
+		body := `{"name":"` + name + `","type":"api-key","value":"v","metadata":{"kind":"x","slug":"x"}}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -214,7 +214,7 @@ func TestHandler_CreateSecret_AllTypesViaHTTP(t *testing.T) {
 		body     string
 		wantCode int
 	}{
-		{"api-key", `{"name":"llm","type":"api-key","value":"sk-123","metadata":{"provider":"anthropic"}}`, 201},
+		{"api-key", `{"name":"llm","type":"api-key","value":"sk-123","metadata":{"kind":"anthropic","slug":"anthropic"}}`, 201},
 		{"ssh-key", `{"name":"ssh","type":"ssh-key","value":"key-data","metadata":{"key_type":"ed25519","host":"github.com"}}`, 201},
 		{"git-credential", `{"name":"git","type":"git-credential","value":"ghp_xxx","metadata":{"host":"github.com"}}`, 201},
 		{"secret-file", `{"name":"file","type":"secret-file","value":"cert","metadata":{"mount_path":"app/cert.pem"}}`, 201},
@@ -249,7 +249,7 @@ func TestHandler_ConcurrentRequests(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		go func(idx int) {
 			name := string(rune('a'+idx)) + "-concurrent"
-			body := `{"name":"` + name + `","type":"api-key","value":"v` + name + `","metadata":{"provider":"x"}}`
+			body := `{"name":"` + name + `","type":"api-key","value":"v` + name + `","metadata":{"kind":"x","slug":"x"}}`
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(body))
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()
@@ -601,7 +601,7 @@ func TestHandler_RevealSecret_RequiresPasswordVerification(t *testing.T) {
 		t.Fatalf("UnlockDEK: %v", err)
 	}
 
-	created, err := svc.CreateSecret(ctx, userID, sessionID, secrets.CreateSecretRequest{
+	created, err := svc.CreateSecret(ctx, userID, sessionID, nil, secrets.CreateSecretRequest{
 		Name: "reveal-me", Type: secrets.SecretTypeEnvSecret, Value: "real-value",
 		Metadata: []byte(`{"var_name":"X"}`),
 	})
@@ -703,7 +703,7 @@ func TestHandler_RevealSecret_CiphertextDecryptFailed_Returns409(t *testing.T) {
 		t.Fatalf("UnlockDEK: %v", err)
 	}
 
-	created, err := svc.CreateSecret(ctx, userID, sessionID, secrets.CreateSecretRequest{
+	created, err := svc.CreateSecret(ctx, userID, sessionID, nil, secrets.CreateSecretRequest{
 		Name: "rotated-out", Type: secrets.SecretTypeEnvSecret, Value: "stale-value",
 		Metadata: []byte(`{"var_name":"X"}`),
 	})
@@ -807,7 +807,7 @@ func TestHandler_RevealSecret_DEKUnavailable_Returns403(t *testing.T) {
 	if err := keySvc.UnlockDEK(ctx, userID, password, sessionID, time.Hour); err != nil {
 		t.Fatalf("UnlockDEK: %v", err)
 	}
-	created, err := svc.CreateSecret(ctx, userID, sessionID, secrets.CreateSecretRequest{
+	created, err := svc.CreateSecret(ctx, userID, sessionID, nil, secrets.CreateSecretRequest{
 		Name: "expired-session", Type: secrets.SecretTypeEnvSecret, Value: "v",
 		Metadata: []byte(`{"var_name":"X"}`),
 	})

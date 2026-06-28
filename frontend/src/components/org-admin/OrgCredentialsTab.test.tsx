@@ -62,10 +62,12 @@ const CRED: OrgCredential = {
   id: "cred-1",
   orgId: "org-1",
   name: "Team Key",
-  provider: "openai",
+  kind: "openai",
+  slug: "team-key",
   baseURL: "https://api.openai.com/v1",
   modelAllowlist: ["gpt-4o"],
   modelContextLimits: { "gpt-4o": 128000 },
+  modelOutputLimits: { "gpt-4o": 16384 },
   createdAt: "2026-01-02T00:00:00Z",
   updatedAt: "2026-01-02T00:00:00Z",
 };
@@ -90,12 +92,13 @@ describe("OrgCredentialsTab", () => {
     ).toBeInTheDocument();
   });
 
-  it("expands a credential to show context limits", async () => {
+  it("expands a credential to show per-model limits", async () => {
     renderTab();
     await waitFor(() => expect(screen.getByText("Team Key")).toBeInTheDocument());
     fireEvent.click(screen.getByText("Team Key"));
-    expect(screen.getByText("Context limits")).toBeInTheDocument();
-    expect(screen.getByText(/128,000 tokens/)).toBeInTheDocument();
+    expect(screen.getByText("Per-model limits")).toBeInTheDocument();
+    // Format: "<model>: ctx 128,000 / out 16,384"
+    expect(screen.getByText(/gpt-4o: ctx 128,000 \/ out 16,384/)).toBeInTheDocument();
   });
 
   it("shows empty state when no credentials exist", async () => {
@@ -131,6 +134,12 @@ describe("OrgCredentialsTab", () => {
     fireEvent.change(screen.getByPlaceholderText(/Name/), {
       target: { value: "New Key" },
     });
+    // Epic 55: org tab now starts with kind="" (empty), forcing the user
+    // to make an explicit SDK-class choice via the dropdown.
+    fireEvent.change(screen.getByDisplayValue("— select SDK kind —"), {
+      target: { value: "openai" },
+    });
+    // Slug auto-populates from name as "new-key".
     fireEvent.change(screen.getByPlaceholderText("API Key"), {
       target: { value: "sk-new" },
     });
@@ -139,7 +148,12 @@ describe("OrgCredentialsTab", () => {
     await waitFor(() => expect(mockCreate).toHaveBeenCalled());
     expect(mockCreate).toHaveBeenCalledWith(
       "org-1",
-      expect.objectContaining({ name: "New Key", apiKey: "sk-new" }),
+      expect.objectContaining({
+        name: "New Key",
+        kind: "openai",
+        slug: "new-key",
+        apiKey: "sk-new",
+      }),
     );
     await waitFor(() => expect(mockList).toHaveBeenCalledTimes(2));
   });
@@ -152,6 +166,31 @@ describe("OrgCredentialsTab", () => {
     expect(
       screen.getByText("Name and API key are required"),
     ).toBeInTheDocument();
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("shows validation error when creating without kind", async () => {
+    renderTab();
+    await waitFor(() => expect(screen.getByText("Team Key")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Add Credential"));
+    fireEvent.change(screen.getByPlaceholderText(/Name/), { target: { value: "New" } });
+    fireEvent.change(screen.getByPlaceholderText("API Key"), { target: { value: "sk-test" } });
+    // Skip the kind dropdown — leaves it at "".
+    fireEvent.click(screen.getByText("Create Credential"));
+    expect(screen.getByText("Kind and slug are required")).toBeInTheDocument();
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid slug format client-side", async () => {
+    renderTab();
+    await waitFor(() => expect(screen.getByText("Team Key")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("Add Credential"));
+    fireEvent.change(screen.getByPlaceholderText(/Name/), { target: { value: "New" } });
+    fireEvent.change(screen.getByDisplayValue("— select SDK kind —"), { target: { value: "openai" } });
+    fireEvent.change(screen.getByPlaceholderText(/Slug/), { target: { value: "has space" } });
+    fireEvent.change(screen.getByPlaceholderText("API Key"), { target: { value: "sk-test" } });
+    fireEvent.click(screen.getByText("Create Credential"));
+    expect(screen.getByText(/Slug must be 1–64 lowercase alphanumeric/)).toBeInTheDocument();
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
@@ -189,7 +228,7 @@ describe("OrgCredentialsTab", () => {
 
   it("probes models for an existing credential in edit mode", async () => {
     mockProbe.mockResolvedValue({
-      models: [{ id: "gpt-4o-mini", contextLimit: 0 }],
+      models: [{ id: "gpt-4o-mini", contextLimit: 0, outputLimit: 0 }],
     });
     renderTab();
     await waitFor(() => expect(screen.getByText("Team Key")).toBeInTheDocument());

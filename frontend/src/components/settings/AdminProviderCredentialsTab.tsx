@@ -15,6 +15,7 @@ import {
   type CreateAdminCredentialRequest,
   type ProbeModelEntry,
 } from "../../api/providerCredentials";
+import { SDK_KINDS, SLUG_REGEX, slugFromName } from "../../api/providerCredentialTypes";
 import { useToast } from "../../providers/ToastProvider";
 import { Spinner } from "../ui/Spinner";
 import { ModelConfigTable, type ModelRow } from "../shared/ModelConfigTable";
@@ -242,8 +243,14 @@ function CredentialRow({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium">{cred.name}</span>
-            <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-              {cred.provider}
+            <span
+              className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono text-muted-foreground"
+              title={`SDK kind: ${cred.kind}`}
+            >
+              {cred.slug}
+            </span>
+            <span className="rounded bg-secondary/30 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+              {cred.kind}
             </span>
           </div>
           {cred.baseURL && (
@@ -486,11 +493,13 @@ function CreateAdminCredentialForm({
 }) {
   const [form, setForm] = useState<CreateAdminCredentialRequest>({
     name: "",
-    provider: "",
+    kind: "",
+    slug: "",
     apiKey: "",
     baseURL: "",
     modelAllowlist: [],
     modelContextLimits: {},
+    modelOutputLimits: {},
   });
   const [showKey, setShowKey] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -519,6 +528,7 @@ function CreateAdminCredentialForm({
         id: m.id,
         enabled: true,
         contextLimit: m.contextLimit > 0 ? String(m.contextLimit) : "",
+        outputLimit: m.outputLimit > 0 ? String(m.outputLimit) : "",
       }));
       setModelRows(rows);
       setFetchedCredId(credId);
@@ -531,8 +541,15 @@ function CreateAdminCredentialForm({
 
   // Phase 1: create the credential shell (no models yet).
   const handleCreate = async () => {
-    if (!form.name.trim() || !form.provider.trim() || !form.apiKey.trim()) {
-      setError("Name, provider, and API key are required");
+    if (!form.name.trim() || !form.kind.trim() || !form.slug.trim() || !form.apiKey.trim()) {
+      setError("Name, kind, slug, and API key are required");
+      return;
+    }
+    if (!SLUG_REGEX.test(form.slug.trim())) {
+      setError(
+        "Slug must be 1–64 lowercase alphanumeric characters and hyphens, " +
+        "starting and ending with alphanumeric (e.g. \"litellm-prod-us-west\")",
+      );
       return;
     }
     setSaving(true);
@@ -540,7 +557,8 @@ function CreateAdminCredentialForm({
     try {
       const req: CreateAdminCredentialRequest = {
         name: form.name.trim(),
-        provider: form.provider.trim(),
+        kind: form.kind.trim(),
+        slug: form.slug.trim(),
         apiKey: form.apiKey.trim(),
         ...(form.baseURL?.trim() ? { baseURL: form.baseURL.trim() } : {}),
       };
@@ -565,13 +583,17 @@ function CreateAdminCredentialForm({
       const enabled = modelRows.filter((r) => r.enabled);
       const modelAllowlist = enabled.map((r) => r.id);
       const modelContextLimits: Record<string, number> = {};
+      const modelOutputLimits: Record<string, number> = {};
       for (const r of enabled) {
-        const v = parseInt(r.contextLimit, 10);
-        if (v > 0) modelContextLimits[r.id] = v;
+        const ctx = parseInt(r.contextLimit, 10);
+        if (ctx > 0) modelContextLimits[r.id] = ctx;
+        const out = parseInt(r.outputLimit, 10);
+        if (out > 0) modelOutputLimits[r.id] = out;
       }
       const updated = await adminProviderCredentialsApi.update(fetchedCredId, {
         modelAllowlist,
         modelContextLimits,
+        modelOutputLimits,
       });
       onCreated(updated);
     } catch (e: unknown) {
@@ -582,8 +604,6 @@ function CreateAdminCredentialForm({
       setSaving(false);
     }
   };
-
-  const PROVIDERS = ["openai", "anthropic", "google", "openrouter", "groq", "mistral", "zhipuai"];
 
   // Phase 2: model configuration screen
   if (fetchState === "done" || fetchState === "error") {
@@ -647,25 +667,55 @@ function CreateAdminCredentialForm({
           <input
             type="text"
             value={form.name}
-            onChange={setField("name")}
+            onChange={(e) => {
+              const v = e.target.value;
+              setForm((prev) => ({
+                ...prev,
+                name: v,
+                // Auto-suggest slug from name as the user types — but only
+                // while the slug field is empty or matches the auto-suggested
+                // value (so manual edits aren't clobbered).
+                slug:
+                  prev.slug && prev.slug !== slugFromName(prev.name)
+                    ? prev.slug
+                    : slugFromName(v),
+              }));
+            }}
             placeholder="e.g. OpenAI Production"
             className="mt-0.5 h-8 w-full rounded-md border border-border bg-background px-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
           />
         </div>
         <div>
-          <label className="text-xs text-muted-foreground">Provider</label>
-          <input
-            list="admin-provider-suggestions"
-            type="text"
-            value={form.provider}
-            onChange={setField("provider")}
-            placeholder="e.g. openai"
+          <label className="text-xs text-muted-foreground">SDK Kind</label>
+          <select
+            value={form.kind}
+            onChange={(e) => setForm((prev) => ({ ...prev, kind: e.target.value }))}
             className="mt-0.5 h-8 w-full rounded-md border border-border bg-background px-2 text-xs focus:outline-none focus:ring-2 focus:ring-ring"
-          />
-          <datalist id="admin-provider-suggestions">
-            {PROVIDERS.map((p) => <option key={p} value={p} />)}
-          </datalist>
+          >
+            <option value="">— select SDK kind —</option>
+            {SDK_KINDS.map((k) => (
+              <option key={k} value={k}>{k}</option>
+            ))}
+          </select>
+          <p className="mt-0.5 text-[10px] text-muted-foreground">
+            Determines which adapter opencode loads. Use <code>openai_compatible</code> for LiteLLM, vLLM, or any OpenAI-shaped endpoint.
+          </p>
         </div>
+      </div>
+
+      <div>
+        <label className="text-xs text-muted-foreground">Slug</label>
+        <input
+          type="text"
+          value={form.slug}
+          onChange={setField("slug")}
+          placeholder="thekaocloud"
+          pattern={SLUG_REGEX.source}
+          className="mt-0.5 h-8 w-full rounded-md border border-border bg-background px-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-ring"
+        />
+        <p className="mt-0.5 text-[10px] text-muted-foreground">
+          Per-owner identity. Appears in agent-config.json as the provider key. Lowercase alphanumeric + hyphens, 1–64 chars.
+        </p>
       </div>
 
       <div>

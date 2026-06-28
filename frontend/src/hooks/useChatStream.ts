@@ -12,7 +12,6 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
   const [error, setError] = useState<string | null>(null);
   const [atCapRetryAfter, setAtCapRetryAfter] = useState<number | null>(null);
   const [streamTimedOut, setStreamTimedOut] = useState(false);
-  const abortRef = useRef<AbortController | null>(null);
   const idleResolverRef = useRef<((sid: string) => void) | null>(null);
   const currentSessionRef = useRef(sessionId);
   // Keep a live ref to serverBusy so the send closure can read the current
@@ -46,7 +45,6 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
       setLocalStreaming(true);
       setError(null);
       setAtCapRetryAfter(null);
-      abortRef.current = new AbortController();
 
       try {
         let idleAlreadyFired = false;
@@ -120,15 +118,10 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
           setLocalStreaming(false);
         }
         idleResolverRef.current = null;
-        abortRef.current = null;
       }
     },
     [workspaceId, sessionId],
   );
-
-  const abort = useCallback(() => {
-    abortRef.current?.abort();
-  }, []);
 
   const clearError = useCallback(() => setError(null), []);
   const clearAtCap = useCallback(() => setAtCapRetryAfter(null), []);
@@ -139,7 +132,6 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
 
   return {
     send,
-    abort,
     streaming: effectiveStreaming,
     localStreaming,
     notifySessionIdle,

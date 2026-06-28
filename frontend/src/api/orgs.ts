@@ -50,6 +50,7 @@ export interface OrgCredential extends ProviderCredential {
   orgId: string;
   modelAllowlist: string[];
   modelContextLimits: Record<string, number>;
+  modelOutputLimits: Record<string, number>;
   /** Present when the credential was created but org-workspace auto-bind failed. */
   bindWarning?: string;
 }
@@ -179,11 +180,13 @@ export const orgsApi = {
     id: string,
     req: {
       name: string;
-      provider: string;
+      kind: string;
+      slug: string;
       apiKey: string;
       baseURL?: string;
       modelAllowlist?: string[];
       modelContextLimits?: Record<string, number>;
+      modelOutputLimits?: Record<string, number>;
     },
   ) => api.post<OrgCredential>(`/orgs/${id}/credentials`, req),
   updateCredential: (
@@ -191,18 +194,23 @@ export const orgsApi = {
     credId: string,
     req: {
       name?: string;
+      kind?: string;
+      slug?: string;
       apiKey?: string;
       baseURL?: string;
       modelAllowlist?: string[];
       modelContextLimits?: Record<string, number>;
+      modelOutputLimits?: Record<string, number>;
     },
   ) => api.put<OrgCredential>(`/orgs/${id}/credentials/${credId}`, req),
   deleteCredential: (id: string, credId: string) =>
     api.delete<void>(`/orgs/${id}/credentials/${credId}`),
   probeCredentialModels: (id: string, credId: string) =>
-    api.get<{ models: { id: string; contextLimit: number }[]; baseURL?: string; warning?: string }>(
-      `/orgs/${id}/credentials/${credId}/models`,
-    ),
+    api.get<{
+      models: { id: string; contextLimit: number; outputLimit: number }[];
+      baseURL?: string;
+      warning?: string;
+    }>(`/orgs/${id}/credentials/${credId}/models`),
 
   listWorkspaces: (id: string) =>
     api.get<{ items: WorkspaceListItem[] }>(`/orgs/${id}/workspaces`),

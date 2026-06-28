@@ -540,6 +540,58 @@ migrations:
   ttlSecondsAfterFinished: 600
 
 # ----------------------------------------------------------------------------
+# Optional Postgres role + database bootstrap (issue #423)
+# ----------------------------------------------------------------------------
+# On a green-field install against a stock Postgres (Bitnami postgresql chart,
+# raw postgres:16 Deployment, CloudNativePG Cluster bootstrapped with a
+# superuser only), the pre-install migration Job fails because the
+# llmsafespaces role and database do not exist yet:
+#
+#   FATAL: database "llmsafespaces" does not exist
+#   FATAL: role "llmsafespaces" does not exist
+#
+# Disabled by default so operators with externally-managed Postgres (where a
+# DBA already created the role+DB) are unaffected. When enabled, the chart
+# renders a pre-install/pre-upgrade Helm-hook Job that connects to Postgres
+# as a superuser and runs idempotent CREATE ROLE / CREATE DATABASE
+# statements. The Job runs at hook-weight -10, before the migration Job
+# (weight -5) but after the credentials Secret (weight -15), so the app
+# password it sets is already materialized.
+#
+# Requires a Secret (created out-of-band) containing the Postgres superuser
+# credentials. For CloudNativePG this is typically the cluster's
+# <name>-superuser Secret; for Bitnami postgresql it is the release's
+# <release>-secret under keys username/password by default.
+dbInit:
+  enabled: false
+  # Image used for the bootstrap Job. Defaults to postgres:16-alpine, which
+  # ships the psql client. Override if your environment mirrors images to a
+  # private registry.
+  image:
+    repository: postgres
+    tag: "16-alpine"
+    pullPolicy: IfNotPresent
+  # Secret in the release namespace holding the Postgres superuser
+  # credentials. Required when dbInit.enabled=true; the chart fails the
+  # render if it is empty (pointing the Job at an unnamed Secret would just
+  # move the failure one step later).
+  superuserSecret:
+    name: ""
+    # Keys inside that Secret. Defaults match the CloudNativePG / Bitnami
+    # convention.
+    userKey: username
+    passwordKey: password
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+
+# ----------------------------------------------------------------------------
 # Network policies (Epic 17 G16 remediation; EVOLUTION-V2 §9.7)
 # ----------------------------------------------------------------------------
 # When enabled (default), the chart ships:

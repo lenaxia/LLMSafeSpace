@@ -62,7 +62,7 @@ def run(run: Runner, cfg: Config) -> None:
 
         # Step 2: Create LLM credential
         cred_value = json.dumps(
-            {"provider": cfg.llm_provider, "apiKey": cfg.llm_api_key}
+            {"kind": cfg.llm_provider, "slug": "canary-py-model-flow", "apiKey": cfg.llm_api_key}
         )
         ok2, cred = run.assert_no_error(
             lambda: c.secrets.create(

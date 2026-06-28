@@ -162,18 +162,29 @@ func (s *Service) ClearWorkspace(ctx context.Context, workspaceID string) error 
 	return nil
 }
 
+// PeekAllGlobal returns ALL queued messages across every workspace and session.
+// It scans Redis for all queue keys matching the global prefix and peeks each
+// one. The order of messages across workspaces/sessions is undefined.
+// Use this for global operations like the periodic stranded-queue sweep.
+func (s *Service) PeekAllGlobal(ctx context.Context) ([]QueuedMessage, error) {
+	return s.peekByPattern(ctx, fmt.Sprintf("%s*", keyPrefix))
+}
+
 // PeekAllWorkspace returns all queued messages across every session for the
 // given workspace. It scans Redis for all queue keys belonging to the workspace
 // and peeks each one. The order of messages across sessions is undefined.
 func (s *Service) PeekAllWorkspace(ctx context.Context, workspaceID string) ([]QueuedMessage, error) {
-	pattern := fmt.Sprintf("%s%s:*", keyPrefix, workspaceID)
+	return s.peekByPattern(ctx, fmt.Sprintf("%s%s:*", keyPrefix, workspaceID))
+}
+
+func (s *Service) peekByPattern(ctx context.Context, pattern string) ([]QueuedMessage, error) {
 	iter := s.client.Scan(ctx, 0, pattern, 100).Iterator()
 	var keys []string
 	for iter.Next(ctx) {
 		keys = append(keys, iter.Val())
 	}
 	if err := iter.Err(); err != nil {
-		return nil, fmt.Errorf("scanning workspace queue keys: %w", err)
+		return nil, fmt.Errorf("scanning queue keys with pattern %q: %w", pattern, err)
 	}
 	var all []QueuedMessage
 	for _, key := range keys {
@@ -184,7 +195,7 @@ func (s *Service) PeekAllWorkspace(ctx context.Context, workspaceID string) ([]Q
 		for _, d := range data {
 			var msg QueuedMessage
 			if err := json.Unmarshal([]byte(d), &msg); err != nil {
-				continue // skip malformed entries
+				continue
 			}
 			all = append(all, msg)
 		}

@@ -25,21 +25,22 @@ export type {
 // ---------------------------------------------------------------------------
 
 // AdminProviderCredential is ProviderCredential with the fields the admin API
-// always returns as non-optional (modelAllowlist / modelContextLimits are
-// guaranteed present for admin creds).
+// always returns as non-optional (modelAllowlist / modelContextLimits /
+// modelOutputLimits are guaranteed present for admin creds).
 export interface AdminProviderCredential extends ProviderCredential {
   modelAllowlist: string[];
   modelContextLimits: Record<string, number>;
+  modelOutputLimits: Record<string, number>;
 }
 
 // CreateAdminCredentialRequest is identical to the shared CreateCredentialRequest
 // (kept as a named alias for readability at call sites).
 export type CreateAdminCredentialRequest = CreateCredentialRequest;
 
-export interface UpdateAdminCredentialRequest extends UpdateCredentialRequest {
-  // Admin update allows changing the provider; user/org do not.
-  provider?: string;
-}
+// UpdateAdminCredentialRequest is the admin partial-update body. Post Epic 55
+// it inherits kind/slug/name/apiKey/baseURL/model* from the shared shape with
+// no additional admin-only fields, so we expose the alias directly.
+export type UpdateAdminCredentialRequest = UpdateCredentialRequest;
 
 // Go handler validates "all" | "user" | "org" — "workspace" is not a valid type.
 export interface AutoApplyRule {

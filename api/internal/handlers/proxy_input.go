@@ -86,8 +86,29 @@ func (h *ProxyHandler) PermissionReply(c *gin.Context) {
 
 // emitPendingInputRequests fetches pending questions and permissions from the pod
 // and publishes them as synthetic events so reconnecting browsers see them immediately.
-func (h *ProxyHandler) emitPendingInputRequests(workspaceID string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+//
+// Accepts the parent's context (typically `c.Request.Context()` for the
+// SSE/snapshot path) so contextcheck is happy and a client disconnect
+// cancels the in-flight pod fetch promptly. Internally derives a 5s
+// timeout from the parent to keep the bounded-per-call cap.
+func (h *ProxyHandler) emitPendingInputRequests(ctx context.Context, workspaceID string) {
+	// D9: emit the snapshot-complete marker unconditionally on exit, even on
+	// timeout/error. This lets the provider commit (or clear) the workspace's
+	// pending set without hanging. On timeout, staging is empty → the provider
+	// commits empty (pending cleared for this workspace).
+	defer func() {
+		if h.userBroker == nil {
+			return
+		}
+		if userID := h.userBroker.WorkspaceOwner(workspaceID); userID != "" {
+			h.userBroker.PublishToUser(userID, apitypes.WorkspaceSSEEvent{
+				Type:        "agent.input.snapshot_complete",
+				WorkspaceID: workspaceID,
+			})
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	v1Client, err := h.k8sClient.LlmsafespacesV1()
@@ -114,7 +135,12 @@ func (h *ProxyHandler) emitPendingInputRequests(workspaceID string) {
 			} else {
 				req.RootSessionID = req.SessionID
 			}
-			h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{Type: "agent.question", Data: req})
+			h.publishWorkspaceAndUserEvent(workspaceID, apitypes.WorkspaceSSEEvent{
+				Type:      "agent.question",
+				SessionID: req.SessionID,
+				RequestID: req.ID,
+				Data:      req,
+			})
 		}
 	}
 
@@ -127,7 +153,12 @@ func (h *ProxyHandler) emitPendingInputRequests(workspaceID string) {
 				} else {
 					req.RootSessionID = req.SessionID
 				}
-				h.publishWorkspaceEvent(workspaceID, apitypes.WorkspaceSSEEvent{Type: "agent.permission", Data: req})
+				h.publishWorkspaceAndUserEvent(workspaceID, apitypes.WorkspaceSSEEvent{
+					Type:      "agent.permission",
+					SessionID: req.SessionID,
+					RequestID: req.ID,
+					Data:      req,
+				})
 			}
 		}
 	}

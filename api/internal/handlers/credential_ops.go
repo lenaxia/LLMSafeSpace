@@ -28,11 +28,22 @@ type probeError struct {
 
 func (e *probeError) Error() string { return fmt.Sprintf("probe: %s (%d)", e.msg, e.status) }
 
+// probeCredentialLimits bundles the per-model context and output limits saved
+// on a credential row. Both maps are passed to probeCredentialModels so the
+// UI can pre-populate its model-config table and so the user can edit both
+// values together (opencode requires both or neither — see
+// pkg/agent/opencode/format.go).
+type probeCredentialLimits struct {
+	Context map[string]int
+	Output  map[string]int
+}
+
 // getCredentialForProbe fetches a credential row, resolves a decrypt closure,
 // decrypts the ciphertext, and returns the plaintext (LLMProviderData JSON)
-// plus the row's saved model context limits for model probing. It returns a
-// non-nil probeError when the row is not found, the key is unavailable, or
-// decryption fails — the caller writes the HTTP response from the error.
+// plus the row's saved model context and output limits for model probing. It
+// returns a non-nil probeError when the row is not found, the key is
+// unavailable, or decryption fails — the caller writes the HTTP response from
+// the error.
 //
 // The returned plaintext must be zeroed by the caller once no longer needed
 // (probeCredentialModels copies out what it needs but does not zero).
@@ -41,13 +52,13 @@ func getCredentialForProbe(
 	store CredentialStore,
 	ownerType, ownerID, credID string,
 	resolveDecrypt credentialDecryptResolver,
-) ([]byte, map[string]int, *probeError) {
+) ([]byte, probeCredentialLimits, *probeError) {
 	row, err := store.GetCredential(ctx, ownerType, ownerID, credID)
 	if err != nil {
-		return nil, nil, &probeError{status: http.StatusInternalServerError, msg: "failed to get credential"}
+		return nil, probeCredentialLimits{}, &probeError{status: http.StatusInternalServerError, msg: "failed to get credential"}
 	}
 	if row == nil {
-		return nil, nil, &probeError{status: http.StatusNotFound, msg: "credential not found"}
+		return nil, probeCredentialLimits{}, &probeError{status: http.StatusNotFound, msg: "credential not found"}
 	}
 
 	decrypt, errMsg, status := resolveDecrypt(ctx)
@@ -56,14 +67,17 @@ func getCredentialForProbe(
 		if errMsg == "" {
 			errMsg = "encryption unavailable"
 		}
-		return nil, nil, &probeError{status: status, msg: errMsg}
+		return nil, probeCredentialLimits{}, &probeError{status: status, msg: errMsg}
 	}
 
 	plaintext, err := decrypt(ctx, row.Ciphertext)
 	if err != nil {
-		return nil, nil, &probeError{status: http.StatusInternalServerError, msg: "failed to decrypt credential"}
+		return nil, probeCredentialLimits{}, &probeError{status: http.StatusInternalServerError, msg: "failed to decrypt credential"}
 	}
-	return plaintext, row.ModelContextLimits, nil
+	return plaintext, probeCredentialLimits{
+		Context: row.ModelContextLimits,
+		Output:  row.ModelOutputLimits,
+	}, nil
 }
 
 // encryptCredentialData marshals LLMProviderData for the given provider/API
@@ -71,11 +85,15 @@ func getCredentialForProbe(
 // plaintext buffer so the API key does not linger in heap memory longer than
 // necessary. Admin/org handlers pass provider.Encrypt; the user handler passes
 // a DEK-wrapping closure (US-50.2: unifies all encrypt paths through closures).
-func encryptCredentialData(ctx context.Context, encrypt func(context.Context, []byte) ([]byte, error), llmProvider, apiKey, baseURL string) ([]byte, error) {
+//
+// Epic 55: kind and slug both reach LLMProviderData so the materialize path
+// can render the correct provider-map key and the SDK-class adapter.
+func encryptCredentialData(ctx context.Context, encrypt func(context.Context, []byte) ([]byte, error), kind, slug, apiKey, baseURL string) ([]byte, error) {
 	plaintext, err := json.Marshal(secrets.LLMProviderData{ //nolint:gosec // marshaling for encryption, not API response
-		Provider: llmProvider,
-		APIKey:   apiKey,
-		BaseURL:  baseURL,
+		Kind:    kind,
+		Slug:    slug,
+		APIKey:  apiKey,
+		BaseURL: baseURL,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode credential: %w", err)

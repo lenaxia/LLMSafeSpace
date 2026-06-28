@@ -26,6 +26,7 @@ func (h *ProxyHandler) Start() error {
 	var startErr error
 	h.startOnce.Do(func() {
 		h.started = true
+		h.stopCh = make(chan struct{})
 		h.userBroker = eventbroker.NewUserEventBroker()
 
 		h.activityTracker = activity.NewActivityTracker(h.k8sClient, h.logger, h.namespace)
@@ -61,12 +62,20 @@ func (h *ProxyHandler) Start() error {
 		// SSE subscriptions for already-Active workspaces are established
 		// by the watcher's seedResourceVersion(), which calls onPhaseChange
 		// for each Active workspace it discovers. No post-Start loop needed.
+
+		// Start the stranded-queue sweep last — after all other setup has
+		// succeeded. This avoids leaking the goroutine if watcher.Start()
+		// fails and the caller doesn't invoke Stop().
+		go h.startQueueSweep(h.stopCh)
 	})
 	return startErr
 }
 
 func (h *ProxyHandler) Stop() error {
 	h.stopOnce.Do(func() {
+		if h.stopCh != nil {
+			close(h.stopCh)
+		}
 		if h.sseTracker != nil {
 			h.sseTracker.Stop()
 		}
@@ -142,6 +151,24 @@ func (h *ProxyHandler) GetWorkspaceOwner(workspaceID string) string {
 func (h *ProxyHandler) publishWorkspaceEvent(workspaceID string, evt apitypes.WorkspaceSSEEvent) {
 	if h.userBroker != nil {
 		h.userBroker.PublishToWorkspace(workspaceID, evt)
+	}
+}
+
+// publishWorkspaceAndUserEvent delivers an event to BOTH the workspace stream
+// (active-view consumers) and the user stream (cross-workspace, replay-buffered).
+// Use for low-frequency events that affect global UI state (agent.question,
+// agent.permission). The user-stream copy carries WorkspaceID so the frontend
+// can route it; the workspace-stream copy does not (implicit for subscribers).
+// If the workspace owner is unrecorded, the user-stream publish is skipped
+// silently — the workspace-stream publish still fires.
+func (h *ProxyHandler) publishWorkspaceAndUserEvent(workspaceID string, evt apitypes.WorkspaceSSEEvent) {
+	if h.userBroker == nil {
+		return
+	}
+	h.userBroker.PublishToWorkspace(workspaceID, evt)
+	if userID := h.userBroker.WorkspaceOwner(workspaceID); userID != "" {
+		evt.WorkspaceID = workspaceID
+		h.userBroker.PublishToUser(userID, evt)
 	}
 }
 

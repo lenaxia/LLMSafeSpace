@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -179,7 +180,7 @@ func TestPgSecretStore_CRUD(t *testing.T) {
 		Type:       SecretTypeAPIKey,
 		Ciphertext: []byte("encrypted-data-here"),
 		KeyVersion: 1,
-		Metadata:   json.RawMessage(`{"provider":"openai"}`),
+		Metadata:   json.RawMessage(`{"kind":"openai","slug":"openai"}`),
 	}
 	err := store.CreateSecret(ctx, secret)
 	if err != nil {
@@ -384,17 +385,17 @@ func TestPgE2E_FullSecretLifecycle(t *testing.T) {
 	}
 
 	// Create secret
-	created, err := svc.CreateSecret(ctx, userID, "e2e-session", CreateSecretRequest{
+	created, err := svc.CreateSecret(ctx, userID, "e2e-session", nil, CreateSecretRequest{
 		Name: "pg-e2e-secret", Type: SecretTypeAPIKey,
 		Value:    `{"apiKey":"sk-real-test-key"}`,
-		Metadata: json.RawMessage(`{"provider":"anthropic"}`),
+		Metadata: json.RawMessage(`{"kind":"anthropic","slug":"anthropic"}`),
 	})
 	if err != nil {
 		t.Fatalf("CreateSecret: %v", err)
 	}
 
 	// Decrypt
-	plaintext, err := svc.DecryptSecretValue(ctx, userID, "e2e-session", created.ID)
+	plaintext, err := svc.DecryptSecretValue(ctx, userID, "e2e-session", nil, created.ID)
 	if err != nil {
 		t.Fatalf("DecryptSecretValue: %v", err)
 	}
@@ -411,7 +412,7 @@ func TestPgE2E_FullSecretLifecycle(t *testing.T) {
 	}
 
 	// Inject
-	data, err := svc.InjectSecrets(ctx, userID, "e2e-session", wsID)
+	data, err := svc.InjectSecrets(ctx, userID, "e2e-session", nil, wsID)
 	if err != nil {
 		t.Fatalf("InjectSecrets: %v", err)
 	}
@@ -435,7 +436,7 @@ func TestPgE2E_FullSecretLifecycle(t *testing.T) {
 	}
 
 	// Secret still decryptable
-	plaintext2, err := svc.DecryptSecretValue(ctx, userID, "e2e-session-2", created.ID)
+	plaintext2, err := svc.DecryptSecretValue(ctx, userID, "e2e-session-2", nil, created.ID)
 	if err != nil {
 		t.Fatalf("Decrypt after password change: %v", err)
 	}
@@ -492,7 +493,7 @@ func TestPgE2E_RotateKey_AtomicReEncryption(t *testing.T) {
 	}
 	createdIDs := make(map[string]string)
 	for name, value := range plaintexts {
-		s, err := svc.CreateSecret(ctx, userID, sessionID, CreateSecretRequest{
+		s, err := svc.CreateSecret(ctx, userID, sessionID, nil, CreateSecretRequest{
 			Name: name, Type: SecretTypeEnvSecret, Value: value,
 			Metadata: json.RawMessage(`{"var_name":"X"}`),
 		})
@@ -520,7 +521,7 @@ func TestPgE2E_RotateKey_AtomicReEncryption(t *testing.T) {
 	// Every pre-rotation secret must still decrypt with the new
 	// session DEK. This is the load-bearing assertion for Bug 9.
 	for name, want := range plaintexts {
-		got, err := svc.DecryptSecretValue(ctx, userID, sessionID, createdIDs[name])
+		got, err := svc.DecryptSecretValue(ctx, userID, sessionID, nil, createdIDs[name])
 		if err != nil {
 			t.Fatalf("DecryptSecretValue(%s) post-rotate: %v — Bug 9 regression", name, err)
 		}
@@ -547,7 +548,7 @@ func TestPgE2E_RotateKey_AtomicReEncryption(t *testing.T) {
 		t.Fatalf("UnlockDEK post-reset: %v", err)
 	}
 	for name, want := range plaintexts {
-		got, err := svc.DecryptSecretValue(ctx, userID, "post-reset-sess", createdIDs[name])
+		got, err := svc.DecryptSecretValue(ctx, userID, "post-reset-sess", nil, createdIDs[name])
 		if err != nil {
 			t.Fatalf("DecryptSecretValue(%s) post-reset: %v", name, err)
 		}
@@ -593,7 +594,7 @@ func TestPgE2E_AddBindings_IdempotentAndConcurrent(t *testing.T) {
 	// Create three secrets.
 	var ids []string
 	for i := 0; i < 3; i++ {
-		s, err := svc.CreateSecret(ctx, userID, sessionID, CreateSecretRequest{
+		s, err := svc.CreateSecret(ctx, userID, sessionID, nil, CreateSecretRequest{
 			Name: fmt.Sprintf("s%d", i), Type: SecretTypeEnvSecret, Value: "v",
 			Metadata: json.RawMessage(`{"var_name":"X"}`),
 		})
@@ -699,4 +700,259 @@ func TestPgE2E_AsyncAuditLogger_Lifecycle(t *testing.T) {
 	auditLogger.Stop()
 
 	t.Log("PostgreSQL: AsyncAuditLogger lifecycle passed")
+}
+
+// --- PgJWTSessionStore Tests (Epic 56) ---
+
+func cleanupJWTSessions(t *testing.T, pool *pgxpool.Pool, userID string) {
+	t.Helper()
+	pool.Exec(context.Background(), "DELETE FROM jwt_sessions WHERE user_id = $1", userID)
+}
+
+func TestPgJWTSessionStore_WriteAndGet(t *testing.T) {
+	pool := getTestPool(t)
+	defer pool.Close()
+	store := NewPgJWTSessionStore(pool)
+	ctx := context.Background()
+	userID := "pg-jwt-user-1"
+	ensureTestUser(t, pool, userID)
+	defer cleanupJWTSessions(t, pool, userID)
+	defer cleanupUserKeys(t, pool, userID) // ON DELETE CASCADE from users — cleanup users implicitly
+
+	jti := uuid.New()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	row := &JWTSession{
+		JTI:        jti,
+		UserID:     userID,
+		WrappedDEK: []byte("wrapped-dek"),
+		KEKSalt:    []byte("salt-32-bytes-0123456789abcdef!!"),
+		CreatedAt:  now,
+		ExpiresAt:  now.Add(24 * time.Hour),
+	}
+	if err := store.WriteJWTSession(ctx, row); err != nil {
+		t.Fatalf("WriteJWTSession: %v", err)
+	}
+
+	got, err := store.GetJWTSession(ctx, jti)
+	if err != nil {
+		t.Fatalf("GetJWTSession: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected row")
+	}
+	if got.JTI != jti {
+		t.Errorf("JTI: got %s, want %s", got.JTI, jti)
+	}
+	if got.UserID != userID {
+		t.Errorf("UserID: got %s, want %s", got.UserID, userID)
+	}
+	if string(got.WrappedDEK) != "wrapped-dek" {
+		t.Errorf("WrappedDEK mismatch")
+	}
+	// PG returns TZ-aware timestamps; compare in UTC.
+	if !got.ExpiresAt.Equal(row.ExpiresAt) {
+		t.Errorf("ExpiresAt: got %v, want %v", got.ExpiresAt, row.ExpiresAt)
+	}
+}
+
+func TestPgJWTSessionStore_GetMissing_ReturnsNilNil(t *testing.T) {
+	pool := getTestPool(t)
+	defer pool.Close()
+	store := NewPgJWTSessionStore(pool)
+
+	got, err := store.GetJWTSession(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatalf("Get for missing row should not error, got: %v", err)
+	}
+	if got != nil {
+		t.Errorf("expected nil for missing row")
+	}
+}
+
+func TestPgJWTSessionStore_WriteUpsert_OverwritesOnConflict(t *testing.T) {
+	pool := getTestPool(t)
+	defer pool.Close()
+	store := NewPgJWTSessionStore(pool)
+	ctx := context.Background()
+	userID := "pg-jwt-user-2"
+	ensureTestUser(t, pool, userID)
+	defer cleanupJWTSessions(t, pool, userID)
+
+	jti := uuid.New()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	// First write
+	if err := store.WriteJWTSession(ctx, &JWTSession{
+		JTI:        jti,
+		UserID:     userID,
+		WrappedDEK: []byte("v1-wrap"),
+		KEKSalt:    []byte("v1-salt"),
+		CreatedAt:  now,
+		ExpiresAt:  now.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("first write: %v", err)
+	}
+
+	// Soft-unlock backfill: same jti, fresh kek_salt + wrapped_dek + later expiry
+	if err := store.WriteJWTSession(ctx, &JWTSession{
+		JTI:        jti,
+		UserID:     userID,
+		WrappedDEK: []byte("v2-wrap"),
+		KEKSalt:    []byte("v2-salt"),
+		CreatedAt:  now,
+		ExpiresAt:  now.Add(2 * time.Hour),
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	got, err := store.GetJWTSession(ctx, jti)
+	if err != nil || got == nil {
+		t.Fatalf("get post-upsert: row=%v err=%v", got, err)
+	}
+	if string(got.WrappedDEK) != "v2-wrap" {
+		t.Errorf("WrappedDEK: got %q, want v2-wrap (upsert should overwrite)", got.WrappedDEK)
+	}
+	if string(got.KEKSalt) != "v2-salt" {
+		t.Errorf("KEKSalt: got %q, want v2-salt", got.KEKSalt)
+	}
+	if !got.ExpiresAt.Equal(now.Add(2 * time.Hour)) {
+		t.Errorf("ExpiresAt should be updated to later value")
+	}
+}
+
+func TestPgJWTSessionStore_DeleteJWTSession(t *testing.T) {
+	pool := getTestPool(t)
+	defer pool.Close()
+	store := NewPgJWTSessionStore(pool)
+	ctx := context.Background()
+	userID := "pg-jwt-user-3"
+	ensureTestUser(t, pool, userID)
+	defer cleanupJWTSessions(t, pool, userID)
+
+	jti := uuid.New()
+	_ = store.WriteJWTSession(ctx, &JWTSession{
+		JTI:        jti,
+		UserID:     userID,
+		WrappedDEK: []byte("w"),
+		KEKSalt:    []byte("s"),
+		CreatedAt:  time.Now(),
+		ExpiresAt:  time.Now().Add(time.Hour),
+	})
+
+	if err := store.DeleteJWTSession(ctx, jti); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	got, _ := store.GetJWTSession(ctx, jti)
+	if got != nil {
+		t.Errorf("expected row deleted")
+	}
+
+	// Idempotent — delete again should be fine
+	if err := store.DeleteJWTSession(ctx, jti); err != nil {
+		t.Errorf("second delete (idempotency): %v", err)
+	}
+}
+
+func TestPgJWTSessionStore_DeleteJWTSessionsForUser(t *testing.T) {
+	pool := getTestPool(t)
+	defer pool.Close()
+	store := NewPgJWTSessionStore(pool)
+	ctx := context.Background()
+	userA := "pg-jwt-user-A"
+	userB := "pg-jwt-user-B"
+	ensureTestUser(t, pool, userA)
+	ensureTestUser(t, pool, userB)
+	defer cleanupJWTSessions(t, pool, userA)
+	defer cleanupJWTSessions(t, pool, userB)
+
+	// 3 rows for userA, 1 for userB
+	for i := 0; i < 3; i++ {
+		_ = store.WriteJWTSession(ctx, &JWTSession{
+			JTI: uuid.New(), UserID: userA, WrappedDEK: []byte("w"), KEKSalt: []byte("s"),
+			CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
+		})
+	}
+	keep := uuid.New()
+	_ = store.WriteJWTSession(ctx, &JWTSession{
+		JTI: keep, UserID: userB, WrappedDEK: []byte("w"), KEKSalt: []byte("s"),
+		CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
+	})
+
+	n, err := store.DeleteJWTSessionsForUser(ctx, userA)
+	if err != nil {
+		t.Fatalf("delete-for-user: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("rows affected = %d, want 3", n)
+	}
+
+	// userB's row preserved
+	if got, _ := store.GetJWTSession(ctx, keep); got == nil {
+		t.Errorf("user B's row should not be touched")
+	}
+}
+
+func TestPgJWTSessionStore_DeleteExpiredJWTSessions(t *testing.T) {
+	pool := getTestPool(t)
+	defer pool.Close()
+	store := NewPgJWTSessionStore(pool)
+	ctx := context.Background()
+	userID := "pg-jwt-user-4"
+	ensureTestUser(t, pool, userID)
+	defer cleanupJWTSessions(t, pool, userID)
+
+	cutoff := time.Now()
+
+	// 2 expired
+	expired1 := uuid.New()
+	expired2 := uuid.New()
+	_ = store.WriteJWTSession(ctx, &JWTSession{JTI: expired1, UserID: userID, WrappedDEK: []byte("w"), KEKSalt: []byte("s"), CreatedAt: cutoff.Add(-2 * time.Hour), ExpiresAt: cutoff.Add(-time.Hour)})
+	_ = store.WriteJWTSession(ctx, &JWTSession{JTI: expired2, UserID: userID, WrappedDEK: []byte("w"), KEKSalt: []byte("s"), CreatedAt: cutoff.Add(-2 * time.Hour), ExpiresAt: cutoff.Add(-time.Minute)})
+
+	// 1 active
+	active := uuid.New()
+	_ = store.WriteJWTSession(ctx, &JWTSession{JTI: active, UserID: userID, WrappedDEK: []byte("w"), KEKSalt: []byte("s"), CreatedAt: cutoff, ExpiresAt: cutoff.Add(time.Hour)})
+
+	n, err := store.DeleteExpiredJWTSessions(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("delete-expired: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("rows affected = %d, want 2", n)
+	}
+	if got, _ := store.GetJWTSession(ctx, active); got == nil {
+		t.Errorf("active row should survive")
+	}
+	if got, _ := store.GetJWTSession(ctx, expired1); got != nil {
+		t.Errorf("expired row should be pruned")
+	}
+}
+
+func TestPgJWTSessionStore_UserDeletionCascadesToJWTSessions(t *testing.T) {
+	pool := getTestPool(t)
+	defer pool.Close()
+	store := NewPgJWTSessionStore(pool)
+	ctx := context.Background()
+	userID := "pg-jwt-user-cascade"
+	ensureTestUser(t, pool, userID)
+	// Note: not deferring cleanupJWTSessions because the CASCADE will do it.
+
+	jti := uuid.New()
+	_ = store.WriteJWTSession(ctx, &JWTSession{
+		JTI: jti, UserID: userID, WrappedDEK: []byte("w"), KEKSalt: []byte("s"),
+		CreatedAt: time.Now(), ExpiresAt: time.Now().Add(time.Hour),
+	})
+
+	// Delete the user — FK ON DELETE CASCADE should clear jwt_sessions.
+	if _, err := pool.Exec(ctx, "DELETE FROM users WHERE id = $1", userID); err != nil {
+		t.Fatalf("delete user: %v", err)
+	}
+
+	got, err := store.GetJWTSession(ctx, jti)
+	if err != nil {
+		t.Fatalf("get after user cascade: %v", err)
+	}
+	if got != nil {
+		t.Errorf("jwt_sessions row should cascade-delete with user; row still exists")
+	}
 }

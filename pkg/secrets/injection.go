@@ -20,7 +20,7 @@ import (
 //
 // Implementations: *SecretService.
 type SecretInjector interface {
-	InjectSecrets(ctx context.Context, userID, sessionID, workspaceID string) ([]byte, error)
+	InjectSecrets(ctx context.Context, userID, sessionID string, matchedSigningKey []byte, workspaceID string) ([]byte, error)
 }
 
 // SessionlessSecretInjector returns the subset of workspace secrets that
@@ -90,7 +90,7 @@ type InjectedSecret struct {
 // sessionID here — that path was previously the source of bug class
 // "buildNonLLMSecrets propagates GetDEK error" (this worklog,
 // 2026-06-24 production incident).
-func (s *SecretService) InjectSecrets(ctx context.Context, userID, sessionID, workspaceID string) ([]byte, error) {
+func (s *SecretService) InjectSecrets(ctx context.Context, userID, sessionID string, matchedSigningKey []byte, workspaceID string) ([]byte, error) {
 	credStore, err := s.requireCredentialStore()
 	if err != nil {
 		return nil, err
@@ -101,9 +101,9 @@ func (s *SecretService) InjectSecrets(ctx context.Context, userID, sessionID, wo
 		return nil, fmt.Errorf("get workspace credentials: %w", err)
 	}
 
-	providerData := s.loadLLMCredentials(ctx, bindings, userID, workspaceID, sessionID)
+	providerData := s.loadLLMCredentials(ctx, bindings, userID, workspaceID, sessionID, matchedSigningKey)
 
-	nonLLM, err := s.loadNonLLMSecrets(ctx, userID, sessionID, workspaceID)
+	nonLLM, err := s.loadNonLLMSecrets(ctx, userID, sessionID, matchedSigningKey, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +141,7 @@ func (s *SecretService) InjectSessionlessSecrets(ctx context.Context, userID, wo
 	// degrade path inside that function (post-PR-#407 review pass 2)
 	// emits a "secret_skipped_no_session" audit per relevant
 	// user_secret and returns nil. No separate audit pass needed.
-	nonLLM, err := s.loadNonLLMSecrets(ctx, userID, "", workspaceID)
+	nonLLM, err := s.loadNonLLMSecrets(ctx, userID, "", nil, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -173,25 +173,29 @@ func (s *SecretService) requireCredentialStore() (CredentialStore, error) {
 // session and sessionless paths; what differs is whether sessionID is
 // non-empty. When empty, every user-bound binding fails the GetDEK call,
 // audits, and continues — no error propagates.
-func (s *SecretService) loadLLMCredentials(ctx context.Context, bindings []CredentialBinding, userID, workspaceID, sessionID string) []LLMProviderData {
+func (s *SecretService) loadLLMCredentials(ctx context.Context, bindings []CredentialBinding, userID, workspaceID, sessionID string, matchedSigningKey []byte) []LLMProviderData {
 	adminDecrypt := decryptFnFor(s.adminProvider)
 	orgDecrypt := decryptFnFor(s.orgProvider)
 
+	// Dedup by Slug — Slug is the per-owner unique identity (Epic 55).
+	// Kind is NOT unique per owner (two openai_compatible LiteLLM
+	// endpoints with different slugs both materialize as separate
+	// providers in agent-config.json).
 	seen := make(map[string]bool)
 	var out []LLMProviderData
 	for _, b := range bindings {
-		if seen[b.Provider] {
+		if seen[b.Slug] {
 			continue
 		}
-		pd, err := s.decryptBinding(ctx, b, sessionID, adminDecrypt, orgDecrypt)
+		pd, err := s.decryptBinding(ctx, b, sessionID, matchedSigningKey, adminDecrypt, orgDecrypt)
 		if err != nil {
 			// Don't set seen — allow fallback to lower-priority binding.
 			s.audit(ctx, userID, "credential_decrypt_failed", nil, &workspaceID,
-				map[string]string{"credentialID": b.ID, "provider": b.Provider, "ownerType": b.OwnerType, "error": err.Error()})
+				map[string]string{"credentialID": b.ID, "slug": b.Slug, "kind": b.Kind, "ownerType": b.OwnerType, "error": err.Error()})
 			continue
 		}
 		s.applyModelAllowlist(&pd, b)
-		seen[b.Provider] = true
+		seen[b.Slug] = true
 		out = append(out, pd)
 	}
 	return out
@@ -209,24 +213,25 @@ func (s *SecretService) loadServerKEKCredentials(ctx context.Context, bindings [
 	seen := make(map[string]bool)
 	var out []LLMProviderData
 	for _, b := range bindings {
-		if seen[b.Provider] {
+		if seen[b.Slug] {
 			continue
 		}
 		if b.OwnerType == "user" {
 			s.audit(ctx, userID, "credential_skipped_no_session", nil, &workspaceID,
-				map[string]string{"credentialID": b.ID, "provider": b.Provider, "ownerType": b.OwnerType})
+				map[string]string{"credentialID": b.ID, "slug": b.Slug, "kind": b.Kind, "ownerType": b.OwnerType})
 			continue
 		}
-		// Sessionless decryption: admin/org only. Pass empty sessionID;
-		// decryptBinding never reaches the user branch for these owner_types.
-		pd, err := s.decryptBinding(ctx, b, "", adminDecrypt, orgDecrypt)
+		// Sessionless decryption: admin/org only. Pass empty sessionID
+		// and nil matchedSigningKey; decryptBinding never reaches the
+		// user branch for these owner_types.
+		pd, err := s.decryptBinding(ctx, b, "", nil, adminDecrypt, orgDecrypt)
 		if err != nil {
 			s.audit(ctx, userID, "credential_decrypt_failed", nil, &workspaceID,
-				map[string]string{"credentialID": b.ID, "provider": b.Provider, "ownerType": b.OwnerType, "error": err.Error()})
+				map[string]string{"credentialID": b.ID, "slug": b.Slug, "kind": b.Kind, "ownerType": b.OwnerType, "error": err.Error()})
 			continue
 		}
 		s.applyModelAllowlist(&pd, b)
-		seen[b.Provider] = true
+		seen[b.Slug] = true
 		out = append(out, pd)
 	}
 	return out
@@ -258,6 +263,9 @@ func (s *SecretService) applyModelAllowlist(pd *LLMProviderData, b CredentialBin
 			if m.ContextLimit == 0 {
 				m.ContextLimit = b.ModelContextLimits[m.ID]
 			}
+			if m.OutputLimit == 0 {
+				m.OutputLimit = b.ModelOutputLimits[m.ID]
+			}
 			filtered = append(filtered, m)
 		}
 	}
@@ -271,6 +279,7 @@ func (s *SecretService) applyModelAllowlist(pd *LLMProviderData, b CredentialBin
 				filtered = append(filtered, LLMModelConfig{
 					ID:           id,
 					ContextLimit: b.ModelContextLimits[id],
+					OutputLimit:  b.ModelOutputLimits[id],
 				})
 			}
 		}
@@ -292,11 +301,11 @@ func decryptFnFor(p RootKeyProvider) decryptFn {
 	return p.Decrypt
 }
 
-func (s *SecretService) decryptBinding(ctx context.Context, b CredentialBinding, sessionID string, adminDecrypt, orgDecrypt decryptFn) (LLMProviderData, error) {
+func (s *SecretService) decryptBinding(ctx context.Context, b CredentialBinding, sessionID string, matchedSigningKey []byte, adminDecrypt, orgDecrypt decryptFn) (LLMProviderData, error) {
 	var plaintext []byte
 	switch b.OwnerType {
 	case "user":
-		dek, err := s.keys.GetDEK(ctx, sessionID)
+		dek, err := s.keys.GetDEK(ctx, sessionID, matchedSigningKey)
 		if err != nil {
 			return LLMProviderData{}, fmt.Errorf("get user DEK: %w", err)
 		}
@@ -371,7 +380,7 @@ func (s *SecretService) decryptBinding(ctx context.Context, b CredentialBinding,
 // whereas InjectSecrets emits "credential_decrypt_failed" with a
 // "DEK not available" error string. The user-visible outcome is the
 // same; the audit trail is cleaner for the explicit-no-session caller.
-func (s *SecretService) loadNonLLMSecrets(ctx context.Context, userID, sessionID, workspaceID string) ([]InjectedSecret, error) {
+func (s *SecretService) loadNonLLMSecrets(ctx context.Context, userID, sessionID string, matchedSigningKey []byte, workspaceID string) ([]InjectedSecret, error) {
 	bound, err := s.store.GetBindings(ctx, workspaceID)
 	if err != nil {
 		return nil, err
@@ -385,7 +394,7 @@ func (s *SecretService) loadNonLLMSecrets(ctx context.Context, userID, sessionID
 	if len(relevant) == 0 {
 		return nil, nil
 	}
-	dek, err := s.keys.GetDEK(ctx, sessionID)
+	dek, err := s.keys.GetDEK(ctx, sessionID, matchedSigningKey)
 	if err != nil {
 		// No DEK available. Audit each user-DEK entry as skipped and
 		// return the empty slice without error — this is the case (1)
@@ -427,8 +436,14 @@ func buildSecretsJSON(providerData []LLMProviderData, nonLLM []InjectedSecret) (
 			return nil, err
 		}
 		out = append(out, InjectedSecret{
-			Type:      SecretTypeLLMProvider,
-			Name:      pd.Provider,
+			Type: SecretTypeLLMProvider,
+			// Name on the InjectedSecret is the slug — this becomes the
+			// provider-map key in agent-config.json (Epic 55). Before
+			// Epic 55 this was the SDK kind ("custom", "opencode"),
+			// causing identity collisions when two credentials shared
+			// the same SDK. opencode persists this as `providerID` on
+			// session records.
+			Name:      pd.Slug,
 			Plaintext: string(plaintext),
 		})
 	}
