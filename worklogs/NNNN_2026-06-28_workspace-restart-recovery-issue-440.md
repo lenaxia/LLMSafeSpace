@@ -34,8 +34,9 @@ Resolve issue 440: a credential add to a running workspace with an active sessio
 ### Backend (agentd) — remove false-premise code + fix misconfigured probe
 
 - **Deleted `abortStaleSessions` and `abortStaleSessionsAfterStart`** (`cmd/workspace-agentd/stale_sessions.go`). They solved a non-problem (no busy flag in SQLite) and imposed a 30s health-check stall on every restart via a probe that can never succeed.
-- **Removed the `onStart` wiring** in `startManagedProcess` (`cmd/workspace-agentd/main.go`). The `onStart` field on `managedProcess` is retained for future use; the supervisor still fires it (no-op when nil).
-- **Fixed `healthCheckURL`** (`cmd/workspace-agentd/managed_process.go`): `http://localhost:4096/v1/readyz` → agentd's own `http://localhost:4098/v1/readyz` with the Bearer admin token. Port 4096 is opencode (serves SPA HTML + requires basic auth on every endpoint), so the probe has always failed. The post-restart health probe (`healthProbeAfterRestart`) now actually succeeds when opencode is healthy.
+- **Removed the entire `onStart` mechanism** on `managedProcess` (field + the `supervise()` firing block + its tests). With its only consumer gone it was speculative retention — Rule 5 ("Remove legacy code") and Rule 4 ("no speculative abstractions"). It can be re-added when a real consumer exists. `probeWg` is retained because it still tracks `healthProbeAfterRestart` goroutines.
+- **Simplified `startManagedProcess`** to `func startManagedProcess(supervise bool)` — the previously retained `context.Context` and `*OpenCodeClient` parameters had a single caller and were dead weight.
+- **Fixed `healthCheckURL`** (`cmd/workspace-agentd/managed_process.go`): built from the `agentd.AgentdAdminPort` constant via `fmt.Sprintf` (a `var`, not a `const` + a fragile compile-time guard), pointing at agentd's own `:4098/v1/readyz` instead of opencode's `:4096` (which serves the SPA + requires basic auth, so the probe always failed). The post-restart health probe (`healthProbeAfterRestart`) now actually succeeds when opencode is healthy. When `AGENTD_ADMIN_TOKEN` is set the probe attaches `Authorization: Bearer <token>` to match the `requireBearerToken` middleware on `/v1/readyz`.
 
 ### Frontend — close the two recovery gaps
 
@@ -81,7 +82,7 @@ Resolve issue 440: a credential add to a running workspace with an active sessio
 
 ## Testing
 
-- Backend: existing `stale_sessions_test.go` removed alongside the source; `managed_process_test.go` updated for the new `healthCheckURL` default.
+- Backend: existing `stale_sessions_test.go` removed alongside the source. `managed_process_test.go` required no change for the `healthCheckURL` default (tests already override `p.healthCheckURL` to a fake server's port in `newTestManagedProcess`); two new focused tests added for the `healthProbeAfterRestart` Bearer-token attachment path.
 - Frontend: `useChatStream.test.ts` extended with a 503-retry case; `ChatPage.reconnect.test.tsx` extended to assert `reconcileOnIdle` fires on reconnect.
 - Go and frontend typecheck/lint/test run green.
 

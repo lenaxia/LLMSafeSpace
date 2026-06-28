@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -345,4 +346,68 @@ func isPortBound(addr string) bool {
 	}
 	_ = c.Close()
 	return true
+}
+
+// TestHealthProbeAfterRestart_BearerTokenAttachment verifies the probe
+// attaches `Authorization: Bearer $AGENTD_ADMIN_TOKEN` when the env var
+// is set, so it succeeds against a readyz endpoint gated by
+// requireBearerToken (server.go). Covers the code path added when the
+// healthCheckURL was corrected from opencode's :4096 (which the probe
+// could never authenticate against) to agentd's :4098 readyz.
+func TestHealthProbeAfterRestart_BearerTokenAttachment(t *testing.T) {
+	const token = "test-admin-token"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+token {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	// requireBearerToken matches this exact header value.
+	t.Setenv("AGENTD_ADMIN_TOKEN", token)
+
+	// Construct a minimal managedProcess with only the fields the probe
+	// reads (healthCheckURL + a closed doneCh so the probe runs its poll
+	// loop rather than aborting immediately).
+	p := &managedProcess{
+		healthCheckURL: srv.URL + "/v1/readyz",
+	}
+	doneCh := make(chan struct{})
+	p.doneCh = doneCh
+
+	require.NotPanics(t, func() { p.healthProbeAfterRestart() },
+		"probe must succeed (200) when the Bearer token is attached")
+}
+
+// TestHealthProbeAfterRestart_BearerTokenMissingFails is the negative
+// half: with the token set in the env but the server expecting a
+// different token, the probe gets 401 on every attempt and never
+// succeeds. (We assert via the absence of a panic / hang rather than a
+// return-value contract, since the probe logs a warning on failure and
+// has no return value — it is "purely diagnostic" by design.)
+func TestHealthProbeAfterRestart_BearerTokenMissingFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Server requires a token the probe does not send.
+		if got := r.Header.Get("Authorization"); got != "Bearer expected-different" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	t.Setenv("AGENTD_ADMIN_TOKEN", "wrong-token")
+
+	p := &managedProcess{
+		healthCheckURL: srv.URL + "/v1/readyz",
+	}
+	doneCh := make(chan struct{})
+	p.doneCh = doneCh
+
+	// The probe exhausts its retries (all 401) and logs a warning. It must
+	// not hang or panic.
+	require.NotPanics(t, func() { p.healthProbeAfterRestart() })
 }

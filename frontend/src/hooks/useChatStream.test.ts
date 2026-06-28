@@ -181,12 +181,9 @@ describe("useChatStream", () => {
     it("retries sendAsync on 503 (workspace restarting) then succeeds", async () => {
       // Issue 440: a credential-add triggers an in-place opencode restart;
       // the proxy returns 503+retryAfter during the ~10s window. The send
-      // must retry rather than drop the user's message.
-      // Real timers with a 1ms retryAfter keeps the test fast without the
-      // microtask-flush fragility of fake timers + promise rejection.
-      // retryAfter is sent in the 503 body (proxy.go) but not on the ApiError
-      // TS type; cast mirrors the production 429 read path.
-      const err503 = new ApiClientError(503, { error: "workspace_restarting", retryAfter: 1 } as unknown as ConstructorParameters<typeof ApiClientError>[1]);
+      // must retry rather than drop the user's message. Real timers with a
+      // 1s retryAfter keeps the test fast.
+      const err503 = new ApiClientError(503, { error: "workspace_restarting", retryAfter: 1 });
       (messagesApi.sendAsync as ReturnType<typeof vi.fn>)
         .mockRejectedValueOnce(err503)
         .mockResolvedValueOnce(undefined);
@@ -212,27 +209,28 @@ describe("useChatStream", () => {
     it("gives up after SEND_MAX_503_RETRIES and surfaces the 503 as an error", async () => {
       // After the bounded retry count the message is dropped with a visible
       // error so the loop cannot spin forever on a wedged workspace.
-      const err503 = new ApiClientError(503, { error: "workspace_restarting", retryAfter: 1 } as unknown as ConstructorParameters<typeof ApiClientError>[1]);
+      const err503 = new ApiClientError(503, { error: "workspace_restarting", retryAfter: 1 });
       (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockRejectedValue(err503);
       (messagesApi.getHistory as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
       const { result } = renderHook(() => useChatStream("sb-1", "sess-1"));
       const onComplete = vi.fn();
 
-      // The bounded loop exhausts retries then throws; no idle signal is
-      // expected since the send never succeeds.
       await act(async () => { await result.current.send("hi", onComplete); });
 
       // Initial attempt + 3 retries = 4 calls.
       expect(messagesApi.sendAsync).toHaveBeenCalledTimes(4);
       expect(result.current.streaming).toBe(false);
+      // The 503 propagates to the outer catch and surfaces as the
+      // user-visible error message (the ApiClientError carries body.error).
+      expect(result.current.error).toBe("workspace_restarting");
       expect(onComplete).not.toHaveBeenCalled();
     });
 
     it("does not retry on 429 (handled by the separate at-cap path)", async () => {
       // Sanity: only 503 is a transient restart signal. 429 must NOT enter
       // the 503 retry loop — it surfaces via atCapRetryAfter instead.
-      const err429 = new ApiClientError(429, { error: "rate limited", retryAfter: 5 } as unknown as ConstructorParameters<typeof ApiClientError>[1]);
+      const err429 = new ApiClientError(429, { error: "rate limited", retryAfter: 5 });
       (messagesApi.sendAsync as ReturnType<typeof vi.fn>).mockRejectedValue(err429);
 
       const { result } = renderHook(() => useChatStream("sb-1", "sess-1"));

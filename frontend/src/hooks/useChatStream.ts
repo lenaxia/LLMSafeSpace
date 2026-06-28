@@ -65,26 +65,22 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
         // Retry loop: the proxy returns 503+retryAfter during an in-place
         // opencode restart (credential reload / OOM / crash / relay). The
         // window is transient; drop the user's message only if it persists
-        // across the bounded retry count.
-        let lastErr: unknown;
+        // across the bounded retry count. The loop exits only via `break`
+        // (success) or `throw` (non-503 error, or retries exhausted).
         for (let attempt = 0; attempt <= SEND_MAX_503_RETRIES; attempt++) {
           try {
             await messagesApi.sendAsync(workspaceId, sessionId, {
               parts: [{ type: "text", text }],
               ...(model && { model }),
             });
-            lastErr = null;
             break;
           } catch (err: unknown) {
-            lastErr = err;
             const is503 = err instanceof ApiClientError && err.status === 503;
             if (!is503 || attempt === SEND_MAX_503_RETRIES) throw err;
-            const body = ((err as ApiClientError).body as unknown) as Record<string, unknown> | undefined;
-            const retryAfter = Number(body?.retryAfter ?? 10);
+            const retryAfter = Number(err.body.retryAfter ?? 10);
             await sleep(Math.min(isNaN(retryAfter) ? 10 : retryAfter, 30) * 1000);
           }
         }
-        if (lastErr) throw lastErr;
 
         // Wait for session.status=idle SSE OR a timeout fallback.
         // The SSE path is preferred (real-time), but if the connection drops
@@ -134,7 +130,7 @@ export function useChatStream(workspaceId: string | undefined, sessionId: string
         onComplete(msg);
       } catch (err: unknown) {
         if (err instanceof ApiClientError && err.status === 429) {
-          const retryAfter = Number(((err.body as unknown) as Record<string, unknown>).retryAfter ?? 60);
+          const retryAfter = Number(err.body.retryAfter ?? 60);
           setAtCapRetryAfter(isNaN(retryAfter) ? 60 : retryAfter);
         } else {
           const message = err instanceof Error ? err.message : "Failed to send message";

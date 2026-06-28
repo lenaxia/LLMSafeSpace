@@ -89,7 +89,7 @@ func main() {
 	// supervisor. No-op when no marker is present (clean boot).
 	logRestartReason(RestartReasonMarkerPath, log.Core())
 
-	proc := startManagedProcess(rootCtx, supervise, client)
+	proc := startManagedProcess(supervise)
 
 	startedAt := time.Now()
 	agentConfigPath := envOrDefault("LLMSAFESPACES_AGENT_CONFIG_PATH", agentd.AgentConfigPath)
@@ -141,15 +141,7 @@ func readAgentPassword() string {
 
 // startManagedProcess builds and starts the opencode supervisor when
 // agentd is invoked with --supervise; returns nil otherwise.
-//
-// The client argument is retained in the signature for caller symmetry
-// but is not currently used: the previous onStart callback
-// (abortStaleSessionsAfterStart) was removed — it solved a non-problem
-// (no busy flag persists in opencode's SQLite at v1.15.12; every
-// "abort" on an idle session is a no-op) and imposed a 30s health-check
-// stall via a misconfigured probe. The onStart field on managedProcess
-// is retained for future use; nil is a documented no-op.
-func startManagedProcess(_ context.Context, supervise bool, _ *OpenCodeClient) *managedProcess {
+func startManagedProcess(supervise bool) *managedProcess {
 	if !supervise {
 		return nil
 	}

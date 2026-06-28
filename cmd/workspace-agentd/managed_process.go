@@ -89,38 +89,21 @@ type managedProcess struct {
 	// a leaked probe and a test's t.Cleanup that swaps out the
 	// logger race on `log` (caught by go test -race).
 	probeWg sync.WaitGroup
-
-	// onStart, if non-nil, is called in a probeWg-tracked goroutine
-	// immediately after each child process starts. Production uses
-	// this to abort stale busy sessions after every opencode restart.
-	// Tests may inject a custom callback; nil means no-op.
-	//
-	// MUST be set before start(): supervise() reads it under p.mu on the
-	// first iteration, and the supervisor goroutine is spawned by start().
-	// Assigning it after start() races with that read and may cause the
-	// initial-boot invocation to be skipped.
-	onStart func()
 }
 
-const (
-	maxBackoffSec = 30
-	// healthCheckURL targets agentd's own /v1/readyz on the admin port,
-	// NOT opencode's :4096 (which serves the SPA and requires HTTP basic
-	// auth on every endpoint — so the previous :4096 URL always failed).
-	// agentd's readyz reflects opencode liveness (it polls opencode's
-	// /global/health behind a cache). When AGENTD_ADMIN_TOKEN is set the
-	// endpoint is Bearer-gated (server.go requireBearerToken); the probe
-	// attaches the token from the same env var.
-	//
-	// Port literal must match agentd.AgentdAdminPort (4098). If the admin
-	// port constant changes, update this string to match.
-	healthCheckURL = "http://localhost:4098/v1/readyz"
-)
+const maxBackoffSec = 30
 
-// Compile-time guard: healthCheckURL hardcodes 4098, which must equal
-// agentd.AgentdAdminPort. The array size is negative (invalid) if they
-// diverge, breaking the build.
-var _ [agentd.AgentdAdminPort - 4098]byte
+// healthCheckURL targets agentd's own /v1/readyz on the admin port,
+// NOT opencode's :4096 (which serves the SPA and requires HTTP basic
+// auth on every endpoint — so the previous :4096 URL always failed).
+// agentd's readyz reflects opencode liveness (it polls opencode's
+// /global/health behind a cache). When AGENTD_ADMIN_TOKEN is set the
+// endpoint is Bearer-gated (server.go requireBearerToken); the probe
+// attaches the token from the same env var.
+//
+// Built from the agentd.AgentdAdminPort constant (not a hardcoded
+// literal) so the two cannot drift.
+var healthCheckURL = fmt.Sprintf("http://localhost:%d/v1/readyz", agentd.AgentdAdminPort)
 
 // start spawns the supervisor goroutine. Calling start() more than
 // once is a no-op (it does NOT restart — use restart() for that).
@@ -198,19 +181,8 @@ func (p *managedProcess) supervise() {
 		// iteration so the next close() targets a fresh channel.
 		upCh := p.upCh
 		p.upCh = make(chan struct{})
-		onStart := p.onStart
 		p.mu.Unlock()
 		close(upCh)
-
-		// Fire the onStart callback (e.g. abort stale sessions) in a
-		// tracked goroutine so stop() can join it before returning.
-		if onStart != nil {
-			p.probeWg.Add(1)
-			go func() {
-				defer p.probeWg.Done()
-				onStart()
-			}()
-		}
 
 		// Sole Wait() in the codebase. This is the contract that
 		// Bug 2 broke.
