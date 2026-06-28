@@ -6,7 +6,6 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -244,7 +243,3 @@ func TestProxy_StripPreservesNon200Responses(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Equal(t, `{"error":"bad request"}`, w.Body.String())
 }
-
-// dummyVar makes go vet happy when this file is the only one in the package
-// adding new variables; remove if a real one is added.
-var _ = httptest.NewRecorder

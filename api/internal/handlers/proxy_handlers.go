@@ -259,31 +259,40 @@ func (h *ProxyHandler) fetchUpstreamHistory(c *gin.Context, sessionID string) ([
 	// opencode — opencode currently ignores them but forwarding them is
 	// noise at best, future breakage at worst.
 	upstreamQuery := stripPaginationQuery(stripVerboseQuery(c.Request.URL.RawQuery))
-	upstreamURL := fmt.Sprintf("http://%s:%d/session/%s/message",
-		workspace.Status.PodIP, opencodePort, sessionID)
-	if upstreamQuery != "" {
-		upstreamURL += "?" + upstreamQuery
+
+	podIP := workspace.Status.PodIP
+	body, status, doErr := h.doHistoryRequest(c.Request.Context(), podIP, sessionID, password, upstreamQuery, c.ClientIP())
+
+	// Stale-IP retry: if the first attempt failed with a connection error,
+	// the pod may have been rescheduled to a new IP since the CRD was last
+	// read from cache. Refetch the workspace and try once more if the IP
+	// actually changed. Mirrors the same recovery in proxy.go:290-302.
+	if doErr != nil && isConnectionError(doErr) {
+		freshWS, getErr := func() (*v1.Workspace, error) {
+			v1Client, vErr := h.k8sClient.LlmsafespacesV1()
+			if vErr != nil {
+				return nil, vErr
+			}
+			return v1Client.Workspaces(h.namespace).Get(c.Request.Context(), workspaceID, metav1.GetOptions{})
+		}()
+		if getErr == nil && freshWS.Status.PodIP != "" && freshWS.Status.PodIP != podIP && freshWS.Status.Phase == phaseActive {
+			h.logger.Info("Retrying history with fresh pod IP",
+				"workspaceID", workspaceID, "oldIP", podIP, "newIP", freshWS.Status.PodIP)
+			body, status, doErr = h.doHistoryRequest(c.Request.Context(), freshWS.Status.PodIP, sessionID, password, upstreamQuery, c.ClientIP())
+		}
 	}
 
-	req, reqErr := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, upstreamURL, nil)
-	if reqErr != nil {
-		h.logger.Error("Failed to build upstream history request", reqErr, "workspaceID", workspaceID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build upstream request"})
-		return nil, 0, reqErr
-	}
-	req.SetBasicAuth("opencode", password)
-	req.Header.Set("X-Forwarded-For", c.ClientIP())
-
-	resp, doErr := h.httpClient.Do(req)
 	if doErr != nil {
 		if isConnectionError(doErr) {
 			h.logger.Warn("History upstream connection error", "error", doErr, "workspaceID", workspaceID)
 			c.Header("Retry-After", fmt.Sprintf("%d", retryAfterSec))
-			// Match the pre-existing fast-fail contract for read-only GETs
-			// against a non-bufferable upstream (proxy_request_buffer_test.go
-			// TestProxyBuffer_GETHistoryNotBufferedReturns503): 503 with a
-			// "workspace connection failed" body lets the frontend distinguish
-			// a transient pod-restart from a malformed history.
+			// 503 (not 502) preserves the contract asserted by
+			// TestProxyBuffer_GETHistoryNotBufferedReturns503: read-only
+			// GETs against a non-bufferable upstream return 503 with a
+			// "workspace connection failed" body so the frontend can
+			// distinguish a transient pod-restart from a malformed history
+			// (which surfaces as 502). The 503 is a fast-fail, not a
+			// buffered retry — buffering is reserved for writes.
 			c.JSON(http.StatusServiceUnavailable, gin.H{
 				"error":      "workspace connection failed",
 				"retryAfter": retryAfterSec,
@@ -294,22 +303,41 @@ func (h *ProxyHandler) fetchUpstreamHistory(c *gin.Context, sessionID string) ([
 		c.JSON(http.StatusBadGateway, gin.H{"error": "upstream request failed"})
 		return nil, 0, doErr
 	}
+
+	return body, status, nil
+}
+
+// doHistoryRequest performs one round-trip against opencode's
+// /session/{id}/message endpoint and returns (body, status, error).
+// Extracted from fetchUpstreamHistory so the stale-IP retry path can
+// reuse it without duplicating header / body-cap handling.
+func (h *ProxyHandler) doHistoryRequest(ctx context.Context, podIP, sessionID, password, query, clientIP string) ([]byte, int, error) {
+	upstreamURL := fmt.Sprintf("http://%s:%d/session/%s/message", podIP, opencodePort, sessionID)
+	if query != "" {
+		upstreamURL += "?" + query
+	}
+
+	req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, upstreamURL, nil)
+	if reqErr != nil {
+		return nil, 0, fmt.Errorf("build upstream history request: %w", reqErr)
+	}
+	req.SetBasicAuth("opencode", password)
+	req.Header.Set("X-Forwarded-For", clientIP)
+
+	resp, doErr := h.httpClient.Do(req)
+	if doErr != nil {
+		return nil, 0, doErr
+	}
 	defer func() { _ = resp.Body.Close() }()
 
 	limited := io.LimitReader(resp.Body, upstreamHistoryBodyCap+1)
 	body, readErr := io.ReadAll(limited)
 	if readErr != nil {
-		h.logger.Error("History upstream body read failed", readErr, "workspaceID", workspaceID)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "failed to read upstream body"})
-		return nil, 0, readErr
+		return nil, 0, fmt.Errorf("read upstream history body: %w", readErr)
 	}
 	if len(body) > upstreamHistoryBodyCap {
-		h.logger.Warn("History upstream body exceeded cap",
-			"workspaceID", workspaceID, "cap", upstreamHistoryBodyCap)
-		c.JSON(http.StatusBadGateway, gin.H{"error": "upstream history too large"})
-		return nil, 0, fmt.Errorf("upstream body > %d bytes", upstreamHistoryBodyCap)
+		return nil, 0, fmt.Errorf("upstream history body > %d bytes", upstreamHistoryBodyCap)
 	}
-
 	return body, resp.StatusCode, nil
 }
 

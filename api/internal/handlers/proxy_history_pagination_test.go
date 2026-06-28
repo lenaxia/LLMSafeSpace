@@ -4,16 +4,25 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 
+	k8smocks "github.com/lenaxia/llmsafespaces/mocks/kubernetes"
 	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
 )
 
@@ -312,4 +321,124 @@ func TestGetHistory_LimitAndBeforeStrippedFromForwardedQuery(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.True(t, strings.HasPrefix(w.Body.String(), "["),
 		"empty array must be returned, not opaque pass-through")
+}
+
+// TestGetHistory_EmptySession_ReturnsEmptyArrayNotNull pins the response
+// shape for a brand-new session with zero messages: the body must be the
+// JSON literal `[]` (not `null`, not the empty string), because the
+// frontend's transformHistory calls .filter() on the parsed result. A
+// `null` body would throw at the parse + filter step.
+func TestGetHistory_EmptySession_ReturnsEmptyArrayNotNull(t *testing.T) {
+	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[]`))
+	})
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+	env.setupWorkspaceWithT(t, "ws-1", 5)
+
+	w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions/ses_1/message", nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	body := strings.TrimSpace(w.Body.String())
+	assert.Equal(t, "[]", body, "empty session body must be the JSON literal [] (not null, not empty)")
+	assert.Empty(t, w.Header().Get("X-Next-Cursor"))
+
+	// Parse-and-filter equivalent of what the frontend does — must not throw.
+	ids := extractIDs(t, w.Body.Bytes())
+	assert.Empty(t, ids)
+}
+
+// TestGetHistory_ExactLimitBoundary_NoCursor guards the off-by-one at the
+// page edge: when the total number of displayable messages equals the
+// requested limit, all messages must be returned in one page and no
+// X-Next-Cursor must be emitted (there is no older page to fetch).
+//
+// Regression target: if the cursor-suppression condition is ever changed
+// from `start > 0` to `start >= 0` (or vice versa), this test catches the
+// off-by-one immediately.
+func TestGetHistory_ExactLimitBoundary_NoCursor(t *testing.T) {
+	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(buildHistoryFixture(50)))
+	})
+	env.setupWorkspacePodWithT(t, "ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	env.setupPasswordWithT(t, "ws-1", "test-password")
+	env.setupWorkspaceWithT(t, "ws-1", 5)
+
+	w := env.doRequestWithT(t, "GET",
+		"/api/v1/workspaces/ws-1/sessions/ses_1/message?limit=50", nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	ids := extractIDs(t, w.Body.Bytes())
+	require.Len(t, ids, 50, "total displayable == limit must return one full page")
+	assert.Equal(t, "msg_0000", ids[0])
+	assert.Equal(t, "msg_0049", ids[len(ids)-1])
+	assert.Empty(t, w.Header().Get("X-Next-Cursor"),
+		"no cursor when there are no older messages — boundary case start==0")
+}
+
+// TestGetHistory_RetriesOnStaleIP guards the stale-IP recovery on the
+// history path: if the cached workspace CRD points at an old pod IP that
+// no longer accepts connections, the handler must refetch the CRD and
+// retry against the new IP — matching the behavior the streaming
+// proxy_test.go TestProxy_RetriesOnStaleIP asserts for write paths.
+//
+// Without this, react-query would still recover via its own retry, but
+// every page load would burn one extra round-trip + render a spurious
+// error before retrying.
+func TestGetHistory_RetriesOnStaleIP(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(buildHistoryFixture(3)))
+	}))
+	defer backend.Close()
+
+	transport := &failFirstTransport{
+		server: backend,
+		failIP: "10.0.0.1:4096",
+		newIP:  "10.0.0.2:4096",
+	}
+	httpClient := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+
+	k8sMock := k8smocks.NewMockKubernetesClient()
+	llmMock := k8smocks.NewMockLLMSafespacesV1Interface()
+	wsMock := k8smocks.NewMockWorkspaceInterface()
+
+	k8sMock.On("LlmsafespacesV1").Return(llmMock, nil)
+	llmMock.On("Workspaces", "default").Return(wsMock)
+
+	fakeClientset := k8sfake.NewSimpleClientset()
+	k8sMock.On("Clientset").Return(fakeClientset)
+
+	// Both the initial GET (used to look up the cached pod IP) and the
+	// post-failure refetch (which discovers the new IP). Two `.Once()`
+	// invocations mirror the corresponding write-path test, with a
+	// trailing catch-all for any further mock calls.
+	oldCRD := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.1", string(v1.WorkspacePhaseActive), "ws-1")
+	newCRD := makeWorkspaceCRDWithStatus("ws-1", "10.0.0.2", string(v1.WorkspacePhaseActive), "ws-1")
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(oldCRD, nil).Once()
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(newCRD, nil).Once()
+	ws := makeWorkspaceCRD("ws-1", 5)
+	wsMock.On("Get", mock.Anything, "ws-1", metav1.GetOptions{}).Return(ws, nil)
+
+	secret := makePasswordSecret("ws-1", "test-password")
+	_, err := fakeClientset.CoreV1().Secrets("default").Create(context.Background(), secret, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	handler, err := NewProxyHandler(k8sMock, &testLogger{}, "default", httpClient, nil)
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/api/v1/workspaces/:id/sessions/:sessionId/message", handler.GetHistory)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/workspaces/ws-1/sessions/ses_1/message", nil)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, int32(1), atomic.LoadInt32(&transport.attempts),
+		"exactly one request should have hit the stale IP before the retry succeeded")
 }

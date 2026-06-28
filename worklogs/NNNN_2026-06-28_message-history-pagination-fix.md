@@ -182,3 +182,19 @@ contract (GET history is an opaque pass-through):
 - `cd api && gofmt -l . && go vet ./...` — clean
 - `cd frontend && npx vitest run` — 1226/1226 passing
 - `cd frontend && npx tsc --noEmit` — clean
+
+---
+
+## PR review iteration (round 1)
+
+AI reviewer flagged 5 findings on the initial PR. Addressed in a follow-up commit:
+
+1. **[critical]** `X-Next-Cursor` was not in CORS `ExposedHeaders`. In a cross-origin Helm deployment (separate `api.ingress`), the browser silently strips response headers not on the expose list — so `nextCursor` would be `undefined`, `hasNextPage` would be `false`, and the fix would silently fail to deliver in production. Added `X-Next-Cursor` to `DefaultSecurityConfig().ExposedHeaders` (`api/internal/middleware/security.go`), plus a regression test pinning the full set of exposed headers (`security_exposed_headers_test.go`).
+
+2. **[missing test]** Empty-history `[]` body — added `TestGetHistory_EmptySession_ReturnsEmptyArrayNotNull` asserting the response body is the JSON literal `[]` (not `null`), which is what `transformHistory` requires for its `.filter()` call to not throw.
+
+3. **[missing test]** Exact-limit boundary (total displayable == limit) — added `TestGetHistory_ExactLimitBoundary_NoCursor` that catches an off-by-one if the cursor-suppression condition `start > 0` were ever changed to `start >= 0`.
+
+4. **[robustness]** Stale-IP retry was lost on the new history path. The old `proxyToWorkspace` retried with a fresh pod IP on connection error; my replacement skipped that. Refactored `fetchUpstreamHistory` to extract a `doHistoryRequest` helper and reinstate the stale-IP refresh-and-retry loop (mirrors `proxy.go:290-302`). Added `TestGetHistory_RetriesOnStaleIP` modeled on the existing write-path stale-IP test.
+
+5. **[nit]** Removed the dead `var _ = httptest.NewRecorder` line and unused `net/http/httptest` import from `proxy_filter_test.go` (was a leftover dummy reference).
