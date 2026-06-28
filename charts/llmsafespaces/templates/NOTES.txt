@@ -12,14 +12,28 @@ NEXT STEPS
 
 2. Check that the database migration Job completed successfully:
 
-     kubectl -n {{ .Release.Namespace }} get jobs {{ include "llmsafespaces.fullname" . }}-migrate
-     kubectl -n {{ .Release.Namespace }} logs job/{{ include "llmsafespaces.fullname" . }}-migrate
+      kubectl -n {{ .Release.Namespace }} get jobs {{ include "llmsafespaces.fullname" . }}-migrate
+      kubectl -n {{ .Release.Namespace }} logs job/{{ include "llmsafespaces.fullname" . }}-migrate
 
    If the Job failed, the API pod will not become Ready. Common causes:
-     - Postgres host {{ .Values.postgresql.host }}:{{ .Values.postgresql.port }} unreachable
-     - postgres-password secret value incorrect
-     - Database '{{ .Values.postgresql.database }}' does not exist (the migrate
-       tool does not CREATE DATABASE; you must do that out of band)
+      - Postgres host {{ .Values.postgresql.host }}:{{ .Values.postgresql.port }} unreachable
+      - postgres-password secret value incorrect
+{{- if .Values.dbInit.enabled }}
+      - The db-init bootstrap hook (job/{{ include "llmsafespaces.fullname" . }}-db-init)
+        failed to create the role/database. The db-init Job runs as the
+        Postgres superuser before the migration Job; if it failed, check its
+        logs first:
+          kubectl -n {{ .Release.Namespace }} logs job/{{ include "llmsafespaces.fullname" . }}-db-init
+        Common db-init failures: superuser Secret {{ .Values.dbInit.superuserSecret.name }}
+        credentials wrong/missing, or the datastore NetworkPolicy blocking the
+        hook pod (the chart adds a db-init ingress rule automatically when
+        dbInit.enabled=true).
+{{- else }}
+      - Database '{{ .Values.postgresql.database }}' does not exist (the migrate
+        tool does not CREATE DATABASE; you must do that out of band, or enable
+        the optional bootstrap hook: --set dbInit.enabled=true
+        --set dbInit.superuserSecret.name=<postgres-superuser-secret>)
+{{- end }}
 
 3. Confirm the API is healthy:
 
