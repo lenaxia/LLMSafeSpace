@@ -7,7 +7,8 @@ import (
 
 func TestLLMProviderData_MarshalUnmarshal(t *testing.T) {
 	src := LLMProviderData{
-		Provider:   "anthropic",
+		Kind:       "anthropic",
+		Slug:       "anthropic",
 		APIKey:     "sk-ant-api03-secret",
 		BaseURL:    "https://api.anthropic.com/v1",
 		Default:    "anthropic/claude-sonnet-4-5-20250929",
@@ -28,8 +29,11 @@ func TestLLMProviderData_MarshalUnmarshal(t *testing.T) {
 		t.Fatalf("Unmarshal failed: %v", err)
 	}
 
-	if dst.Provider != src.Provider {
-		t.Errorf("Provider: got %q, want %q", dst.Provider, src.Provider)
+	if dst.Kind != src.Kind {
+		t.Errorf("Kind: got %q, want %q", dst.Kind, src.Kind)
+	}
+	if dst.Slug != src.Slug {
+		t.Errorf("Slug: got %q, want %q", dst.Slug, src.Slug)
 	}
 	if dst.APIKey != src.APIKey {
 		t.Errorf("APIKey: got %q, want %q", dst.APIKey, src.APIKey)
@@ -56,8 +60,9 @@ func TestLLMProviderData_MarshalUnmarshal(t *testing.T) {
 
 func TestLLMProviderData_MarshalUnmarshal_Minimal(t *testing.T) {
 	src := LLMProviderData{
-		Provider: "openai",
-		APIKey:   "sk-openai-key",
+		Kind:   "openai",
+		Slug:   "openai",
+		APIKey: "sk-openai-key",
 	}
 
 	data, err := json.Marshal(src)
@@ -70,8 +75,11 @@ func TestLLMProviderData_MarshalUnmarshal_Minimal(t *testing.T) {
 		t.Fatalf("Unmarshal failed: %v", err)
 	}
 
-	if dst.Provider != "openai" {
-		t.Errorf("Provider: got %q, want openai", dst.Provider)
+	if dst.Kind != "openai" {
+		t.Errorf("Kind: got %q, want openai", dst.Kind)
+	}
+	if dst.Slug != "openai" {
+		t.Errorf("Slug: got %q, want openai", dst.Slug)
 	}
 	if dst.APIKey != "sk-openai-key" {
 		t.Errorf("APIKey: got %q", dst.APIKey)
@@ -96,20 +104,21 @@ func TestLLMProviderData_Unmarshal_InvalidJSON(t *testing.T) {
 }
 
 func TestLLMProviderData_Unmarshal_ExtraFields(t *testing.T) {
-	raw := `{"provider":"anthropic","apiKey":"sk-...","unknown_field":"value"}`
+	raw := `{"kind":"anthropic","slug":"anthropic","apiKey":"sk-...","unknown_field":"value"}`
 	var dst LLMProviderData
 	if err := json.Unmarshal([]byte(raw), &dst); err != nil {
 		t.Fatalf("Unmarshal with extra fields should succeed: %v", err)
 	}
-	if dst.Provider != "anthropic" {
-		t.Errorf("Provider: got %q", dst.Provider)
+	if dst.Slug != "anthropic" {
+		t.Errorf("Slug: got %q", dst.Slug)
 	}
 }
 
 func TestLLMProviderData_Models_OmitEmpty(t *testing.T) {
 	src := LLMProviderData{
-		Provider: "anthropic",
-		APIKey:   "sk-...",
+		Kind:   "anthropic",
+		Slug:   "anthropic",
+		APIKey: "sk-...",
 	}
 
 	data, err := json.Marshal(src)

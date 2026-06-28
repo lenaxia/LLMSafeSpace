@@ -10,7 +10,62 @@ import { ChatPage } from "./ChatPage";
 import { TooltipProvider } from "../components/ui";
 import type { WorkspaceStreamEvent, SessionStatusEvent } from "../api/types";
 
-// --- Mocks ---
+// React-state-backed mock for useIsSessionBusy so busy state changes trigger re-renders.
+const mockBusyState = vi.hoisted(() => {
+  let val = false;
+  const listeners = new Set<(v: boolean) => void>();
+  return {
+    get: () => val,
+    set: (v: boolean) => { val = v; listeners.forEach((l) => l(v)); },
+    subscribe: (l: (v: boolean) => void) => { listeners.add(l); },
+    unsubscribe: (l: (v: boolean) => void) => { listeners.delete(l); },
+    reset: () => { val = false; listeners.clear(); },
+  };
+});
+
+// Stateful prompt store so the auto-abort guard (pendingPromptCount > 0)
+// reflects questions/permissions delivered via SSE. Mutated synchronously by
+// the add/remove/clear mocks; read at render time by the selector mocks.
+const promptStore = vi.hoisted(() => ({ questions: [] as Array<{ id: string }>, permissions: [] as Array<{ id: string }> }));
+
+vi.mock("../providers/SessionActivityProvider", async () => {
+  const { useState, useEffect } = await vi.importActual<typeof import("react")>("react");
+  return {
+    useClearPendingUnread: () => () => {},
+    useIsSessionBusy: () => {
+      const [val, setVal] = useState(mockBusyState.get());
+      useEffect(() => {
+        mockBusyState.subscribe(setVal);
+        return () => { mockBusyState.unsubscribe(setVal); };
+      }, []);
+      return val;
+    },
+    useIsSessionUnread: () => false,
+    useWorkspaceBusyCount: () => 0,
+    useIsSessionPendingAction: () => false,
+    useSessionPendingActions: () => new Set<string>(),
+    useAddPendingAction: () => () => {},
+    useRemovePendingAction: () => (id: string) => {
+      promptStore.questions = promptStore.questions.filter((q) => q.id !== id);
+      promptStore.permissions = promptStore.permissions.filter((p) => p.id !== id);
+    },
+    useAddPendingQuestion: () => (_ws: string, req: { id: string }) => {
+      if (!promptStore.questions.some((q) => q.id === req.id)) promptStore.questions = [...promptStore.questions, req];
+    },
+    useAddPendingPermission: () => (_ws: string, req: { id: string }) => {
+      if (!promptStore.permissions.some((p) => p.id === req.id)) promptStore.permissions = [...promptStore.permissions, req];
+    },
+    usePendingQuestionsForSession: () => promptStore.questions,
+    usePendingPermissionsForSession: () => promptStore.permissions,
+    useClearSessionPendingPrompts: () => () => {
+      promptStore.questions = [];
+      promptStore.permissions = [];
+    },
+    useSessionStatus: () => "idle",
+    resolveSessionStatus: () => "idle",
+    SessionActivityProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  };
+});
 
 vi.mock("../api/workspaces", () => ({
   workspacesApi: {
@@ -22,37 +77,6 @@ vi.mock("../api/workspaces", () => ({
     markSessionSeen: vi.fn().mockResolvedValue(undefined),
     getSessions: vi.fn().mockResolvedValue([]),
   },
-}));
-// Stateful prompt store so the auto-abort guard (pendingPromptCount > 0)
-// reflects questions/permissions delivered via SSE. Mutated synchronously by
-// the add/remove/clear mocks; read at render time by the selector mocks.
-const promptStore = vi.hoisted(() => ({ questions: [] as Array<{ id: string }>, permissions: [] as Array<{ id: string }> }));
-
-vi.mock("../providers/SessionActivityProvider", () => ({
-  useClearPendingUnread: () => () => {},
-  useIsSessionBusy: () => false,
-  useIsSessionUnread: () => false,
-  useWorkspaceBusyCount: () => 0,
-  useIsSessionPendingAction: () => false,
-  useSessionPendingActions: () => new Set<string>(),
-  useAddPendingAction: () => () => {},
-  useRemovePendingAction: () => (id: string) => {
-    promptStore.questions = promptStore.questions.filter((q) => q.id !== id);
-    promptStore.permissions = promptStore.permissions.filter((p) => p.id !== id);
-  },
-  useAddPendingQuestion: () => (_ws: string, req: { id: string }) => {
-    if (!promptStore.questions.some((q) => q.id === req.id)) promptStore.questions = [...promptStore.questions, req];
-  },
-  useAddPendingPermission: () => (_ws: string, req: { id: string }) => {
-    if (!promptStore.permissions.some((p) => p.id === req.id)) promptStore.permissions = [...promptStore.permissions, req];
-  },
-  usePendingQuestionsForSession: () => promptStore.questions,
-  usePendingPermissionsForSession: () => promptStore.permissions,
-  useClearSessionPendingPrompts: () => () => {
-    promptStore.questions = [];
-    promptStore.permissions = [];
-  },
-  SessionActivityProvider: ({ children }: { children: any }) => <>{children}</>,
 }));
 vi.mock("../api/messages", () => {
   const gh = vi.fn().mockResolvedValue([]);
@@ -130,6 +154,9 @@ function renderChat(qc: QueryClient, path: string) {
 }
 
 function sendSSEEvent(event: WorkspaceStreamEvent) {
+  if (event.type === "session.status") {
+    mockBusyState.set(event.status === "busy");
+  }
   act(() => { capturedSSEHandler?.(event); });
 }
 
@@ -201,12 +228,14 @@ describe("US-15.1 + US-15.2: Status-Driven Streaming Indicator", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockBusyState.reset();
     capturedSSEHandler = null;
     capturedOnReconnect = null;
     qc = makeQueryClient();
   });
 
   it("shows streaming indicator when session is busy on mount", async () => {
+    mockBusyState.set(true);
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       phase: "Active",
       sessions: [{ id: "sess-1", status: "busy" }],
@@ -268,6 +297,7 @@ describe("US-15.1 + US-15.2: Status-Driven Streaming Indicator", () => {
   });
 
   it("SSE idle event hides streaming indicator", async () => {
+    mockBusyState.set(true);
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       phase: "Active",
       sessions: [{ id: "sess-1", status: "busy" }],
@@ -305,6 +335,7 @@ describe("US-15.1 + US-15.2: Status-Driven Streaming Indicator", () => {
   });
 
   it("SSE reconnect triggers status re-poll to catch missed transitions", async () => {
+    mockBusyState.set(true);
     (workspacesApi.getStatus as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce({
         phase: "Active",
@@ -321,8 +352,11 @@ describe("US-15.1 + US-15.2: Status-Driven Streaming Indicator", () => {
       expect(getStreamingState()).toBe(true);
     });
 
-    // Simulate SSE reconnect
+    // Simulate SSE reconnect — workspace stream reconnect triggers status
+    // re-poll; the user stream (provider) also reconnects and re-seeds busy
+    // state. The mock simulates the provider clearing busy (status now idle).
     triggerReconnect();
+    mockBusyState.set(false);
 
     // After reconnect, status is re-polled and returns idle
     await waitFor(() => {
@@ -336,6 +370,8 @@ describe("US-15.3: History Fetch on Busy Reconnect", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockBusyState.reset();
+    mockBusyState.set(true);
     capturedSSEHandler = null;
     capturedOnReconnect = null;
     qc = makeQueryClient();
@@ -389,6 +425,8 @@ describe("US-15.4: Boundary Detection", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockBusyState.reset();
+    mockBusyState.set(true);
     capturedSSEHandler = null;
     capturedOnReconnect = null;
     qc = makeQueryClient();
@@ -544,6 +582,8 @@ describe("US-15.5: Idle Reconciliation", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockBusyState.reset();
+    mockBusyState.set(true);
     capturedSSEHandler = null;
     capturedOnReconnect = null;
     qc = makeQueryClient();
@@ -645,6 +685,8 @@ describe("US-15.6: Full Flow Integration", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockBusyState.reset();
+    mockBusyState.set(true);
     capturedSSEHandler = null;
     capturedOnReconnect = null;
     qc = makeQueryClient();
@@ -703,6 +745,8 @@ describe("US-15.6: Full Flow Integration", () => {
 // ---------------------------------------------------------------------------
 describe("ChatPage auto-abort stuck input sessions", () => {
   beforeEach(() => {
+    mockBusyState.reset();
+    mockBusyState.set(true);
     capturedSSEHandler = null;
     capturedOnReconnect = null;
     vi.clearAllMocks();

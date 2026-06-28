@@ -91,8 +91,8 @@ func (m *MockAuthMiddlewareService) Login(ctx context.Context, req types.LoginRe
 	return args.Get(0).(*types.AuthResponse), args.Error(1)
 }
 
-func (m *MockAuthMiddlewareService) CreateAPIKey(ctx context.Context, userID string, req types.CreateAPIKeyRequest, sessionID string) (*types.APIKey, error) {
-	args := m.Called(ctx, userID, req, sessionID)
+func (m *MockAuthMiddlewareService) CreateAPIKey(ctx context.Context, userID string, req types.CreateAPIKeyRequest, sessionID string, matchedSigningKey []byte) (*types.APIKey, error) {
+	args := m.Called(ctx, userID, req, sessionID, matchedSigningKey)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}

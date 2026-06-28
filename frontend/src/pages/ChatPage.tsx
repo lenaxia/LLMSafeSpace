@@ -27,7 +27,7 @@ import { sessionsApi } from "../api/sessions";
 import type { Message, SessionListItem, WorkspaceStreamEvent, OpenCodeEvent, QuestionRequest, PermissionRequest } from "../api/types";
 import { QuestionPrompt } from "../components/chat/QuestionPrompt";
 import { PermissionPrompt } from "../components/chat/PermissionPrompt";
-import { useClearPendingUnread, useAddPendingQuestion, useAddPendingPermission, useRemovePendingAction, usePendingQuestionsForSession, usePendingPermissionsForSession, useClearSessionPendingPrompts } from "../providers/SessionActivityProvider";
+import { useClearPendingUnread, useAddPendingQuestion, useAddPendingPermission, useRemovePendingAction, usePendingQuestionsForSession, usePendingPermissionsForSession, useClearSessionPendingPrompts, useIsSessionBusy } from "../providers/SessionActivityProvider";
 
 type StreamPart = { type: "text" | "thinking" | "tool"; text: string; toolState?: string; toolCallID?: string; toolInput?: unknown; toolOutput?: string };
 
@@ -47,9 +47,7 @@ export function ChatPage() {
     setLocalMessages([]);
     setSessionErrors([]);
     setSseStreamParts([]);
-    setServerBusy(false);
     setRetryStatus(null);
-    sseHasDrivenBusy.current = false;
     // Pending prompt content is NOT cleared here — it lives in the global
     // SessionActivityProvider (keyed by requestId) so it survives within-tab
     // navigation between a parent session and its subtasks (issue #346).
@@ -128,7 +126,7 @@ export function ChatPage() {
 
   // Reactive subscription to sessions list for context_used.
   // Uses the same query key as the Sidebar's sessions query so no extra fetch is made.
-  // staleTime:Infinity prevents re-fetching (Sidebar/useSessions owns the fetch lifecycle).
+  // staleTime:Infinity prevents re-fetching (Sidebar owns the fetch lifecycle).
   // notifyOnChangeProps:["data"] limits re-renders to data changes only.
   // We find the active session from the full list in the render body (not via `select`)
   // to avoid TanStack Query's structural-sharing optimisation dropping updates.
@@ -210,11 +208,7 @@ export function ChatPage() {
   const sseWorkspaceId = workspaceId;
   const { data: history, isLoading: historyLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useMessageHistory(activeWorkspaceId, sessionId);
 
-  // US-15.1: Derive serverBusy from workspace status
-  const sessionStatus = status?.sessions?.find((s) => s.id === sessionId);
-  const [serverBusy, setServerBusy] = useState(false);
-  // Track whether SSE has taken over serverBusy (to avoid status poll overriding SSE)
-  const sseHasDrivenBusy = useRef(false);
+  const isSessionBusy = useIsSessionBusy(sessionId ?? "");
 
   // Real-time context_used from session.next.step.ended SSE events.
   // The ref map is updated synchronously on each event; setContextVersion triggers
@@ -259,16 +253,7 @@ export function ChatPage() {
 
   const idCounterRef = useRef(0);
 
-  // Sync serverBusy from status poll (on mount / after invalidation)
-  // Only applies when SSE hasn't already driven the state
-  useEffect(() => {
-    if (sessionStatus && !sseHasDrivenBusy.current) {
-      setServerBusy(sessionStatus.status === "busy");
-    }
-  }, [sessionStatus]);
-
-
-  const { send, abort, streaming, localStreaming, notifySessionIdle, error: chatError, clearError, atCapRetryAfter, clearAtCap, streamTimedOut, clearStreamTimedOut } = useChatStream(activeWorkspaceId, sessionId, serverBusy);
+  const { send, streaming, localStreaming, notifySessionIdle, error: chatError, clearError, atCapRetryAfter, clearAtCap, streamTimedOut, clearStreamTimedOut } = useChatStream(activeWorkspaceId, sessionId, isSessionBusy);
   const [retryStatus, setRetryStatus] = useState<RetryStatus | null>(null);
   const sessionTitle = useSessionTitle(activeWorkspaceId, sessionId, isReady, streaming);
 
@@ -290,18 +275,12 @@ export function ChatPage() {
   const isReconnectMode = useRef(false);
   const knownLivePartIds = useRef<Set<string>>(new Set());
 
-  // Enter reconnect mode when session is busy on mount (serverBusy from status poll)
-  useEffect(() => {
-    if (serverBusy && !localStreaming) {
-      isReconnectMode.current = true;
-    }
-  }, [serverBusy, localStreaming]);
-
   const [sessionWasInterrupted, setSessionWasInterrupted] = useState(false);
   const [agentDied, setAgentDied] = useState(false);
   const hasAutoAbortedRef = useRef(false);
 
-  // Reset reconnect state on session change
+  // Reset reconnect state on session change — MUST be defined before the
+  // reconnect-mode activation effect below so it runs first on mount.
   useEffect(() => {
     isReconnectMode.current = false;
     hasAutoAbortedRef.current = false;
@@ -312,6 +291,14 @@ export function ChatPage() {
     prevContextUsedRef.current = undefined;
     setCompactionDetected(false);
   }, [sessionId]);
+
+  // Enter reconnect mode when session is busy — MUST be after the session-change
+  // reset effect so it runs second on mount and isn't cleared.
+  useEffect(() => {
+    if (isSessionBusy && !localStreaming) {
+      isReconnectMode.current = true;
+    }
+  }, [isSessionBusy, localStreaming]);
 
   // US-15.5: Reconcile on idle — fetch authoritative history and clear streaming state
   const reconcileOnIdle = useCallback(async () => {
@@ -566,9 +553,7 @@ export function ChatPage() {
       queryClient.invalidateQueries({ queryKey: ["sessions", workspaceId] });
       if (event.session_id === sessionId) {
         if (event.status === "idle") {
-          sseHasDrivenBusy.current = true;
           notifySessionIdle(event.session_id);
-          setServerBusy(false);
           setRetryStatus(null);
           clearStreamTimedOut();
           reconcileOnIdle();
@@ -577,8 +562,6 @@ export function ChatPage() {
           // this session — survives across views, cleared when idle).
           clearSessionPendingPrompts(event.session_id);
         } else if (event.status === "busy") {
-          sseHasDrivenBusy.current = true;
-          setServerBusy(true);
           setRetryStatus(null);
         }
       }
@@ -709,7 +692,6 @@ export function ChatPage() {
   // US-15.2: On SSE reconnect, re-poll status to catch missed transitions
   const handleSSEReconnect = useCallback(() => {
     if (workspaceId) {
-      sseHasDrivenBusy.current = false;
       queryClient.invalidateQueries({ queryKey: ["workspace-status", workspaceId] });
     }
     void queue.refreshQueue();
@@ -784,7 +766,7 @@ export function ChatPage() {
   const handleSend = (text: string) => {
     // If busy, hold the message locally — it will be sent when the session
     // next goes idle (matching TUI serialized queue behavior).
-    if (serverBusy || streaming) {
+    if (isSessionBusy || streaming) {
       queue.enqueue(text);
       return;
     }
@@ -991,7 +973,6 @@ export function ChatPage() {
               if (workspaceId && sessionId) {
                 workspacesApi.abortSession(workspaceId, sessionId);
               }
-              abort();
               void queue.clearAll();
             }}
             onLoadEarlier={() => fetchNextPage()}

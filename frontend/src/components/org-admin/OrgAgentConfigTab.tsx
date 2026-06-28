@@ -12,7 +12,7 @@ import { Toggle } from "../ui/Toggle";
 import { Spinner } from "../ui";
 import type { OrgResponse } from "../../api/orgs";
 
-export default function OrgAgentConfigTab() {
+export function OrgAgentConfigTab() {
   const { org } = useOutletContext<{ org: OrgResponse; isAdmin: boolean }>();
   const { toast } = useToast();
 

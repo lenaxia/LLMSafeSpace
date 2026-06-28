@@ -543,13 +543,15 @@ func TestLive_Worklogs_NoDuplicates(t *testing.T) {
 	// Race-window skip: when CI runs on a push-to-main event (the merge
 	// commit), origin/main IS that merge commit — which legitimately
 	// carries NNNN_ sentinels from the just-merged PR. The post-merge
-	// bot (repolint-autofix job) renames them AFTER CI runs and commits
-	// with [skip ci], so CI never re-runs on the cleaned state. In that
-	// context the test would false-positive, so we skip it. The bot's
-	// correctness is still verified by every subsequent PR run (which
-	// reads origin/main and fails if sentinels persist). See ci.yml:1341-
-	// 1343 for the documented non-gating intent and worklog 0507 for the
-	// sentinel scheme rationale.
+	// bot (dedicated .github/workflows/worklog-renumber.yml, formerly the
+	// repolint-autofix job in ci.yml) renames them AFTER CI runs and
+	// commits with [skip ci], so CI never re-runs on the cleaned state.
+	// In that context the test would false-positive, so we skip it. The
+	// bot's correctness is still verified by every subsequent PR run
+	// (which reads origin/main and fails if sentinels persist) and by
+	// the bot's own 6h cron catch-up. See worklogs 0507 (sentinel scheme
+	// rationale) and 0552 (the [skip ci] bypass incident that motivated
+	// extracting the bot to its own workflow with a cron trigger).
 	if os.Getenv("GITHUB_EVENT_NAME") == "push" && os.Getenv("GITHUB_REF") == "refs/heads/main" {
 		t.Skip("skipping sentinel check on push-to-main: the post-merge bot renames sentinels after CI runs")
 	}

@@ -36,14 +36,14 @@ type WorkspacePromptResponse struct {
 // --- Agent role types ---
 
 type RoleConfig struct {
-	Version     int               `json:"version"`
-	System      *string           `json:"system,omitempty"`
-	Description *string           `json:"description,omitempty"`
-	Color       *string           `json:"color,omitempty"`
-	Model       *string           `json:"model,omitempty"`
-	Mode        *string           `json:"mode,omitempty"`
-	Hidden      *bool             `json:"hidden,omitempty"`
-	Permissions []PermissionRule  `json:"permissions,omitempty"`
+	Version     int              `json:"version"`
+	System      *string          `json:"system,omitempty"`
+	Description *string          `json:"description,omitempty"`
+	Color       *string          `json:"color,omitempty"`
+	Model       *string          `json:"model,omitempty"`
+	Mode        *string          `json:"mode,omitempty"`
+	Hidden      *bool            `json:"hidden,omitempty"`
+	Permissions []PermissionRule `json:"permissions,omitempty"`
 }
 
 type PermissionRule struct {

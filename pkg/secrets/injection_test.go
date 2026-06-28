@@ -14,7 +14,7 @@ func TestSecretService_InjectSecrets_Empty(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	data, err := svc.InjectSecrets(ctx, "user-1", sessionID, "ws-empty")
+	data, err := svc.InjectSecrets(ctx, "user-1", sessionID, nil, "ws-empty")
 	if err != nil {
 		t.Fatalf("InjectSecrets failed: %v", err)
 	}
@@ -31,15 +31,15 @@ func TestSecretService_InjectSecrets_MultipleTypes(t *testing.T) {
 	ctx := context.Background()
 
 	// Create secrets of different types
-	s1, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "anthropic", Type: SecretTypeAPIKey, Value: `{"apiKey":"sk-ant-123","provider":"anthropic"}`,
-		Metadata: json.RawMessage(`{"provider":"anthropic"}`),
+	s1, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name: "anthropic", Type: SecretTypeAPIKey, Value: `{"apiKey":"sk-ant-123","kind":"anthropic","slug":"anthropic"}`,
+		Metadata: json.RawMessage(`{"kind":"anthropic","slug":"anthropic"}`),
 	})
-	s2, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	s2, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "gh-ssh", Type: SecretTypeSSHKey, Value: "-----BEGIN OPENSSH PRIVATE KEY-----\nfake",
 		Metadata: json.RawMessage(`{"key_type":"ed25519","host":"github.com"}`),
 	})
-	s3, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	s3, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "db-url", Type: SecretTypeEnvSecret, Value: "postgres://user:pass@host/db",
 		Metadata: json.RawMessage(`{"var_name":"DATABASE_URL"}`),
 	})
@@ -48,7 +48,7 @@ func TestSecretService_InjectSecrets_MultipleTypes(t *testing.T) {
 	_, _ = svc.SetBindings(ctx, "user-1", "ws-1", []string{s1.ID, s2.ID, s3.ID})
 
 	// Prepare injection
-	data, err := svc.InjectSecrets(ctx, "user-1", sessionID, "ws-1")
+	data, err := svc.InjectSecrets(ctx, "user-1", sessionID, nil, "ws-1")
 	if err != nil {
 		t.Fatalf("InjectSecrets failed: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestSecretService_InjectSecrets_NoSession(t *testing.T) {
 	// Initialize but don't unlock
 	_, _ = keySvc.InitializeUserKeys(ctx, "user-1", []byte("pw"))
 
-	_, err := svc.InjectSecrets(ctx, "user-1", "no-session", "ws-1")
+	_, err := svc.InjectSecrets(ctx, "user-1", "no-session", nil, "ws-1")
 	// Should succeed with empty result (no bindings)
 	if err != nil {
 		t.Fatalf("Should succeed with no bindings: %v", err)
@@ -101,9 +101,9 @@ func TestSecretService_InjectSecrets_AuditLogged(t *testing.T) {
 	svc, store, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	s1, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	s1, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "audited-inject", Type: SecretTypeAPIKey, Value: "val",
-		Metadata: json.RawMessage(`{"provider":"x"}`),
+		Metadata: json.RawMessage(`{"kind":"x","slug":"x"}`),
 	})
 	_, _ = svc.SetBindings(ctx, "user-1", "ws-1", []string{s1.ID})
 
@@ -111,7 +111,7 @@ func TestSecretService_InjectSecrets_AuditLogged(t *testing.T) {
 	store.audit = nil
 	store.mu.Unlock()
 
-	data, err := svc.InjectSecrets(ctx, "user-1", sessionID, "ws-1")
+	data, err := svc.InjectSecrets(ctx, "user-1", sessionID, nil, "ws-1")
 	if err != nil {
 		t.Fatalf("InjectSecrets failed: %v", err)
 	}
@@ -127,13 +127,13 @@ func TestSecretService_InjectSecrets_PreservesMetadata(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	s1, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	s1, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "file-secret", Type: SecretTypeSecretFile, Value: "cert-content",
 		Metadata: json.RawMessage(`{"mount_path":"cert.pem"}`),
 	})
 	_, _ = svc.SetBindings(ctx, "user-1", "ws-1", []string{s1.ID})
 
-	data, _ := svc.InjectSecrets(ctx, "user-1", sessionID, "ws-1")
+	data, _ := svc.InjectSecrets(ctx, "user-1", sessionID, nil, "ws-1")
 
 	var injected []InjectedSecret
 	json.Unmarshal(data, &injected)
@@ -198,7 +198,7 @@ func TestSecretService_InjectSecrets_BootstrapPath_NoSession_BoundNonLLMSecrets(
 	// to trigger the bug.) The user creates the secret with a real session
 	// — they are logged in when binding it. The bug only manifests later
 	// at pod boot when there is no session.
-	s, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	s, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name:     "github",
 		Type:     SecretTypeSSHKey,
 		Value:    "-----BEGIN OPENSSH PRIVATE KEY-----\nfake",
@@ -258,7 +258,7 @@ func TestSecretService_InjectSecrets_BootstrapPath_NoSession_PreservesServerKEKC
 	for i := range adminKEK {
 		adminKEK[i] = byte(i + 1)
 	}
-	adminPlaintext, _ := json.Marshal(LLMProviderData{Provider: "anthropic", APIKey: "admin-key"})
+	adminPlaintext, _ := json.Marshal(LLMProviderData{Kind: "anthropic", Slug: "anthropic", APIKey: "admin-key"})
 	adminCipher, err := EncryptSecret(adminKEK, adminPlaintext)
 	if err != nil {
 		t.Fatalf("EncryptSecret: %v", err)
@@ -266,7 +266,7 @@ func TestSecretService_InjectSecrets_BootstrapPath_NoSession_PreservesServerKEKC
 
 	mockCred := &mockCredentialStore{
 		bindings: []CredentialBinding{
-			{ID: "cred-admin", OwnerType: "admin", OwnerID: "_platform", Provider: "anthropic", Ciphertext: adminCipher, SourceType: "auto"},
+			{ID: "cred-admin", OwnerType: "admin", OwnerID: "_platform", Kind: "anthropic", Slug: "anthropic", Ciphertext: adminCipher, SourceType: "auto"},
 		},
 	}
 	combined := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCred}
@@ -274,7 +274,7 @@ func TestSecretService_InjectSecrets_BootstrapPath_NoSession_PreservesServerKEKC
 	svc.SetAdminProvider(mustStaticProvider(t, adminKEK))
 
 	// Bind a non-LLM user secret (the trigger for the bug).
-	userSecret, err := svc.CreateSecret(ctx, "user-1", "create-session", CreateSecretRequest{
+	userSecret, err := svc.CreateSecret(ctx, "user-1", "create-session", nil, CreateSecretRequest{
 		Name:     "github",
 		Type:     SecretTypeSSHKey,
 		Value:    "-----BEGIN OPENSSH PRIVATE KEY-----\nfake",
@@ -345,7 +345,7 @@ func TestSecretService_InjectSecrets_BootstrapPath_NoSession_OrgCredential(t *te
 	for i := range orgKEK {
 		orgKEK[i] = byte(i + 1)
 	}
-	orgPlaintext, _ := json.Marshal(LLMProviderData{Provider: "custom", APIKey: "org-key", BaseURL: "https://api.thekao.cloud/v1"})
+	orgPlaintext, _ := json.Marshal(LLMProviderData{Kind: "openai_compatible", Slug: "custom", APIKey: "org-key", BaseURL: "https://api.thekao.cloud/v1"})
 	orgCipher, err := EncryptSecret(orgKEK, orgPlaintext)
 	if err != nil {
 		t.Fatalf("EncryptSecret: %v", err)
@@ -353,7 +353,7 @@ func TestSecretService_InjectSecrets_BootstrapPath_NoSession_OrgCredential(t *te
 
 	mockCred := &mockCredentialStore{
 		bindings: []CredentialBinding{
-			{ID: "cred-org", OwnerType: "org", OwnerID: "org-1", Provider: "custom", Ciphertext: orgCipher, ModelAllowlist: []string{"glm-5.2"}, SourceType: "auto"},
+			{ID: "cred-org", OwnerType: "org", OwnerID: "org-1", Kind: "openai_compatible", Slug: "custom", Ciphertext: orgCipher, ModelAllowlist: []string{"glm-5.2"}, SourceType: "auto"},
 		},
 	}
 	combined := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCred}
@@ -361,7 +361,7 @@ func TestSecretService_InjectSecrets_BootstrapPath_NoSession_OrgCredential(t *te
 	svc.SetOrgProvider(mustStaticProvider(t, orgKEK))
 
 	// Trigger condition: user has a bound non-LLM secret (ssh-key in production).
-	userSecret, err := svc.CreateSecret(ctx, "user-1", "create-session", CreateSecretRequest{
+	userSecret, err := svc.CreateSecret(ctx, "user-1", "create-session", nil, CreateSecretRequest{
 		Name:     "github",
 		Type:     SecretTypeSSHKey,
 		Value:    "-----BEGIN OPENSSH PRIVATE KEY-----\nfake",
@@ -431,11 +431,11 @@ func TestSecretService_InjectSecrets_BootstrapPath_NoSession_LegacyAPIKey_Skippe
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	apiKey, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	apiKey, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name:     "legacy-anthropic",
 		Type:     SecretTypeAPIKey,
-		Value:    `{"apiKey":"sk-ant-legacy","provider":"anthropic"}`,
-		Metadata: json.RawMessage(`{"provider":"anthropic"}`),
+		Value:    `{"apiKey":"sk-ant-legacy","kind":"anthropic","slug":"anthropic"}`,
+		Metadata: json.RawMessage(`{"kind":"anthropic","slug":"anthropic"}`),
 	})
 	if err != nil {
 		t.Fatalf("CreateSecret(api-key): %v", err)
@@ -478,7 +478,7 @@ func TestSecretService_InjectSecrets_BootstrapPath_NoSession_AuditsSkippedUserDE
 	svc, store, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	envSecret, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	envSecret, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name:     "database_url",
 		Type:     SecretTypeEnvSecret,
 		Value:    "postgres://user:pass@host/db",
@@ -555,21 +555,21 @@ func TestSecretService_InjectSecrets_BootstrapPath_DeliversWorkspaceConfigDefaul
 	for i := range orgKEK {
 		orgKEK[i] = byte(i + 1)
 	}
-	orgPlaintext, _ := json.Marshal(LLMProviderData{Provider: "custom", APIKey: "org-key"})
+	orgPlaintext, _ := json.Marshal(LLMProviderData{Kind: "openai_compatible", Slug: "custom", APIKey: "org-key"})
 	orgCipher, _ := EncryptSecret(orgKEK, orgPlaintext)
 
 	combined := &combinedTestStore{
 		SecretStore: secretStore,
 		CredentialStore: &mockCredentialStore{
 			bindings: []CredentialBinding{
-				{ID: "cred-org", OwnerType: "org", OwnerID: "org-1", Provider: "custom", Ciphertext: orgCipher, SourceType: "auto"},
+				{ID: "cred-org", OwnerType: "org", OwnerID: "org-1", Kind: "openai_compatible", Slug: "custom", Ciphertext: orgCipher, SourceType: "auto"},
 			},
 		},
 	}
 	svc := NewSecretService(keySvc, combined)
 	svc.SetOrgProvider(mustStaticProvider(t, orgKEK))
 
-	userSecret, _ := svc.CreateSecret(ctx, "user-1", "create-session", CreateSecretRequest{
+	userSecret, _ := svc.CreateSecret(ctx, "user-1", "create-session", nil, CreateSecretRequest{
 		Name: "github", Type: SecretTypeSSHKey, Value: "fake",
 		Metadata: json.RawMessage(`{"key_type":"ed25519","host":"github.com"}`),
 	})
@@ -623,7 +623,7 @@ func TestSecretService_InjectSessionlessSecrets_UserBindingDoesNotShadowServerKE
 	for i := range userDEK {
 		userDEK[i] = byte(i + 100)
 	}
-	userPlaintext, _ := json.Marshal(LLMProviderData{Provider: "openai", APIKey: "user-key"})
+	userPlaintext, _ := json.Marshal(LLMProviderData{Kind: "openai", Slug: "openai", APIKey: "user-key"})
 	userCipher, err := EncryptSecret(userDEK, userPlaintext)
 	if err != nil {
 		t.Fatalf("EncryptSecret(user): %v", err)
@@ -635,7 +635,7 @@ func TestSecretService_InjectSessionlessSecrets_UserBindingDoesNotShadowServerKE
 	for i := range adminKEK {
 		adminKEK[i] = byte(i + 1)
 	}
-	adminPlaintext, _ := json.Marshal(LLMProviderData{Provider: "openai", APIKey: "admin-key"})
+	adminPlaintext, _ := json.Marshal(LLMProviderData{Kind: "openai", Slug: "openai", APIKey: "admin-key"})
 	adminCipher, err := EncryptSecret(adminKEK, adminPlaintext)
 	if err != nil {
 		t.Fatalf("EncryptSecret(admin): %v", err)
@@ -645,8 +645,8 @@ func TestSecretService_InjectSessionlessSecrets_UserBindingDoesNotShadowServerKE
 	// precedence sort that puts user creds ahead of admin (Epic 30).
 	mockCred := &mockCredentialStore{
 		bindings: []CredentialBinding{
-			{ID: "cred-user", OwnerType: "user", OwnerID: "user-1", Provider: "openai", Ciphertext: userCipher, SourceType: "explicit"},
-			{ID: "cred-admin", OwnerType: "admin", OwnerID: "_platform", Provider: "openai", Ciphertext: adminCipher, SourceType: "auto"},
+			{ID: "cred-user", OwnerType: "user", OwnerID: "user-1", Kind: "openai", Slug: "openai", Ciphertext: userCipher, SourceType: "explicit"},
+			{ID: "cred-admin", OwnerType: "admin", OwnerID: "_platform", Kind: "openai", Slug: "openai", Ciphertext: adminCipher, SourceType: "auto"},
 		},
 	}
 	combined := &combinedTestStore{SecretStore: secretStore, CredentialStore: mockCred}
@@ -688,14 +688,14 @@ func TestSecretService_InjectSecrets_CrossTenantIsolation(t *testing.T) {
 	ctx := context.Background()
 
 	// User 1 creates and binds a secret
-	s1, _ := svc.CreateSecret(ctx, "user-1", sess1, CreateSecretRequest{
+	s1, _ := svc.CreateSecret(ctx, "user-1", sess1, nil, CreateSecretRequest{
 		Name: "private", Type: SecretTypeAPIKey, Value: "user1-key",
-		Metadata: json.RawMessage(`{"provider":"x"}`),
+		Metadata: json.RawMessage(`{"kind":"x","slug":"x"}`),
 	})
 	_, _ = svc.SetBindings(ctx, "user-1", "ws-user1", []string{s1.ID})
 
 	// User 2 tries to inject from user 1's workspace (should get nothing)
-	data, err := svc.InjectSecrets(ctx, "user-2", "sess-2", "ws-user1")
+	data, err := svc.InjectSecrets(ctx, "user-2", "sess-2", nil, "ws-user1")
 	if err != nil {
 		t.Fatalf("Should not error: %v", err)
 	}

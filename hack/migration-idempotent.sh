@@ -4,7 +4,9 @@
 # Apply all up migrations twice. The second apply MUST succeed: a
 # migration using CREATE TABLE without IF NOT EXISTS, or ALTER TABLE
 # without IF EXISTS, will fail and that's a real bug — operators
-# retry migrations on transient failure.
+# retry migrations on transient failure, and the testharness (which
+# shares a single database across tests) calls MigrateUp on every
+# test setup.
 #
 # Required env vars: PGHOST, PGUSER, PGPASSWORD, PGDATABASE.
 

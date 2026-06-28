@@ -43,8 +43,8 @@ func TestStageCredentials_CorrectHTTPVerbs(t *testing.T) {
 
 	c := NewClient(srv.URL, testPassword, zaptest.NewLogger(t))
 	providers := []secrets.LLMProviderData{
-		{Provider: "anthropic", APIKey: "sk-1"},
-		{Provider: "openai", APIKey: "sk-2"},
+		{Kind: "anthropic", Slug: "anthropic", APIKey: "sk-1"},
+		{Kind: "openai", Slug: "openai", APIKey: "sk-2"},
 	}
 
 	err := c.StageCredentials(context.Background(), providers)
@@ -72,7 +72,7 @@ func TestStageCredentials_AuthPayloadMatchesOpenCodeSchema(t *testing.T) {
 
 	c := NewClient(srv.URL, testPassword, zaptest.NewLogger(t))
 	providers := []secrets.LLMProviderData{
-		{Provider: "anthropic", APIKey: "sk-ant-api03-xyz", BaseURL: "https://proxy.example.com/v1"},
+		{Kind: "anthropic", Slug: "anthropic", APIKey: "sk-ant-api03-xyz", BaseURL: "https://proxy.example.com/v1"},
 	}
 
 	err := c.StageCredentials(context.Background(), providers)
@@ -101,7 +101,7 @@ func TestStageCredentials_ContentTypeJSON(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, testPassword, zaptest.NewLogger(t))
-	providers := []secrets.LLMProviderData{{Provider: "x", APIKey: "k"}}
+	providers := []secrets.LLMProviderData{{Kind: "x", Slug: "x", APIKey: "k"}}
 
 	err := c.StageCredentials(context.Background(), providers)
 	require.NoError(t, err)
@@ -130,7 +130,7 @@ func TestPushCredentials_ContextCancelled_Aborts(t *testing.T) {
 	cancel() // cancel immediately
 
 	c := NewClient(srv.URL, testPassword, zaptest.NewLogger(t))
-	providers := []secrets.LLMProviderData{{Provider: "x", APIKey: "k"}}
+	providers := []secrets.LLMProviderData{{Kind: "x", Slug: "x", APIKey: "k"}}
 
 	err := c.PushCredentials(ctx, providers)
 	require.Error(t, err)
@@ -162,7 +162,7 @@ func TestPushCredentials_4xxError_IncludesProviderName(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, testPassword, zaptest.NewLogger(t))
-	providers := []secrets.LLMProviderData{{Provider: "my-provider", APIKey: "k"}}
+	providers := []secrets.LLMProviderData{{Kind: "my-provider", Slug: "my-provider", APIKey: "k"}}
 
 	err := c.PushCredentials(context.Background(), providers)
 	require.Error(t, err)
@@ -177,7 +177,7 @@ func TestPushCredentials_5xxError_IncludesProviderName(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, testPassword, zaptest.NewLogger(t))
-	providers := []secrets.LLMProviderData{{Provider: "broken-provider", APIKey: "k"}}
+	providers := []secrets.LLMProviderData{{Kind: "broken-provider", Slug: "broken-provider", APIKey: "k"}}
 
 	err := c.PushCredentials(context.Background(), providers)
 	require.Error(t, err)
@@ -212,7 +212,7 @@ func TestPushCredentials_ProviderIDWithSlash(t *testing.T) {
 
 	c := NewClient(srv.URL, testPassword, zaptest.NewLogger(t))
 	// opencode provider IDs like "google-vertex" are simple, but test edge case
-	providers := []secrets.LLMProviderData{{Provider: "custom-provider", APIKey: "k"}}
+	providers := []secrets.LLMProviderData{{Kind: "custom-provider", Slug: "custom-provider", APIKey: "k"}}
 
 	err := c.PushCredentials(context.Background(), providers)
 	require.NoError(t, err)
@@ -230,7 +230,7 @@ func TestPushCredentials_ProviderIDWithSpecialChars(t *testing.T) {
 
 	c := NewClient(srv.URL, testPassword, zaptest.NewLogger(t))
 	// Provider IDs from opencode are typically simple strings, but verify no mangling
-	providers := []secrets.LLMProviderData{{Provider: "openai", APIKey: "k"}}
+	providers := []secrets.LLMProviderData{{Kind: "openai", Slug: "openai", APIKey: "k"}}
 
 	err := c.PushCredentials(context.Background(), providers)
 	require.NoError(t, err)
@@ -253,7 +253,7 @@ func TestPushCredentials_EmptyBaseURL_OmitsMetadata(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, testPassword, zaptest.NewLogger(t))
-	providers := []secrets.LLMProviderData{{Provider: "anthropic", APIKey: "sk", BaseURL: ""}}
+	providers := []secrets.LLMProviderData{{Kind: "anthropic", Slug: "anthropic", APIKey: "sk", BaseURL: ""}}
 
 	err := c.StageCredentials(context.Background(), providers)
 	require.NoError(t, err)
@@ -277,7 +277,7 @@ func TestPushCredentials_NonEmptyBaseURL_IncludesMetadata(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, testPassword, zaptest.NewLogger(t))
-	providers := []secrets.LLMProviderData{{Provider: "openai", APIKey: "sk", BaseURL: "https://x.com"}}
+	providers := []secrets.LLMProviderData{{Kind: "openai", Slug: "openai", APIKey: "sk", BaseURL: "https://x.com"}}
 
 	err := c.StageCredentials(context.Background(), providers)
 	require.NoError(t, err)
@@ -304,7 +304,7 @@ func TestClient_ConcurrentStageCredentials(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL, testPassword, zaptest.NewLogger(t))
-	providers := []secrets.LLMProviderData{{Provider: "anthropic", APIKey: "sk"}}
+	providers := []secrets.LLMProviderData{{Kind: "anthropic", Slug: "anthropic", APIKey: "sk"}}
 
 	var wg sync.WaitGroup
 	for i := 0; i < 5; i++ {
@@ -368,9 +368,9 @@ func TestPushCredentials_StopsAtFirstFailure(t *testing.T) {
 
 	c := NewClient(srv.URL, testPassword, zaptest.NewLogger(t))
 	providers := []secrets.LLMProviderData{
-		{Provider: "good1", APIKey: "k"},
-		{Provider: "bad", APIKey: "k"},
-		{Provider: "good2", APIKey: "k"}, // should NOT be reached
+		{Kind: "good1", Slug: "good1", APIKey: "k"},
+		{Kind: "bad", Slug: "bad", APIKey: "k"},
+		{Kind: "good2", Slug: "good2", APIKey: "k"}, // should NOT be reached
 	}
 
 	err := c.PushCredentials(context.Background(), providers)
@@ -404,7 +404,7 @@ func TestPushCredentials_LargeAPIKey(t *testing.T) {
 	}
 
 	c := NewClient(srv.URL, testPassword, zaptest.NewLogger(t))
-	providers := []secrets.LLMProviderData{{Provider: "test", APIKey: largeKey}}
+	providers := []secrets.LLMProviderData{{Kind: "test", Slug: "test", APIKey: largeKey}}
 
 	err := c.PushCredentials(context.Background(), providers)
 	require.NoError(t, err)

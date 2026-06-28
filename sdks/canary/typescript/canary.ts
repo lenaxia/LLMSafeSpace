@@ -248,3 +248,25 @@ export async function ensureSessionWithRetry(client: any, wsId: string, maxTries
 export function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
 }
+
+// jwtLogin posts email/password and returns the JWT bearer token.
+//
+// Some endpoints (user-credential CRUD, user-secret CRUD) require the
+// session-scoped DEK that only JWT login produces (post-Epic-56). API-key
+// auth alone returns 403 "encryption key not available; re-authenticate"
+// on those paths. Scenarios that exercise user-DEK-encrypted writes must
+// use the JWT token returned here as `apiKey` for subsequent calls.
+//
+// Throws on login failure.
+export async function jwtLogin(cfg: Config): Promise<string> {
+  const body = JSON.stringify({ email: cfg.email, password: cfg.password });
+  const [status, content] = await rawDo("POST", `${cfg.apiUrl}/api/v1/auth/login`, "", body);
+  if (status !== 200) {
+    throw new Error(`jwt login failed: status=${status} body=${content.slice(0, 200).toString()}`);
+  }
+  const obj = JSON.parse(content.toString());
+  if (!obj.token) {
+    throw new Error(`jwt login: no token in response: ${JSON.stringify(obj)}`);
+  }
+  return obj.token;
+}

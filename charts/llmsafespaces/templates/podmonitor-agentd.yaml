@@ -45,7 +45,7 @@ spec:
     matchLabels:
       app: llmsafespaces
       component: workspace
-  endpoints:
+  podMetricsEndpoints:
     - port: agentd-admin
       path: /metrics
       interval: {{ .Values.monitoring.serviceMonitors.interval }}

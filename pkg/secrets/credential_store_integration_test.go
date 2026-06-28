@@ -42,7 +42,7 @@ func TestPgCredentialStore_UpsertFreeTierCredential(t *testing.T) {
 	// Verify provider_credentials row exists.
 	var count int
 	err = pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM provider_credentials WHERE owner_type='admin' AND owner_id='_platform' AND provider='opencode'`).Scan(&count)
+		`SELECT COUNT(*) FROM provider_credentials WHERE owner_type='admin' AND owner_id='_platform' AND slug='opencode-free-tier'`).Scan(&count)
 	if err != nil {
 		t.Fatalf("query provider_credentials: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestPgCredentialStore_UpsertFreeTierCredential(t *testing.T) {
 
 	// Still only 1 row.
 	err = pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM provider_credentials WHERE owner_type='admin' AND owner_id='_platform' AND provider='opencode'`).Scan(&count)
+		`SELECT COUNT(*) FROM provider_credentials WHERE owner_type='admin' AND owner_id='_platform' AND slug='opencode-free-tier'`).Scan(&count)
 	if err != nil {
 		t.Fatalf("query after upsert: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestPgCredentialStore_UpsertFreeTierCredential(t *testing.T) {
 	// Verify ciphertext was updated.
 	var stored []byte
 	err = pool.QueryRow(ctx,
-		`SELECT ciphertext FROM provider_credentials WHERE owner_type='admin' AND owner_id='_platform' AND provider='opencode'`).Scan(&stored)
+		`SELECT ciphertext FROM provider_credentials WHERE owner_type='admin' AND owner_id='_platform' AND slug='opencode-free-tier'`).Scan(&stored)
 	if err != nil {
 		t.Fatalf("query ciphertext: %v", err)
 	}
@@ -161,8 +161,8 @@ func TestPgCredentialStore_GetWorkspaceCredentials(t *testing.T) {
 	// Create admin credential.
 	var adminCredID string
 	err := pool.QueryRow(ctx,
-		`INSERT INTO provider_credentials (owner_type, owner_id, name, provider, ciphertext)
-		 VALUES ('admin', '_platform', 'admin-anthropic', 'anthropic', $1)
+		`INSERT INTO provider_credentials (owner_type, owner_id, name, kind, slug, ciphertext)
+		 VALUES ('admin', '_platform', 'admin-anthropic', 'anthropic', 'anthropic', $1)
 		 RETURNING id`, []byte("admin-cipher")).Scan(&adminCredID)
 	if err != nil {
 		t.Fatalf("insert admin cred: %v", err)
@@ -171,8 +171,8 @@ func TestPgCredentialStore_GetWorkspaceCredentials(t *testing.T) {
 	// Create user credential for same provider.
 	var userCredID string
 	err = pool.QueryRow(ctx,
-		`INSERT INTO provider_credentials (owner_type, owner_id, name, provider, ciphertext)
-		 VALUES ('user', $1, 'my-anthropic', 'anthropic', $2)
+		`INSERT INTO provider_credentials (owner_type, owner_id, name, kind, slug, ciphertext)
+		 VALUES ('user', $1, 'my-anthropic', 'anthropic', 'anthropic', $2)
 		 RETURNING id`, userID, []byte("user-cipher")).Scan(&userCredID)
 	if err != nil {
 		t.Fatalf("insert user cred: %v", err)
@@ -210,8 +210,8 @@ func TestPgCredentialStore_GetWorkspaceCredentials(t *testing.T) {
 	if bindings[0].OwnerType != "user" {
 		t.Errorf("first binding owner_type = %q, want 'user'", bindings[0].OwnerType)
 	}
-	if bindings[0].Provider != "anthropic" {
-		t.Errorf("first binding provider = %q, want 'anthropic'", bindings[0].Provider)
+	if bindings[0].Kind != "anthropic" {
+		t.Errorf("first binding kind = %q, want 'anthropic'", bindings[0].Kind)
 	}
 
 	// Second binding should be auto (admin).
@@ -267,8 +267,8 @@ func TestPgCredentialStore_HasUserProviderCredential(t *testing.T) {
 
 	// Create one.
 	_, err = pool.Exec(ctx,
-		`INSERT INTO provider_credentials (owner_type, owner_id, name, provider, ciphertext)
-		 VALUES ('user', $1, 'my-anthropic', 'anthropic', $2)`, userID, []byte("cipher"))
+		`INSERT INTO provider_credentials (owner_type, owner_id, name, kind, slug, ciphertext)
+		 VALUES ('user', $1, 'my-anthropic', 'anthropic', 'anthropic', $2)`, userID, []byte("cipher"))
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}
@@ -309,15 +309,15 @@ func TestPgCredentialStore_GetWorkspaceCredentials_PriorityOrder(t *testing.T) {
 	// Create two admin credentials for different providers.
 	var cred1ID, cred2ID string
 	err := pool.QueryRow(ctx,
-		`INSERT INTO provider_credentials (owner_type, owner_id, name, provider, ciphertext)
-		 VALUES ('admin', '_platform', 'admin-openai', 'openai', $1)
+		`INSERT INTO provider_credentials (owner_type, owner_id, name, kind, slug, ciphertext)
+		 VALUES ('admin', '_platform', 'admin-openai', 'openai', 'openai', $1)
 		 RETURNING id`, []byte("cipher1")).Scan(&cred1ID)
 	if err != nil {
 		t.Fatalf("insert cred1: %v", err)
 	}
 	err = pool.QueryRow(ctx,
-		`INSERT INTO provider_credentials (owner_type, owner_id, name, provider, ciphertext)
-		 VALUES ('admin', '_platform', 'admin-anthropic', 'anthropic', $1)
+		`INSERT INTO provider_credentials (owner_type, owner_id, name, kind, slug, ciphertext)
+		 VALUES ('admin', '_platform', 'admin-anthropic', 'anthropic', 'anthropic', $1)
 		 RETURNING id`, []byte("cipher2")).Scan(&cred2ID)
 	if err != nil {
 		t.Fatalf("insert cred2: %v", err)
@@ -373,7 +373,8 @@ func TestPgCredentialStore_UpdateCredential_NilPreservesLimits(t *testing.T) {
 	row := &CredentialRow{
 		ID:                 credID,
 		Name:               "original",
-		Provider:           "test-provider-nil",
+		Kind:               "openai_compatible",
+		Slug:               "test-cred-nil-preserve",
 		Ciphertext:         []byte("encrypted"),
 		KeyVersion:         1,
 		ModelAllowlist:     []string{"glm-5.1", "gpt-4o"},
@@ -389,7 +390,8 @@ func TestPgCredentialStore_UpdateCredential_NilPreservesLimits(t *testing.T) {
 	upd := &CredentialRow{
 		ID:                 credID,
 		Name:               "renamed",
-		Provider:           "test-provider-nil",
+		Kind:               "openai_compatible",
+		Slug:               "test-cred-nil-preserve",
 		Ciphertext:         []byte("encrypted"),
 		KeyVersion:         1,
 		ModelAllowlist:     nil, // nil = don't change

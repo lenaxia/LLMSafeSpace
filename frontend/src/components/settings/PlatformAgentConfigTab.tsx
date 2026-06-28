@@ -1,16 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
-import { promptsApi, type PlatformPrompt } from "../../api/prompts";
+import { promptsApi } from "../../api/prompts";
 import {
   agentRolesApi,
   type AgentRole,
-  type CreateAgentRoleRequest,
 } from "../../api/agentRoles";
 import { ApiClientError } from "../../api/client";
 import { useToast } from "../../providers/ToastProvider";
 import { Button, Card, CardContent, CardHeader, CardTitle, Input, Badge } from "../ui";
 import { Spinner } from "../ui";
 
-export default function PlatformAgentConfigTab() {
+export function PlatformAgentConfigTab() {
   const { toast } = useToast();
   const [prompt, setPrompt] = useState("");
   const [loadingPrompt, setLoadingPrompt] = useState(true);

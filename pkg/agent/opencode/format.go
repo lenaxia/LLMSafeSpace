@@ -77,14 +77,28 @@ func FormatOpenCodeConfig(providers []secrets.LLMProviderData) ([]byte, error) {
 				if m.Label != "" {
 					om.Name = m.Label
 				}
-				if m.ContextLimit > 0 {
-					om.Limit = &opencodeModelLimit{Context: m.ContextLimit}
+				// opencode's published JSON Schema requires BOTH context and
+				// output when `limit` is present (required: ["context", "output"],
+				// additionalProperties: false). Emitting a partial block makes
+				// opencode reject the entire config with SchemaError, so we omit
+				// the whole block when either value is missing. Re-validate against
+				// https://opencode.ai/config.json before relaxing this rule.
+				if m.ContextLimit > 0 && m.OutputLimit > 0 {
+					om.Limit = &opencodeModelLimit{
+						Context: m.ContextLimit,
+						Output:  m.OutputLimit,
+					}
 				}
 				op.Models[m.ID] = om
 			}
 		}
 
-		cfg.Provider[p.Provider] = op
+		// Key the provider map by Slug — this is the literal value
+		// opencode persists as `providerID` on session records. Pre-
+		// Epic-55 this was keyed by Provider (the SDK kind), causing
+		// identity collisions when two credentials of the same SDK
+		// kind existed for the same owner.
+		cfg.Provider[p.Slug] = op
 
 		// First provider with a Default wins.
 		if cfg.Model == "" && p.Default != "" {
@@ -131,13 +145,15 @@ type opencodeModel struct {
 	Limit *opencodeModelLimit `json:"limit,omitempty"`
 }
 
-// opencodeModelLimit mirrors the opencode config schema's model.limit object.
-// Only the context field is written here. The output field exists in opencode's
-// schema (see agent_config_writer.go buildRelayProviderEntry which writes both) but is not
-// set by FormatOpenCodeConfig because LLMModelConfig does not carry an output
-// limit — that data is also unavailable from the /v1/models API endpoint.
-// The input field is intentionally absent: opencode returns ConfigInvalidError
-// when limit.input is present (confirmed in agent_config_writer.go buildRelayProviderEntry).
+// opencodeModelLimit mirrors opencode's published JSON Schema for the model
+// `limit` object (https://opencode.ai/config.json). The schema declares
+// `required: ["context", "output"]` with `additionalProperties: false`, so
+// callers MUST set both fields. FormatOpenCodeConfig enforces this by only
+// allocating opencodeModelLimit when both are non-zero. The `input` field
+// in the schema is optional and intentionally not modeled — opencode treats
+// `input` as a separate cap from `context` and we have no source of truth
+// for it; omitting it leaves opencode's built-in default in effect.
 type opencodeModelLimit struct {
-	Context int `json:"context,omitempty"`
+	Context int `json:"context"`
+	Output  int `json:"output"`
 }

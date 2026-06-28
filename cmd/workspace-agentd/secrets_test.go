@@ -93,7 +93,7 @@ func TestMaterializeSubcommand_HappyPath(t *testing.T) {
 	secretsPath := filepath.Join(dir, "secrets.json")
 	require.NoError(t, os.WriteFile(secretsPath, []byte(`[
 		{"type":"env-secret","name":"a","metadata":{"var_name":"FOO"},"plaintext":"bar"},
-		{"type":"api-key","name":"p","plaintext":"{\"provider\":\"x\"}"}
+		{"type":"api-key","name":"p","plaintext":"{\"kind\":\"x\",\"slug\":\"x\"}"}
 	]`), 0o600))
 
 	secretsBase := filepath.Join(dir, "secrets")
@@ -289,7 +289,7 @@ func TestReloadSecretsHandler_WrongMethod(t *testing.T) {
 // (handled by PATCH /global/config instead).
 func TestShouldRestart_LLMProvider(t *testing.T) {
 	batch := []secrets.Secret{
-		{Type: "llm-provider", Name: "anthropic", Plaintext: `{"provider":"anthropic","apiKey":"sk-..."}`},
+		{Type: "llm-provider", Name: "anthropic", Plaintext: `{"kind":"anthropic","slug":"anthropic","apiKey":"sk-..."}`},
 	}
 	if shouldRestart(batch) {
 		t.Error("shouldRestart must return false for llm-provider (handled by PATCH)")
@@ -300,7 +300,7 @@ func TestShouldRestart_LLMProvider(t *testing.T) {
 func TestShouldRestart_LLMProviderMixed(t *testing.T) {
 	batch := []secrets.Secret{
 		{Type: "ssh-key", Name: "k", Metadata: map[string]string{"key_type": "ed25519"}, Plaintext: "key"},
-		{Type: "llm-provider", Name: "p", Plaintext: `{"provider":"anthropic","apiKey":"sk-..."}`},
+		{Type: "llm-provider", Name: "p", Plaintext: `{"kind":"anthropic","slug":"anthropic","apiKey":"sk-..."}`},
 		{Type: "env-secret", Name: "e", Metadata: map[string]string{"var_name": "VAR"}, Plaintext: "v"},
 	}
 	if !shouldRestart(batch) {
@@ -420,7 +420,7 @@ func TestReloadSecretsHandler_LLMProvider_CallsOpenCodeClient(t *testing.T) {
 	// We can't easily override the port in the handler, so we'll verify
 	// the handler's response indicates configReloaded=true when the
 	// provider is staged and FlushProviders succeeds.
-	body := `[{"type":"llm-provider","name":"anthropic","plaintext":"{\"provider\":\"anthropic\",\"apiKey\":\"sk-ant-test\"}"}]`
+	body := `[{"type":"llm-provider","name":"anthropic","plaintext":"{\"kind\":\"anthropic\",\"slug\":\"anthropic\",\"apiKey\":\"sk-ant-test\"}"}]`
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
@@ -463,7 +463,7 @@ func TestReloadSecretsHandler_WriterRebuildFailure_Returns500(t *testing.T) {
 		home:            dir,
 	}
 
-	body := `[{"type":"llm-provider","name":"p","plaintext":"{\"provider\":\"openai\",\"apiKey\":\"sk-oai\"}"}]`
+	body := `[{"type":"llm-provider","name":"p","plaintext":"{\"kind\":\"openai\",\"slug\":\"openai\",\"apiKey\":\"sk-oai\"}"}]`
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
@@ -499,7 +499,7 @@ func TestReloadSecretsHandler_MixedBatch_LLMAndEnv(t *testing.T) {
 	}
 
 	body := `[
-		{"type":"llm-provider","name":"p","plaintext":"{\"provider\":\"anthropic\",\"apiKey\":\"sk-1\"}"},
+		{"type":"llm-provider","name":"p","plaintext":"{\"kind\":\"anthropic\",\"slug\":\"anthropic\",\"apiKey\":\"sk-1\"}"},
 		{"type":"env-secret","name":"e","metadata":{"var_name":"MY_VAR"},"plaintext":"my_value"}
 	]`
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
@@ -588,7 +588,7 @@ func TestReloadSecretsHandler_PreservesRelayViaWriter(t *testing.T) {
 		{ID: "big-pickle", Name: "Big Pickle", ContextLimit: 131072, OutputLimit: 16384},
 	})
 
-	body := `[{"type":"llm-provider","name":"thekao","plaintext":"{\"provider\":\"thekao\",\"apiKey\":\"sk-test\",\"baseURL\":\"https://ai.thekao.cloud/v1\"}"}]`
+	body := `[{"type":"llm-provider","name":"thekao","plaintext":"{\"kind\":\"thekao\",\"slug\":\"thekao\",\"apiKey\":\"sk-test\",\"baseURL\":\"https://ai.thekao.cloud/v1\"}"}]`
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
@@ -636,7 +636,7 @@ func TestReloadSecretsHandler_NoRelay_NoDisabledProviders(t *testing.T) {
 
 	writer := newAgentConfigWriter(agentCfg) // no relay set
 
-	body := `[{"type":"llm-provider","name":"openai","plaintext":"{\"provider\":\"openai\",\"apiKey\":\"sk-personal\"}"}]`
+	body := `[{"type":"llm-provider","name":"openai","plaintext":"{\"kind\":\"openai\",\"slug\":\"openai\",\"apiKey\":\"sk-personal\"}"}]`
 	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 

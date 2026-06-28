@@ -91,9 +91,15 @@ type OrgMember struct {
 // Per design 0031 D1, org creation is platform-admin only. The admin supplies
 // the intended owner's email; the backend resolves it to a user ID. This is a
 // single lookup, not a search/list endpoint (account-enumeration prevention).
+//
+// Slug format: lowercase letters, digits, and single hyphens between segments
+// (e.g. "my-org", "team-1"). The `slug` validator is registered in
+// pkg/types/validators.go. Hyphens are required because the frontend's
+// slugify() produces them from multi-word names; rejecting hyphens would
+// produce an unreachable 400 for any user-friendly name.
 type CreateOrgRequest struct {
 	Name       string  `json:"name"       binding:"required,min=2,max=100"`
-	Slug       string  `json:"slug"       binding:"required,min=2,max=50,alphanum"`
+	Slug       string  `json:"slug"       binding:"required,min=2,max=50,slug"`
 	OwnerEmail string  `json:"ownerEmail" binding:"required,email"`
 	PlanID     OrgPlan `json:"planId"     binding:"omitempty"`
 }
@@ -101,7 +107,7 @@ type CreateOrgRequest struct {
 // UpdateOrgRequest is the request body for updating an organization.
 type UpdateOrgRequest struct {
 	Name string `json:"name" binding:"omitempty,min=2,max=100"`
-	Slug string `json:"slug" binding:"omitempty,min=2,max=50,alphanum"`
+	Slug string `json:"slug" binding:"omitempty,min=2,max=50,slug"`
 }
 
 // CreateOrgResponse is returned by POST /api/v1/orgs. Org creation is

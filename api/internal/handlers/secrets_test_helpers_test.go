@@ -317,10 +317,10 @@ func (m *testSecretStore) GetWorkspaceCredentials(_ context.Context, workspaceID
 			continue
 		}
 		result = append(result, secrets.CredentialBinding{
-			ID:         s.ID,
-			OwnerType:  "user",
-			OwnerID:    s.UserID,
-			Provider:   s.Name, // use name as provider key for dedup; decryptBinding resolves the real provider
+			ID:        s.ID,
+			OwnerType: "user",
+			OwnerID:   s.UserID,
+			Kind:      s.Name, Slug: s.Name, // use name as provider key for dedup; decryptBinding resolves the real provider
 			Ciphertext: s.Ciphertext,
 		})
 	}

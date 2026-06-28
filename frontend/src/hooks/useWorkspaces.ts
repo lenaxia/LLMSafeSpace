@@ -2,13 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import { workspacesApi } from "../api/workspaces";
 import { wsLog } from "../lib/wsLog";
 
-export function useWorkspaces() {
-  return useQuery({
-    queryKey: ["workspaces"],
-    queryFn: () => workspacesApi.list(),
-  });
-}
-
 // Phases that indicate the workspace is transitioning and not yet usable.
 const transitioningPhases = new Set(["Pending", "Creating", "Resuming", "Suspending"]);
 

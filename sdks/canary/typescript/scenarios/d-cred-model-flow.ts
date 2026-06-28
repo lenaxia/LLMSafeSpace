@@ -40,7 +40,7 @@ async function run(run: Runner, cfg: Config): Promise<void> {
     if (phase !== 'Active') return;
 
     // Step 2: Create LLM credential
-    const credValue = JSON.stringify({ provider: cfg.llmProvider, apiKey: cfg.llmApiKey });
+    const credValue = JSON.stringify({ kind: cfg.llmProvider, slug: "canary-ts-model-flow", apiKey: cfg.llmApiKey });
     const [ok2, cred] = await run.assertNoError(
       () => c.secrets.create({ name: 'canary-ts-flow-cred', type: 'llm-provider', value: credValue }),
       'create-cred: no error',

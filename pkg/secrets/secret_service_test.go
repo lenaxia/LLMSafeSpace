@@ -291,11 +291,12 @@ func TestSecretService_CreateSecret_LLMProvider_Legacy(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	resp, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name:     "my-anthropic-key",
-		Type:     SecretTypeAPIKey,
-		Value:    "sk-ant-api03-secret-key",
-		Metadata: json.RawMessage(`{"provider": "anthropic"}`),
+	resp, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name:  "my-anthropic-key",
+		Type:  SecretTypeAPIKey,
+		Value: "sk-ant-api03-secret-key",
+		Metadata: json.RawMessage(`{"kind": "anthropic",
+		"slug": "anthropic"}`),
 	})
 	if err != nil {
 		t.Fatalf("CreateSecret failed: %v", err)
@@ -320,11 +321,12 @@ func TestSecretService_CreateSecret_LLMProvider_Correct(t *testing.T) {
 	ctx := context.Background()
 
 	providerData, _ := json.Marshal(LLMProviderData{
-		Provider: "anthropic",
-		APIKey:   "sk-ant-api03-test-key",
+		Kind:   "anthropic",
+		Slug:   "anthropic",
+		APIKey: "sk-ant-api03-test-key",
 	})
 
-	resp, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	resp, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name:  "anthropic-prod",
 		Type:  SecretTypeLLMProvider,
 		Value: string(providerData),
@@ -346,7 +348,7 @@ func TestSecretService_CreateSecret_LLMProvider_InvalidJSON(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	_, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	_, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name:  "bad-cred",
 		Type:  SecretTypeLLMProvider,
 		Value: "not-valid-json",
@@ -366,7 +368,7 @@ func TestSecretService_CreateSecret_LLMProvider_MissingProvider(t *testing.T) {
 	ctx := context.Background()
 
 	val, _ := json.Marshal(map[string]string{"apiKey": "sk-ant-test"})
-	_, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	_, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name:  "missing-provider",
 		Type:  SecretTypeLLMProvider,
 		Value: string(val),
@@ -385,8 +387,9 @@ func TestSecretService_CreateSecret_LLMProvider_MissingAPIKey(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	val, _ := json.Marshal(map[string]string{"provider": "anthropic"})
-	_, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	val, _ := json.Marshal(map[string]string{"kind": "anthropic",
+		"slug": "anthropic"})
+	_, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name:  "missing-apikey",
 		Type:  SecretTypeLLMProvider,
 		Value: string(val),
@@ -403,7 +406,7 @@ func TestSecretService_CreateSecret_SSHKey(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	resp, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	resp, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name:     "github-ssh",
 		Type:     SecretTypeSSHKey,
 		Value:    "-----BEGIN OPENSSH PRIVATE KEY-----\n...",
@@ -421,7 +424,7 @@ func TestSecretService_CreateSecret_SSHKey_MissingMetadata(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	_, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	_, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name:  "github-ssh",
 		Type:  SecretTypeSSHKey,
 		Value: "key-data",
@@ -435,7 +438,7 @@ func TestSecretService_CreateSecret_SecretFile_MissingMountPath(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	_, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	_, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name:  "cert",
 		Type:  SecretTypeSecretFile,
 		Value: "cert-data",
@@ -449,7 +452,7 @@ func TestSecretService_CreateSecret_EnvSecret_MissingVarName(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	_, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	_, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name:  "db-url",
 		Type:  SecretTypeEnvSecret,
 		Value: "postgres://...",
@@ -463,7 +466,7 @@ func TestSecretService_CreateSecret_InvalidType(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	_, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	_, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name:  "test",
 		Type:  "invalid-type",
 		Value: "data",
@@ -481,7 +484,7 @@ func TestSecretService_CreateSecret_InvalidType_ListsValidTypes(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	_, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	_, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "test", Type: "bogus", Value: "data",
 	})
 	if err == nil {
@@ -512,7 +515,7 @@ func TestSecretService_CreateSecret_InvalidMetadata_NamesField(t *testing.T) {
 		{SecretTypeEnvSecret, "var_name"},
 	}
 	for _, tc := range cases {
-		_, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+		_, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 			Name: "n-" + string(tc.secretType), Type: tc.secretType, Value: "v",
 			Metadata: json.RawMessage(`{}`),
 		})
@@ -547,7 +550,7 @@ func TestSecretService_CreateSecret_RejectsAdversarialMountPath(t *testing.T) {
 		"", // empty
 	}
 	for _, mp := range bad {
-		_, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+		_, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 			Name: "f-" + mp, Type: SecretTypeSecretFile, Value: "x",
 			Metadata: json.RawMessage(`{"mount_path":"` + mp + `"}`),
 		})
@@ -557,7 +560,7 @@ func TestSecretService_CreateSecret_RejectsAdversarialMountPath(t *testing.T) {
 	}
 
 	// Sanity: a safe path is still accepted.
-	_, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	_, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "safe-secret-file", Type: SecretTypeSecretFile, Value: "x",
 		Metadata: json.RawMessage(`{"mount_path":"config/app.yaml"}`),
 	})
@@ -628,21 +631,23 @@ func TestSecretService_CreateSecret_DuplicateName(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	_, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name:     "my-key",
-		Type:     SecretTypeAPIKey,
-		Value:    "value1",
-		Metadata: json.RawMessage(`{"provider": "openai"}`),
+	_, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name:  "my-key",
+		Type:  SecretTypeAPIKey,
+		Value: "value1",
+		Metadata: json.RawMessage(`{"kind": "openai",
+		"slug": "openai"}`),
 	})
 	if err != nil {
 		t.Fatalf("First create failed: %v", err)
 	}
 
-	_, err = svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name:     "my-key",
-		Type:     SecretTypeAPIKey,
-		Value:    "value2",
-		Metadata: json.RawMessage(`{"provider": "openai"}`),
+	_, err = svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name:  "my-key",
+		Type:  SecretTypeAPIKey,
+		Value: "value2",
+		Metadata: json.RawMessage(`{"kind": "openai",
+		"slug": "openai"}`),
 	})
 	if err == nil {
 		t.Error("Duplicate name should fail")
@@ -660,7 +665,7 @@ func TestSecretService_CreateSecret_NoSession(t *testing.T) {
 	// Initialize keys but don't unlock
 	_, _ = keySvc.InitializeUserKeys(ctx, "user-1", []byte("pw"))
 
-	_, err := svc.CreateSecret(ctx, "user-1", "no-session", CreateSecretRequest{
+	_, err := svc.CreateSecret(ctx, "user-1", "no-session", nil, CreateSecretRequest{
 		Name:  "test",
 		Type:  SecretTypeAPIKey,
 		Value: "val",
@@ -674,11 +679,12 @@ func TestSecretService_GetSecret(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name:     "test-secret",
-		Type:     SecretTypeAPIKey,
-		Value:    "secret-value",
-		Metadata: json.RawMessage(`{"provider": "openai"}`),
+	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name:  "test-secret",
+		Type:  SecretTypeAPIKey,
+		Value: "secret-value",
+		Metadata: json.RawMessage(`{"kind": "openai",
+		"slug": "openai"}`),
 	})
 
 	resp, err := svc.GetSecret(ctx, "user-1", created.ID)
@@ -704,10 +710,10 @@ func TestSecretService_ListSecrets(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "key-1", Type: SecretTypeAPIKey, Value: "v1", Metadata: json.RawMessage(`{"provider":"a"}`),
+	svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name: "key-1", Type: SecretTypeAPIKey, Value: "v1", Metadata: json.RawMessage(`{"kind":"a","slug":"a"}`),
 	})
-	svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "key-2", Type: SecretTypeEnvSecret, Value: "v2", Metadata: json.RawMessage(`{"var_name":"DB_URL"}`),
 	})
 
@@ -724,11 +730,11 @@ func TestSecretService_UpdateSecret(t *testing.T) {
 	svc, store, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "updatable", Type: SecretTypeAPIKey, Value: "old-value", Metadata: json.RawMessage(`{"provider":"x"}`),
+	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name: "updatable", Type: SecretTypeAPIKey, Value: "old-value", Metadata: json.RawMessage(`{"kind":"x","slug":"x"}`),
 	})
 
-	err := svc.UpdateSecret(ctx, "user-1", sessionID, created.ID, UpdateSecretRequest{
+	err := svc.UpdateSecret(ctx, "user-1", sessionID, nil, created.ID, UpdateSecretRequest{
 		Value: "new-value",
 	})
 	if err != nil {
@@ -741,7 +747,7 @@ func TestSecretService_UpdateSecret(t *testing.T) {
 		t.Fatal("Secret should still exist")
 	}
 	// Decrypt and verify
-	dek, _ := svc.keys.GetDEK(ctx, sessionID)
+	dek, _ := svc.keys.GetDEK(ctx, sessionID, nil)
 	plaintext, _ := DecryptSecret(dek, secret.Ciphertext)
 	if string(plaintext) != "new-value" {
 		t.Errorf("Expected decrypted value 'new-value', got '%s'", string(plaintext))
@@ -752,7 +758,7 @@ func TestSecretService_UpdateSecret_NotFound(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	err := svc.UpdateSecret(ctx, "user-1", sessionID, "nonexistent", UpdateSecretRequest{Value: "x"})
+	err := svc.UpdateSecret(ctx, "user-1", sessionID, nil, "nonexistent", UpdateSecretRequest{Value: "x"})
 	if err == nil {
 		t.Error("UpdateSecret for nonexistent ID should fail")
 	}
@@ -762,8 +768,8 @@ func TestSecretService_DeleteSecret(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "deletable", Type: SecretTypeAPIKey, Value: "val", Metadata: json.RawMessage(`{"provider":"x"}`),
+	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name: "deletable", Type: SecretTypeAPIKey, Value: "val", Metadata: json.RawMessage(`{"kind":"x","slug":"x"}`),
 	})
 
 	err := svc.DeleteSecret(ctx, "user-1", created.ID)
@@ -792,11 +798,11 @@ func TestSecretService_DecryptSecretValue(t *testing.T) {
 	ctx := context.Background()
 
 	originalValue := "sk-super-secret-key-12345"
-	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "decrypt-test", Type: SecretTypeAPIKey, Value: originalValue, Metadata: json.RawMessage(`{"provider":"x"}`),
+	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name: "decrypt-test", Type: SecretTypeAPIKey, Value: originalValue, Metadata: json.RawMessage(`{"kind":"x","slug":"x"}`),
 	})
 
-	plaintext, err := svc.DecryptSecretValue(ctx, "user-1", sessionID, created.ID)
+	plaintext, err := svc.DecryptSecretValue(ctx, "user-1", sessionID, nil, created.ID)
 	if err != nil {
 		t.Fatalf("DecryptSecretValue failed: %v", err)
 	}
@@ -809,10 +815,10 @@ func TestSecretService_SetAndGetBindings(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	s1, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "key-1", Type: SecretTypeAPIKey, Value: "v1", Metadata: json.RawMessage(`{"provider":"a"}`),
+	s1, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name: "key-1", Type: SecretTypeAPIKey, Value: "v1", Metadata: json.RawMessage(`{"kind":"a","slug":"a"}`),
 	})
-	s2, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	s2, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "key-2", Type: SecretTypeEnvSecret, Value: "v2", Metadata: json.RawMessage(`{"var_name":"X"}`),
 	})
 
@@ -845,12 +851,12 @@ func TestSecretService_AuditLogging(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a secret (generates audit entry)
-	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "audited", Type: SecretTypeAPIKey, Value: "v", Metadata: json.RawMessage(`{"provider":"x"}`),
+	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name: "audited", Type: SecretTypeAPIKey, Value: "v", Metadata: json.RawMessage(`{"kind":"x","slug":"x"}`),
 	})
 
 	// Update (generates audit entry)
-	svc.UpdateSecret(ctx, "user-1", sessionID, created.ID, UpdateSecretRequest{Value: "v2"})
+	svc.UpdateSecret(ctx, "user-1", sessionID, nil, created.ID, UpdateSecretRequest{Value: "v2"})
 
 	// Delete (generates audit entry)
 	svc.DeleteSecret(ctx, "user-1", created.ID)
@@ -881,8 +887,8 @@ func TestSecretService_DeleteSecret_CascadesBindings(t *testing.T) {
 	svc, secretStore, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
-		Name: "bound-secret", Type: SecretTypeAPIKey, Value: "v", Metadata: json.RawMessage(`{"provider":"x"}`),
+	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name: "bound-secret", Type: SecretTypeAPIKey, Value: "v", Metadata: json.RawMessage(`{"kind":"x","slug":"x"}`),
 	})
 
 	// Bind to workspace
@@ -909,18 +915,18 @@ func TestSecretService_AddBindings_HappyPath_AppendsAndAudits(t *testing.T) {
 	svc, secretStore, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	pre, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	pre, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "pre", Type: SecretTypeEnvSecret, Value: "p",
 		Metadata: json.RawMessage(`{"var_name":"PRE"}`),
 	})
 	if err != nil {
 		t.Fatalf("create pre: %v", err)
 	}
-	add1, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	add1, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "add1", Type: SecretTypeEnvSecret, Value: "a",
 		Metadata: json.RawMessage(`{"var_name":"A"}`),
 	})
-	add2, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	add2, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "add2", Type: SecretTypeEnvSecret, Value: "b",
 		Metadata: json.RawMessage(`{"var_name":"B"}`),
 	})
@@ -977,7 +983,7 @@ func TestSecretService_AddBindings_Idempotent(t *testing.T) {
 	svc, secretStore, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	s, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	s, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "s", Type: SecretTypeEnvSecret, Value: "v",
 		Metadata: json.RawMessage(`{"var_name":"S"}`),
 	})
@@ -1002,7 +1008,7 @@ func TestSecretService_GetSecretByName_OwnerAndCrossUser(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	created, err := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	created, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "shared-name", Type: SecretTypeEnvSecret, Value: "v",
 		Metadata: json.RawMessage(`{"var_name":"X"}`),
 	})
@@ -1047,7 +1053,7 @@ func TestSecretService_GetBindingsForSecret_OwnershipEnforced(t *testing.T) {
 	svc, _, sessionID := setupSecretService(t)
 	ctx := context.Background()
 
-	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, CreateSecretRequest{
+	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
 		Name: "lookup-me", Type: SecretTypeEnvSecret, Value: "v",
 		Metadata: json.RawMessage(`{"var_name":"X"}`),
 	})

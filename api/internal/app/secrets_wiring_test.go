@@ -77,7 +77,7 @@ func TestSecretsWiring_E2E(t *testing.T) {
 	wsGroup.GET("/:id/bindings", secretsHandler.GetBindings)
 
 	// === Test: Create secret ===
-	body := `{"name":"wiring-test","type":"api-key","value":"sk-wired-123","metadata":{"provider":"openai"}}`
+	body := `{"name":"wiring-test","type":"api-key","value":"sk-wired-123","metadata":{"kind":"openai","slug":"openai"}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/secrets", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -305,7 +305,7 @@ func TestPodBootstrapHandler_LoggerWired(t *testing.T) {
 	fakeClientset := k8sfake.NewSimpleClientset()
 	dbSvc := &fakeAppDBLookup{}
 	h := handlers.NewPodBootstrapHandlerFromClientset(
-		fakeClientset, secretService, dbSvc, "test-namespace",
+		fakeClientset, secretService, dbSvc, nil, "test-namespace",
 	)
 	if h.HasLogger() {
 		t.Fatalf("freshly-constructed PodBootstrapHandler must not have a logger before SetLogger is called")

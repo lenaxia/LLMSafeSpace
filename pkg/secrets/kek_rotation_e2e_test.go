@@ -43,7 +43,7 @@ func TestE2E_KEKRotation_OldKeyCanNoLongerDecrypt(t *testing.T) {
 	newProviders := map[string]RootKeyProvider{"provider-credentials": newProv}
 
 	// Seed a row encrypted under the OLD key (version 1).
-	originalPlaintext := []byte(`{"provider":"anthropic","apiKey":"sk-rotate-me"}`)
+	originalPlaintext := []byte(`{"kind":"anthropic","slug":"anthropic","apiKey":"sk-rotate-me"}`)
 	oldCiphertext, err := EncryptSecret(oldKey, originalPlaintext)
 	require.NoError(t, err)
 

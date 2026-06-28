@@ -30,7 +30,8 @@ vi.mock("../../api/providerCredentials", () => ({
 const CRED = {
   id: "cred-1",
   name: "My OpenAI Key",
-  provider: "openai",
+  kind: "openai",
+  slug: "my-openai-key",
   baseURL: "https://ai.example.com/v1",
   modelAllowlist: ["glm-5.1", "gpt-4o"],
   createdAt: "2026-01-01T00:00:00Z",
@@ -66,11 +67,12 @@ describe("UserProviderCredentialsTab", () => {
     });
   });
 
-  it("renders credential row with name, provider badge, allowlist count", async () => {
+  it("renders credential row with name, kind+slug badges, allowlist count", async () => {
     mockList.mockResolvedValue([CRED]);
     renderTab();
     await waitFor(() => {
       expect(screen.getByText("My OpenAI Key")).toBeInTheDocument();
+      expect(screen.getByText("my-openai-key")).toBeInTheDocument();
       expect(screen.getByText("openai")).toBeInTheDocument();
       expect(screen.getByText("2 models")).toBeInTheDocument();
     });
@@ -172,7 +174,9 @@ describe("UserProviderCredentialsTab", () => {
     expect(screen.getByText("Add Provider Key")).toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText("e.g. My OpenAI Key"), { target: { value: "Work Key" } });
-    fireEvent.change(screen.getByPlaceholderText("e.g. openai"), { target: { value: "openai" } });
+    // Kind is now a select element with an empty default option.
+    fireEvent.change(screen.getByDisplayValue("— select SDK kind —"), { target: { value: "openai" } });
+    // Slug auto-populated from name as "work-key".
     fireEvent.change(screen.getByPlaceholderText("sk-… or key-…"), { target: { value: "sk-work-key" } });
 
     // Submit — the form's own button is the second "Add key" button
@@ -180,7 +184,12 @@ describe("UserProviderCredentialsTab", () => {
     fireEvent.click(addBtns[addBtns.length - 1]!);
     await waitFor(() => {
       expect(mockCreate).toHaveBeenCalledWith(
-        expect.objectContaining({ name: "Work Key", provider: "openai", apiKey: "sk-work-key" }),
+        expect.objectContaining({
+          name: "Work Key",
+          kind: "openai",
+          slug: "work-key",
+          apiKey: "sk-work-key",
+        }),
       );
       expect(screen.getByText("Work Key")).toBeInTheDocument();
     });
@@ -196,7 +205,28 @@ describe("UserProviderCredentialsTab", () => {
     // Submit empty — the form button is the last "Add key"
     const addBtns = screen.getAllByRole("button", { name: "Add key" });
     fireEvent.click(addBtns[addBtns.length - 1]!);
-    expect(screen.getByText(/Name, provider, and API key are required/)).toBeInTheDocument();
+    expect(screen.getByText(/Name, kind, slug, and API key are required/)).toBeInTheDocument();
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("create form rejects invalid slug format client-side", async () => {
+    // Epic 55: slug must match ^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$. Client
+    // validation prevents the server's 400 from being the user's first feedback.
+    mockList.mockResolvedValue([]);
+    renderTab();
+    await waitFor(() => screen.getByText(/Add key/));
+    const [navBtn] = screen.getAllByRole("button", { name: /Add key/ });
+    fireEvent.click(navBtn!);
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. My OpenAI Key"), { target: { value: "Work" } });
+    fireEvent.change(screen.getByDisplayValue("— select SDK kind —"), { target: { value: "openai" } });
+    const slugInput = screen.getByPlaceholderText("my-openai");
+    fireEvent.change(slugInput, { target: { value: "Has Space" } });
+    fireEvent.change(screen.getByPlaceholderText("sk-… or key-…"), { target: { value: "sk-test" } });
+
+    const addBtns = screen.getAllByRole("button", { name: "Add key" });
+    fireEvent.click(addBtns[addBtns.length - 1]!);
+    expect(screen.getByText(/Slug must be 1–64 lowercase alphanumeric/)).toBeInTheDocument();
     expect(mockCreate).not.toHaveBeenCalled();
   });
 });

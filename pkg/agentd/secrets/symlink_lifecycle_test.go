@@ -176,7 +176,7 @@ func TestMaterialize_WritesThroughSymlinkToTmpfs(t *testing.T) {
 		{
 			Type:      "llm-provider",
 			Name:      "anthropic",
-			Plaintext: `{"provider":"anthropic","api_key":"sk-ant-test"}`,
+			Plaintext: `{"kind":"anthropic","slug":"anthropic","api_key":"sk-ant-test"}`,
 		},
 	}
 

@@ -257,6 +257,26 @@ func (h *ProxyHandler) snapshotUserWorkspaces(ctx context.Context, s *eventbroke
 			EventID:     0, // snapshot events have no id: line
 		})
 	}
+
+	// US-55.3: Pending-input anti-entropy. Re-emit each Active workspace's
+	// authoritative pending set from the pod so a reconnecting client rebuilds
+	// pendingActions correctly (mirrors busy's seedBusy). Bounded by the ≤10
+	// active-workspace scale constraint; each fetch is timeout-guarded.
+	if h.dialect != nil {
+		for _, wsID := range wsIDs {
+			phase := ""
+			if phases != nil {
+				phase = phases[wsID]
+			}
+			if phase != string(phaseActive) {
+				continue
+			}
+			go func(id string) {
+				defer func() { _ = recover() }() // never let a fetch panic the snapshot
+				h.emitPendingInputRequests(ctx, id)
+			}(wsID)
+		}
+	}
 }
 
 // heartbeatLoop sends heartbeat sentinels into s.Ch every heartbeatInterval.

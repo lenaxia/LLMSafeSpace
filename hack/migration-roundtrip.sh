@@ -20,6 +20,10 @@ cd "$(dirname "$0")/.."
 
 # Schema-snapshot filter: drop volatile bits so the comparison is
 # structural. \restrict / \unrestrict are pg_dump v17+ session tokens.
+# COMMENT ON SCHEMA public is filtered because the default value
+# differs across Postgres versions (PG16: empty string; PG17:
+# "standard public schema") and across reset-via-DROP-CASCADE vs
+# fresh-database initial states. It's metadata, not application schema.
 snapshot() {
     pg_dump --schema-only --no-owner --no-privileges \
         | grep -v '^--' \
@@ -27,6 +31,7 @@ snapshot() {
         | grep -v '^SELECT pg_catalog.set_config' \
         | grep -v '^\\restrict' \
         | grep -v '^\\unrestrict' \
+        | grep -v "^COMMENT ON SCHEMA public " \
         | sort -u
 }
 
