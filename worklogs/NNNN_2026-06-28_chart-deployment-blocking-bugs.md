@@ -46,9 +46,13 @@ Automated review: **REQUEST CHANGES** with a critical finding — the db-init po
 
 Fixed a misspell (`materialised` → `materialized`) caught by golangci-lint. Awaiting re-review.
 
-### PR #439 — api/Makefile same-class bug (Rule 5)
+### PR #439 — api/Makefile + migrate.sh same-class bug (Rule 5)
 
-`fix/api-makefile-migrate-url-encoding`. The `migrate-up`/`migrate-down` targets in `api/Makefile` had the identical `postgres://` URL-with-interpolated-password bug as #424. Per Rule 5 (Zero Technical Debt), fixed it with the same libpq KV conversion. TDD: added `api/migrate_makefile_test.go` (red → green) that parses the Makefile and asserts the connection-string form.
+`fix/api-makefile-migrate-url-encoding`. The `migrate-up`/`migrate-down` targets in `api/Makefile` had the identical `postgres://` URL-with-interpolated-password bug as #424. Per Rule 5 (Zero Technical Debt), fixed it with the same libpq KV conversion.
+
+The first automated review (REQUEST CHANGES) then caught a **second** same-class site I had missed in my initial scan: `api/scripts/migrate.sh:24` built `CONNECTION_STRING` as `postgres://${DB_USER}:${DB_PASSWORD}@...`. It is reachable live code (referenced by `api/scripts/init-db.sh` and `design/0023_docker-deployment.md`). The sibling scripts `init-db.sh` and `health-check.sh` already used the safe `PGPASSWORD=… psql …` pattern, making `migrate.sh` the inconsistent outlier. Fixed under the PR's own Rule 5 mandate. TDD: refactored `api/migrate_makefile_test.go` into shared helpers and added `TestMigrateShellScript_UseLibpqKVNotURL` (content-scan, since migrate.sh builds the string in an intermediate variable). Automated re-review: **APPROVE**.
+
+**Lesson for future scans:** my initial scan searched chart templates only. The same-class bug existed in `api/` dev tooling (`Makefile` + `scripts/migrate.sh`) which I should have grepped repo-wide for `postgres://` with interpolated variables. The reviewer's Rule 5 framing correctly forced the complete fix.
 
 ---
 
@@ -65,7 +69,7 @@ Fixed a misspell (`materialised` → `materialized`) caught by golangci-lint. Aw
 
 ## Blockers
 
-None. All four PRs are open; #436 and #437 are APPROVED, #438 has fixes pushed and awaits re-review, #439 awaits first review.
+None. All four PRs are open and APPROVED (#436, #437, #438, #439). Ready to merge in dependency order: #436 → #437 → #439 (independent) → #438 (consolidate duplicated helpers if #437 merged first).
 
 ---
 
@@ -110,6 +114,7 @@ CI on all four PRs: Lint pass, golangci-lint pass (after misspell fixes), Test (
 - `charts/llmsafespaces/values.yaml` (#438 — dbInit block)
 - `charts/llmsafespaces/chart_dbinit_test.go` (#438, new)
 - `api/Makefile` (#439)
+- `api/scripts/migrate.sh` (#439)
 - `api/migrate_makefile_test.go` (#439, new)
 
 This worklog covers PRs #436, #437, #438, #439.
