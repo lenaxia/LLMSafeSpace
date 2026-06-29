@@ -358,7 +358,7 @@ func runMaterializeCommand(args []string, stdout, stderr io.Writer) int {
 	// pre-first-bind state and is handled as an empty batch below.
 	baseSecrets, err := secrets.LoadSecretsFile(*from)
 	if err != nil {
-		if !(errors.Is(err, os.ErrNotExist) || strings.Contains(err.Error(), "no such file")) {
+		if !errors.Is(err, os.ErrNotExist) && !strings.Contains(err.Error(), "no such file") {
 			_, _ = fmt.Fprintf(stderr, "materialize: %v\n", err)
 			return 2
 		}
@@ -821,7 +821,7 @@ func hasLLMProviders(batch []secrets.Secret) bool {
 }
 
 // mergeSecretBatches combines a base batch with a layered batch, resolving
-// duplicates in favour of the layered batch. The dedup key is Type+Name —
+// duplicates in favor of the layered batch. The dedup key is Type+Name —
 // the materializer's identity for a secret within a workspace. Metadata and
 // Plaintext from the layered entry replace the base entry wholesale.
 //
