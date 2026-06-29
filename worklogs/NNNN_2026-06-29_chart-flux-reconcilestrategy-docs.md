@@ -68,7 +68,7 @@ go vet ./charts/llmsafespaces/   # clean
 - Address automated-reviewer findings; iterate to APPROVE; squash-merge.
 - After merge: confirm the consuming Flux HelmRelease carries `reconcileStrategy: Revision` (already restored in talos-ops-prod `57a53dce`); the docs now make the requirement discoverable upstream for all consumers.
 - Long-term (#456 option 2): OCI publish to ghcr.io or a CI version-bump Action to make the trap impossible regardless of consumer config.
-- Companion PR: #455 (migrate Job CLI args).
+- Companion PR: #457 (migrate Job CLI args, issue #455).
 
 ---
 

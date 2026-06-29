@@ -50,11 +50,11 @@ func chartFile(t *testing.T, rel string) string {
 func TestChart_ReadmeDocumentsFluxReconcileStrategy(t *testing.T) {
 	readme := chartFile(t, "README.md")
 
-	// The fix keyword consumers must apply.
-	assert.Contains(t, readme, "reconcileStrategy",
-		"README must document reconcileStrategy (the Flux setting that avoids stale chart packaging; #456)")
-	assert.Contains(t, readme, "Revision",
-		"README must name reconcileStrategy: Revision as the remediation for Git-sourced deploys")
+	// The fix keyword consumers must apply. Assert the LITERAL pair so a stale
+	// `reconcileStrategy: ChartVersion` line plus the word "Revision" elsewhere
+	// cannot satisfy the guard — that combination is precisely the trap.
+	assert.Contains(t, readme, "reconcileStrategy: Revision",
+		"README must contain the literal reconcileStrategy: Revision pair (independent tokens would let ChartVersion+Revision pass)")
 
 	// It must explain WHY (otherwise the fix looks arbitrary). The version
 	// pin is the root cause and must be called out.
@@ -64,14 +64,15 @@ func TestChart_ReadmeDocumentsFluxReconcileStrategy(t *testing.T) {
 	// It must name the affected tooling so operators searching the README can
 	// find the section. FluxCD is the primary consumer; Argo CD has the same
 	// class of issue.
-	for _, term := range []string{"Flux", "GitRepository"} {
+	for _, term := range []string{"Flux", "GitRepository", "HelmRelease"} {
 		assert.Contains(t, readme, term,
-			"README must reference Flux/GitRepository so the trap is discoverable")
+			"README must reference %s so the trap is discoverable", term)
 	}
 
-	// It must give a copy-pasteable spec so operators don't paraphrase it wrong.
-	assert.Contains(t, readme, "chart:",
-		"README must include a HelmRelease chart.spec example for reconcileStrategy")
+	// It must give a copy-pasteable HelmRelease spec (sourceRef is specific to
+	// the Flux example; the bare token `chart:` is too common to be a signal).
+	assert.Contains(t, readme, "sourceRef:",
+		"README must include a HelmRelease chart.spec example with a sourceRef")
 }
 
 // TestChart_ChartYamlDescriptionReferencesGitOps asserts Chart.yaml's
