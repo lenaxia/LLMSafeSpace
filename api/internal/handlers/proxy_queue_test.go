@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -110,26 +111,34 @@ func TestEnqueueMessage_NoQueueService(t *testing.T) {
 // this, a message enqueued after the agent finished would sit in Redis forever
 // — no session.status=idle event will arrive because the session is already quiet.
 //
-// Also asserts (defense-in-depth) that the queue-generated messageID reaches
-// opencode in the correct on-the-wire format: "msg_" + 12 hex + 14 base62.
-// A regression in the ID generator that does not also break the unit tests
-// (e.g. wrong field name in promptRequestBody) would still be caught here.
+// Also asserts (regression for the 2026-06-29 second-pass incident) that the
+// drain path does NOT send a client-supplied messageID to opencode. Letting
+// opencode generate its own user-message ID is the only way to keep the
+// session.prompt loop's lex-ordering invariant correct in both directions
+// (above the previous-turn assistant AND below the new-turn assistant).
+// See worklog for the role-flip / silent-drop incidents.
 func TestEnqueueMessage_DrainsWhenIdle(t *testing.T) {
 	type promptCall struct {
 		text      string
 		messageID string
+		bodyRaw   string
 	}
 	promptCalled := make(chan promptCall, 1)
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/session/ses-1/prompt_async" {
+			bodyBytes, _ := io.ReadAll(r.Body)
 			var body struct {
 				Parts     []struct{ Text string } `json:"parts"`
 				MessageID string                  `json:"messageID"`
 			}
-			_ = json.NewDecoder(r.Body).Decode(&body)
+			_ = json.Unmarshal(bodyBytes, &body)
 			if len(body.Parts) > 0 {
 				select {
-				case promptCalled <- promptCall{text: body.Parts[0].Text, messageID: body.MessageID}:
+				case promptCalled <- promptCall{
+					text:      body.Parts[0].Text,
+					messageID: body.MessageID,
+					bodyRaw:   string(bodyBytes),
+				}:
 				default:
 				}
 			}
@@ -172,20 +181,19 @@ func TestEnqueueMessage_DrainsWhenIdle(t *testing.T) {
 	case call := <-promptCalled:
 		assert.Equal(t, "drain me", call.text)
 
-		// Verify the messageID reaches opencode in the format required to
-		// keep opencode's session.prompt loop exiting cleanly. The full
-		// invariant (this ID must lex-sort below opencode's assistant ID)
-		// is exercised by unit tests in msgqueue/service_test.go; here we
-		// pin the on-the-wire shape: "msg_" + 12 hex + 14 base62.
-		require.Len(t, call.messageID, 30,
-			"messageID must be msg_ + 26 body chars (opencode Identifier.ascending layout)")
-		require.True(t, strings.HasPrefix(call.messageID, "msg_"),
-			"messageID must start with msg_")
-		for i, c := range call.messageID[4:16] {
-			require.True(t,
-				(c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'),
-				"messageID hex prefix char %d (%q) must be lowercase hex", i, c)
-		}
+		// Regression: opencode's session.prompt loop-exit predicate depends
+		// on `lastUser.id < lastAssistant.id` under lex comparison. Any
+		// client-supplied messageID risks landing on the wrong side of
+		// either bound (above the new-turn assistant → infinite loop; below
+		// the previous-turn assistant → silent drop without LLM call).
+		// Letting opencode generate the ID via its monotonic
+		// MessageID.ascending() is the only design that keeps the
+		// invariant correct in both directions.
+		assert.Empty(t, call.messageID,
+			"messageID must not be sent on prompt_async; opencode must generate it")
+		assert.NotContains(t, call.bodyRaw, "messageID",
+			"prompt_async body must not contain a messageID key (omitempty) — got %s",
+			call.bodyRaw)
 	case <-time.After(2 * time.Second):
 		t.Fatal("drain-on-enqueue: prompt_async was never called for idle session")
 	}

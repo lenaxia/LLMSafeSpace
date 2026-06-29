@@ -24,35 +24,25 @@ const ocAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwx
 // Source: packages/opencode/src/id/id.ts (const LENGTH = 26).
 const ocBodyLen = 26
 
-// idClockSafetyMs backdates the timestamp embedded in queue IDs to absorb
-// expected clock skew between the API pod and the workspace pod, plus any
-// transport/processing delay before opencode generates its assistant ID.
+// Queued message IDs are generated using a faithful port of opencode's
+// Identifier.ascending("message") layout so they are temporally sortable
+// when rendered alongside opencode-generated history IDs on the frontend.
 //
-// We need our ID to lex-sort STRICTLY below opencode's first
-// same-conversation assistant ID. Opencode uses its own pod's wall clock,
-// which can drift relative to ours by tens of ms even with NTP. Backdating
-// by 60s puts us comfortably below opencode's clock regardless of skew, at
-// the cost of decoded queue-ID timestamps appearing 60s in the past — an
-// acceptable cosmetic trade since nothing relies on decoded ID time
-// (creation time is tracked separately in QueuedMessage.EnqueuedAt).
-const idClockSafetyMs = 60 * 1000
-
-// Opencode's session.prompt agent loop exits only when
-// userMessage.id < assistantMessage.id under lexicographic string comparison
-// (decompiled from opencode binary v1.15.12). Any caller-supplied user message
-// ID that sorts above the assistant ID causes opencode to loop indefinitely,
-// re-prompting the model with the same user text wrapped in
-// <system-reminder> tags — observable in chat as the assistant
-// "talking to itself" with role-flipped replies.
+// Queue IDs are NOT used as the opencode `messageID` on prompt_async
+// (api/internal/handlers/proxy_events.go: promptRequestBody.MessageID uses
+// omitempty and is intentionally left blank). Letting opencode generate its
+// own message ID via MessageID.ascending() is the only design that keeps
+// opencode's session.prompt loop-exit invariant correct in both directions:
 //
-// To preserve that invariant, queued message IDs are generated using a
-// faithful port of opencode's Identifier.ascending("message") format. Because
-// the queue service runs before opencode receives the prompt, the queue ID's
-// embedded timestamp is always <= opencode's, and the hex-encoded prefix
-// preserves that order.
+//   - User ID above the new-turn assistant ID → infinite loop, model
+//     re-prompted with <system-reminder> wrappers (role-flip / self-talk).
+//   - User ID below the previous-turn assistant ID → loop exits immediately
+//     on step 0, no LLM call, queued message silently dropped.
 //
-// See the worklog under worklogs/*_msg-queue-id-format-role-flip-fix.md and
-// the incident on 2026-06-29 (session ses_0ed760478ffeQVPJGD5iEvRRmu).
+// We saw both failure modes in production on 2026-06-29. The opencode-format
+// generator stays only because the queue ID surfaces in the frontend queue
+// UI alongside opencode history IDs, and matching the shape keeps temporal
+// ordering coherent there.
 
 // generateOpencodeMessageID returns a "msg_..." identifier matching
 // opencode's Identifier.ascending("message") layout exactly:
@@ -62,25 +52,18 @@ const idClockSafetyMs = 60 * 1000
 // The 12 hex chars encode the low 48 bits of (timestamp_ms * 0x1000 + counter)
 // big-endian; the trailing 14 chars are cryptographically random base62.
 //
-// Critical ordering invariants:
-//
-//  1. The embedded timestamp is the current wall clock minus idClockSafetyMs.
-//     This guarantees ours < opencode's even under clock skew between the API
-//     pod and the workspace pod.
-//
-//  2. Counter is held at 0. Opencode's per-ms counter starts at 0 and is
-//     incremented before encoding (minimum 1), so on a same-ms tie our hex
-//     prefix still sorts strictly below opencode's.
+// Counter is held at 0 so that queue IDs generated in the same millisecond
+// as one another are distinguished only by the random suffix; collision
+// across 14 base62 chars is negligible.
 //
 // Source for the opencode algorithm: packages/opencode/src/id/id.ts.
 func generateOpencodeMessageID() (string, error) {
-	now := time.Now().UnixMilli() - idClockSafetyMs
+	now := time.Now().UnixMilli()
 
-	// counter = 0, deliberately below opencode's minimum-used counter of 1.
-	// (ts << 12) | 0, truncated to low 48 bits via the 6-byte big-endian
-	// write loop below.
-	// gosec G115: `now` is `UnixMilli() - 60_000`, always positive
-	// post-1970, so the int64→uint64 conversion never wraps.
+	// counter = 0; uniqueness within a millisecond comes from the random
+	// suffix.
+	// gosec G115: `now` from UnixMilli() is always positive post-1970, so
+	// the int64→uint64 conversion never wraps.
 	n := uint64(now) * 0x1000 //nolint:gosec // bounded positive timestamp
 
 	var bytes6 [6]byte
