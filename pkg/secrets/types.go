@@ -95,15 +95,16 @@ func formatSecretTypes(types []SecretType) string {
 
 // UserSecret represents an encrypted secret record.
 type UserSecret struct {
-	ID         string          `json:"id"`
-	UserID     string          `json:"userId"`
-	Name       string          `json:"name"`
-	Type       SecretType      `json:"type"`
-	Ciphertext []byte          `json:"-"` // never exposed via API
-	KeyVersion int             `json:"keyVersion"`
-	Metadata   json.RawMessage `json:"metadata"`
-	CreatedAt  time.Time       `json:"createdAt"`
-	UpdatedAt  time.Time       `json:"updatedAt"`
+	ID            string          `json:"id"`
+	UserID        string          `json:"userId"`
+	Name          string          `json:"name"`
+	Type          SecretType      `json:"type"`
+	Ciphertext    []byte          `json:"-"` // never exposed via API
+	KeyVersion    int             `json:"keyVersion"`
+	Metadata      json.RawMessage `json:"metadata"`
+	GlobalDefault bool            `json:"globalDefault"`
+	CreatedAt     time.Time       `json:"createdAt"`
+	UpdatedAt     time.Time       `json:"updatedAt"`
 }
 
 // SecretBinding represents a secret-to-workspace binding.
@@ -126,26 +127,31 @@ type AuditEntry struct {
 
 // CreateSecretRequest is the API request for creating a secret.
 type CreateSecretRequest struct {
-	Name     string          `json:"name" binding:"required,min=1,max=255"`
-	Type     SecretType      `json:"type" binding:"required"`
-	Value    string          `json:"value" binding:"required"` // plaintext, encrypted before storage
-	Metadata json.RawMessage `json:"metadata"`
+	Name          string          `json:"name" binding:"required,min=1,max=255"`
+	Type          SecretType      `json:"type" binding:"required"`
+	Value         string          `json:"value" binding:"required"` // plaintext, encrypted before storage
+	Metadata      json.RawMessage `json:"metadata"`
+	GlobalDefault bool            `json:"globalDefault,omitempty"`
 }
 
 // UpdateSecretRequest is the API request for updating a secret value.
 type UpdateSecretRequest struct {
-	Value    string          `json:"value" binding:"required"`
-	Metadata json.RawMessage `json:"metadata,omitempty"`
+	Value         string          `json:"value" binding:"required"`
+	Metadata      json.RawMessage `json:"metadata,omitempty"`
+	// GlobalDefault, when non-nil, updates whether this secret is automatically
+	// bound to newly-created workspaces. Nil means "leave unchanged".
+	GlobalDefault *bool           `json:"globalDefault,omitempty"`
 }
 
 // SecretResponse is the API response for a secret (never includes value).
 type SecretResponse struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
-	Type      SecretType      `json:"type"`
-	Metadata  json.RawMessage `json:"metadata"`
-	CreatedAt time.Time       `json:"createdAt"`
-	UpdatedAt time.Time       `json:"updatedAt"`
+	ID            string          `json:"id"`
+	Name          string          `json:"name"`
+	Type          SecretType      `json:"type"`
+	Metadata      json.RawMessage `json:"metadata"`
+	GlobalDefault bool            `json:"globalDefault"`
+	CreatedAt     time.Time       `json:"createdAt"`
+	UpdatedAt     time.Time       `json:"updatedAt"`
 }
 
 // SetBindingsRequest is the API request for setting workspace bindings.

@@ -38,17 +38,18 @@ type WorkspaceConfig = types.WorkspaceConfig
 
 // Service implements apiinterfaces.WorkspaceService.
 type Service struct {
-	logger           pkginterfaces.LoggerInterface
-	k8sClient        pkginterfaces.KubernetesClient
-	dbService        apiinterfaces.DatabaseService
-	cacheService     apiinterfaces.CacheService
-	metricsService   apiinterfaces.MetricsService
-	sessionIndex     apiinterfaces.SessionIndexService
-	credProvisioner  CredentialProvisioner
-	instanceSettings *settings.InstanceService
-	orgStore         OrgMembershipChecker
-	policyChecker    PolicyChecker
-	config           *Config
+	logger             pkginterfaces.LoggerInterface
+	k8sClient          pkginterfaces.KubernetesClient
+	dbService          apiinterfaces.DatabaseService
+	cacheService       apiinterfaces.CacheService
+	metricsService     apiinterfaces.MetricsService
+	sessionIndex       apiinterfaces.SessionIndexService
+	credProvisioner    CredentialProvisioner
+	secretProvisioner  SecretAutoProvisioner
+	instanceSettings   *settings.InstanceService
+	orgStore           OrgMembershipChecker
+	policyChecker      PolicyChecker
+	config             *Config
 }
 
 type OrgMembershipChecker interface {
@@ -79,9 +80,20 @@ type CredentialProvisioner interface {
 	SeedWorkspaceCredentials(ctx context.Context, workspaceID, userID string, orgID *string) error
 }
 
+// SecretAutoProvisioner seeds user_secret_bindings from user_secrets where
+// global_default=true. Called on workspace creation as a best-effort operation.
+type SecretAutoProvisioner interface {
+	SeedGlobalDefaultSecrets(ctx context.Context, workspaceID, userID string) error
+}
+
 // SetCredentialProvisioner installs the credential auto-apply seeder.
 func (s *Service) SetCredentialProvisioner(cp CredentialProvisioner) {
 	s.credProvisioner = cp
+}
+
+// SetSecretAutoProvisioner installs the global-default secret seeder.
+func (s *Service) SetSecretAutoProvisioner(sp SecretAutoProvisioner) {
+	s.secretProvisioner = sp
 }
 
 func (s *Service) workspaceCRDClient() (pkginterfaces.WorkspaceInterface, error) {
@@ -325,6 +337,15 @@ func (s *Service) CreateWorkspace(ctx context.Context, userID string, req types.
 	if s.credProvisioner != nil {
 		if err := s.credProvisioner.SeedWorkspaceCredentials(ctx, meta.ID, userID, meta.OrgID); err != nil {
 			s.logger.Error("credential seeding failed for new workspace; it will have no LLM credentials",
+				err, "workspaceID", meta.ID, "userID", userID)
+		}
+	}
+
+	// Auto-bind global-default secrets if any exist for this user.
+	// Best-effort: a failure does NOT roll back workspace creation.
+	if s.secretProvisioner != nil {
+		if err := s.secretProvisioner.SeedGlobalDefaultSecrets(ctx, meta.ID, userID); err != nil {
+			s.logger.Error("global-default secret seeding failed for new workspace",
 				err, "workspaceID", meta.ID, "userID", userID)
 		}
 	}

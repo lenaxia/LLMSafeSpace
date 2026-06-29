@@ -508,6 +508,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		wsSvc, wsSvcOk := svc.Workspace.(*workspace.Service)
 		if wsSvcOk {
 			wsSvc.SetCredentialProvisioner(pgStore)
+			wsSvc.SetSecretAutoProvisioner(secretService)
 			wsSvc.SetOrgStore(pgOrgStore)
 		}
 		// Epic 35 US-35.3: pod bootstrap handler. Uses the API's K8s

@@ -5,6 +5,7 @@ export interface SecretResponse {
   name: string;
   type: "llm-provider" | "api-key" | "ssh-key" | "git-credential" | "secret-file" | "env-secret";
   metadata: Record<string, string>;
+  globalDefault: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -14,11 +15,13 @@ export interface CreateSecretRequest {
   type: SecretResponse["type"];
   value: string;
   metadata?: Record<string, string>;
+  globalDefault?: boolean;
 }
 
 export interface UpdateSecretRequest {
   value: string;
   metadata?: Record<string, string>;
+  globalDefault?: boolean;
 }
 
 export const secretsApi = {

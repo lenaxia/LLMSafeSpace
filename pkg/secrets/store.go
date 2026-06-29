@@ -11,6 +11,9 @@ type SecretStore interface {
 	GetSecret(ctx context.Context, userID, secretID string) (*UserSecret, error)
 	GetSecretByName(ctx context.Context, userID, name string) (*UserSecret, error)
 	ListSecrets(ctx context.Context, userID string) ([]*UserSecret, error)
+	// ListGlobalDefaultSecrets returns all secrets owned by userID that have
+	// global_default=true. Used when seeding bindings on workspace creation.
+	ListGlobalDefaultSecrets(ctx context.Context, userID string) ([]*UserSecret, error)
 	UpdateSecret(ctx context.Context, secret *UserSecret) error
 	DeleteSecret(ctx context.Context, userID, secretID string) error
 
