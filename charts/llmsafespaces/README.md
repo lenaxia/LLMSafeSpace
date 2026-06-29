@@ -20,6 +20,62 @@ Deployment and optional gVisor RuntimeClass are gated by feature flags.
 It does **not** deploy Postgres, Redis, or cert-manager. See "Prerequisites"
 below.
 
+## ⚠ GitOps deployment (FluxCD / Argo CD) — read before deploying via Git
+
+> If you consume this chart from a Git source (FluxCD `GitRepository` or Argo CD
+> Application pointing at this repo), you **must** set `reconcileStrategy:
+> Revision` on your Flux `HelmRelease`. Otherwise the chart is packaged exactly
+> once and **never re-packaged**, and every `helm upgrade` after the first will
+> silently render against a stale snapshot of the chart.
+
+**The trap.** `Chart.yaml` has `version: 0.1.0` pinned intentionally — this chart
+is consumed directly from Git, not published to a Helm/OCI registry, so the
+version is never bumped. FluxCD's `source-controller` packages a
+`GitRepository`-sourced chart and caches the packaged artifact keyed on the
+chart version. With the **default** `reconcileStrategy: ChartVersion`, the
+artifact is built once on first reconcile and re-used forever (because the
+version never changes). New templates, new `ConfigMap` keys (e.g. new SQL
+migrations bundled via `(.Files.Glob "migrations/*.sql")`), new RBAC — none of
+it reaches the cluster until something forces a re-package.
+
+**Symptom.** `kubectl get configmap <release>-migrations -o jsonpath='{.data}'`
+shows only the original migration files after you've added new ones; new chart
+templates don't appear; hook args never update. The migration Job from issue
+[#455](https://github.com/lenaxia/llmsafespaces/issues/455) was masked by this
+for 2.5 days because the stale packaged chart kept running the old (already
+applied) baseline migration. This caused the 2026-06-29 production incident.
+
+**Fix — set `reconcileStrategy: Revision` so source-controller re-packages on
+every git revision:**
+
+```yaml
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: llmsafespaces
+  namespace: flux-system
+spec:
+  chart:
+    spec:
+      chart: charts/llmsafespaces
+      sourceRef:
+        kind: GitRepository
+        name: llmsafespaces
+        namespace: flux-system
+      reconcileStrategy: Revision   # <-- required: Chart.yaml version is pinned at 0.1.0
+  interval: 5m
+```
+
+Argo CD users: the equivalent is ensuring your Application tracks `targetRevision`
+of a branch/tag (not a chart version) and uses `helm` with `passCredentials` off;
+Argo re-renders the chart from the synced Git revision on every sync, so it does
+not hit the ChartVersion cache — but verify your `syncPolicy` re-renders rather
+than re-applying a cached manifest set.
+
+**Long-term alternative.** Publishing the chart to an OCI registry (ghcr.io)
+on each commit would make `reconcileStrategy` irrelevant and is the most robust
+fix. That is tracked as a follow-up to [#456](https://github.com/lenaxia/llmsafespaces/issues/456).
+
 ## Prerequisites
 
 ### Kubernetes
