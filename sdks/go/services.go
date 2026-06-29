@@ -42,6 +42,15 @@ func (s *WorkspacesService) Restart(ctx context.Context, id string) error {
 	return s.c.do(ctx, "POST", "/workspaces/"+id+"/restart", nil, nil)
 }
 
+// RefreshCompute re-syncs the workspace's resource defaults with the platform's
+// current configuration and rebuilds the pod so it picks up the latest runtime
+// image version. Returns the bumped restart generation.
+func (s *WorkspacesService) RefreshCompute(ctx context.Context, id string) (*RefreshWorkspaceResult, error) {
+	var resp RefreshWorkspaceResult
+	err := s.c.do(ctx, "POST", "/workspaces/"+id+"/refresh-compute", nil, &resp)
+	return &resp, err
+}
+
 func (s *WorkspacesService) Rename(ctx context.Context, id, name string) error {
 	return s.c.do(ctx, "PUT", "/workspaces/"+id, map[string]string{"name": name}, nil)
 }

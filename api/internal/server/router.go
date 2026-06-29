@@ -1000,6 +1000,28 @@ func registerWorkspaceRoutes(rg *gin.RouterGroup, idGroup *gin.RouterGroup, serv
 		c.Status(http.StatusAccepted)
 	})
 
+	// Refresh Compute: re-sync the workspace CRD with the platform's current
+	// defaults (resources, security level, storage class, max active sessions)
+	// and bump spec.restartGeneration so the controller rebuilds the pod,
+	// re-resolving spec.runtime to its latest image version.
+	idGroup.POST("/refresh-compute", func(c *gin.Context) {
+		userID := authSvc.GetUserID(c)
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+			return
+		}
+		ctx := c.Request.Context()
+		if sid, exists := c.Get("sessionID"); exists {
+			ctx = workspace.ContextWithSessionID(ctx, sid.(string))
+		}
+		resp, err := wsSvc.RefreshWorkspaceCompute(ctx, userID, c.Param("id"))
+		if err != nil {
+			respondWithError(c, err)
+			return
+		}
+		c.JSON(http.StatusAccepted, resp)
+	})
+
 	// Epic 27a: explicit agent reload (disposes opencode without pod restart).
 	if cfg.AgentReloadHandler != nil {
 		idGroup.POST("/agent/reload", cfg.AgentReloadHandler.Reload)

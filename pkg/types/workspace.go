@@ -133,3 +133,11 @@ type ActivateWorkspaceResponse struct {
 	Resumed   string `json:"resumed"`
 	Suspended string `json:"suspended,omitempty"`
 }
+
+// RefreshWorkspaceResult is returned by POST /workspaces/:id/refresh-compute.
+// It reports the restartGeneration that will trigger a pod rebuild, which
+// re-resolves the runtime image to its latest version and applies the
+// refreshed resource requests.
+type RefreshWorkspaceResult struct {
+	RestartGeneration int64 `json:"restartGeneration"`
+}

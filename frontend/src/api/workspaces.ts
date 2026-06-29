@@ -49,6 +49,8 @@ export const workspacesApi = {
   getStatus: (id: string) => api.get<WorkspaceStatus>(`/workspaces/${id}/status`),
   activate: (id: string) => api.post<ActivateWorkspaceResponse>(`/workspaces/${id}/activate`),
   suspend: (id: string) => api.post<void>(`/workspaces/${id}/suspend`),
+  refreshCompute: (id: string) =>
+    api.post<{ restartGeneration: number }>(`/workspaces/${id}/refresh-compute`),
   getSessions: (id: string) => api.get<SessionListItem[]>(`/workspaces/${id}/sessions`),
   getSession: (workspaceId: string, sessionId: string) =>
     api.get<OpenCodeSession>(`/workspaces/${workspaceId}/sessions/${sessionId}`),

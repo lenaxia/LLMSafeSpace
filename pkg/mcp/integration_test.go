@@ -52,10 +52,10 @@ func TestIntegration_FullWorkflow(t *testing.T) {
 	_, err = mcpClient.Initialize(ctx, initReq)
 	require.NoError(t, err)
 
-	// 1. List tools — verify all 14 are registered (11 original + 3 question/permission reply tools)
+	// 1. List tools — verify all 15 are registered (11 original + 3 question/permission reply tools + workspace_refresh_compute)
 	toolsResp, err := mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
 	require.NoError(t, err)
-	assert.Len(t, toolsResp.Tools, 14)
+	assert.Len(t, toolsResp.Tools, 15)
 
 	toolNames := make(map[string]bool)
 	for _, tool := range toolsResp.Tools {
@@ -64,6 +64,7 @@ func TestIntegration_FullWorkflow(t *testing.T) {
 	assert.True(t, toolNames["workspace_create"])
 	assert.True(t, toolNames["workspace_activate"])
 	assert.True(t, toolNames["workspace_stop"])
+	assert.True(t, toolNames["workspace_refresh_compute"])
 	assert.True(t, toolNames["session_create"])
 	assert.True(t, toolNames["session_message"])
 	assert.True(t, toolNames["session_history"])

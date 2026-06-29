@@ -118,11 +118,25 @@ func (c *Client) do(ctx context.Context, method, path string, body, result any) 
 		return parseError(resp)
 	}
 
-	if result == nil || resp.StatusCode == 204 || resp.StatusCode == 202 {
+	// 204 No Content has no body by definition. 202 Accepted MAY carry a
+	// payload describing the accepted operation (RFC 7231 §6.3.3), so read
+	// the body and decode only when it is non-empty AND a result is wanted
+	// (preserving the void contract for callers like Suspend/Restart).
+	if resp.StatusCode == 204 {
 		return nil
 	}
-
-	return json.NewDecoder(resp.Body).Decode(result)
+	if result == nil {
+		io.Copy(io.Discard, resp.Body)
+		return nil
+	}
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read response body: %w", err)
+	}
+	if len(raw) == 0 {
+		return nil
+	}
+	return json.Unmarshal(raw, result)
 }
 
 func (c *Client) login(ctx context.Context) error {

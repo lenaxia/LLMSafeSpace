@@ -49,6 +49,8 @@ vi.mock("../../api/workspaces", () => ({
     }),
     create: vi.fn().mockResolvedValue({ id: "ws-new", name: "new-ws" }),
     activate: vi.fn().mockResolvedValue({ resumed: "ws-1" }),
+    suspend: vi.fn().mockResolvedValue(undefined),
+    refreshCompute: vi.fn().mockResolvedValue({ restartGeneration: 1 }),
     ensureSession: vi.fn().mockResolvedValue({ sessionId: "sess-1", workspaceId: "ws-1" }),
     getSessions: vi.fn().mockResolvedValue([
       { id: "sess-1", title: "My session", messageCount: 3, status: "idle" },
@@ -115,6 +117,21 @@ describe("Sidebar", () => {
     renderSidebar();
     const kebabButtons = await screen.findAllByLabelText("Actions");
     expect(kebabButtons.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("calls refreshCompute when workspace kebab 'Refresh compute' is clicked", async () => {
+    renderSidebar();
+    await screen.findByText("alpha");
+
+    const kebabButtons = await screen.findAllByLabelText("Actions");
+    const workspaceKebab = kebabButtons[0]!;
+    workspaceKebab.click();
+
+    const refreshBtn = await screen.findByText("Refresh compute");
+    refreshBtn.click();
+
+    await screen.findByText("alpha");
+    expect(workspacesApi.refreshCompute).toHaveBeenCalledWith("ws-1");
   });
 
   it("new workspace button creates immediately without dialog", async () => {

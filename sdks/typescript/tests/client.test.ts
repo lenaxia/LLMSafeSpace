@@ -64,6 +64,26 @@ describe("LLMSafeSpaces Client", () => {
 
       await expect(client.workspaces.suspend("ws-1")).resolves.toBeUndefined();
     });
+
+    it("refreshes workspace compute", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({ restartGeneration: 3 }, 202));
+
+      const result = await client.workspaces.refreshCompute("ws-1");
+      expect(result.restartGeneration).toBe(3);
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://localhost:8080/api/v1/workspaces/ws-1/refresh-compute",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+
+    it("returns undefined for 202 with empty body (suspend/restart contract)", async () => {
+      // Guards the shared request() empty-body branch: 202 with no body must
+      // resolve to undefined, not throw JSON.parse(""). The production paths
+      // for suspend/restart return 202 with no body (router.go).
+      mockFetch.mockResolvedValueOnce(new Response(null, { status: 202 }));
+
+      await expect(client.workspaces.suspend("ws-1")).resolves.toBeUndefined();
+    });
   });
 
   describe("sessions", () => {

@@ -1643,7 +1643,7 @@ The state-cookie signing key is `deriveServerKey("oidc-state-cookie")` (`api/int
 The complete REST API is documented in `README.md` under "REST API". The API has ~90 routes covering:
 
 - **Auth** (8 routes): register, login, logout, me, API key CRUD
-- **Workspaces** (9 routes): CRUD + suspend, activate, restart, status, agent reload
+- **Workspaces** (10 routes): CRUD + suspend, activate, restart, refresh-compute, status, agent reload
 - **Session management** (5 routes): list, ensure, rename, mark-seen, active
 - **Session proxy** (7 routes): message, prompt, history, get, abort, delete, SSE events — reverse-proxied to the workspace pod's `opencode serve` on port 4096
 - **Questions & Permissions** (5 routes): list/reply/reject agent questions and permission requests

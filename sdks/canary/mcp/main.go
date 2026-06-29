@@ -290,10 +290,13 @@ func (c *stdioClient) close() {
 // ── Scenario runners ───────────────────────────────────────────────────────
 
 func runMCPTools(ctx context.Context, r *Runner, client *stdioClient) {
-	const expectedCount = 11
+	const expectedCount = 15
 	expectedTools := []string{
 		"workspace_create", "workspace_activate", "workspace_stop",
+		"workspace_refresh_compute",
 		"session_create", "session_message", "session_history",
+		"session_question_reply", "session_question_reject",
+		"session_permission_reply",
 		"credential_create", "credential_list", "credential_delete",
 		"model_list", "model_set",
 	}

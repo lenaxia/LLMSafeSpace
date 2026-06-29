@@ -6,6 +6,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -39,6 +40,14 @@ func (m *MockAPIClient) ActivateWorkspace(ctx context.Context, workspaceID strin
 
 func (m *MockAPIClient) SuspendWorkspace(ctx context.Context, workspaceID string) error {
 	return m.Called(ctx, workspaceID).Error(0)
+}
+
+func (m *MockAPIClient) RefreshWorkspace(ctx context.Context, workspaceID string) (*RefreshWorkspaceResp, error) {
+	args := m.Called(ctx, workspaceID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*RefreshWorkspaceResp), args.Error(1)
 }
 
 func (m *MockAPIClient) CreateSession(ctx context.Context, workspaceID string) (*SessionResp, error) {
@@ -219,6 +228,49 @@ func TestWorkspaceStop_MissingID(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
+}
+
+// ===== workspace_refresh_compute =====
+
+func TestWorkspaceRefreshCompute_HappyPath(t *testing.T) {
+	h, mockClient := newTestHandlers()
+	ctx := context.Background()
+
+	mockClient.On("RefreshWorkspace", ctx, "ws-123").
+		Return(&RefreshWorkspaceResp{RestartGeneration: 5}, nil)
+
+	result, err := h.workspaceRefreshCompute(ctx, makeReq("workspace_refresh_compute", map[string]any{"workspace_id": "ws-123"}))
+
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	text := result.Content[0].(mcp.TextContent).Text
+	assert.Contains(t, text, "ws-123")
+	assert.Contains(t, text, "5")
+	mockClient.AssertExpectations(t)
+}
+
+func TestWorkspaceRefreshCompute_MissingID(t *testing.T) {
+	h, _ := newTestHandlers()
+
+	result, err := h.workspaceRefreshCompute(context.Background(), makeReq("workspace_refresh_compute", map[string]any{}))
+
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+}
+
+func TestWorkspaceRefreshCompute_APIError(t *testing.T) {
+	h, mockClient := newTestHandlers()
+	ctx := context.Background()
+
+	mockClient.On("RefreshWorkspace", ctx, "ws-123").
+		Return((*RefreshWorkspaceResp)(nil), fmt.Errorf("conflict: workspace terminating"))
+
+	result, err := h.workspaceRefreshCompute(ctx, makeReq("workspace_refresh_compute", map[string]any{"workspace_id": "ws-123"}))
+
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "failed to refresh workspace compute")
+	mockClient.AssertExpectations(t)
 }
 
 // ===== session_create =====

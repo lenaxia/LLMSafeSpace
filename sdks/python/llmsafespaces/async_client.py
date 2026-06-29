@@ -99,11 +99,15 @@ class AsyncLLMSafeSpaces:
         if resp.status_code >= 400:
             self._raise_for_status(resp)
 
+        # 204 No Content has no body by definition. 202 Accepted MAY carry a
+        # payload describing the accepted operation (RFC 7231 §6.3.3), so
+        # parse the body and return None only when it is actually empty
+        # (preserving the void contract for Suspend/Restart).
         if resp.status_code == 204:
             return None
-        if resp.status_code == 202:
-            return None
-        return resp.json()
+        if resp.content:
+            return resp.json()
+        return None
 
     async def _auth_headers(self) -> dict[str, str]:
         if self._api_key:
@@ -181,6 +185,9 @@ class _AsyncWorkspacesAPI:
 
     async def restart(self, workspace_id: str) -> None:
         await self._c._request("POST", f"/workspaces/{workspace_id}/restart")
+
+    async def refresh_compute(self, workspace_id: str) -> dict[str, Any]:
+        return await self._c._request("POST", f"/workspaces/{workspace_id}/refresh-compute")
 
     async def set_bindings(self, workspace_id: str, secret_ids: list[str]) -> None:
         await self._c._request(

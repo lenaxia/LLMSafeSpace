@@ -28,6 +28,7 @@ func NewServer(client APIClient, defaultTimeout time.Duration) *server.MCPServer
 		server.ServerTool{Tool: workspaceCreateTool, Handler: h.workspaceCreate},
 		server.ServerTool{Tool: workspaceActivateTool, Handler: h.workspaceActivate},
 		server.ServerTool{Tool: workspaceStopTool, Handler: h.workspaceStop},
+		server.ServerTool{Tool: workspaceRefreshComputeTool, Handler: h.workspaceRefreshCompute},
 		server.ServerTool{Tool: sessionCreateTool, Handler: h.sessionCreate},
 		server.ServerTool{Tool: sessionMessageTool, Handler: h.sessionMessage},
 		server.ServerTool{Tool: sessionHistoryTool, Handler: h.sessionHistory},
@@ -64,6 +65,11 @@ var workspaceActivateTool = mcp.NewTool("workspace_activate",
 
 var workspaceStopTool = mcp.NewTool("workspace_stop",
 	mcp.WithDescription("Stop a workspace (suspends the agent, preserves all files)"),
+	mcp.WithString("workspace_id", mcp.Required(), mcp.Description("Workspace ID")),
+)
+
+var workspaceRefreshComputeTool = mcp.NewTool("workspace_refresh_compute",
+	mcp.WithDescription("Refresh a workspace's compute: re-sync its resource defaults (CPU, memory, security level, storage class) with the platform's current configuration and rebuild the pod so it picks up the latest runtime image version. Use when the workspace is long-lived and its image version or resource requests have drifted from platform defaults."),
 	mcp.WithString("workspace_id", mcp.Required(), mcp.Description("Workspace ID")),
 )
 
@@ -136,6 +142,23 @@ func (h *handlers) workspaceStop(ctx context.Context, req mcp.CallToolRequest) (
 	}
 
 	return mcp.NewToolResultText(fmt.Sprintf("Workspace %s stopped (files preserved)", workspaceID)), nil
+}
+
+func (h *handlers) workspaceRefreshCompute(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := req.GetArguments()
+	workspaceID, _ := args["workspace_id"].(string)
+	if workspaceID == "" {
+		return mcp.NewToolResultError("workspace_id is required"), nil
+	}
+
+	resp, err := h.client.RefreshWorkspace(ctx, workspaceID)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to refresh workspace compute: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf(
+		"Workspace %s compute refreshed; pod rebuilding with current defaults and latest image version (restartGeneration %d)",
+		workspaceID, resp.RestartGeneration)), nil
 }
 
 func (h *handlers) sessionCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

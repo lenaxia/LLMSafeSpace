@@ -106,6 +106,14 @@ export function Sidebar({ onNavigate }: Props) {
     },
   });
 
+  const refreshComputeMutation = useMutation({
+    mutationFn: (wsId: string) => workspacesApi.refreshCompute(wsId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+      queryClient.invalidateQueries({ queryKey: ["workspace-status"] });
+    },
+  });
+
   const newSessionMutation = useMutation({
     mutationFn: (wsId: string) => workspacesApi.ensureSession(wsId),
     onSuccess: (data, wsId) => {
@@ -204,6 +212,8 @@ export function Sidebar({ onNavigate }: Props) {
               }}
               onSuspend={() => suspendMutation.mutate(ws.id)}
               onResume={() => activateMutation.mutate(ws.id)}
+              onRefreshCompute={() => refreshComputeMutation.mutate(ws.id)}
+              refreshingCompute={refreshComputeMutation.isPending && refreshComputeMutation.variables === ws.id}
               onRenameSession={(sessionId, title) => setRenamingSession({ wsId: ws.id, sessionId, title })}
               onAbortSession={(sid) => {
                 workspacesApi.abortSession(ws.id, sid)
@@ -293,6 +303,8 @@ interface WorkspaceGroupProps {
   onDelete: () => void;
   onSuspend: () => void;
   onResume: () => void;
+  onRefreshCompute: () => void;
+  refreshingCompute: boolean;
   onRenameSession: (sessionId: string, title: string) => void;
   onDeleteSession: (sessionId: string) => void;
   onAbortSession: (sessionId: string) => void;
@@ -318,6 +330,8 @@ function WorkspaceGroup({
   onDelete,
   onSuspend,
   onResume,
+  onRefreshCompute,
+  refreshingCompute,
   onRenameSession,
   onDeleteSession,
   onAbortSession,
@@ -341,6 +355,11 @@ function WorkspaceGroup({
   const kebabItems: KebabMenuItem[] = [
     { label: "Settings", onClick: () => setShowSettings(true) },
     { label: "Copy new session link", onClick: () => navigator.clipboard.writeText(`${window.location.origin}/chat/${workspace.id}`) },
+    {
+      label: refreshingCompute ? "Refreshing compute…" : "Refresh compute",
+      onClick: onRefreshCompute,
+      disabled: refreshingCompute,
+    },
     ...(isActive ? [{ label: "Suspend", onClick: onSuspend }] : []),
     ...(isSuspended ? [{ label: "Resume", onClick: onResume }] : []),
     { label: "Rename", onClick: onRenameClick },

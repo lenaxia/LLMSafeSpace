@@ -92,6 +92,33 @@ func TestHTTPClient_SuspendWorkspace_HappyPath(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+// ===== RefreshWorkspace =====
+
+func TestHTTPClient_RefreshWorkspace_HappyPath(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/workspaces/ws-1/refresh-compute", func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		json.NewEncoder(w).Encode(RefreshWorkspaceResp{RestartGeneration: 9})
+	})
+
+	client, ts := newTestHTTPClient(mux)
+	defer ts.Close()
+
+	resp, err := client.RefreshWorkspace(context.Background(), "ws-1")
+	require.NoError(t, err)
+	assert.Equal(t, int64(9), resp.RestartGeneration)
+}
+
+func TestHTTPClient_RefreshWorkspace_APIError(t *testing.T) {
+	client, ts := newTestHTTPClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+	}))
+	defer ts.Close()
+
+	_, err := client.RefreshWorkspace(context.Background(), "ws-1")
+	assert.Error(t, err)
+}
+
 // ===== CreateSession =====
 
 func TestHTTPClient_CreateSession_HappyPath(t *testing.T) {

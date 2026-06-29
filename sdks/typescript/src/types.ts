@@ -82,6 +82,10 @@ export interface ActivateWorkspaceResponse {
   suspended?: string;
 }
 
+export interface RefreshWorkspaceResult {
+  restartGeneration: number;
+}
+
 export interface EnsureSessionResponse {
   workspaceId: string;
   workspacePhase: string;
