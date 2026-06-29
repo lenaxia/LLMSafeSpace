@@ -496,8 +496,18 @@ func (h *ProxyHandler) drainQueuedMessage(workspaceID, sessionID string) {
 }
 
 type promptRequestBody struct {
-	Parts     []promptPart `json:"parts"`
-	MessageID string       `json:"messageID"`
+	Parts []promptPart `json:"parts"`
+	// MessageID is intentionally omitted from the wire payload (omitempty).
+	// Opencode's session.prompt loop-exit predicate compares user vs.
+	// assistant message IDs by raw lex order; any caller-supplied ID risks
+	// landing outside the (prev_assistant_id, next_assistant_id) window
+	// that the predicate requires. opencode's own MessageID.ascending() is
+	// monotonic by construction and is the only ID source guaranteed to
+	// keep the invariant correct in both directions. Letting opencode
+	// generate the user-message ID is the simplest design that avoids the
+	// trap entirely. See worklog for the role-flip / silent-drop incidents
+	// on 2026-06-29.
+	MessageID string `json:"messageID,omitempty"`
 }
 
 type promptPart struct {
@@ -512,8 +522,10 @@ func (h *ProxyHandler) sendQueuedToOpencode(ctx context.Context, workspaceID, se
 	}
 
 	body := promptRequestBody{
-		Parts:     []promptPart{{Type: "text", Text: msg.Text}},
-		MessageID: msg.ID,
+		Parts: []promptPart{{Type: "text", Text: msg.Text}},
+		// MessageID intentionally left empty — opencode generates the
+		// user-message ID via MessageID.ascending(). See the doc comment on
+		// promptRequestBody.MessageID.
 	}
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
