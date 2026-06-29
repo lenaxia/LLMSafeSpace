@@ -38,18 +38,18 @@ type WorkspaceConfig = types.WorkspaceConfig
 
 // Service implements apiinterfaces.WorkspaceService.
 type Service struct {
-	logger             pkginterfaces.LoggerInterface
-	k8sClient          pkginterfaces.KubernetesClient
-	dbService          apiinterfaces.DatabaseService
-	cacheService       apiinterfaces.CacheService
-	metricsService     apiinterfaces.MetricsService
-	sessionIndex       apiinterfaces.SessionIndexService
-	credProvisioner    CredentialProvisioner
-	secretProvisioner  SecretAutoProvisioner
-	instanceSettings   *settings.InstanceService
-	orgStore           OrgMembershipChecker
-	policyChecker      PolicyChecker
-	config             *Config
+	logger            pkginterfaces.LoggerInterface
+	k8sClient         pkginterfaces.KubernetesClient
+	dbService         apiinterfaces.DatabaseService
+	cacheService      apiinterfaces.CacheService
+	metricsService    apiinterfaces.MetricsService
+	sessionIndex      apiinterfaces.SessionIndexService
+	credProvisioner   CredentialProvisioner
+	secretProvisioner SecretAutoProvisioner
+	instanceSettings  *settings.InstanceService
+	orgStore          OrgMembershipChecker
+	policyChecker     PolicyChecker
+	config            *Config
 }
 
 type OrgMembershipChecker interface {

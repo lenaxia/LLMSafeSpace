@@ -136,11 +136,11 @@ type CreateSecretRequest struct {
 
 // UpdateSecretRequest is the API request for updating a secret value.
 type UpdateSecretRequest struct {
-	Value         string          `json:"value" binding:"required"`
-	Metadata      json.RawMessage `json:"metadata,omitempty"`
+	Value    string          `json:"value" binding:"required"`
+	Metadata json.RawMessage `json:"metadata,omitempty"`
 	// GlobalDefault, when non-nil, updates whether this secret is automatically
 	// bound to newly-created workspaces. Nil means "leave unchanged".
-	GlobalDefault *bool           `json:"globalDefault,omitempty"`
+	GlobalDefault *bool `json:"globalDefault,omitempty"`
 }
 
 // SecretResponse is the API response for a secret (never includes value).

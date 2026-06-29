@@ -82,6 +82,19 @@ func (m *mockSecretStore) ListSecrets(_ context.Context, userID string) ([]*User
 	return result, nil
 }
 
+func (m *mockSecretStore) ListGlobalDefaultSecrets(_ context.Context, userID string) ([]*UserSecret, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var result []*UserSecret
+	for _, s := range m.secrets {
+		if s.UserID == userID && s.GlobalDefault {
+			cp := *s
+			result = append(result, &cp)
+		}
+	}
+	return result, nil
+}
+
 func (m *mockSecretStore) UpdateSecret(_ context.Context, secret *UserSecret) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
