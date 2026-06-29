@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/mock"
 
 	v1 "github.com/lenaxia/llmsafespaces/pkg/apis/llmsafespaces/v1"
+	"github.com/lenaxia/llmsafespaces/pkg/types"
 )
 
 // RefreshWorkspaceCompute re-syncs a workspace CRD with the platform's current
@@ -105,26 +106,82 @@ func TestRefreshWorkspaceCompute_NoSettings_BumpsGenerationOnly(t *testing.T) {
 	assert.Equal(t, int64(1), res.RestartGeneration)
 }
 
-func TestRefreshWorkspaceCompute_Suspended_AllowedAndBumpsGeneration(t *testing.T) {
-	// A suspended workspace has no pod; refresh updates spec so the next
-	// activate rebuilds with current defaults + image. Bumping restartGeneration
-	// is harmless (observed on the next pod build).
+func TestRefreshWorkspaceCompute_Suspended_AppliesDefaultsAndResumes(t *testing.T) {
+	// A suspended workspace has no pod. handleSuspended does NOT observe
+	// restartGeneration (only spec.suspend), so a generation bump alone is a
+	// no-op. Refresh must therefore ALSO request a resume (spec.suspend=false)
+	// so the controller builds a fresh pod carrying the refreshed spec.
 	f := newDefaultsFixture(t, map[string]any{
 		"workspace.defaultResources.memory": "2Gi",
 	})
 	ctx := context.Background()
 
-	crd := crdWorkspace("ws-1", "default", "user1", "10Gi")
-	crd.Status.Phase = v1.WorkspacePhaseSuspended
+	suspendedCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
+	suspendedCrd.Status.Phase = v1.WorkspacePhaseSuspended
+
+	// ActivateWorkspace (the resume path) re-Gets and re-Updates, so Get is
+	// called more than once. Returning the suspended CRD each time mirrors
+	// the apiserver reading a not-yet-resumed object.
 	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
-	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(crd, nil)
-	f.ws.On("Update", mock.Anything, mock.MatchedBy(func(ws *v1.Workspace) bool {
-		return ws.Spec.RestartGeneration == 1 && ws.Spec.Resources.Memory == "2Gi"
-	})).Return(crd, nil)
+	f.db.On("ListWorkspaces", mock.Anything, "user1", mock.Anything, mock.Anything).
+		Return([]*types.WorkspaceMetadata{}, &types.PaginationMetadata{}, nil)
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(suspendedCrd, nil)
+	// enforceMaxActiveWorkspaces (called by ActivateWorkspace) lists workspaces.
+	f.ws.On("List", mock.Anything, mock.Anything).Return(&v1.WorkspaceList{}, nil)
+
+	// Capture every Update so we can assert both the refresh write and the
+	// resume write happened. The returned CRD must carry spec.suspend=false
+	// to satisfy ActivateWorkspace's post-write persistence check.
+	resumeCrd := suspendedCrd.DeepCopy()
+	suspendFalse := false
+	resumeCrd.Spec.Suspend = &suspendFalse
+	var updates []*v1.Workspace
+	f.ws.On("Update", mock.Anything, mock.AnythingOfType("*v1.Workspace")).
+		Run(func(args mock.Arguments) { updates = append(updates, args.Get(1).(*v1.Workspace)) }).
+		Return(resumeCrd, nil)
 
 	res, err := f.svc.RefreshWorkspaceCompute(ctx, "user1", "ws-1")
 	assert.NoError(t, err)
 	assert.Equal(t, int64(1), res.RestartGeneration)
+
+	// One update reapplied the defaults + bumped the generation...
+	sawRefresh := false
+	// ...and one wrote the resume request (spec.suspend=false).
+	sawResume := false
+	for _, u := range updates {
+		if u.Spec.RestartGeneration == 1 && u.Spec.Resources != nil && u.Spec.Resources.Memory == "2Gi" {
+			sawRefresh = true
+		}
+		if u.Spec.Suspend != nil && !*u.Spec.Suspend {
+			sawResume = true
+		}
+	}
+	assert.True(t, sawRefresh, "refresh must write re-applied defaults + bumped generation")
+	assert.True(t, sawResume, "refresh must request a resume (spec.suspend=false) when suspended")
+}
+
+func TestRefreshWorkspaceCompute_Suspended_ActivateFails_ReturnsError(t *testing.T) {
+	// If the resume step fails (e.g. the active-workspace cap check can't read
+	// the user's workspaces), the error surfaces. The spec refresh has already
+	// persisted, which is the correct partial state — the next manual activate
+	// picks up the new config.
+	f := newDefaultsFixture(t, map[string]any{
+		"workspace.defaultResources.cpu": "1000m",
+	})
+	ctx := context.Background()
+
+	suspendedCrd := crdWorkspace("ws-1", "default", "user1", "10Gi")
+	suspendedCrd.Status.Phase = v1.WorkspacePhaseSuspended
+	f.db.On("GetWorkspace", ctx, "ws-1").Return(dbWorkspace("ws-1", "user1", "my-ws", "10Gi"), nil)
+	// enforceMaxActiveWorkspaces → dbService.ListWorkspaces fails.
+	f.db.On("ListWorkspaces", mock.Anything, "user1", mock.Anything, mock.Anything).
+		Return([]*types.WorkspaceMetadata(nil), (*types.PaginationMetadata)(nil), errors.New("db unavailable"))
+	f.ws.On("Get", mock.Anything, "ws-1", mock.Anything).Return(suspendedCrd, nil)
+	// The refresh spec write still succeeds (happens before the resume).
+	f.ws.On("Update", mock.Anything, mock.AnythingOfType("*v1.Workspace")).Return(suspendedCrd, nil)
+
+	_, err := f.svc.RefreshWorkspaceCompute(ctx, "user1", "ws-1")
+	assert.Error(t, err)
 }
 
 func TestRefreshWorkspaceCompute_WrongOwner_ReturnsForbidden(t *testing.T) {
