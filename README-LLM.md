@@ -248,6 +248,35 @@ This is not optional introspection — it is a mandatory validation gate. Code t
 
 See also the [Adversarial Assessment](#adversarial-assessment) section in the PR Review Guide for expanded criteria used during pull request review.
 
+### 12. Containment Before Abstraction (External-Dependency Coupling)
+
+This codebase depends on external components it does not own — most notably the AI agent that runs inside every workspace (`opencode serve`). The platform's value is the orchestration, isolation, and multi-tenant control layer, *not* the agent loop. The risk is that knowledge of an external component's implementation details bleeds into platform code (API, controller, services), making every future change a jury-rig and every eventual swap a rewrite.
+
+The rule is about *when* to pay for an abstraction — and it is the opposite of "abstract everything early."
+
+**Containment now (cheap, mandatory):**
+
+- **Keep external-dependency knowledge behind a single seam.** A package, folder, or adapter — not scattered across the codebase. The opencode config-merge semantics, provider-ID model, relay injection, and readyz contract should live in one place. Platform code talks to that seam; it does not know what is behind it.
+- **Stop adding new external-component specifics to platform code.** When you write a new feature, ask: "does this line need to know the agent is opencode?" If yes, it belongs behind the seam, not in a service or handler.
+- **Containment is not abstraction.** No interface design, no generics, no provider registry. Just a boundary — a folder whose contents are allowed to know the external component, and a small surface the rest of the codebase calls. This is cheap and reversible.
+
+**Do NOT abstract prematurely (the trap):**
+
+- A single consumer tells you nothing about what the interface should look like. Any abstraction designed against one implementation will encode that implementation's shape as if it were universal — and you will refactor the abstraction itself when the second consumer arrives. You pay twice. This is the speculative-abstraction tax Rule 4 prohibits.
+- The relay-config subsystem is the canonical example: every accommodation of opencode's config-merge semantics (last-writer-wins, `OPENCODE_CONFIG` always wins, no hot reload, the `agent-config.json` writers, the one-shot injector, the 20s stale window) is opencode's behaviour leaking into our design. None of those are *our* requirements. Designing an "agent provider" interface today — against opencode only — would freeze that leakage into a contract we'd then have to break.
+
+**Trigger the real abstraction here (pay the big cost):**
+
+1. **When a second consumer is funded.** The moment a second agent (e.g., Claude Code, a homegrown harness) is scheduled as real work, abstract first, adapter second. A second consumer is the only thing that validates interface shape — writing the second adapter straight onto single-consumer-shaped platform code produces two jury-rigged systems instead of one. This is the highest-leverage moment to spend the money.
+2. **When the external component forces a rewrite anyway.** If an opencode breaking change forces a relay-config rewrite, absorb the abstraction cost then — the rewrite cost is already sunk.
+3. **When pain recurs in the same seam.** A repeated pattern of jury-rigging the *same* area (e.g., multiple worklogs touching `agent-config.json` handling) is evidence that containment has failed. That is a valid abstraction signal even before a second consumer — but the bar is *recurrence*, not a single inconvenience.
+
+**The test for "is this premature?"**
+
+Before introducing an interface, adapter, or provider abstraction for an external component, answer: *"Do I have at least two concrete consumers, or a forcing rewrite, or demonstrated recurring pain in this seam?"* If none, contain behind a boundary and stop. The abstraction will be cheaper and more correct when one of those is true.
+
+**Scope:** this rule is general — it applies to any external dependency whose internals we accommodate (agents, cloud drivers, relay VM binaries, MCP SDKs). The agent provider is the current primary case because the coupling is deepest there.
+
 ---
 
 ## Repository Structure
