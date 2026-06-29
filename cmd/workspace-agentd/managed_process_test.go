@@ -24,9 +24,11 @@ package main
 // os/exec/exec_test.go in the standard library): the test re-execs
 // itself with a marker env var so the subprocess runs `runFakeOpencode`
 // instead of the test binary. The fake binds a TCP port (configurable
-// via env var so concurrent tests don't collide) and ignores SIGTERM
-// for a configurable duration, which faithfully reproduces the slow-
-// shutdown timing that triggered Bug 2.
+// via env var so concurrent tests don't collide) and has three
+// signal-handling modes:
+//   - IGNORE_SIGTERM=1: catch+discard SIGTERM in a loop (only SIGKILL kills)
+//   - SIGTERM_DELAY_MS=N: catch SIGTERM, sleep N ms, then exit
+//   - default: block forever until killed (SIGKILL)
 //
 // The managedProcess code under test is decoupled from the literal
 // `opencode serve` argv via a commandFactory func; production wires
@@ -93,8 +95,19 @@ func runFakeOpencode() {
 	// managedProcess.restart() to wait for the old process to fully
 	// exit before binding a new port — the regression behavior for
 	// Bug 2 (worklog 0125).
+	//
+	// IGNORE_SIGTERM=1: the process catches and discards SIGTERM/SIGINT
+	// in a loop, never exiting on signal. Only SIGKILL can terminate it.
+	// Used by the SIGKILL-fallback tests to prove the killTimer is what
+	// kills the child (not a natural exit).
 	delayMS, _ := strconv.Atoi(os.Getenv("SIGTERM_DELAY_MS"))
-	if delayMS > 0 {
+	if os.Getenv("IGNORE_SIGTERM") == "1" {
+		ch := make(chan os.Signal, 1)
+		signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
+		for range ch {
+			// discard — only SIGKILL (uncatchable) terminates us
+		}
+	} else if delayMS > 0 {
 		ch := make(chan os.Signal, 1)
 		signal.Notify(ch, syscall.SIGTERM, syscall.SIGINT)
 		<-ch

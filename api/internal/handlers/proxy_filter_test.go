@@ -6,7 +6,6 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -202,8 +201,15 @@ func TestProxy_StripDoesNotApplyToSessionList(t *testing.T) {
 		"session list response should pass through unchanged")
 }
 
-// TestProxy_StripPreservesNonJSONResponses ensures non-JSON responses are
-// passed through unchanged even on the message endpoint (defense in depth).
+// TestProxy_StripPreservesNonJSONResponses asserts the API does not
+// silently forward non-JSON-array bodies from a misbehaving upstream
+// on the message endpoint. Returning an HTML/text blob would crash the
+// frontend's transformHistory parser; surfacing it as a 502 lets the
+// client show a real error.
+//
+// (Pre-#440 this test asserted opaque pass-through, which was the source
+// of a class of frontend crashes when upstream returned an error page
+// with a 200 status code.)
 func TestProxy_StripPreservesNonJSONResponses(t *testing.T) {
 	env := newTestEnvWithBackend(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -215,8 +221,9 @@ func TestProxy_StripPreservesNonJSONResponses(t *testing.T) {
 	env.setupWorkspaceWithT(t, "ws-1", 5)
 
 	w := env.doRequestWithT(t, "GET", "/api/v1/workspaces/ws-1/sessions/ses_1/message", nil)
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "not json {{{", w.Body.String())
+	assert.Equal(t, http.StatusBadGateway, w.Code,
+		"non-JSON-array upstream body must surface as 502, not opaque pass-through")
+	assert.Contains(t, w.Body.String(), "malformed upstream history")
 }
 
 // TestProxy_StripPreservesNon200Responses ensures non-2xx responses (errors)
@@ -236,7 +243,3 @@ func TestProxy_StripPreservesNon200Responses(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Equal(t, `{"error":"bad request"}`, w.Body.String())
 }
-
-// dummyVar makes go vet happy when this file is the only one in the package
-// adding new variables; remove if a real one is added.
-var _ = httptest.NewRecorder

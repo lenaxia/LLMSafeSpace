@@ -62,7 +62,7 @@ func DefaultSecurityConfig() SecurityConfig {
 		AllowedOrigins:        []string{},
 		AllowedMethods:        []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
 		AllowedHeaders:        []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "X-Request-ID"},
-		ExposedHeaders:        []string{"X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"},
+		ExposedHeaders:        []string{"X-Request-ID", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "X-Next-Cursor"},
 		AllowCredentials:      false,
 		MaxAge:                86400,
 		TrustedProxies:        []string{"127.0.0.1", "::1"},

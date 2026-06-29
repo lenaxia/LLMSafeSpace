@@ -33,6 +33,8 @@ import (
 	"github.com/lenaxia/llmsafespaces/api/internal/services/metrics"
 	"github.com/lenaxia/llmsafespaces/api/internal/services/msgqueue"
 	"github.com/lenaxia/llmsafespaces/api/internal/services/policy"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/prompt"
+	"github.com/lenaxia/llmsafespaces/api/internal/services/role"
 	"github.com/lenaxia/llmsafespaces/api/internal/services/sessionindex"
 	"github.com/lenaxia/llmsafespaces/api/internal/services/sso"
 	"github.com/lenaxia/llmsafespaces/api/internal/services/workspace"
@@ -234,6 +236,10 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	var jwtSessionJanitor *secrets.JWTSessionJanitor // populated when secrets are enabled; goroutine started below
 	var policySvc *policy.Service
 	var policyHandler *handlers.PolicyHandler
+	var promptSvc *prompt.Service
+	var promptHandler *handlers.PromptHandler
+	var roleSvc *role.Service
+	var agentRoleHandler *handlers.AgentRoleHandler
 	var auditHandler *handlers.AuditHandler
 	var platformAdminHandler *handlers.PlatformAdminHandler
 	var internalOrgStatusHandler *handlers.InternalOrgStatusHandler
@@ -514,7 +520,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		// source to diagnose live boot failures (the very gap PR #407
 		// closed). Enforced by TestPodBootstrapHandler_LoggerWired.
 		podBootstrapHandler = handlers.NewPodBootstrapHandlerFromClientset(
-			k8sClient.Clientset(), secretService, dbSvc, cfg.Kubernetes.Namespace,
+			k8sClient.Clientset(), secretService, dbSvc, nil, cfg.Kubernetes.Namespace,
 		)
 		podBootstrapHandler.SetLogger(log)
 		// User provider-credential bind/unbind routes are NOT under
@@ -730,9 +736,17 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	}
 
 	// US-43.7: Org policy service + handler.
+	// Agent Customization: Prompt service + handler.
 	if pgOrgStore != nil {
 		policySvc = policy.New(pgOrgStore, svc.Cache)
 		policyHandler = handlers.NewPolicyHandler(pgOrgStore, policySvc, svc.GetAuth(), log)
+		promptSvc = prompt.New(pgOrgStore, svc.Cache)
+		promptHandler = handlers.NewPromptHandler(pgOrgStore, promptSvc, svc.GetAuth(), log)
+		roleSvc = role.New(pgOrgStore)
+		agentRoleHandler = handlers.NewAgentRoleHandler(pgOrgStore, roleSvc, svc.GetAuth(), log)
+		if podBootstrapHandler != nil {
+			podBootstrapHandler.SetPromptService(promptSvc)
+		}
 		if wsSvc, ok := svc.Workspace.(*workspace.Service); ok {
 			wsSvc.SetPolicyChecker(policySvc)
 		}
@@ -794,6 +808,8 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		EmailVerifyHandler:              emailVerifyHandler,
 		PasswordResetHandler:            passwordResetHandler,
 		PolicyHandler:                   policyHandler,
+		PromptHandler:                   promptHandler,
+		AgentRoleHandler:                agentRoleHandler,
 		AuditHandler:                    auditHandler,
 		RelayAdminHandler:               relayAdminHandler,
 		AdminSessionHandler:             adminSessionHandler,

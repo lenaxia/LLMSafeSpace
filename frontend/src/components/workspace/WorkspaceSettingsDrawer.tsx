@@ -1,9 +1,10 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { X } from "lucide-react";
+import { X, Lock } from "lucide-react";
 import { useState, useEffect } from "react";
 import type { WorkspaceListItem } from "../../api/types";
 import { secretsApi, type SecretResponse } from "../../api/secrets";
 import { api } from "../../api/client";
+import { promptsApi } from "../../api/prompts";
 
 interface Props {
   workspace: WorkspaceListItem;
@@ -26,6 +27,8 @@ export function WorkspaceSettingsDrawer({ workspace, open, onOpenChange }: Props
   const [allSecrets, setAllSecrets] = useState<SecretResponse[]>([]);
   const [boundIds, setBoundIds] = useState<Set<string>>(new Set());
   const [bindingsChanged, setBindingsChanged] = useState(false);
+  const [customPrompt, setCustomPrompt] = useState("");
+  const [promptLocked, setPromptLocked] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -36,7 +39,17 @@ export function WorkspaceSettingsDrawer({ workspace, open, onOpenChange }: Props
       setAllSecrets(secretsRes.secrets || []);
       setBoundIds(new Set((bindingsRes.bindings || []).map((b) => b.secretId)));
     }).catch(() => {});
-  }, [open, workspace.id]);
+
+    const orgId = workspace.orgId;
+    if (orgId) {
+      promptsApi.getOrg(orgId).then((data) => {
+        setPromptLocked(!data.allowUserPrompt);
+      }).catch(() => setPromptLocked(false));
+    }
+    api.get<{ prompt?: string }>(`/workspaces/${workspace.id}/prompt`).then((data) => {
+      setCustomPrompt(data.prompt ?? "");
+    }).catch(() => {});
+  }, [open, workspace]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -44,6 +57,9 @@ export function WorkspaceSettingsDrawer({ workspace, open, onOpenChange }: Props
     try {
       if (bindingsChanged) {
         await api.put(`/workspaces/${workspace.id}/bindings`, { secretIds: Array.from(boundIds) });
+      }
+      if (!promptLocked) {
+        await api.put(`/workspaces/${workspace.id}/prompt`, { prompt: customPrompt });
       }
       onOpenChange(false);
     } catch (e: unknown) {
@@ -91,6 +107,28 @@ export function WorkspaceSettingsDrawer({ workspace, open, onOpenChange }: Props
           <p className="text-xs text-muted-foreground mb-6 truncate">{workspace.name}</p>
 
           <div className="space-y-5">
+            {/* Custom Agent Instructions */}
+            <div className="border-t border-border pt-4">
+              <label className="text-sm font-medium">Custom Instructions</label>
+              <p className="text-xs text-muted-foreground mb-2">
+                Appended after your role's system prompt.
+              </p>
+              {promptLocked ? (
+                <div className="flex items-center gap-2 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                  <Lock className="h-3 w-3" />
+                  Managed by your organization. Contact your admin to request changes.
+                </div>
+              ) : (
+                <textarea
+                  className="w-full min-h-[80px] rounded-md border border-border bg-background px-3 py-2 text-sm font-mono"
+                  placeholder="Focus on test coverage this session..."
+                  value={customPrompt}
+                  onChange={(e) => setCustomPrompt(e.target.value)}
+                  maxLength={10000}
+                />
+              )}
+            </div>
+
             {allSecrets.length > 0 && (
               <div className="border-t border-border pt-4">
                 <label className="text-sm font-medium">Attached Secrets</label>

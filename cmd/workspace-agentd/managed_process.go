@@ -267,18 +267,26 @@ func (p *managedProcess) restart() {
 	p.restartRequested = true
 	cmd := p.cmd
 	upCh := p.upCh
+	pid := 0
+	if cmd != nil && cmd.Process != nil {
+		pid = cmd.Process.Pid
+	}
 	p.mu.Unlock()
 
-	if cmd != nil && cmd.Process != nil {
-		log.Info("stopping opencode for restart", zap.Int("pid", cmd.Process.Pid))
-		_ = cmd.Process.Signal(syscall.SIGTERM)
+	if pid > 0 {
+		log.Info("stopping opencode for restart", zap.Int("pid", pid))
+		_ = syscall.Kill(pid, syscall.SIGTERM)
 		// Give the child up to 5s to exit on SIGTERM, then SIGKILL.
 		// We can't Wait() here (supervisor owns Wait), so we rely on
 		// the supervisor's loop iteration: when the child exits, the
 		// supervisor will see restartRequested and loop. We poll
 		// upCh to know when the new child is up.
+		//
+		// Uses syscall.Kill instead of cmd.Process.Signal/Kill to
+		// avoid a data race with cmd.Wait() in supervise(): both
+		// would concurrently access the same *os.Process struct.
 		killTimer := time.AfterFunc(5*time.Second, func() {
-			_ = cmd.Process.Kill()
+			_ = syscall.Kill(pid, syscall.SIGKILL)
 		})
 		defer killTimer.Stop()
 	}
@@ -315,12 +323,16 @@ func (p *managedProcess) stop() {
 	p.stopRequested = true
 	cmd := p.cmd
 	doneCh := p.doneCh
+	pid := 0
+	if cmd != nil && cmd.Process != nil {
+		pid = cmd.Process.Pid
+	}
 	p.mu.Unlock()
 
-	if cmd != nil && cmd.Process != nil {
-		_ = cmd.Process.Signal(syscall.SIGTERM)
+	if pid > 0 {
+		_ = syscall.Kill(pid, syscall.SIGTERM)
 		killTimer := time.AfterFunc(5*time.Second, func() {
-			_ = cmd.Process.Kill()
+			_ = syscall.Kill(pid, syscall.SIGKILL)
 		})
 		defer killTimer.Stop()
 	}
