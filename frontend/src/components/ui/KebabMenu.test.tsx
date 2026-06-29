@@ -112,4 +112,41 @@ describe("KebabMenu", () => {
       "text-destructive",
     );
   });
+
+  it("renders a header on each section change (multi-section)", async () => {
+    const user = userEvent.setup();
+    render(
+      <KebabMenu
+        items={[
+          { label: "Rename", onClick: vi.fn() },
+          { label: "Suspend", onClick: vi.fn(), section: "Lifecycle" },
+          { label: "Delete", onClick: vi.fn(), section: "Lifecycle", destructive: true },
+          { label: "Export", onClick: vi.fn(), section: "Advanced" },
+        ]}
+      />,
+    );
+    await user.click(screen.getByLabelText("Actions"));
+    // One header per named section; the unsectioned "Rename" has no header.
+    const lifecycleHeaders = screen.getAllByText("Lifecycle");
+    const advancedHeaders = screen.getAllByText("Advanced");
+    expect(lifecycleHeaders).toHaveLength(1);
+    expect(advancedHeaders).toHaveLength(1);
+  });
+
+  it("calls onClick and closes the menu for an item in sectioned mode", async () => {
+    const user = userEvent.setup();
+    const onClick = vi.fn();
+    render(
+      <KebabMenu
+        items={[
+          { label: "Rename", onClick: vi.fn() },
+          { label: "Suspend", onClick, section: "Lifecycle" },
+        ]}
+      />,
+    );
+    await user.click(screen.getByLabelText("Actions"));
+    await user.click(screen.getByRole("menuitem", { name: "Suspend" }));
+    expect(onClick).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
 });

@@ -16,7 +16,21 @@ describe("ConfirmDialog", () => {
         onConfirm={() => {}}
       />,
     );
-    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("renders the dialog when open", () => {
+    render(
+      <ConfirmDialog
+        open
+        onOpenChange={() => {}}
+        title="Refresh compute?"
+        description="d"
+        confirmLabel="Refresh"
+        onConfirm={() => {}}
+      />,
+    );
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
   it("renders title, description, and buttons when open", () => {
@@ -70,5 +84,36 @@ describe("ConfirmDialog", () => {
     );
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("renders the confirm button in the destructive style when destructive", () => {
+    render(
+      <ConfirmDialog
+        open
+        onOpenChange={() => {}}
+        title="t"
+        description="d"
+        confirmLabel="Delete"
+        destructive
+        onConfirm={() => {}}
+      />,
+    );
+    const confirm = screen.getByRole("button", { name: "Delete" });
+    expect(confirm.className).toContain("bg-destructive");
+  });
+
+  it("renders the confirm button in the default style when not destructive", () => {
+    render(
+      <ConfirmDialog
+        open
+        onOpenChange={() => {}}
+        title="t"
+        description="d"
+        confirmLabel="Refresh"
+        onConfirm={() => {}}
+      />,
+    );
+    const confirm = screen.getByRole("button", { name: "Refresh" });
+    expect(confirm.className).toContain("bg-primary");
   });
 });
