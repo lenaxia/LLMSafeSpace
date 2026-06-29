@@ -2,8 +2,8 @@
 
 > **Repository:** `github.com/lenaxia/llmsafespaces`
 
-**Version:** 1.20
-**Last Updated:** 2026-06-23
+**Version:** 1.21
+**Last Updated:** 2026-06-29
 **Project Status:** Active Development
 
 ---
@@ -263,7 +263,7 @@ The rule is about *when* to pay for an abstraction — and it is the opposite of
 **Do NOT abstract prematurely (the trap):**
 
 - A single consumer tells you nothing about what the interface should look like. Any abstraction designed against one implementation will encode that implementation's shape as if it were universal — and you will refactor the abstraction itself when the second consumer arrives. You pay twice. This is the speculative-abstraction tax Rule 4 prohibits.
-- The relay-config subsystem is the canonical example: every accommodation of opencode's config-merge semantics (last-writer-wins, `OPENCODE_CONFIG` always wins, no hot reload, the `agent-config.json` writers, the one-shot injector, the 20s stale window) is opencode's behaviour leaking into our design. None of those are *our* requirements. Designing an "agent provider" interface today — against opencode only — would freeze that leakage into a contract we'd then have to break.
+- The relay-config subsystem is the canonical example: every accommodation of opencode's config-merge semantics (last-writer-wins, `OPENCODE_CONFIG` always wins, no hot reload, the `agent-config.json` write architecture, the one-shot injector, the 20s stale window) is opencode's behaviour leaking into our design. None of those are *our* requirements. Designing an "agent provider" interface today — against opencode only — would freeze that leakage into a contract we'd then have to break.
 
 **Trigger the real abstraction here (pay the big cost):**
 
