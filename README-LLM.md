@@ -464,7 +464,7 @@ The relay config subsystem manages how `agent-config.json` — the file opencode
 | `/home/sandbox` | Longhorn PVC (`subPath: home`) | Yes | SSH keys, secrets base dir, enricher cache, tool caches |
 | `/tmp` | Longhorn PVC (`subPath: tmp`) | Yes — init scripts, package caches; NOT credentials (US-35.7 moved them to tmpfs) | init-script.sh |
 | `/sandbox-cfg` | emptyDir (memory, 32Mi) | No — ephemeral per pod, read-only on main container | secrets.json, workspace-config.json, password (from bootstrap) |
-| `/sandbox-runtime` | emptyDir (memory, 96Mi, RW) | No — ephemeral per pod, wiped on death | agent-config.json, secrets-env, symlink targets for SSH/git/secrets/auth.json |
+| `/sandbox-runtime` | emptyDir (memory, 96Mi, RW) | No — ephemeral per pod, wiped on death | agent-config.json, secrets-env, `last-reload-secrets.json` (reload-replay cache, #443), symlink targets for SSH/git/secrets/auth.json |
 
 **Key path constants** (`pkg/agentd/types.go`):
 
@@ -472,6 +472,7 @@ The relay config subsystem manages how `agent-config.json` — the file opencode
 AgentConfigPath  = "/sandbox-runtime/agent-config.json"
 SecretsBasePath  = "/sandbox-runtime/rt/secrets"   ← deleted by reset() on every reload; tmpfs
 SecretsEnvPath   = "/sandbox-runtime/secrets-env"
+ReloadSecretsCachePath = "/sandbox-runtime/last-reload-secrets.json"  ← persisted by reloadSecretsHandler; replayed by boot-time materialize to restore user-DEK creds after a container restart (#443); tmpfs, wiped on pod death
 ```
 
 
@@ -532,14 +533,16 @@ The relay config subsystem uses a single `AgentConfigWriter` (`cmd/workspace-age
 
 #### Agent-config.json write sequence (boot)
 
-1. **Materialize subcommand** (separate process, before agentd): `Materializer.reset()` deletes agent-config.json → `FlushProviders()` writes provider credentials → `applyWorkspaceConfig()` adds model key with providerID/modelID
+1. **Materialize subcommand** (separate process, before agentd): loads base `/sandbox-cfg/secrets.json` (server-KEK creds) and replays `/sandbox-runtime/last-reload-secrets.json` (the last reload-secrets batch, #443) merged on top — cache wins on duplicate Type+Name. `Materializer.reset()` wipes tmpfs credential files → `Materialize(merged)` re-applies both base + cached user-DEK creds → `FlushProviders()` writes provider credentials → `applyWorkspaceConfig()` adds model key with providerID/modelID. Absent cache = first boot (base only). Corrupt cache = warn + base only.
 2. **agentd starts**: `newAgentConfigWriter()` reads the existing file, captures providers + model as initial sources
 3. **~T+7s**: `startRelayInjector()` fetches free models → `writer.SetRelay(url, models)` + `writer.Rebuild()` writes merged config → updates auth.json → restarts opencode
 
 #### Agent-config.json write sequence (credential reload)
 
-1. `reloadMu.Lock()` → `Materializer.reset()` → `Materializer.FormatProviders()` formats credentials → `writer.SetProviders(formatted)` + `writer.Rebuild()` merges with existing model + relay sources → `reloadMu.Unlock()`
+1. `reloadMu.Lock()` → `Materializer.reset()` → `Materialize(batch)` → `Materializer.FormatProviders()` formats credentials → `writer.SetProviders(formatted)` + `writer.Rebuild()` merges with existing model + relay sources → **`writeReloadSecretsCache()`** persists the batch to `/sandbox-runtime/last-reload-secrets.json` (tmpfs; survives container restart, wiped on pod death) → `reloadMu.Unlock()`
 2. `proc.restart()` reboots opencode with updated config
+
+The cache write (#443) is what lets user-DEK credentials (env-secrets like `GH_TOKEN`, SSH keys, user LLM providers) survive a main-container restart (OOM, panic, kubelet restart): without it, the next boot's `reset()` would wipe them and the base `secrets.json` (bootstrap, sessionless) never contained them. The cache is written after `Materialize` succeeds, is never written on a hard failure (500), and degrades to base-only on a corrupt read.
 
 #### RelayInjected signal flow
 

@@ -16,6 +16,17 @@ const (
 	PasswordPath    = "/sandbox-cfg/password"
 	SecretsBasePath = "/sandbox-runtime/rt/secrets"
 	WorkspacePath   = "/workspace"
+	// ReloadSecretsCachePath is where reloadSecretsHandler persists the last
+	// reload-secrets batch so it can be replayed after a main-container restart
+	// (#443). It lives on the /sandbox-runtime tmpfs emptyDir (Memory medium):
+	// it survives a container restart (kubelet respawns the main container on
+	// the same pod without touching the emptyDir) but is wiped on pod death —
+	// preserving the US-35.7 "no plaintext on PVC at rest" invariant. The base
+	// /sandbox-cfg/secrets.json (written by the init container) only ever
+	// contains server-KEK creds; user-DEK creds (env-secrets, SSH keys, user
+	// LLM providers) are live-pushed after boot and would otherwise be lost on
+	// every container restart.
+	ReloadSecretsCachePath = "/sandbox-runtime/last-reload-secrets.json"
 )
 
 // Ports and network constants shared between agentd and the controller.
