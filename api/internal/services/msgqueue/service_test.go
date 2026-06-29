@@ -435,7 +435,7 @@ func TestEnqueue_IDsAreTemporallyOrdered(t *testing.T) {
 		prev = id
 		time.Sleep(50 * time.Microsecond)
 	}
-	t.Logf("same-ms unordered pairs: %d/99 (expected: small, since 50µs sleep usually crosses ms boundary)", monotonicMisses)
+	t.Logf("same-ms unordered pairs: %d/99 (expected: common, since 50µs sleep typically does NOT cross a 1ms boundary)", monotonicMisses)
 }
 
 // TestEnqueue_LegacyUUIDFormatWouldRegress documents and pins the failure mode
