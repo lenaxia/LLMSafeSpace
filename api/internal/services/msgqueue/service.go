@@ -2,18 +2,105 @@ package msgqueue
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/go-redis/redis/v8"
-	"github.com/google/uuid"
 )
 
 const (
 	keyPrefix = "llmsafespaces:msgqueue:"
 	keyTTL    = 24 * time.Hour
 )
+
+// ocAlphabet is opencode's randomBase62 alphabet.
+// Source: packages/opencode/src/id/id.ts (randomBase62).
+const ocAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+// ocBodyLen is the post-prefix length of an opencode Identifier.ascending ID.
+// Source: packages/opencode/src/id/id.ts (const LENGTH = 26).
+const ocBodyLen = 26
+
+// idClockSafetyMs backdates the timestamp embedded in queue IDs to absorb
+// expected clock skew between the API pod and the workspace pod, plus any
+// transport/processing delay before opencode generates its assistant ID.
+//
+// We need our ID to lex-sort STRICTLY below opencode's first
+// same-conversation assistant ID. Opencode uses its own pod's wall clock,
+// which can drift relative to ours by tens of ms even with NTP. Backdating
+// by 60s puts us comfortably below opencode's clock regardless of skew, at
+// the cost of decoded queue-ID timestamps appearing 60s in the past — an
+// acceptable cosmetic trade since nothing relies on decoded ID time
+// (creation time is tracked separately in QueuedMessage.EnqueuedAt).
+const idClockSafetyMs = 60 * 1000
+
+// Opencode's session.prompt agent loop exits only when
+// userMessage.id < assistantMessage.id under lexicographic string comparison
+// (decompiled from opencode binary v1.15.12). Any caller-supplied user message
+// ID that sorts above the assistant ID causes opencode to loop indefinitely,
+// re-prompting the model with the same user text wrapped in
+// <system-reminder> tags — observable in chat as the assistant
+// "talking to itself" with role-flipped replies.
+//
+// To preserve that invariant, queued message IDs are generated using a
+// faithful port of opencode's Identifier.ascending("message") format. Because
+// the queue service runs before opencode receives the prompt, the queue ID's
+// embedded timestamp is always <= opencode's, and the hex-encoded prefix
+// preserves that order.
+//
+// See the worklog under worklogs/*_msg-queue-id-format-role-flip-fix.md and
+// the incident on 2026-06-29 (session ses_0ed760478ffeQVPJGD5iEvRRmu).
+
+// generateOpencodeMessageID returns a "msg_..." identifier matching
+// opencode's Identifier.ascending("message") layout exactly:
+//
+//	"msg_" + 12 hex chars + 14 base62 chars
+//
+// The 12 hex chars encode the low 48 bits of (timestamp_ms * 0x1000 + counter)
+// big-endian; the trailing 14 chars are cryptographically random base62.
+//
+// Critical ordering invariants:
+//
+//  1. The embedded timestamp is the current wall clock minus idClockSafetyMs.
+//     This guarantees ours < opencode's even under clock skew between the API
+//     pod and the workspace pod.
+//
+//  2. Counter is held at 0. Opencode's per-ms counter starts at 0 and is
+//     incremented before encoding (minimum 1), so on a same-ms tie our hex
+//     prefix still sorts strictly below opencode's.
+//
+// Source for the opencode algorithm: packages/opencode/src/id/id.ts.
+func generateOpencodeMessageID() (string, error) {
+	now := time.Now().UnixMilli() - idClockSafetyMs
+
+	// counter = 0, deliberately below opencode's minimum-used counter of 1.
+	// (ts << 12) | 0, truncated to low 48 bits via the 6-byte big-endian
+	// write loop below.
+	// gosec G115: `now` is `UnixMilli() - 60_000`, always positive
+	// post-1970, so the int64→uint64 conversion never wraps.
+	n := uint64(now) * 0x1000 //nolint:gosec // bounded positive timestamp
+
+	var bytes6 [6]byte
+	for i := 0; i < 6; i++ {
+		bytes6[i] = byte((n >> uint(40-8*i)) & 0xff)
+	}
+	hexPart := hex.EncodeToString(bytes6[:])
+
+	const randLen = ocBodyLen - 12
+	randBytes := make([]byte, randLen)
+	if _, err := rand.Read(randBytes); err != nil {
+		return "", fmt.Errorf("generating random suffix: %w", err)
+	}
+	randPart := make([]byte, randLen)
+	for i := 0; i < randLen; i++ {
+		randPart[i] = ocAlphabet[int(randBytes[i])%len(ocAlphabet)]
+	}
+
+	return "msg_" + hexPart + string(randPart), nil
+}
 
 // QueuedMessage represents a message held in the Redis-backed queue.
 type QueuedMessage struct {
@@ -41,8 +128,12 @@ func queueKey(workspaceID, sessionID string) string {
 }
 
 func (s *Service) Enqueue(ctx context.Context, workspaceID, sessionID, text string) (string, error) {
+	id, err := generateOpencodeMessageID()
+	if err != nil {
+		return "", fmt.Errorf("generating queued message ID: %w", err)
+	}
 	msg := QueuedMessage{
-		ID:          "msg_q_" + uuid.NewString(),
+		ID:          id,
 		Text:        text,
 		SessionID:   sessionID,
 		WorkspaceID: workspaceID,
