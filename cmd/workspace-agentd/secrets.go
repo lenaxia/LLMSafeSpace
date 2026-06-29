@@ -282,6 +282,11 @@ type materializeConfig struct {
 	// Default: $HOME/.local/state/llmsafespaces (on the workspace PVC subPath:home,
 	// outside SecretsBaseDir and SSHDir, never cleaned by reset()).
 	enricherCacheDir string
+	// reloadCachePath is where reloadSecretsHandler persists the last reload
+	// batch for replay after a main-container restart (#443). It is on the
+	// /sandbox-runtime tmpfs (survives container restart, wiped on pod death).
+	// See agentd.ReloadSecretsCachePath.
+	reloadCachePath string
 }
 
 func (c materializeConfig) toPaths() secrets.Paths {
@@ -312,6 +317,7 @@ func loadMaterializeConfig() materializeConfig {
 		secretsEnvPath:   envOrDefault("LLMSAFESPACES_SECRETS_ENV_PATH", agentd.SecretsEnvPath),
 		gitCredsPath:     envOrDefault("LLMSAFESPACES_GIT_CREDS_PATH", "/sandbox-runtime/rt/git-credentials"),
 		enricherCacheDir: envOrDefault("LLMSAFESPACES_ENRICHER_CACHE_DIR", home+"/.local/state/llmsafespaces"),
+		reloadCachePath:  envOrDefault("LLMSAFESPACES_RELOAD_CACHE_PATH", agentd.ReloadSecretsCachePath),
 	}
 }
 
@@ -347,17 +353,36 @@ func runMaterializeCommand(args []string, stdout, stderr io.Writer) int {
 
 	cfg := loadMaterializeConfig()
 
-	secretsList, err := secrets.LoadSecretsFile(*from)
+	// Load the base batch from secrets.json (written by the init container's
+	// bootstrap — server-KEK creds only). Absent is the zero-credential /
+	// pre-first-bind state and is handled as an empty batch below.
+	baseSecrets, err := secrets.LoadSecretsFile(*from)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) || strings.Contains(err.Error(), "no such file") {
-			// secrets.json is absent (zero-credential user or pre-first-bind).
-			// Still apply workspace-config.json so the default model is written
-			// to agent-config.json even when no LLM credentials are configured.
-			applyWorkspaceConfig(cfg.toPaths().AgentConfigPath, *from)
-			return 0
+		if !(errors.Is(err, os.ErrNotExist) || strings.Contains(err.Error(), "no such file")) {
+			_, _ = fmt.Fprintf(stderr, "materialize: %v\n", err)
+			return 2
 		}
-		_, _ = fmt.Fprintf(stderr, "materialize: %v\n", err)
-		return 2
+		baseSecrets = nil
+	}
+
+	// Replay the last reload-secrets batch (survives container restart on the
+	// /sandbox-runtime tmpfs; wiped on pod death). This restores user-DEK
+	// credentials (env-secrets, SSH keys, user LLM providers) that were
+	// live-pushed after boot and would otherwise be lost when reset() runs
+	// again on this restart (#443). Absent on first boot / fresh pod.
+	cachedSecrets := loadReloadSecretsCache(cfg.reloadCachePath, stderr)
+
+	// Merge: base (server-KEK) + cache (last live state). The cache is the
+	// newer ground truth — it wins on any duplicate Type+Name.
+	secretsList := mergeSecretBatches(baseSecrets, cachedSecrets)
+
+	if len(secretsList) == 0 {
+		// No credentials at all (first boot, zero-credential user, and no
+		// prior reload). Still apply workspace-config.json so the default
+		// model is written to agent-config.json even when no LLM credentials
+		// are configured.
+		applyWorkspaceConfig(cfg.toPaths().AgentConfigPath, *from)
+		return 0
 	}
 
 	m := &secrets.Materializer{FS: secrets.RealFS(), Paths: cfg.toPaths()}
@@ -641,6 +666,22 @@ func reloadSecretsHandler(cfg materializeConfig, deps reloadSecretsDeps) http.Ha
 			result = &secrets.MaterializeResult{}
 		}
 
+		// Persist the just-applied batch so a main-container restart (OOM,
+		// panic, kubelet restart) can replay it. reset() inside the next boot's
+		// Materialize would otherwise wipe these user-DEK credentials with no
+		// way to restore them (#443). The cache lives on the /sandbox-runtime
+		// tmpfs: survives container restart, wiped on pod death (US-35.7).
+		// Written here — after Materialize succeeded — so the cached state
+		// reflects what was materialized to the filesystem even if a later
+		// step (writer rebuild) fails. Non-fatal: a write failure warns but
+		// does not roll back the live materialization; the cost is only that
+		// the creds will not survive the *next* restart.
+		if pErr := writeReloadSecretsCache(cfg.reloadCachePath, batch); pErr != nil {
+			log.Warn("reload-secrets: failed to persist reload batch for restart replay; "+
+				"user-DEK credentials may be lost on the next container restart",
+				zap.Error(pErr))
+		}
+
 		// Enrich custom-endpoint providers with their live model list (same as
 		// the boot-time materialize path). On reload, any cached model list is
 		// reused so this is typically instant.
@@ -777,6 +818,108 @@ func hasLLMProviders(batch []secrets.Secret) bool {
 		}
 	}
 	return false
+}
+
+// mergeSecretBatches combines a base batch with a layered batch, resolving
+// duplicates in favour of the layered batch. The dedup key is Type+Name —
+// the materializer's identity for a secret within a workspace. Metadata and
+// Plaintext from the layered entry replace the base entry wholesale.
+//
+// Used at boot (#443): base = /sandbox-cfg/secrets.json (server-KEK creds),
+// layered = the last reload-secrets cache (the newer, complete live state).
+// The cache wins because a reload is a full-replace and therefore holds the
+// most recent intended credential set.
+func mergeSecretBatches(base, layered []secrets.Secret) []secrets.Secret {
+	if len(base) == 0 {
+		return layered
+	}
+	if len(layered) == 0 {
+		return base
+	}
+
+	seen := make(map[string]int, len(base)+len(layered))
+	merged := make([]secrets.Secret, 0, len(base)+len(layered))
+	key := func(s secrets.Secret) string { return s.Type + "\x00" + s.Name }
+
+	for _, s := range base {
+		seen[key(s)] = len(merged)
+		merged = append(merged, s)
+	}
+	for _, s := range layered {
+		if idx, ok := seen[key(s)]; ok {
+			merged[idx] = s
+			continue
+		}
+		seen[key(s)] = len(merged)
+		merged = append(merged, s)
+	}
+	return merged
+}
+
+// writeReloadSecretsCache atomically writes the batch as JSON to path with
+// mode 0600. Atomicity uses a temp file in the same directory + os.Rename so
+// a crash mid-write never leaves a truncated cache that would shadow the last
+// known good state on the next restart.
+//
+// The file holds plaintext credentials, so 0600 is mandatory. The parent
+// directory (/sandbox-runtime tmpfs) is created by the pod's init container
+// and is writable by the sandbox user.
+func writeReloadSecretsCache(path string, batch []secrets.Secret) error {
+	data, err := json.Marshal(batch)
+	if err != nil {
+		return fmt.Errorf("marshal reload batch: %w", err)
+	}
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".last-reload-secrets.*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp cache file: %w", err)
+	}
+	tmpName := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpName) }
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return fmt.Errorf("write cache: %w", err)
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return fmt.Errorf("chmod cache: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return fmt.Errorf("close cache: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		cleanup()
+		return fmt.Errorf("rename cache into place: %w", err)
+	}
+	return nil
+}
+
+// loadReloadSecretsCache reads and parses the persisted reload batch. It never
+// returns an error: an absent file is the normal first-boot / fresh-pod state
+// (returns nil), and a corrupt file degrades to base-only materialization with
+// a warning on stderr so an operator can diagnose missing creds after a
+// restart. A zero-length decode error is treated the same as absent.
+func loadReloadSecretsCache(path string, stderr io.Writer) []secrets.Secret {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			_, _ = fmt.Fprintf(stderr, "materialize: read last-reload-secrets cache %q: %v\n", path, err)
+		}
+		return nil
+	}
+	var batch []secrets.Secret
+	if err := json.Unmarshal(data, &batch); err != nil {
+		_, _ = fmt.Fprintf(stderr,
+			"materialize: ignoring corrupt last-reload-secrets cache %q (%v); "+
+				"falling back to base secrets only — user-DEK credentials pushed since the last boot will NOT be restored\n",
+			path, err)
+		return nil
+	}
+	return batch
 }
 
 // buildEnvFrom returns the process environment with secrets-env entries
