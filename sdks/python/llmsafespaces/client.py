@@ -177,6 +177,9 @@ class _WorkspacesAPI:
     def restart(self, workspace_id: str) -> None:
         self._c._request("POST", f"/workspaces/{workspace_id}/restart")
 
+    def refresh_compute(self, workspace_id: str) -> dict[str, Any]:
+        return self._c._request("POST", f"/workspaces/{workspace_id}/refresh-compute")
+
     def set_bindings(self, workspace_id: str, secret_ids: list[str]) -> None:
         self._c._request(
             "PUT",

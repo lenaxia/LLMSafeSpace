@@ -316,6 +316,24 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "404":
           $ref: "#/components/responses/NotFound"
+  /workspaces/{id}/refresh-compute:
+    post:
+      tags: [workspaces]
+      summary: Refresh workspace compute (re-sync resource defaults and rebuild pod for latest image version)
+      operationId: refreshWorkspaceCompute
+      parameters:
+        - $ref: "#/components/parameters/WorkspaceId"
+      responses:
+        "202":
+          description: Refresh initiated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefreshWorkspaceResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
   # --- Sessions ---
   /workspaces/{id}/sessions:
     get:
@@ -1542,6 +1560,13 @@ components:
         suspended:
           type: string
           description: ID of the workspace that was suspended to make room (if any)
+    RefreshWorkspaceResult:
+      type: object
+      properties:
+        restartGeneration:
+          type: integer
+          format: int64
+          description: The bumped restart generation that triggers a pod rebuild (re-resolves the runtime image to its latest version and applies refreshed resource requests)
     TerminalTicketResponse:
       type: object
       properties:

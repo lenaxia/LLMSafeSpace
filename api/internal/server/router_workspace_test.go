@@ -90,6 +90,7 @@ var workspaceRoutes = []struct {
 	{http.MethodDelete, "/api/v1/workspaces/ws-1"},
 	{http.MethodPost, "/api/v1/workspaces/ws-1/suspend"},
 	{http.MethodPost, "/api/v1/workspaces/ws-1/restart"},
+	{http.MethodPost, "/api/v1/workspaces/ws-1/refresh-compute"},
 	{http.MethodGet, "/api/v1/workspaces/ws-1/status"},
 	{http.MethodPut, "/api/v1/workspaces/ws-1"},
 }
@@ -123,6 +124,8 @@ func TestWorkspaceRoutes_Exist(t *testing.T) {
 				Return(assert.AnError).Maybe()
 			svc.workspace.On("RestartWorkspace", mock.Anything, mock.Anything, mock.Anything).
 				Return(assert.AnError).Maybe()
+			svc.workspace.On("RefreshWorkspaceCompute", mock.Anything, mock.Anything, mock.Anything).
+				Return((*types.RefreshWorkspaceResult)(nil), assert.AnError).Maybe()
 
 			req, _ := http.NewRequest(rt.method, rt.path, nil)
 			req.Header.Set("Authorization", "Bearer testtoken")
@@ -151,4 +154,38 @@ func TestWorkspaceRoutes_RequireAuth(t *testing.T) {
 				"route %s %s should return 401 without auth token", rt.method, rt.path)
 		})
 	}
+}
+
+// TestRefreshComputeRoute_Success verifies the refresh-compute endpoint is
+// wired end-to-end: router → handler → service → 202 + JSON body with the
+// bumped restartGeneration.
+func TestRefreshComputeRoute_Success(t *testing.T) {
+	router, svc := newRouterFixture(t)
+	svc.workspace.On("RefreshWorkspaceCompute", mock.Anything, "test-user", "ws-1").
+		Return(&types.RefreshWorkspaceResult{RestartGeneration: 7}, nil)
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-1/refresh-compute", nil)
+	req.Header.Set("Authorization", "Bearer testtoken")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusAccepted, w.Code)
+	assert.Contains(t, w.Body.String(), `"restartGeneration":7`)
+	svc.workspace.AssertCalled(t, "RefreshWorkspaceCompute", mock.Anything, "test-user", "ws-1")
+}
+
+// TestRefreshComputeRoute_ServiceError_Propagated verifies a service error
+// (e.g. forbidden / conflict) surfaces as a non-2xx instead of 202.
+func TestRefreshComputeRoute_ServiceError_Propagated(t *testing.T) {
+	router, svc := newRouterFixture(t)
+	svc.workspace.On("RefreshWorkspaceCompute", mock.Anything, mock.Anything, mock.Anything).
+		Return((*types.RefreshWorkspaceResult)(nil), assert.AnError)
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/workspaces/ws-1/refresh-compute", nil)
+	req.Header.Set("Authorization", "Bearer testtoken")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.NotEqual(t, http.StatusAccepted, w.Code)
+	assert.NotEqual(t, http.StatusNotFound, w.Code)
 }

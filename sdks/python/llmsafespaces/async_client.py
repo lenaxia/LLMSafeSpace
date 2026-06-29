@@ -182,6 +182,9 @@ class _AsyncWorkspacesAPI:
     async def restart(self, workspace_id: str) -> None:
         await self._c._request("POST", f"/workspaces/{workspace_id}/restart")
 
+    async def refresh_compute(self, workspace_id: str) -> dict[str, Any]:
+        return await self._c._request("POST", f"/workspaces/{workspace_id}/refresh-compute")
+
     async def set_bindings(self, workspace_id: str, secret_ids: list[str]) -> None:
         await self._c._request(
             "PUT",

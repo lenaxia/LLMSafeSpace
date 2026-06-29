@@ -24,6 +24,7 @@ import type {
   Workspace,
   WorkspaceListResult,
   WorkspaceStatusResult,
+  RefreshWorkspaceResult,
 } from "./types.js";
 
 const DEFAULT_TIMEOUT = 120_000;
@@ -123,8 +124,14 @@ export class LLMSafeSpaces {
       }
     }
 
-    if (res.status === 204 || res.status === 202) return undefined as T;
-    return res.json() as Promise<T>;
+    // 204 No Content has no body by definition. 202 Accepted MAY carry a
+    // payload describing the accepted operation's status (RFC 7231 §6.3.3),
+    // so read the body and return undefined only when it is actually empty
+    // (preserving the void contract for endpoints like suspend/restart).
+    if (res.status === 204) return undefined as T;
+    const text = await res.text();
+    if (text === "") return undefined as T;
+    return JSON.parse(text) as T;
   }
 
   private async login(): Promise<void> {
@@ -175,6 +182,9 @@ class WorkspacesAPI {
   }
   restart(id: string) {
     return this.client.request<void>("POST", `/workspaces/${id}/restart`);
+  }
+  refreshCompute(id: string) {
+    return this.client.request<RefreshWorkspaceResult>("POST", `/workspaces/${id}/refresh-compute`);
   }
   setBindings(id: string, secretIds: string[]) {
     return this.client.request<void>("PUT", `/workspaces/${id}/bindings`, { secretIds });

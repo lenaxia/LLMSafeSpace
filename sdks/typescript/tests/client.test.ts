@@ -64,6 +64,17 @@ describe("LLMSafeSpaces Client", () => {
 
       await expect(client.workspaces.suspend("ws-1")).resolves.toBeUndefined();
     });
+
+    it("refreshes workspace compute", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({ restartGeneration: 3 }, 202));
+
+      const result = await client.workspaces.refreshCompute("ws-1");
+      expect(result.restartGeneration).toBe(3);
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://localhost:8080/api/v1/workspaces/ws-1/refresh-compute",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
   });
 
   describe("sessions", () => {

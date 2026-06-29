@@ -140,6 +140,11 @@ type ActivateWorkspaceResponse struct {
 	Suspended string `json:"suspended,omitempty"`
 }
 
+// RefreshWorkspaceResult is returned by POST /workspaces/:id/refresh-compute.
+type RefreshWorkspaceResult struct {
+	RestartGeneration int64 `json:"restartGeneration"`
+}
+
 // SessionListItem is sidebar metadata for a session.
 type SessionListItem struct {
 	ID            string     `json:"id"`

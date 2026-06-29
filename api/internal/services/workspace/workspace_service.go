@@ -685,6 +685,116 @@ func (s *Service) RestartWorkspace(ctx context.Context, userID, workspaceID stri
 	return nil
 }
 
+// RefreshWorkspaceCompute re-syncs a workspace CRD with the platform's current
+// defaults, then bumps spec.restartGeneration so the controller rebuilds the
+// pod. The rebuild re-resolves spec.runtime to the latest RuntimeEnvironment
+// image (picking up new image versions) and applies the refreshed resource
+// requests.
+//
+// Use cases:
+//   - A new runtime image version is published; the user wants the workspace
+//     to pick it up without a full recreate.
+//   - The platform's default CPU/memory (workspace.defaultResources) increased
+//     and the user wants their long-lived workspace to adopt the new values.
+//
+// Fields re-applied from instance settings (overwritten to current platform
+// defaults when configured): Resources.CPU, Resources.Memory, SecurityLevel,
+// Storage.StorageClassName, MaxActiveSessions. Fields the platform has no
+// opinion on (empty/zero default) are left untouched, so refresh never
+// clobbers a deliberate user setting with a schema default.
+//
+// Like RestartWorkspace, refresh is REJECTED for Terminating/Terminated phases
+// (they race with finalizer cleanup) and idempotent at the spec layer.
+func (s *Service) RefreshWorkspaceCompute(ctx context.Context, userID, workspaceID string) (*types.RefreshWorkspaceResult, error) {
+	start := time.Now()
+	defer func() {
+		if s.metricsService != nil {
+			s.metricsService.RecordRequest("RefreshWorkspaceCompute", "", 0, time.Since(start), 0)
+		}
+	}()
+
+	if err := s.verifyOwner(ctx, userID, workspaceID); err != nil {
+		return nil, err
+	}
+
+	crd, err := func() (*v1.Workspace, error) {
+		wsClient, wErr := s.workspaceCRDClient()
+		if wErr != nil {
+			return nil, wErr
+		}
+		return wsClient.Get(ctx, workspaceID, metav1.GetOptions{})
+	}()
+	if err != nil {
+		return nil, apierrors.NewInternalError("workspace_get_failed", err)
+	}
+
+	if crd.Status.Phase == v1.WorkspacePhaseTerminating || crd.Status.Phase == v1.WorkspacePhaseTerminated {
+		return nil, apierrors.NewConflictError(
+			"workspace",
+			workspaceID,
+			fmt.Errorf("cannot refresh compute for workspace in phase %q", crd.Status.Phase),
+		)
+	}
+
+	s.reapplyComputeDefaults(ctx, crd)
+	crd.Spec.RestartGeneration++
+
+	if _, err := func() (*v1.Workspace, error) {
+		wsClient, wErr := s.workspaceCRDClient()
+		if wErr != nil {
+			return nil, wErr
+		}
+		return wsClient.Update(ctx, crd)
+	}(); err != nil {
+		s.logger.Error("Failed to refresh workspace compute", err, "workspaceID", workspaceID)
+		return nil, apierrors.NewInternalError("workspace_refresh_failed", err)
+	}
+
+	s.logger.Info("Workspace compute refresh initiated",
+		"workspaceID", workspaceID, "userID", userID,
+		"restartGeneration", crd.Spec.RestartGeneration, "fromPhase", string(crd.Status.Phase))
+	return &types.RefreshWorkspaceResult{RestartGeneration: crd.Spec.RestartGeneration}, nil
+}
+
+// reapplyComputeDefaults overwrites the compute-oriented spec fields with the
+// platform's current instance settings. Unlike applyWorkspaceDefaults (which
+// only fills empty fields), this force-converges the workspace to the current
+// platform defaults — the intent of "refresh compute". Each field is only
+// overwritten when the platform default is explicitly configured (non-empty /
+// non-zero), so refresh never replaces a deliberate user value with a schema
+// default on a platform that has no opinion on that field.
+func (s *Service) reapplyComputeDefaults(ctx context.Context, crd *v1.Workspace) {
+	if s.instanceSettings == nil {
+		return
+	}
+
+	cpu, cpuErr := s.instanceSettings.GetString(ctx, settings.KeyWorkspaceDefaultResourcesCPU.Name())
+	mem, memErr := s.instanceSettings.GetString(ctx, settings.KeyWorkspaceDefaultResourcesMemory.Name())
+	if cpuOk := cpuErr == nil && cpu != ""; cpuOk || (memErr == nil && mem != "") {
+		if crd.Spec.Resources == nil {
+			crd.Spec.Resources = &v1.ResourceRequirements{}
+		}
+		if cpuOk {
+			crd.Spec.Resources.CPU = cpu
+		}
+		if memErr == nil && mem != "" {
+			crd.Spec.Resources.Memory = mem
+		}
+	}
+
+	if level, err := s.instanceSettings.GetString(ctx, settings.KeyWorkspaceDefaultSecurityLevel.Name()); err == nil && level != "" {
+		crd.Spec.SecurityLevel = level
+	}
+
+	if sc, err := s.instanceSettings.DefaultStorageClass(ctx); err == nil && sc != "" {
+		crd.Spec.Storage.StorageClassName = sc
+	}
+
+	if v, err := s.instanceSettings.GetInt(ctx, settings.KeyWorkspaceDefaultMaxActiveSessions.Name()); err == nil && v > 0 {
+		crd.Spec.MaxActiveSessions = int32(v) //nolint:gosec // bounded by settings schema (1-100)
+	}
+}
+
 // GetWorkspaceStatus returns infrastructure state from the Workspace CRD.
 func (s *Service) GetWorkspaceStatus(ctx context.Context, userID, workspaceID string) (*types.WorkspaceStatusResult, error) {
 	start := time.Now()

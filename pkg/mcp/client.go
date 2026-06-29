@@ -51,6 +51,7 @@ type APIClient interface {
 	CreateWorkspace(ctx context.Context, req CreateWorkspaceReq) (*WorkspaceResp, error)
 	ActivateWorkspace(ctx context.Context, workspaceID string) (*ActivateResp, error)
 	SuspendWorkspace(ctx context.Context, workspaceID string) error
+	RefreshWorkspace(ctx context.Context, workspaceID string) (*RefreshWorkspaceResp, error)
 	CreateSession(ctx context.Context, workspaceID string) (*SessionResp, error)
 	GetHistory(ctx context.Context, workspaceID, sessionID string) ([]Message, error)
 	SendMessage(ctx context.Context, workspaceID, sessionID, message string, timeout time.Duration) (string, error)
@@ -89,6 +90,11 @@ type WorkspaceResp struct {
 type ActivateResp struct {
 	Resumed   string `json:"resumed"`
 	Suspended string `json:"suspended,omitempty"`
+}
+
+// RefreshWorkspaceResp is the response from workspace compute refresh.
+type RefreshWorkspaceResp struct {
+	RestartGeneration int64 `json:"restartGeneration"`
 }
 
 // SessionResp is the response from session creation.
@@ -241,6 +247,17 @@ func (c *HTTPClient) SuspendWorkspace(ctx context.Context, workspaceID string) e
 		return err
 	}
 	return c.doJSON(ctx, http.MethodPost, "/api/v1/workspaces/"+workspaceID+"/suspend", nil, nil)
+}
+
+func (c *HTTPClient) RefreshWorkspace(ctx context.Context, workspaceID string) (*RefreshWorkspaceResp, error) {
+	if err := validateID(workspaceID, "workspace_id"); err != nil {
+		return nil, err
+	}
+	var resp RefreshWorkspaceResp
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/workspaces/"+workspaceID+"/refresh-compute", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // CreateSession resolves workspace → sandbox, then creates a session via the proxy.

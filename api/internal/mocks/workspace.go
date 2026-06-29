@@ -66,6 +66,14 @@ func (m *MockWorkspaceService) RestartWorkspace(ctx context.Context, userID, wor
 	return m.Called(ctx, userID, workspaceID).Error(0)
 }
 
+func (m *MockWorkspaceService) RefreshWorkspaceCompute(ctx context.Context, userID, workspaceID string) (*types.RefreshWorkspaceResult, error) {
+	args := m.Called(ctx, userID, workspaceID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.RefreshWorkspaceResult), args.Error(1)
+}
+
 func (m *MockWorkspaceService) GetWorkspaceStatus(ctx context.Context, userID, workspaceID string) (*types.WorkspaceStatusResult, error) {
 	args := m.Called(ctx, userID, workspaceID)
 	if args.Get(0) == nil {
