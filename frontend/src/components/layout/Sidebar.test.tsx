@@ -119,19 +119,56 @@ describe("Sidebar", () => {
     expect(kebabButtons.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("calls refreshCompute when workspace kebab 'Refresh compute' is clicked", async () => {
+  it("groups refresh, suspend, and delete under a Lifecycle section", async () => {
     renderSidebar();
     await screen.findByText("alpha");
 
     const kebabButtons = await screen.findAllByLabelText("Actions");
-    const workspaceKebab = kebabButtons[0]!;
-    workspaceKebab.click();
+    kebabButtons[0]!.click();
 
-    const refreshBtn = await screen.findByText("Refresh compute");
-    refreshBtn.click();
+    expect(await screen.findByText("Lifecycle")).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Refresh compute" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Suspend" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
+  });
+});
 
+describe("Sidebar — workspace refresh compute", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("shows a confirm dialog before refreshing and refreshes on confirm", async () => {
+    renderSidebar();
+    await screen.findByText("alpha");
+
+    const kebabButtons = await screen.findAllByLabelText("Actions");
+    kebabButtons[0]!.click();
+
+    // Clicking the kebab item opens the confirm dialog (does not refresh yet).
+    (await screen.findByRole("menuitem", { name: "Refresh compute" })).click();
+    expect(await screen.findByText("Refresh compute?")).toBeInTheDocument();
+    expect(workspacesApi.refreshCompute).not.toHaveBeenCalled();
+
+    // Confirming in the dialog triggers the refresh.
+    (await screen.findByRole("button", { name: "Refresh compute" })).click();
     await screen.findByText("alpha");
     expect(workspacesApi.refreshCompute).toHaveBeenCalledWith("ws-1");
+  });
+
+  it("does not refresh compute when the confirm dialog is cancelled", async () => {
+    renderSidebar();
+    await screen.findByText("alpha");
+
+    const kebabButtons = await screen.findAllByLabelText("Actions");
+    kebabButtons[0]!.click();
+
+    (await screen.findByRole("menuitem", { name: "Refresh compute" })).click();
+    expect(await screen.findByText("Refresh compute?")).toBeInTheDocument();
+
+    (await screen.findByRole("button", { name: "Cancel" })).click();
+
+    expect(workspacesApi.refreshCompute).not.toHaveBeenCalled();
   });
 
   it("new workspace button creates immediately without dialog", async () => {
