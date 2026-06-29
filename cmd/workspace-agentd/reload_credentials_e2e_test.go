@@ -93,6 +93,9 @@ func (s *reloadE2EStore) GetSecretByName(_ context.Context, _, _ string) (*secre
 func (s *reloadE2EStore) ListSecrets(_ context.Context, _ string) ([]*secrets.UserSecret, error) {
 	panic("unexpected ListSecrets")
 }
+func (s *reloadE2EStore) ListGlobalDefaultSecrets(_ context.Context, _ string) ([]*secrets.UserSecret, error) {
+	panic("unexpected ListGlobalDefaultSecrets")
+}
 func (s *reloadE2EStore) UpdateSecret(_ context.Context, _ *secrets.UserSecret) error {
 	panic("unexpected UpdateSecret")
 }

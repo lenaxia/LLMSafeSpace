@@ -383,6 +383,16 @@ func (m *memSecretStore) ListSecrets(_ context.Context, uid string) ([]*secrets.
 	}
 	return r, nil
 }
+func (m *memSecretStore) ListGlobalDefaultSecrets(_ context.Context, uid string) ([]*secrets.UserSecret, error) {
+	var r []*secrets.UserSecret
+	for _, s := range m.secrets {
+		if s.UserID == uid && s.GlobalDefault {
+			cp := *s
+			r = append(r, &cp)
+		}
+	}
+	return r, nil
+}
 func (m *memSecretStore) UpdateSecret(_ context.Context, s *secrets.UserSecret) error {
 	m.secrets[s.ID] = s
 	return nil

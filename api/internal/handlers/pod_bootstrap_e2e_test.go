@@ -123,6 +123,9 @@ func (s *e2eSecretStore) GetSecretByName(_ context.Context, _, _ string) (*secre
 func (s *e2eSecretStore) ListSecrets(_ context.Context, _ string) ([]*secrets.UserSecret, error) {
 	panic("unexpected ListSecrets in bootstrap e2e")
 }
+func (s *e2eSecretStore) ListGlobalDefaultSecrets(_ context.Context, _ string) ([]*secrets.UserSecret, error) {
+	panic("unexpected ListGlobalDefaultSecrets in bootstrap e2e")
+}
 func (s *e2eSecretStore) UpdateSecret(_ context.Context, _ *secrets.UserSecret) error {
 	panic("unexpected UpdateSecret in bootstrap e2e")
 }
