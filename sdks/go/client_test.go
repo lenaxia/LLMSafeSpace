@@ -128,6 +128,55 @@ func TestClient_Suspend(t *testing.T) {
 	}
 }
 
+// TestClient_Suspend_204EmptyBody guards the do() 204/empty-body path shared
+// with RefreshCompute: a response with no body must return nil without
+// attempting to decode an empty stream.
+func TestClient_Suspend_204EmptyBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(204)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, WithAPIKey("lsp_test"))
+	if err := c.Workspaces.Suspend(context.Background(), "ws-1"); err != nil {
+		t.Fatalf("204 with empty body must not error, got: %v", err)
+	}
+}
+
+// TestClient_RefreshCompute_202Body verifies the 202-with-body path: the
+// response must be decoded into RefreshWorkspaceResult rather than discarded.
+func TestClient_RefreshCompute_202Body(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(202)
+		json.NewEncoder(w).Encode(RefreshWorkspaceResult{RestartGeneration: 7})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, WithAPIKey("lsp_test"))
+	res, err := c.Workspaces.RefreshCompute(context.Background(), "ws-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.RestartGeneration != 7 {
+		t.Fatalf("expected RestartGeneration 7, got %d (202 body was discarded)", res.RestartGeneration)
+	}
+}
+
+// TestClient_RefreshCompute_APIError verifies a non-2xx surfaces as an error.
+func TestClient_RefreshCompute_APIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(409)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, WithAPIKey("lsp_test"))
+	_, err := c.Workspaces.RefreshCompute(context.Background(), "ws-1")
+	if err == nil {
+		t.Fatal("expected error for 409, got nil")
+	}
+}
+
 func TestClient_TerminalTicket(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(TerminalTicket{Ticket: "tkt_abc", ExpiresAt: "2026-05-29T18:00:00Z"})

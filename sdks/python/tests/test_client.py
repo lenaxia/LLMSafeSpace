@@ -110,3 +110,32 @@ def test_suspend_workspace():
     client = LLMSafeSpaces("http://localhost:8080", api_key="lsp_test")
     # Should not raise
     client.workspaces.suspend("ws-1")
+
+
+@respx.mock
+def test_refresh_compute_202_body():
+    """202 Accepted MAY carry a body (RFC 7231 §6.3.3); the response must be
+    parsed, not discarded like an empty 204."""
+    respx.post(f"{BASE}/workspaces/ws-1/refresh-compute").respond(
+        status_code=202, json={"restartGeneration": 7}
+    )
+    client = LLMSafeSpaces("http://localhost:8080", api_key="lsp_test")
+    result = client.workspaces.refresh_compute("ws-1")
+    assert result == {"restartGeneration": 7}
+
+
+@respx.mock
+def test_refresh_compute_api_error():
+    respx.post(f"{BASE}/workspaces/ws-1/refresh-compute").respond(status_code=409)
+    client = LLMSafeSpaces("http://localhost:8080", api_key="lsp_test")
+    with pytest.raises(Exception):
+        client.workspaces.refresh_compute("ws-1")
+
+
+@respx.mock
+def test_suspend_204_empty_body_returns_none():
+    """Guards the shared _request empty-body path: a 204 (or 202) with no body
+    must return None rather than attempting to decode an empty body."""
+    respx.post(f"{BASE}/workspaces/ws-1/suspend").respond(status_code=204)
+    client = LLMSafeSpaces("http://localhost:8080", api_key="lsp_test")
+    assert client.workspaces.suspend("ws-1") is None

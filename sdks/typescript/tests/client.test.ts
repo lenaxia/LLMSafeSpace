@@ -75,6 +75,15 @@ describe("LLMSafeSpaces Client", () => {
         expect.objectContaining({ method: "POST" }),
       );
     });
+
+    it("returns undefined for 202 with empty body (suspend/restart contract)", async () => {
+      // Guards the shared request() empty-body branch: 202 with no body must
+      // resolve to undefined, not throw JSON.parse(""). The production paths
+      // for suspend/restart return 202 with no body (router.go).
+      mockFetch.mockResolvedValueOnce(new Response(null, { status: 202 }));
+
+      await expect(client.workspaces.suspend("ws-1")).resolves.toBeUndefined();
+    });
   });
 
   describe("sessions", () => {

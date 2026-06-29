@@ -111,6 +111,29 @@ async def test_async_terminal_ticket(client: AsyncLLMSafeSpaces):
 
 @respx.mock
 @pytest.mark.asyncio
+async def test_async_refresh_compute_202_body(client: AsyncLLMSafeSpaces):
+    """202 Accepted MAY carry a body (RFC 7231 §6.3.3); the response must be
+    parsed, not discarded like an empty 204."""
+    respx.post(f"{BASE}/api/v1/workspaces/ws-1/refresh-compute").mock(
+        return_value=httpx.Response(202, json={"restartGeneration": 9})
+    )
+    result = await client.workspaces.refresh_compute("ws-1")
+    assert result == {"restartGeneration": 9}
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_async_suspend_empty_body_returns_none(client: AsyncLLMSafeSpaces):
+    """Guards the shared _request empty-body path: a 204 with no body must
+    return None rather than attempting to decode an empty body."""
+    respx.post(f"{BASE}/api/v1/workspaces/ws-1/suspend").mock(
+        return_value=httpx.Response(204)
+    )
+    assert await client.workspaces.suspend("ws-1") is None
+
+
+@respx.mock
+@pytest.mark.asyncio
 async def test_async_context_manager():
     respx.get(f"{BASE}/api/v1/workspaces").mock(
         return_value=httpx.Response(200, json={"items": [], "pagination": {}})

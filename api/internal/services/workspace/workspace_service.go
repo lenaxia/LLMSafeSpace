@@ -759,10 +759,14 @@ func (s *Service) RefreshWorkspaceCompute(ctx context.Context, userID, workspace
 // reapplyComputeDefaults overwrites the compute-oriented spec fields with the
 // platform's current instance settings. Unlike applyWorkspaceDefaults (which
 // only fills empty fields), this force-converges the workspace to the current
-// platform defaults — the intent of "refresh compute". Each field is only
-// overwritten when the platform default is explicitly configured (non-empty /
-// non-zero), so refresh never replaces a deliberate user value with a schema
-// default on a platform that has no opinion on that field.
+// platform defaults — the intent of "refresh compute".
+//
+// The settings service returns schema defaults for unconfigured keys (CPU
+// "500m", memory "1Gi", securityLevel "standard", maxActiveSessions 5 — from
+// schema.go), so refresh converges resources to the platform default even when
+// an admin hasn't explicitly overridden them. StorageClass has an empty schema
+// default, so it is only overwritten when explicitly configured — refresh
+// never forces a storage class the platform has no opinion on.
 func (s *Service) reapplyComputeDefaults(ctx context.Context, crd *v1.Workspace) {
 	if s.instanceSettings == nil {
 		return
