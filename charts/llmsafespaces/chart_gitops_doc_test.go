@@ -33,6 +33,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"sigs.k8s.io/yaml"
 )
 
 // chartFile reads a file relative to the chart root.
@@ -80,10 +81,7 @@ func TestChart_ReadmeDocumentsFluxReconcileStrategy(t *testing.T) {
 // surfaces the description before the README, so it is the first line of
 // defense for a consumer who never opens the repo.
 func TestChart_ChartYamlDescriptionReferencesGitOps(t *testing.T) {
-	chart := chartFile(t, "Chart.yaml")
-
-	// The description is a block scalar; collapse newlines for substring checks.
-	desc := collapseChartDescription(chart)
+	desc := chartDescription(t)
 
 	// It must mention the version pin + the GitOps reconciliation caveat.
 	assert.True(t,
@@ -96,55 +94,20 @@ func TestChart_ChartYamlDescriptionReferencesGitOps(t *testing.T) {
 		"Chart.yaml description must reference GitOps/reconcileStrategy so `helm show chart` warns consumers (#456)")
 }
 
-// collapseChartDescription extracts and flattens the `description:` block
-// scalar from Chart.yaml into a single space-separated string. If parsing
-// fails it returns the whole file so assertions still operate on real bytes.
-func collapseChartDescription(chart string) string {
-	lines := strings.Split(chart, "\n")
-	var (
-		out        []string
-		inDesc     bool
-		descIndent = -1
-	)
-	for _, line := range lines {
-		trimmed := strings.TrimRight(line, "\r")
-		if !inDesc {
-			if strings.HasPrefix(strings.TrimSpace(trimmed), "description:") {
-				inDesc = true
-				// record indentation of the description key for block-scalar folding
-				descIndent = leadingSpaces(trimmed)
-				rest := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(trimmed), "description:"))
-				rest = strings.Trim(rest, "|>")
-				if rest != "" {
-					out = append(out, strings.TrimSpace(rest))
-				}
-			}
-			continue
-		}
-		// We are inside the description block scalar: continue while indented
-		// deeper than the key (or blank).
-		if strings.TrimSpace(trimmed) == "" {
-			continue
-		}
-		if leadingSpaces(trimmed) <= descIndent {
-			break // block ended
-		}
-		out = append(out, strings.TrimSpace(trimmed))
+// chartDescription parses Chart.yaml and returns the `description` field as a
+// single flattened string. Uses a real YAML decoder (not hand-rolled
+// block-scalar folding) so every scalar indicator (|, >, |-, |+, >-, digits)
+// and indentation case is handled correctly. The previous hand-rolled
+// parser used strings.Trim(rest, "|>") which treats its argument as a cutset
+// and would leave trailing modifier chars (e.g. the '-' in '>-' or the '+'
+// in '|+') in the output.
+func chartDescription(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(chartDir(t), "Chart.yaml"))
+	require.NoError(t, err, "Chart.yaml must exist")
+	var meta struct {
+		Description string `yaml:"description"`
 	}
-	if len(out) == 0 {
-		return chart
-	}
-	return strings.Join(out, " ")
-}
-
-func leadingSpaces(s string) int {
-	n := 0
-	for _, r := range s {
-		if r == ' ' {
-			n++
-			continue
-		}
-		break
-	}
-	return n
+	require.NoError(t, yaml.Unmarshal(b, &meta), "Chart.yaml must be parseable YAML")
+	return meta.Description
 }
