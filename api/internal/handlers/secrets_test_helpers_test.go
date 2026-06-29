@@ -172,6 +172,19 @@ func (m *testSecretStore) ListSecrets(_ context.Context, userID string) ([]*secr
 	return result, nil
 }
 
+func (m *testSecretStore) ListGlobalDefaultSecrets(_ context.Context, userID string) ([]*secrets.UserSecret, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var result []*secrets.UserSecret
+	for _, s := range m.secrets {
+		if s.UserID == userID && s.GlobalDefault {
+			cp := *s
+			result = append(result, &cp)
+		}
+	}
+	return result, nil
+}
+
 func (m *testSecretStore) UpdateSecret(_ context.Context, secret *secrets.UserSecret) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

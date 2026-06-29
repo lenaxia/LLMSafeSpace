@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -16,10 +17,11 @@ import (
 // --- In-memory mock SecretStore ---
 
 type mockSecretStore struct {
-	mu       sync.Mutex
-	secrets  map[string]*UserSecret // keyed by ID
-	bindings map[string][]string    // workspace_id -> []secret_id
-	audit    []*AuditEntry
+	mu                   sync.Mutex
+	secrets              map[string]*UserSecret // keyed by ID
+	bindings             map[string][]string    // workspace_id -> []secret_id
+	audit                []*AuditEntry
+	listGlobalDefaultErr error // optional: forces ListGlobalDefaultSecrets to fail
 }
 
 func newMockSecretStore() *mockSecretStore {
@@ -75,6 +77,22 @@ func (m *mockSecretStore) ListSecrets(_ context.Context, userID string) ([]*User
 	var result []*UserSecret
 	for _, s := range m.secrets {
 		if s.UserID == userID {
+			cp := *s
+			result = append(result, &cp)
+		}
+	}
+	return result, nil
+}
+
+func (m *mockSecretStore) ListGlobalDefaultSecrets(_ context.Context, userID string) ([]*UserSecret, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.listGlobalDefaultErr != nil {
+		return nil, m.listGlobalDefaultErr
+	}
+	var result []*UserSecret
+	for _, s := range m.secrets {
+		if s.UserID == userID && s.GlobalDefault {
 			cp := *s
 			result = append(result, &cp)
 		}
@@ -1077,5 +1095,371 @@ func TestSecretService_GetBindingsForSecret_OwnershipEnforced(t *testing.T) {
 	}
 	if wsIDs != nil {
 		t.Errorf("cross-user: must return nil; got %v", wsIDs)
+	}
+}
+
+// --- GlobalDefault / SeedGlobalDefaultSecrets tests ---
+
+// TestSecretService_CreateSecret_GlobalDefault verifies that the GlobalDefault
+// flag on CreateSecretRequest propagates to the stored UserSecret and the
+// returned SecretResponse.
+func TestSecretService_CreateSecret_GlobalDefault(t *testing.T) {
+	svc, store, sessionID := setupSecretService(t)
+	ctx := context.Background()
+
+	resp, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name:          "global-key",
+		Type:          SecretTypeEnvSecret,
+		Value:         "v",
+		Metadata:      json.RawMessage(`{"var_name":"X"}`),
+		GlobalDefault: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret failed: %v", err)
+	}
+	if !resp.GlobalDefault {
+		t.Error("SecretResponse.GlobalDefault should be true")
+	}
+
+	stored, _ := store.GetSecret(ctx, "user-1", resp.ID)
+	if stored == nil {
+		t.Fatal("stored secret not found")
+	}
+	if !stored.GlobalDefault {
+		t.Error("stored UserSecret.GlobalDefault should be true")
+	}
+}
+
+// TestSecretService_CreateSecret_GlobalDefault_False verifies that the
+// default is false when the field is omitted.
+func TestSecretService_CreateSecret_GlobalDefault_False(t *testing.T) {
+	svc, _, sessionID := setupSecretService(t)
+	ctx := context.Background()
+
+	resp, err := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name:     "non-global",
+		Type:     SecretTypeEnvSecret,
+		Value:    "v",
+		Metadata: json.RawMessage(`{"var_name":"X"}`),
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret failed: %v", err)
+	}
+	if resp.GlobalDefault {
+		t.Error("SecretResponse.GlobalDefault should default to false")
+	}
+}
+
+// TestSecretService_ListGlobalDefaultSecrets_FilterCorrectness verifies that
+// the store-level filter only returns secrets where global_default=true.
+func TestSecretService_ListGlobalDefaultSecrets_FilterCorrectness(t *testing.T) {
+	svc, store, sessionID := setupSecretService(t)
+	ctx := context.Background()
+
+	// Two global-default secrets, one non-global, belonging to user-1.
+	svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name: "global-a", Type: SecretTypeEnvSecret, Value: "v",
+		Metadata: json.RawMessage(`{"var_name":"A"}`), GlobalDefault: true,
+	})
+	svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name: "global-b", Type: SecretTypeEnvSecret, Value: "v",
+		Metadata: json.RawMessage(`{"var_name":"B"}`), GlobalDefault: true,
+	})
+	svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name: "non-global", Type: SecretTypeEnvSecret, Value: "v",
+		Metadata: json.RawMessage(`{"var_name":"C"}`),
+	})
+
+	defaults, err := store.ListGlobalDefaultSecrets(ctx, "user-1")
+	if err != nil {
+		t.Fatalf("ListGlobalDefaultSecrets failed: %v", err)
+	}
+	if len(defaults) != 2 {
+		t.Fatalf("expected 2 global-default secrets, got %d", len(defaults))
+	}
+	for _, d := range defaults {
+		if !d.GlobalDefault {
+			t.Errorf("secret %s returned but GlobalDefault=false", d.Name)
+		}
+		if d.Name != "global-a" && d.Name != "global-b" {
+			t.Errorf("unexpected secret returned: %s", d.Name)
+		}
+	}
+}
+
+// TestSecretService_SeedGlobalDefaultSecrets_HappyPath creates two global-
+// default secrets, calls SeedGlobalDefaultSecrets, and verifies both are
+// bound to the workspace and audit entries are recorded.
+func TestSecretService_SeedGlobalDefaultSecrets_HappyPath(t *testing.T) {
+	svc, _, sessionID := setupSecretService(t)
+	ctx := context.Background()
+
+	s1, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name: "global-a", Type: SecretTypeEnvSecret, Value: "v",
+		Metadata: json.RawMessage(`{"var_name":"A"}`), GlobalDefault: true,
+	})
+	s2, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name: "global-b", Type: SecretTypeEnvSecret, Value: "v",
+		Metadata: json.RawMessage(`{"var_name":"B"}`), GlobalDefault: true,
+	})
+
+	wsID := "ws-seed-1"
+	if err := svc.SeedGlobalDefaultSecrets(ctx, wsID, "user-1"); err != nil {
+		t.Fatalf("SeedGlobalDefaultSecrets failed: %v", err)
+	}
+
+	bindings, err := svc.GetBindings(ctx, "user-1", wsID)
+	if err != nil {
+		t.Fatalf("GetBindings failed: %v", err)
+	}
+	if len(bindings.Bindings) != 2 {
+		t.Fatalf("expected 2 bindings, got %d", len(bindings.Bindings))
+	}
+	// Verify both secret IDs are present.
+	seen := map[string]bool{}
+	for _, b := range bindings.Bindings {
+		seen[b.SecretID] = true
+	}
+	if !seen[s1.ID] || !seen[s2.ID] {
+		t.Errorf("expected both %s and %s bound; got %v", s1.ID, s2.ID, seen)
+	}
+
+	// Audit entries: each auto-bind should record a "bind" action.
+	entries, err := svc.QueryAudit(ctx, "user-1", AuditQuery{WorkspaceID: wsID})
+	if err != nil {
+		t.Fatalf("QueryAudit failed: %v", err)
+	}
+	bindCount := 0
+	for _, e := range entries {
+		if e.Action == "bind" {
+			bindCount++
+		}
+	}
+	if bindCount != 2 {
+		t.Errorf("expected 2 bind audit entries, got %d", bindCount)
+	}
+}
+
+// TestSecretService_SeedGlobalDefaultSecrets_EmptyPath verifies that a user
+// with no global-default secrets results in a no-op (no bindings created,
+// no error).
+func TestSecretService_SeedGlobalDefaultSecrets_EmptyPath(t *testing.T) {
+	svc, _, sessionID := setupSecretService(t)
+	ctx := context.Background()
+
+	// Create only a non-global secret.
+	svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name: "non-global", Type: SecretTypeEnvSecret, Value: "v",
+		Metadata: json.RawMessage(`{"var_name":"X"}`),
+	})
+
+	wsID := "ws-seed-empty"
+	if err := svc.SeedGlobalDefaultSecrets(ctx, wsID, "user-1"); err != nil {
+		t.Fatalf("SeedGlobalDefaultSecrets should not error on empty set: %v", err)
+	}
+
+	bindings, err := svc.GetBindings(ctx, "user-1", wsID)
+	if err != nil {
+		t.Fatalf("GetBindings failed: %v", err)
+	}
+	if len(bindings.Bindings) != 0 {
+		t.Errorf("expected 0 bindings, got %d", len(bindings.Bindings))
+	}
+}
+
+// TestSecretService_SeedGlobalDefaultSecrets_Idempotent verifies that calling
+// SeedGlobalDefaultSecrets twice for the same workspace produces no duplicate
+// bindings (AddBindings uses ON CONFLICT DO NOTHING at the store layer).
+func TestSecretService_SeedGlobalDefaultSecrets_Idempotent(t *testing.T) {
+	svc, _, sessionID := setupSecretService(t)
+	ctx := context.Background()
+
+	svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name: "global-a", Type: SecretTypeEnvSecret, Value: "v",
+		Metadata: json.RawMessage(`{"var_name":"A"}`), GlobalDefault: true,
+	})
+
+	wsID := "ws-seed-idem"
+	if err := svc.SeedGlobalDefaultSecrets(ctx, wsID, "user-1"); err != nil {
+		t.Fatalf("first SeedGlobalDefaultSecrets failed: %v", err)
+	}
+	if err := svc.SeedGlobalDefaultSecrets(ctx, wsID, "user-1"); err != nil {
+		t.Fatalf("second SeedGlobalDefaultSecrets failed: %v", err)
+	}
+
+	bindings, err := svc.GetBindings(ctx, "user-1", wsID)
+	if err != nil {
+		t.Fatalf("GetBindings failed: %v", err)
+	}
+	if len(bindings.Bindings) != 1 {
+		t.Errorf("expected 1 binding after double-seed, got %d", len(bindings.Bindings))
+	}
+}
+
+// TestSecretService_SeedGlobalDefaultSecrets_StoreError verifies that a store
+// error from ListGlobalDefaultSecrets propagates as an error from
+// SeedGlobalDefaultSecrets.
+func TestSecretService_SeedGlobalDefaultSecrets_StoreError(t *testing.T) {
+	svc, store, sessionID := setupSecretService(t)
+	ctx := context.Background()
+
+	svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name: "global-a", Type: SecretTypeEnvSecret, Value: "v",
+		Metadata: json.RawMessage(`{"var_name":"A"}`), GlobalDefault: true,
+	})
+
+	store.listGlobalDefaultErr = fmt.Errorf("simulated DB outage")
+	defer func() { store.listGlobalDefaultErr = nil }()
+
+	err := svc.SeedGlobalDefaultSecrets(ctx, "ws-seed-err", "user-1")
+	if err == nil {
+		t.Fatal("expected error from SeedGlobalDefaultSecrets on store failure")
+	}
+	if !strings.Contains(err.Error(), "simulated DB outage") {
+		t.Errorf("expected wrapped DB error, got: %v", err)
+	}
+}
+
+// TestSecretService_UpdateSecret_GlobalDefault_NilUnchanged verifies that a
+// nil GlobalDefault pointer leaves the stored value unchanged.
+func TestSecretService_UpdateSecret_GlobalDefault_NilUnchanged(t *testing.T) {
+	svc, store, sessionID := setupSecretService(t)
+	ctx := context.Background()
+
+	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name:          "global-key",
+		Type:          SecretTypeEnvSecret,
+		Value:         "v",
+		Metadata:      json.RawMessage(`{"var_name":"X"}`),
+		GlobalDefault: true,
+	})
+
+	// Update without specifying GlobalDefault (nil pointer).
+	err := svc.UpdateSecret(ctx, "user-1", sessionID, nil, created.ID, UpdateSecretRequest{
+		Value: "new-v",
+	})
+	if err != nil {
+		t.Fatalf("UpdateSecret failed: %v", err)
+	}
+
+	stored, _ := store.GetSecret(ctx, "user-1", created.ID)
+	if stored == nil {
+		t.Fatal("secret not found")
+	}
+	if !stored.GlobalDefault {
+		t.Error("GlobalDefault should remain true after update with nil pointer")
+	}
+}
+
+// TestSecretService_UpdateSecret_GlobalDefault_ToggleOff verifies that
+// GlobalDefault=&false flips the stored value from true to false and records
+// the change in the audit metadata.
+func TestSecretService_UpdateSecret_GlobalDefault_ToggleOff(t *testing.T) {
+	svc, store, sessionID := setupSecretService(t)
+	ctx := context.Background()
+
+	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name:          "global-key",
+		Type:          SecretTypeEnvSecret,
+		Value:         "v",
+		Metadata:      json.RawMessage(`{"var_name":"X"}`),
+		GlobalDefault: true,
+	})
+
+	newVal := false
+	err := svc.UpdateSecret(ctx, "user-1", sessionID, nil, created.ID, UpdateSecretRequest{
+		Value:         "new-v",
+		GlobalDefault: &newVal,
+	})
+	if err != nil {
+		t.Fatalf("UpdateSecret failed: %v", err)
+	}
+
+	stored, _ := store.GetSecret(ctx, "user-1", created.ID)
+	if stored == nil {
+		t.Fatal("secret not found")
+	}
+	if stored.GlobalDefault {
+		t.Error("GlobalDefault should be false after toggle-off update")
+	}
+
+	// Audit entry should carry the globalDefault metadata key.
+	entries, _ := svc.QueryAudit(ctx, "user-1", AuditQuery{Action: "update"})
+	var found bool
+	for _, e := range entries {
+		if e.SecretID != nil && *e.SecretID == created.ID {
+			if strings.Contains(string(e.Metadata), "globalDefault") {
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		t.Error("expected update audit entry to record globalDefault change")
+	}
+}
+
+// TestSecretService_UpdateSecret_GlobalDefault_ToggleOn verifies that
+// GlobalDefault=&true flips the stored value from false to true.
+func TestSecretService_UpdateSecret_GlobalDefault_ToggleOn(t *testing.T) {
+	svc, store, sessionID := setupSecretService(t)
+	ctx := context.Background()
+
+	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name:     "non-global",
+		Type:     SecretTypeEnvSecret,
+		Value:    "v",
+		Metadata: json.RawMessage(`{"var_name":"X"}`),
+	})
+
+	newVal := true
+	err := svc.UpdateSecret(ctx, "user-1", sessionID, nil, created.ID, UpdateSecretRequest{
+		Value:         "new-v",
+		GlobalDefault: &newVal,
+	})
+	if err != nil {
+		t.Fatalf("UpdateSecret failed: %v", err)
+	}
+
+	stored, _ := store.GetSecret(ctx, "user-1", created.ID)
+	if stored == nil {
+		t.Fatal("secret not found")
+	}
+	if !stored.GlobalDefault {
+		t.Error("GlobalDefault should be true after toggle-on update")
+	}
+}
+
+// TestSecretService_UpdateSecret_GlobalDefault_SameValueNoAuditKey verifies
+// that when GlobalDefault is set to the same value it already had, the audit
+// metadata does NOT include the globalDefault key (no change = no record).
+func TestSecretService_UpdateSecret_GlobalDefault_SameValueNoAuditKey(t *testing.T) {
+	svc, _, sessionID := setupSecretService(t)
+	ctx := context.Background()
+
+	created, _ := svc.CreateSecret(ctx, "user-1", sessionID, nil, CreateSecretRequest{
+		Name:          "global-key",
+		Type:          SecretTypeEnvSecret,
+		Value:         "v",
+		Metadata:      json.RawMessage(`{"var_name":"X"}`),
+		GlobalDefault: true,
+	})
+
+	sameVal := true
+	err := svc.UpdateSecret(ctx, "user-1", sessionID, nil, created.ID, UpdateSecretRequest{
+		Value:         "new-v",
+		GlobalDefault: &sameVal,
+	})
+	if err != nil {
+		t.Fatalf("UpdateSecret failed: %v", err)
+	}
+
+	entries, _ := svc.QueryAudit(ctx, "user-1", AuditQuery{Action: "update"})
+	for _, e := range entries {
+		if e.SecretID != nil && *e.SecretID == created.ID {
+			if strings.Contains(string(e.Metadata), "globalDefault") {
+				t.Errorf("audit should not contain globalDefault key when value unchanged: %s", string(e.Metadata))
+			}
+		}
 	}
 }

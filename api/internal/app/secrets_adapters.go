@@ -179,6 +179,20 @@ func (a *dbSecretStoreAdapter) ListSecrets(_ context.Context, userID string) ([]
 	return result, nil
 }
 
+func (a *dbSecretStoreAdapter) ListGlobalDefaultSecrets(_ context.Context, userID string) ([]*secrets.UserSecret, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.init()
+	var result []*secrets.UserSecret
+	for _, s := range a.secrets {
+		if s.UserID == userID && s.GlobalDefault {
+			cp := *s
+			result = append(result, &cp)
+		}
+	}
+	return result, nil
+}
+
 func (a *dbSecretStoreAdapter) UpdateSecret(_ context.Context, secret *secrets.UserSecret) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()

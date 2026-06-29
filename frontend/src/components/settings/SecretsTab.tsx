@@ -57,6 +57,7 @@ export function SecretsTab() {
   const [revealingId, setRevealingId] = useState<string | null>(null);
   const [revealedValue, setRevealedValue] = useState<string | null>(null);
   const [revealPassword, setRevealPassword] = useState("");
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [secretBindings, setSecretBindings] = useState<Record<string, string[]>>({});
   const { toast } = useToast();
 
@@ -207,13 +208,26 @@ export function SecretsTab() {
                               · {(secretBindings[s.id] ?? []).length} workspace{(secretBindings[s.id] ?? []).length > 1 ? "s" : ""}
                             </span>
                           )}
+                          {s.globalDefault && (
+                            <Tooltip content="Automatically bound to all newly created workspaces." side="top" align="start">
+                              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary cursor-default">
+                                all workspaces
+                              </span>
+                            </Tooltip>
+                          )}
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <button
-                            onClick={() => { setRevealingId(revealingId === s.id ? null : s.id); setRevealedValue(null); }}
+                            onClick={() => { setRevealingId(revealingId === s.id ? null : s.id); setRevealedValue(null); setUpdatingId(null); }}
                             className="rounded px-2 py-1 text-xs text-primary hover:bg-primary/10 transition-colors"
                           >
                             {revealingId === s.id ? "Hide" : "Reveal"}
+                          </button>
+                          <button
+                            onClick={() => { setUpdatingId(updatingId === s.id ? null : s.id); setRevealingId(null); setRevealedValue(null); }}
+                            className="rounded px-2 py-1 text-xs text-primary hover:bg-primary/10 transition-colors"
+                          >
+                            {updatingId === s.id ? "Cancel" : "Update"}
                           </button>
                           <button
                             onClick={() => handleDelete(s.id, s.name)}
@@ -276,6 +290,16 @@ export function SecretsTab() {
                           <p className="text-xs text-muted-foreground">Auto-hides in 30 seconds</p>
                         </div>
                       )}
+
+                      {/* Update panel */}
+                      {updatingId === s.id && (
+                        <UpdateSecretForm
+                          secret={s}
+                          onUpdated={() => { setUpdatingId(null); fetchSecrets(); }}
+                          onCancel={() => setUpdatingId(null)}
+                          onError={setError}
+                        />
+                      )}
                     </div>
                   ))}
                 </div>
@@ -285,6 +309,82 @@ export function SecretsTab() {
         </div>
       )}
     </div>
+  );
+}
+
+// --- Update Form ---
+
+function UpdateSecretForm({
+  secret,
+  onUpdated,
+  onCancel,
+  onError,
+}: {
+  secret: SecretResponse;
+  onUpdated: () => void;
+  onCancel: () => void;
+  onError: (e: string) => void;
+}) {
+  const { toast } = useToast();
+  const [value, setValue] = useState("");
+  const [globalDefault, setGlobalDefault] = useState(secret.globalDefault);
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      await secretsApi.update(secret.id, { value, globalDefault });
+      toast("Secret updated");
+      onUpdated();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      onError(msg === "encryption key not available; re-authenticate"
+        ? "Session expired. Please log out and log back in to manage secrets."
+        : msg);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="mt-2 space-y-3 rounded-md border border-border bg-accent/5 p-3">
+      <div>
+        <label className="text-xs font-medium text-muted-foreground">New value</label>
+        <textarea
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="Enter new secret value"
+          className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono min-h-[60px] resize-y"
+          required
+        />
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          id={`update-global-default-${secret.id}`}
+          type="checkbox"
+          checked={globalDefault}
+          onChange={(e) => setGlobalDefault(e.target.checked)}
+          className="h-4 w-4 rounded border-border"
+        />
+        <label htmlFor={`update-global-default-${secret.id}`} className="text-xs text-foreground cursor-pointer">
+          Include in all workspaces
+        </label>
+        <Tooltip content="When enabled, this secret is automatically bound to all newly created workspaces. Does not apply retroactively to existing workspaces." side="top" align="start">
+          <button type="button" className="cursor-help focus:outline-none" aria-label="More info">
+            <span className="text-muted-foreground text-xs">ⓘ</span>
+          </button>
+        </Tooltip>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button type="submit" disabled={submitting || !value}>
+          {submitting ? "Saving..." : "Save"}
+        </Button>
+        <button type="button" onClick={onCancel} className="text-xs text-muted-foreground hover:text-foreground">
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -403,6 +503,7 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
   const [type, setType] = useState<SecretType>("llm-provider");
   const [value, setValue] = useState("");
   const [metadata, setMetadata] = useState<Record<string, string>>({});
+  const [globalDefault, setGlobalDefault] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [createdValue, setCreatedValue] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -427,7 +528,7 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
     try {
       const submitMetadata = { ...metadata };
       await secretsApi.create({
-        name, type, value,
+        name, type, value, globalDefault,
         metadata: Object.keys(submitMetadata).length > 0 ? submitMetadata : undefined,
       });
       setCreatedValue(value);
@@ -476,7 +577,7 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
             </button>
           </div>
         )}
-        <p className="text-xs text-muted-foreground">⚠️ Save this value now. You won't be able to view it without re-entering your password.</p>
+        <p className="text-xs text-muted-foreground">You can reveal this value later using your password.</p>
         <Button onClick={handleDone}>Done</Button>
       </div>
     );
@@ -616,6 +717,29 @@ function CreateSecretForm({ onCreated, onError }: { onCreated: () => void; onErr
           </div>
         </div>
       )}
+
+      {/* Include in all workspaces */}
+      <div className="flex items-center gap-2">
+        <input
+          id="create-global-default"
+          type="checkbox"
+          checked={globalDefault}
+          onChange={(e) => setGlobalDefault(e.target.checked)}
+          className="h-4 w-4 rounded border-border"
+        />
+        <label htmlFor="create-global-default" className="text-sm text-foreground cursor-pointer">
+          Include in all workspaces
+        </label>
+        <Tooltip
+          content="When enabled, this secret is automatically bound to all newly created workspaces. Does not apply retroactively to existing workspaces."
+          side="top"
+          align="start"
+        >
+          <button type="button" className="cursor-help focus:outline-none" aria-label="More info">
+            <span className="text-muted-foreground text-xs">ⓘ</span>
+          </button>
+        </Tooltip>
+      </div>
 
       <Button type="submit" disabled={submitting || !name || !value}>
         {submitting ? "Encrypting..." : "Create Secret"}

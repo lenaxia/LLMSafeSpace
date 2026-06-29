@@ -30,10 +30,10 @@ func NewPgSecretStore(pool *pgxpool.Pool) *PgSecretStore {
 
 func (s *PgSecretStore) CreateSecret(ctx context.Context, secret *UserSecret) error {
 	row := s.pool.QueryRow(ctx,
-		`INSERT INTO user_secrets (user_id, name, type, ciphertext, key_version, metadata)
-		 VALUES ($1, $2, $3, $4, $5, $6)
+		`INSERT INTO user_secrets (user_id, name, type, ciphertext, key_version, metadata, global_default)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
 		 RETURNING id, created_at, updated_at`,
-		secret.UserID, secret.Name, secret.Type, secret.Ciphertext, secret.KeyVersion, secret.Metadata)
+		secret.UserID, secret.Name, secret.Type, secret.Ciphertext, secret.KeyVersion, secret.Metadata, secret.GlobalDefault)
 
 	if err := row.Scan(&secret.ID, &secret.CreatedAt, &secret.UpdatedAt); err != nil {
 		// 23505 = unique_violation. Wrap as ErrDuplicateSecret so the
@@ -50,11 +50,11 @@ func (s *PgSecretStore) CreateSecret(ctx context.Context, secret *UserSecret) er
 
 func (s *PgSecretStore) GetSecret(ctx context.Context, userID, secretID string) (*UserSecret, error) {
 	row := s.pool.QueryRow(ctx,
-		`SELECT id, user_id, name, type, ciphertext, key_version, metadata, created_at, updated_at
+		`SELECT id, user_id, name, type, ciphertext, key_version, metadata, global_default, created_at, updated_at
 		 FROM user_secrets WHERE id = $1 AND user_id = $2`, secretID, userID)
 
 	var sec UserSecret
-	err := row.Scan(&sec.ID, &sec.UserID, &sec.Name, &sec.Type, &sec.Ciphertext, &sec.KeyVersion, &sec.Metadata, &sec.CreatedAt, &sec.UpdatedAt)
+	err := row.Scan(&sec.ID, &sec.UserID, &sec.Name, &sec.Type, &sec.Ciphertext, &sec.KeyVersion, &sec.Metadata, &sec.GlobalDefault, &sec.CreatedAt, &sec.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -66,11 +66,11 @@ func (s *PgSecretStore) GetSecret(ctx context.Context, userID, secretID string) 
 
 func (s *PgSecretStore) GetSecretByName(ctx context.Context, userID, name string) (*UserSecret, error) {
 	row := s.pool.QueryRow(ctx,
-		`SELECT id, user_id, name, type, ciphertext, key_version, metadata, created_at, updated_at
+		`SELECT id, user_id, name, type, ciphertext, key_version, metadata, global_default, created_at, updated_at
 		 FROM user_secrets WHERE user_id = $1 AND name = $2`, userID, name)
 
 	var sec UserSecret
-	err := row.Scan(&sec.ID, &sec.UserID, &sec.Name, &sec.Type, &sec.Ciphertext, &sec.KeyVersion, &sec.Metadata, &sec.CreatedAt, &sec.UpdatedAt)
+	err := row.Scan(&sec.ID, &sec.UserID, &sec.Name, &sec.Type, &sec.Ciphertext, &sec.KeyVersion, &sec.Metadata, &sec.GlobalDefault, &sec.CreatedAt, &sec.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -82,7 +82,7 @@ func (s *PgSecretStore) GetSecretByName(ctx context.Context, userID, name string
 
 func (s *PgSecretStore) ListSecrets(ctx context.Context, userID string) ([]*UserSecret, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, user_id, name, type, ciphertext, key_version, metadata, created_at, updated_at
+		`SELECT id, user_id, name, type, ciphertext, key_version, metadata, global_default, created_at, updated_at
 		 FROM user_secrets WHERE user_id = $1 ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list user_secrets: %w", err)
@@ -92,8 +92,30 @@ func (s *PgSecretStore) ListSecrets(ctx context.Context, userID string) ([]*User
 	var secrets []*UserSecret
 	for rows.Next() {
 		var sec UserSecret
-		if err := rows.Scan(&sec.ID, &sec.UserID, &sec.Name, &sec.Type, &sec.Ciphertext, &sec.KeyVersion, &sec.Metadata, &sec.CreatedAt, &sec.UpdatedAt); err != nil {
+		if err := rows.Scan(&sec.ID, &sec.UserID, &sec.Name, &sec.Type, &sec.Ciphertext, &sec.KeyVersion, &sec.Metadata, &sec.GlobalDefault, &sec.CreatedAt, &sec.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan user_secrets: %w", err)
+		}
+		secrets = append(secrets, &sec)
+	}
+	return secrets, rows.Err()
+}
+
+// ListGlobalDefaultSecrets returns all secrets owned by userID that have
+// global_default=true. Used when seeding bindings on workspace creation.
+func (s *PgSecretStore) ListGlobalDefaultSecrets(ctx context.Context, userID string) ([]*UserSecret, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, user_id, name, type, ciphertext, key_version, metadata, global_default, created_at, updated_at
+		 FROM user_secrets WHERE user_id = $1 AND global_default = true ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list global default user_secrets: %w", err)
+	}
+	defer rows.Close()
+
+	var secrets []*UserSecret
+	for rows.Next() {
+		var sec UserSecret
+		if err := rows.Scan(&sec.ID, &sec.UserID, &sec.Name, &sec.Type, &sec.Ciphertext, &sec.KeyVersion, &sec.Metadata, &sec.GlobalDefault, &sec.CreatedAt, &sec.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan global default user_secrets: %w", err)
 		}
 		secrets = append(secrets, &sec)
 	}
@@ -102,9 +124,9 @@ func (s *PgSecretStore) ListSecrets(ctx context.Context, userID string) ([]*User
 
 func (s *PgSecretStore) UpdateSecret(ctx context.Context, secret *UserSecret) error {
 	_, err := s.pool.Exec(ctx,
-		`UPDATE user_secrets SET ciphertext = $1, key_version = $2, metadata = $3, updated_at = $4
-		 WHERE id = $5 AND user_id = $6`,
-		secret.Ciphertext, secret.KeyVersion, secret.Metadata, secret.UpdatedAt, secret.ID, secret.UserID)
+		`UPDATE user_secrets SET ciphertext = $1, key_version = $2, metadata = $3, global_default = $4, updated_at = $5
+		 WHERE id = $6 AND user_id = $7`,
+		secret.Ciphertext, secret.KeyVersion, secret.Metadata, secret.GlobalDefault, secret.UpdatedAt, secret.ID, secret.UserID)
 	return err
 }
 
@@ -373,7 +395,7 @@ func (s *PgSecretStore) AddBindings(ctx context.Context, workspaceID string, sec
 
 func (s *PgSecretStore) GetBindings(ctx context.Context, workspaceID string) ([]*UserSecret, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT s.id, s.user_id, s.name, s.type, s.ciphertext, s.key_version, s.metadata, s.created_at, s.updated_at
+		`SELECT s.id, s.user_id, s.name, s.type, s.ciphertext, s.key_version, s.metadata, s.global_default, s.created_at, s.updated_at
 		 FROM user_secrets s
 		 JOIN user_secret_bindings b ON b.secret_id = s.id
 		 WHERE b.workspace_id = $1
@@ -386,7 +408,7 @@ func (s *PgSecretStore) GetBindings(ctx context.Context, workspaceID string) ([]
 	var secrets []*UserSecret
 	for rows.Next() {
 		var sec UserSecret
-		if err := rows.Scan(&sec.ID, &sec.UserID, &sec.Name, &sec.Type, &sec.Ciphertext, &sec.KeyVersion, &sec.Metadata, &sec.CreatedAt, &sec.UpdatedAt); err != nil {
+		if err := rows.Scan(&sec.ID, &sec.UserID, &sec.Name, &sec.Type, &sec.Ciphertext, &sec.KeyVersion, &sec.Metadata, &sec.GlobalDefault, &sec.CreatedAt, &sec.UpdatedAt); err != nil {
 			return nil, err
 		}
 		secrets = append(secrets, &sec)
@@ -645,6 +667,9 @@ func (l *AsyncAuditLogger) GetSecretByName(ctx context.Context, userID, name str
 }
 func (l *AsyncAuditLogger) ListSecrets(ctx context.Context, userID string) ([]*UserSecret, error) {
 	return l.store.ListSecrets(ctx, userID)
+}
+func (l *AsyncAuditLogger) ListGlobalDefaultSecrets(ctx context.Context, userID string) ([]*UserSecret, error) {
+	return l.store.ListGlobalDefaultSecrets(ctx, userID)
 }
 func (l *AsyncAuditLogger) UpdateSecret(ctx context.Context, secret *UserSecret) error {
 	return l.store.UpdateSecret(ctx, secret)

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -97,14 +98,15 @@ func (s *SecretService) CreateSecret(ctx context.Context, userID, sessionID stri
 	}
 
 	secret := &UserSecret{
-		UserID:     userID,
-		Name:       req.Name,
-		Type:       req.Type,
-		Ciphertext: ciphertext,
-		KeyVersion: record.KeyVersion,
-		Metadata:   metadata,
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
+		UserID:        userID,
+		Name:          req.Name,
+		Type:          req.Type,
+		Ciphertext:    ciphertext,
+		KeyVersion:    record.KeyVersion,
+		Metadata:      metadata,
+		GlobalDefault: req.GlobalDefault,
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
 	}
 
 	if err := s.store.CreateSecret(ctx, secret); err != nil {
@@ -114,12 +116,13 @@ func (s *SecretService) CreateSecret(ctx context.Context, userID, sessionID stri
 	s.audit(ctx, userID, "create", &secret.ID, nil, map[string]string{"name": req.Name, "type": string(req.Type)})
 
 	return &SecretResponse{
-		ID:        secret.ID,
-		Name:      secret.Name,
-		Type:      secret.Type,
-		Metadata:  secret.Metadata,
-		CreatedAt: secret.CreatedAt,
-		UpdatedAt: secret.UpdatedAt,
+		ID:            secret.ID,
+		Name:          secret.Name,
+		Type:          secret.Type,
+		Metadata:      secret.Metadata,
+		GlobalDefault: secret.GlobalDefault,
+		CreatedAt:     secret.CreatedAt,
+		UpdatedAt:     secret.UpdatedAt,
 	}, nil
 }
 
@@ -133,12 +136,13 @@ func (s *SecretService) GetSecretByName(ctx context.Context, userID, name string
 		return nil, nil
 	}
 	return &SecretResponse{
-		ID:        secret.ID,
-		Name:      secret.Name,
-		Type:      secret.Type,
-		Metadata:  secret.Metadata,
-		CreatedAt: secret.CreatedAt,
-		UpdatedAt: secret.UpdatedAt,
+		ID:            secret.ID,
+		Name:          secret.Name,
+		Type:          secret.Type,
+		Metadata:      secret.Metadata,
+		GlobalDefault: secret.GlobalDefault,
+		CreatedAt:     secret.CreatedAt,
+		UpdatedAt:     secret.UpdatedAt,
 	}, nil
 }
 
@@ -152,12 +156,13 @@ func (s *SecretService) GetSecret(ctx context.Context, userID, secretID string) 
 		return nil, ErrSecretNotFound
 	}
 	return &SecretResponse{
-		ID:        secret.ID,
-		Name:      secret.Name,
-		Type:      secret.Type,
-		Metadata:  secret.Metadata,
-		CreatedAt: secret.CreatedAt,
-		UpdatedAt: secret.UpdatedAt,
+		ID:            secret.ID,
+		Name:          secret.Name,
+		Type:          secret.Type,
+		Metadata:      secret.Metadata,
+		GlobalDefault: secret.GlobalDefault,
+		CreatedAt:     secret.CreatedAt,
+		UpdatedAt:     secret.UpdatedAt,
 	}, nil
 }
 
@@ -170,12 +175,13 @@ func (s *SecretService) ListSecrets(ctx context.Context, userID string) ([]*Secr
 	result := make([]*SecretResponse, len(secrets))
 	for i, sec := range secrets {
 		result[i] = &SecretResponse{
-			ID:        sec.ID,
-			Name:      sec.Name,
-			Type:      sec.Type,
-			Metadata:  sec.Metadata,
-			CreatedAt: sec.CreatedAt,
-			UpdatedAt: sec.UpdatedAt,
+			ID:            sec.ID,
+			Name:          sec.Name,
+			Type:          sec.Type,
+			Metadata:      sec.Metadata,
+			GlobalDefault: sec.GlobalDefault,
+			CreatedAt:     sec.CreatedAt,
+			UpdatedAt:     sec.UpdatedAt,
 		}
 	}
 	return result, nil
@@ -209,11 +215,15 @@ func (s *SecretService) UpdateSecret(ctx context.Context, userID, sessionID stri
 	secret.Ciphertext = ciphertext
 	secret.KeyVersion = record.KeyVersion
 	secret.UpdatedAt = time.Now()
+	prevGlobalDefault := secret.GlobalDefault
 	if req.Metadata != nil {
 		if err := validateMetadata(secret.Type, req.Metadata); err != nil {
 			return err
 		}
 		secret.Metadata = req.Metadata
+	}
+	if req.GlobalDefault != nil {
+		secret.GlobalDefault = *req.GlobalDefault
 	}
 	if err := validateValue(secret.Type, req.Value); err != nil {
 		return err
@@ -223,7 +233,11 @@ func (s *SecretService) UpdateSecret(ctx context.Context, userID, sessionID stri
 		return fmt.Errorf("update secret: %w", err)
 	}
 
-	s.audit(ctx, userID, "update", &secretID, nil, map[string]string{"name": secret.Name})
+	auditMeta := map[string]string{"name": secret.Name}
+	if req.GlobalDefault != nil && *req.GlobalDefault != prevGlobalDefault {
+		auditMeta["globalDefault"] = strconv.FormatBool(secret.GlobalDefault)
+	}
+	s.audit(ctx, userID, "update", &secretID, nil, auditMeta)
 	return nil
 }
 
@@ -416,6 +430,32 @@ func (s *SecretService) GetBindingsForSecret(ctx context.Context, userID, secret
 // QueryAudit returns audit log entries for the current user.
 func (s *SecretService) QueryAudit(ctx context.Context, userID string, query AuditQuery) ([]*AuditEntry, error) {
 	return s.store.QueryAudit(ctx, userID, query)
+}
+
+// SeedGlobalDefaultSecrets binds all secrets with global_default=true owned
+// by userID to the given workspace. Called by the workspace service on
+// workspace creation as a best-effort operation (failure is logged but does
+// not roll back the workspace). Uses the service-level AddBindings so each
+// auto-bind is recorded in the audit log (matching every user-initiated
+// bind path) and is idempotent if called more than once for the same
+// workspace (ON CONFLICT DO NOTHING at the store layer).
+func (s *SecretService) SeedGlobalDefaultSecrets(ctx context.Context, workspaceID, userID string) error {
+	defaults, err := s.store.ListGlobalDefaultSecrets(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("list global default secrets: %w", err)
+	}
+	if len(defaults) == 0 {
+		return nil
+	}
+	ids := make([]string, len(defaults))
+	for i, d := range defaults {
+		ids[i] = d.ID
+	}
+	// Service-level AddBindings verifies ownership (already pre-filtered by
+	// ListGlobalDefaultSecrets) and emits a "bind" audit entry per secret,
+	// preserving the audit-trail contract every other bind path satisfies.
+	_, err = s.AddBindings(ctx, userID, workspaceID, ids)
+	return err
 }
 
 // auditWorkspaceIDMaxLen matches the secret_audit_log.workspace_id
