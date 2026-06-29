@@ -726,6 +726,15 @@ func (s *Service) RestartWorkspace(ctx context.Context, userID, workspaceID stri
 //
 // Like RestartWorkspace, refresh is REJECTED for Terminating/Terminated phases
 // (they race with finalizer cleanup) and idempotent at the spec layer.
+//
+// Suspended workspaces have no pod, and handleSuspended only observes
+// spec.suspend (NOT restartGeneration) — so a generation bump alone would be a
+// no-op. When the workspace is Suspended, refresh also requests a resume via
+// ActivateWorkspace (which enforces the active-workspace cap and writes
+// spec.suspend=false), so the controller builds a fresh pod carrying the
+// refreshed spec. If the resume fails after the spec refresh has persisted,
+// the error is returned but the config update remains in effect for the next
+// manual activate.
 func (s *Service) RefreshWorkspaceCompute(ctx context.Context, userID, workspaceID string) (*types.RefreshWorkspaceResult, error) {
 	start := time.Now()
 	defer func() {
@@ -757,6 +766,8 @@ func (s *Service) RefreshWorkspaceCompute(ctx context.Context, userID, workspace
 		)
 	}
 
+	wasSuspended := crd.Status.Phase == v1.WorkspacePhaseSuspended
+
 	s.reapplyComputeDefaults(ctx, crd)
 	crd.Spec.RestartGeneration++
 
@@ -771,9 +782,21 @@ func (s *Service) RefreshWorkspaceCompute(ctx context.Context, userID, workspace
 		return nil, apierrors.NewInternalError("workspace_refresh_failed", err)
 	}
 
+	// A suspended workspace has no pod; the restartGeneration bump is invisible
+	// to handleSuspended (it watches only spec.suspend). Resume so the
+	// controller builds a fresh pod from the refreshed spec. ActivateWorkspace
+	// enforces the active-workspace cap exactly like a manual resume.
+	if wasSuspended {
+		if _, err := s.ActivateWorkspace(ctx, userID, workspaceID); err != nil {
+			s.logger.Error("Refresh applied defaults but resume failed", err, "workspaceID", workspaceID)
+			return nil, err
+		}
+	}
+
 	s.logger.Info("Workspace compute refresh initiated",
 		"workspaceID", workspaceID, "userID", userID,
-		"restartGeneration", crd.Spec.RestartGeneration, "fromPhase", string(crd.Status.Phase))
+		"restartGeneration", crd.Spec.RestartGeneration, "fromPhase", string(crd.Status.Phase),
+		"resumed", wasSuspended)
 	return &types.RefreshWorkspaceResult{RestartGeneration: crd.Spec.RestartGeneration}, nil
 }
 
