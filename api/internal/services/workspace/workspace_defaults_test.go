@@ -518,3 +518,108 @@ func TestApplyWorkspaceDefaults_ExistingMaxActiveSessions_NotOverridden(t *testi
 	// The pre-set value of 3 must NOT be overwritten by the setting of 8.
 	assert.Equal(t, int32(3), crd.Spec.MaxActiveSessions)
 }
+
+// ===== SecretAutoProvisioner (global-default secrets) =====
+
+// fakeSecretProvisioner is a test double for SecretAutoProvisioner that
+// records calls so tests can assert SeedGlobalDefaultSecrets was invoked.
+type fakeSecretProvisioner struct {
+	calls   []seedCall
+	returns error
+}
+
+type seedCall struct {
+	workspaceID string
+	userID      string
+}
+
+func (f *fakeSecretProvisioner) SeedGlobalDefaultSecrets(_ context.Context, workspaceID, userID string) error {
+	f.calls = append(f.calls, seedCall{workspaceID: workspaceID, userID: userID})
+	return f.returns
+}
+
+// TestCreateWorkspace_InvokesSecretProvisioner verifies that CreateWorkspace
+// calls SeedGlobalDefaultSecrets with the new workspace's ID and the owning
+// user's ID when a SecretAutoProvisioner is wired.
+func TestCreateWorkspace_InvokesSecretProvisioner(t *testing.T) {
+	f := newDefaultsFixture(t, map[string]any{
+		"workspace.defaultStorageSize": "10Gi",
+	})
+	prov := &fakeSecretProvisioner{}
+	f.svc.SetSecretAutoProvisioner(prov)
+
+	mockCRD := crdWorkspace("ws-seed-target", "default", "user-1", "10Gi")
+	f.k8s.On("LlmsafespacesV1").Return(f.v1iface, nil).Maybe()
+	f.v1iface.On("Workspaces", mock.Anything).Return(f.ws)
+	f.ws.On("Create", mock.Anything, mock.Anything).Return(mockCRD, nil)
+	f.db.On("CreateWorkspace", mock.Anything, mock.Anything).Return(nil)
+	f.db.On("GetCredentialAutoApplyRules", mock.Anything).Return(nil, nil).Maybe()
+	f.db.On("SeedWorkspaceCredentials", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	req := types.CreateWorkspaceRequest{Name: "test", StorageSize: "10Gi", Runtime: "python:3.10"}
+	_, err := f.svc.CreateWorkspace(context.Background(), "user-1", req)
+	assert.NoError(t, err)
+
+	if len(prov.calls) != 1 {
+		t.Fatalf("expected 1 SeedGlobalDefaultSecrets call, got %d", len(prov.calls))
+	}
+	if prov.calls[0].userID != "user-1" {
+		t.Errorf("expected userID 'user-1', got %q", prov.calls[0].userID)
+	}
+	if prov.calls[0].workspaceID != "ws-seed-target" {
+		t.Errorf("expected workspaceID 'ws-seed-target', got %q", prov.calls[0].workspaceID)
+	}
+}
+
+// TestCreateWorkspace_SecretProvisionerFailure_BestEffort verifies that a
+// SeedGlobalDefaultSecrets error does NOT roll back workspace creation —
+// the workspace is still returned, and the error is only logged.
+func TestCreateWorkspace_SecretProvisionerFailure_BestEffort(t *testing.T) {
+	f := newDefaultsFixture(t, map[string]any{
+		"workspace.defaultStorageSize": "10Gi",
+	})
+	prov := &fakeSecretProvisioner{
+		returns: fmt.Errorf("simulated provisioner outage"),
+	}
+	f.svc.SetSecretAutoProvisioner(prov)
+
+	mockCRD := crdWorkspace("ws-seed-failok", "default", "user-1", "10Gi")
+	f.k8s.On("LlmsafespacesV1").Return(f.v1iface, nil).Maybe()
+	f.v1iface.On("Workspaces", mock.Anything).Return(f.ws)
+	f.ws.On("Create", mock.Anything, mock.Anything).Return(mockCRD, nil)
+	f.db.On("CreateWorkspace", mock.Anything, mock.Anything).Return(nil)
+	f.db.On("GetCredentialAutoApplyRules", mock.Anything).Return(nil, nil).Maybe()
+	f.db.On("SeedWorkspaceCredentials", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	req := types.CreateWorkspaceRequest{Name: "test", StorageSize: "10Gi", Runtime: "python:3.10"}
+	ws, err := f.svc.CreateWorkspace(context.Background(), "user-1", req)
+	assert.NoError(t, err, "workspace creation must not fail when secret seeding fails")
+	if ws == nil {
+		t.Fatal("expected non-nil workspace despite provisioner failure")
+	}
+}
+
+// TestCreateWorkspace_NoSecretProvisioner_NoPanic verifies that
+// CreateWorkspace does not panic when no SecretAutoProvisioner is wired
+// (the field is nil and the call is skipped).
+func TestCreateWorkspace_NoSecretProvisioner_NoPanic(t *testing.T) {
+	f := newDefaultsFixture(t, map[string]any{
+		"workspace.defaultStorageSize": "10Gi",
+	})
+	// Deliberately do NOT call SetSecretAutoProvisioner.
+
+	mockCRD := crdWorkspace("ws-no-prov", "default", "user-1", "10Gi")
+	f.k8s.On("LlmsafespacesV1").Return(f.v1iface, nil).Maybe()
+	f.v1iface.On("Workspaces", mock.Anything).Return(f.ws)
+	f.ws.On("Create", mock.Anything, mock.Anything).Return(mockCRD, nil)
+	f.db.On("CreateWorkspace", mock.Anything, mock.Anything).Return(nil)
+	f.db.On("GetCredentialAutoApplyRules", mock.Anything).Return(nil, nil).Maybe()
+	f.db.On("SeedWorkspaceCredentials", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	req := types.CreateWorkspaceRequest{Name: "test", StorageSize: "10Gi", Runtime: "python:3.10"}
+	ws, err := f.svc.CreateWorkspace(context.Background(), "user-1", req)
+	assert.NoError(t, err)
+	if ws == nil {
+		t.Fatal("expected non-nil workspace")
+	}
+}

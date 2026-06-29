@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -214,6 +215,7 @@ func (s *SecretService) UpdateSecret(ctx context.Context, userID, sessionID stri
 	secret.Ciphertext = ciphertext
 	secret.KeyVersion = record.KeyVersion
 	secret.UpdatedAt = time.Now()
+	prevGlobalDefault := secret.GlobalDefault
 	if req.Metadata != nil {
 		if err := validateMetadata(secret.Type, req.Metadata); err != nil {
 			return err
@@ -231,7 +233,11 @@ func (s *SecretService) UpdateSecret(ctx context.Context, userID, sessionID stri
 		return fmt.Errorf("update secret: %w", err)
 	}
 
-	s.audit(ctx, userID, "update", &secretID, nil, map[string]string{"name": secret.Name})
+	auditMeta := map[string]string{"name": secret.Name}
+	if req.GlobalDefault != nil && *req.GlobalDefault != prevGlobalDefault {
+		auditMeta["globalDefault"] = strconv.FormatBool(secret.GlobalDefault)
+	}
+	s.audit(ctx, userID, "update", &secretID, nil, auditMeta)
 	return nil
 }
 
@@ -429,8 +435,10 @@ func (s *SecretService) QueryAudit(ctx context.Context, userID string, query Aud
 // SeedGlobalDefaultSecrets binds all secrets with global_default=true owned
 // by userID to the given workspace. Called by the workspace service on
 // workspace creation as a best-effort operation (failure is logged but does
-// not roll back the workspace). Uses AddBindings so it is idempotent if
-// called more than once for the same workspace.
+// not roll back the workspace). Uses the service-level AddBindings so each
+// auto-bind is recorded in the audit log (matching every user-initiated
+// bind path) and is idempotent if called more than once for the same
+// workspace (ON CONFLICT DO NOTHING at the store layer).
 func (s *SecretService) SeedGlobalDefaultSecrets(ctx context.Context, workspaceID, userID string) error {
 	defaults, err := s.store.ListGlobalDefaultSecrets(ctx, userID)
 	if err != nil {
@@ -443,9 +451,11 @@ func (s *SecretService) SeedGlobalDefaultSecrets(ctx context.Context, workspaceI
 	for i, d := range defaults {
 		ids[i] = d.ID
 	}
-	// AddBindings takes the advisory workspace lock and uses ON CONFLICT DO
-	// NOTHING, so it is safe and idempotent even if called concurrently.
-	return s.store.AddBindings(ctx, workspaceID, ids)
+	// Service-level AddBindings verifies ownership (already pre-filtered by
+	// ListGlobalDefaultSecrets) and emits a "bind" audit entry per secret,
+	// preserving the audit-trail contract every other bind path satisfies.
+	_, err = s.AddBindings(ctx, userID, workspaceID, ids)
+	return err
 }
 
 // auditWorkspaceIDMaxLen matches the secret_audit_log.workspace_id
