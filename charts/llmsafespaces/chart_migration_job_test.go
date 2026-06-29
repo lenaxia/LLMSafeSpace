@@ -274,15 +274,6 @@ func TestMigrationJob_ScriptProducesValidURLOnReservedCharPassword(t *testing.T)
 			"this is the #455 regression guard: any raw/missing encoding breaks here")
 }
 
-// containerArgs extracts the args of the named container in a Job.
-func containerArgs(t *testing.T, job map[string]any, name string) []any {
-	t.Helper()
-	c := findContainer(t, job, name)
-	args, ok := c["args"].([]any)
-	require.True(t, ok, "container %q must have args", name)
-	return args
-}
-
 // containerEnv extracts the env of the named container in a Job.
 func containerEnv(t *testing.T, job map[string]any, name string) []any {
 	t.Helper()
