@@ -131,4 +131,4 @@ None.
 - `frontend/src/api/secrets.ts`
 - `frontend/src/components/settings/SecretsTab.tsx`
 - `README-LLM.md`
-- `worklogs/NNNN_2026-06-29_secrets-global-default-update-ux.md` (new)
+- `worklogs/0572_2026-06-29_secrets-global-default-update-ux.md` (new)
