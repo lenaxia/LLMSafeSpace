@@ -60,4 +60,56 @@ describe("KebabMenu", () => {
     await user.click(document.body);
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
+
+  // --- Section grouping ---
+
+  it("renders a labelled divider for a section header", async () => {
+    const user = userEvent.setup();
+    render(
+      <KebabMenu
+        items={[
+          { label: "Rename", onClick: vi.fn() },
+          { label: "Suspend", onClick: vi.fn(), section: "Lifecycle" },
+        ]}
+      />,
+    );
+    await user.click(screen.getByLabelText("Actions"));
+    expect(screen.getByText("Lifecycle")).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Suspend" })).toBeInTheDocument();
+  });
+
+  it("does not render a section header when no item declares a section", async () => {
+    const user = userEvent.setup();
+    render(
+      <KebabMenu
+        items={[
+          { label: "Rename", onClick: vi.fn() },
+          { label: "Delete", onClick: vi.fn(), destructive: true },
+        ]}
+      />,
+    );
+    await user.click(screen.getByLabelText("Actions"));
+    // Legacy two-phase layout: no section header text present.
+    expect(screen.queryByText("Lifecycle")).not.toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Rename" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
+  });
+
+  it("keeps destructive styling within a section", async () => {
+    const user = userEvent.setup();
+    render(
+      <KebabMenu
+        items={[
+          { label: "Refresh compute", onClick: vi.fn(), section: "Lifecycle" },
+          { label: "Delete", onClick: vi.fn(), section: "Lifecycle", destructive: true },
+        ]}
+      />,
+    );
+    await user.click(screen.getByLabelText("Actions"));
+    const deleteItem = screen.getByRole("menuitem", { name: "Delete" });
+    expect(deleteItem.className).toContain("text-destructive");
+    expect(screen.getByRole("menuitem", { name: "Refresh compute" }).className).not.toContain(
+      "text-destructive",
+    );
+  });
 });

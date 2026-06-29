@@ -12,6 +12,7 @@ import { WorkspaceSettingsDrawer } from "../workspace/WorkspaceSettingsDrawer";
 import { RenameSessionDialog } from "../session/RenameSessionDialog";
 import { KebabMenu } from "../ui/KebabMenu";
 import type { KebabMenuItem } from "../ui/KebabMenu";
+import { ConfirmDialog } from "../ui/ConfirmDialog";
 import {
   Settings,
   LogOut,
@@ -346,6 +347,7 @@ function WorkspaceGroup({
   const busyCount = useWorkspaceBusyCount(workspace.id);
 
   const [showSettings, setShowSettings] = useState(false);
+  const [showRefreshConfirm, setShowRefreshConfirm] = useState(false);
 
   const versionFooter: string[] = [
     ...(workspace.agentVersion ? [`opencode v${workspace.agentVersion}`] : []),
@@ -355,15 +357,16 @@ function WorkspaceGroup({
   const kebabItems: KebabMenuItem[] = [
     { label: "Settings", onClick: () => setShowSettings(true) },
     { label: "Copy new session link", onClick: () => navigator.clipboard.writeText(`${window.location.origin}/chat/${workspace.id}`) },
+    { label: "Rename", onClick: onRenameClick },
     {
       label: refreshingCompute ? "Refreshing compute…" : "Refresh compute",
-      onClick: onRefreshCompute,
+      onClick: () => setShowRefreshConfirm(true),
       disabled: refreshingCompute,
+      section: "Lifecycle",
     },
-    ...(isActive ? [{ label: "Suspend", onClick: onSuspend }] : []),
-    ...(isSuspended ? [{ label: "Resume", onClick: onResume }] : []),
-    { label: "Rename", onClick: onRenameClick },
-    { label: "Delete", onClick: onDelete, destructive: true },
+    ...(isActive ? [{ label: "Suspend", onClick: onSuspend, section: "Lifecycle" }] : []),
+    ...(isSuspended ? [{ label: "Resume", onClick: onResume, section: "Lifecycle" }] : []),
+    { label: "Delete", onClick: onDelete, destructive: true, section: "Lifecycle" },
   ];
 
   return (
@@ -461,6 +464,18 @@ function WorkspaceGroup({
         workspace={workspace}
         open={showSettings}
         onOpenChange={setShowSettings}
+      />
+      <ConfirmDialog
+        open={showRefreshConfirm}
+        onOpenChange={setShowRefreshConfirm}
+        title="Refresh compute?"
+        description="This will halt all current work in the workspace and reprovision it from scratch with the latest image version and current resource defaults. Any running agent sessions will be interrupted."
+        note="Your files and workspace data are preserved."
+        confirmLabel="Refresh compute"
+        onConfirm={() => {
+          setShowRefreshConfirm(false);
+          onRefreshCompute();
+        }}
       />
     </div>
   );
