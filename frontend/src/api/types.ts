@@ -185,6 +185,13 @@ export interface ApiError {
    * 4xx/5xx responses.
    */
   details?: Record<string, string>;
+  /**
+   * Seconds to wait before retrying. Sent by the proxy on 429 (active-
+   * session cap / rate limit) and 503 (workspace restarting — in-place
+   * opencode restart for credential reload, OOM, crash, relay injection).
+   * Mirrors the HTTP `Retry-After` header value.
+   */
+  retryAfter?: number;
 }
 
 // --- Workspace SSE event types ---

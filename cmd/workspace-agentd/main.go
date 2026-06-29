@@ -89,7 +89,7 @@ func main() {
 	// supervisor. No-op when no marker is present (clean boot).
 	logRestartReason(RestartReasonMarkerPath, log.Core())
 
-	proc := startManagedProcess(rootCtx, supervise, client)
+	proc := startManagedProcess(supervise)
 
 	startedAt := time.Now()
 	agentConfigPath := envOrDefault("LLMSAFESPACES_AGENT_CONFIG_PATH", agentd.AgentConfigPath)
@@ -140,26 +140,12 @@ func readAgentPassword() string {
 }
 
 // startManagedProcess builds and starts the opencode supervisor when
-// agentd is invoked with --supervise; returns nil otherwise. The
-// onStart callback aborts stale busy sessions after every opencode
-// (re)start, once opencode is healthy (bounded by a 30s deadline
-// inside abortStaleSessionsAfterStart).
-//
-// The client is constructed before the supervisor so onStart can close
-// over it and be set in the struct literal — before start() spawns the
-// supervisor goroutine. Assigning onStart after start() races with the
-// supervisor's mutex-protected read in supervise(): on the initial boot
-// the supervisor could observe onStart == nil and silently skip the
-// stale-session cleanup, defeating the entire fix.
-func startManagedProcess(rootCtx context.Context, supervise bool, client *OpenCodeClient) *managedProcess {
+// agentd is invoked with --supervise; returns nil otherwise.
+func startManagedProcess(supervise bool) *managedProcess {
 	if !supervise {
 		return nil
 	}
-	proc := &managedProcess{
-		onStart: func() {
-			abortStaleSessionsAfterStart(rootCtx, client, log)
-		},
-	}
+	proc := &managedProcess{}
 	proc.start()
 	return proc
 }
