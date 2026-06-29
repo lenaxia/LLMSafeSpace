@@ -100,6 +100,9 @@ func (s *pushPathSessionStore) GetSecretByName(_ context.Context, _, name string
 func (s *pushPathSessionStore) ListSecrets(_ context.Context, _ string) ([]*secrets.UserSecret, error) {
 	return nil, nil
 }
+func (s *pushPathSessionStore) ListGlobalDefaultSecrets(_ context.Context, _ string) ([]*secrets.UserSecret, error) {
+	return nil, nil
+}
 func (s *pushPathSessionStore) UpdateSecret(_ context.Context, _ *secrets.UserSecret) error {
 	return nil
 }
