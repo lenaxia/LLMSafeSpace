@@ -109,17 +109,27 @@ func TestEnqueueMessage_NoQueueService(t *testing.T) {
 // immediate drain when the session is not in activeSess (already idle). Without
 // this, a message enqueued after the agent finished would sit in Redis forever
 // — no session.status=idle event will arrive because the session is already quiet.
+//
+// Also asserts (defense-in-depth) that the queue-generated messageID reaches
+// opencode in the correct on-the-wire format: "msg_" + 12 hex + 14 base62.
+// A regression in the ID generator that does not also break the unit tests
+// (e.g. wrong field name in promptRequestBody) would still be caught here.
 func TestEnqueueMessage_DrainsWhenIdle(t *testing.T) {
-	promptCalled := make(chan string, 1)
+	type promptCall struct {
+		text      string
+		messageID string
+	}
+	promptCalled := make(chan promptCall, 1)
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/session/ses-1/prompt_async" {
 			var body struct {
-				Parts []struct{ Text string } `json:"parts"`
+				Parts     []struct{ Text string } `json:"parts"`
+				MessageID string                  `json:"messageID"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			if len(body.Parts) > 0 {
 				select {
-				case promptCalled <- body.Parts[0].Text:
+				case promptCalled <- promptCall{text: body.Parts[0].Text, messageID: body.MessageID}:
 				default:
 				}
 			}
@@ -159,8 +169,23 @@ func TestEnqueueMessage_DrainsWhenIdle(t *testing.T) {
 
 	// The drain goroutine should send the message to opencode immediately.
 	select {
-	case text := <-promptCalled:
-		assert.Equal(t, "drain me", text)
+	case call := <-promptCalled:
+		assert.Equal(t, "drain me", call.text)
+
+		// Verify the messageID reaches opencode in the format required to
+		// keep opencode's session.prompt loop exiting cleanly. The full
+		// invariant (this ID must lex-sort below opencode's assistant ID)
+		// is exercised by unit tests in msgqueue/service_test.go; here we
+		// pin the on-the-wire shape: "msg_" + 12 hex + 14 base62.
+		require.Len(t, call.messageID, 30,
+			"messageID must be msg_ + 26 body chars (opencode Identifier.ascending layout)")
+		require.True(t, strings.HasPrefix(call.messageID, "msg_"),
+			"messageID must start with msg_")
+		for i, c := range call.messageID[4:16] {
+			require.True(t,
+				(c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'),
+				"messageID hex prefix char %d (%q) must be lowercase hex", i, c)
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("drain-on-enqueue: prompt_async was never called for idle session")
 	}
