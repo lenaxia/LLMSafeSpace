@@ -26,7 +26,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lenaxia/llmsafespaces/pkg/agentd/secrets"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -271,6 +270,115 @@ func TestContainerRestart_SSHKeySurvivesRestart(t *testing.T) {
 	require.NotEmpty(t, entries, "SSH key must survive container restart via cache replay")
 }
 
+// TestContainerRestart_CredentialRemoval_NotReplayed locks down the unbind
+// path: a reload with a SMALLER batch (user removed a credential) must result
+// in the removed credential being absent after restart. Because reload is a
+// full-replace and the cache holds the latest complete state, replay rebuilds
+// from the merged batch (cache wins) and the removed cred must NOT reappear.
+// Without this test, a regression that breaks reset() for the removal case
+// would go undetected.
+func TestContainerRestart_CredentialRemoval_NotReplayed(t *testing.T) {
+	bin := buildAgentdBinary(t)
+	dir := t.TempDir()
+
+	envPath := filepath.Join(dir, "env")
+	cachePath := filepath.Join(dir, "last-reload-secrets.json")
+	baseSecretsPath := filepath.Join(dir, "secrets.json")
+	require.NoError(t, os.WriteFile(baseSecretsPath, []byte(`[]`), 0o600))
+
+	env := cacheMaterializeEnv(filepath.Join(dir, "secrets"), filepath.Join(dir, ".ssh"),
+		filepath.Join(dir, "agent-config.json"), envPath, filepath.Join(dir, ".git-credentials"), cachePath)
+
+	cfg := materializeConfig{
+		secretsBaseDir:  filepath.Join(dir, "secrets"),
+		sshDir:          filepath.Join(dir, ".ssh"),
+		agentConfigPath: filepath.Join(dir, "agent-config.json"),
+		secretsEnvPath:  envPath,
+		gitCredsPath:    filepath.Join(dir, ".git-credentials"),
+		home:            dir,
+		reloadCachePath: cachePath,
+	}
+
+	// Initial live state: two env-secrets bound.
+	first := `[{"type":"env-secret","name":"keep","metadata":{"var_name":"KEEP"},"plaintext":"1"},{"type":"env-secret","name":"remove","metadata":{"var_name":"REMOVE"},"plaintext":"2"}]`
+	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(first))
+	rec := httptest.NewRecorder()
+	reloadSecretsHandler(cfg, reloadSecretsDeps{})(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	// User unbinds "remove": the new reload batch omits it. The cache must now
+	// reflect ONLY "keep" — reload is a full-replace, so the cache is overwritten.
+	second := `[{"type":"env-secret","name":"keep","metadata":{"var_name":"KEEP"},"plaintext":"1"}]`
+	req = httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader(second))
+	rec = httptest.NewRecorder()
+	reloadSecretsHandler(cfg, reloadSecretsDeps{})(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	// Simulate the container restart: reset() wipes the env file.
+	require.NoError(t, os.Remove(envPath))
+
+	exit, stderr := runCacheMaterialize(t, bin, baseSecretsPath, env)
+	require.Equal(t, 0, exit, "stderr=%q", stderr)
+
+	envContent, err := os.ReadFile(envPath)
+	require.NoError(t, err)
+	require.Contains(t, string(envContent), "export KEEP=",
+		"retained credential must be replayed after restart")
+	assert.NotContains(t, string(envContent), "export REMOVE=",
+		"unbound credential must NOT reappear after restart (cache reflects the full-replace reload)")
+}
+
+// TestContainerRestart_LLMProviderSurvivesRestart covers the provider code
+// path (FlushProviders/FormatProviders → agent-config.json), which is distinct
+// from the env-secret/ssh-key paths. A user-owned LLM provider bound after
+// boot must survive a container restart via cache replay and land in
+// agent-config.json.
+func TestContainerRestart_LLMProviderSurvivesRestart(t *testing.T) {
+	bin := buildAgentdBinary(t)
+	dir := t.TempDir()
+
+	agentCfg := filepath.Join(dir, "agent-config.json")
+	cachePath := filepath.Join(dir, "last-reload-secrets.json")
+	baseSecretsPath := filepath.Join(dir, "secrets.json")
+	// Base is empty — no server-KEK providers.
+	require.NoError(t, os.WriteFile(baseSecretsPath, []byte(`[]`), 0o600))
+
+	cfg := materializeConfig{
+		secretsBaseDir:  filepath.Join(dir, "secrets"),
+		sshDir:          filepath.Join(dir, ".ssh"),
+		agentConfigPath: agentCfg,
+		secretsEnvPath:  filepath.Join(dir, "env"),
+		gitCredsPath:    filepath.Join(dir, ".git-credentials"),
+		home:            dir,
+		reloadCachePath: cachePath,
+	}
+
+	// A user-owned LLM provider (delivered with a session DEK, hence absent
+	// from base secrets.json and only present via the reload push).
+	provider := `{"type":"llm-provider","name":"user-openai","plaintext":"{\"kind\":\"openai\",\"slug\":\"user-openai\",\"apiKey\":\"sk-user-123\"}"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/reload-secrets", strings.NewReader("["+provider+"]"))
+	rec := httptest.NewRecorder()
+	reloadSecretsHandler(cfg, reloadSecretsDeps{})(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	// Simulate the restart: reset() would wipe agent-config.json. In this test
+	// the handler runs without an AgentConfigWriter (nil), so the handler never
+	// wrote agent-config.json — RemoveAll tolerates absence, matching reset().
+	require.NoError(t, os.RemoveAll(agentCfg))
+
+	exit, stderr := runCacheMaterialize(t, bin, baseSecretsPath,
+		cacheMaterializeEnv(cfg.secretsBaseDir, cfg.sshDir, agentCfg, cfg.secretsEnvPath, cfg.gitCredsPath, cachePath))
+	require.Equal(t, 0, exit, "stderr=%q", stderr)
+
+	// agent-config.json must contain the replayed provider. The provider key
+	// is the slug (Epic 55) — pre-fix, a restart would leave agent-config.json
+	// empty because reset() wiped it and the base secrets.json had no providers.
+	raw, err := os.ReadFile(agentCfg)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), "user-openai",
+		"user-owned LLM provider must survive container restart via cache replay (#443)")
+}
+
 // requireEnvHasVar asserts the materialized env file contains an export line
 // for the given variable name.
 func requireEnvHasVar(t *testing.T, envPath, varName string) {
@@ -279,7 +387,3 @@ func requireEnvHasVar(t *testing.T, envPath, varName string) {
 	require.NoError(t, err)
 	require.Contains(t, string(data), "export "+varName+"=", "env file missing %s", varName)
 }
-
-// Reference the secrets package so the import is retained even if a future
-// edit removes the only inline usage in this file.
-var _ = secrets.OutcomeSkipped

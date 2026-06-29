@@ -676,10 +676,18 @@ func reloadSecretsHandler(cfg materializeConfig, deps reloadSecretsDeps) http.Ha
 		// step (writer rebuild) fails. Non-fatal: a write failure warns but
 		// does not roll back the live materialization; the cost is only that
 		// the creds will not survive the *next* restart.
-		if pErr := writeReloadSecretsCache(cfg.reloadCachePath, batch); pErr != nil {
-			log.Warn("reload-secrets: failed to persist reload batch for restart replay; "+
-				"user-DEK credentials may be lost on the next container restart",
-				zap.Error(pErr))
+		//
+		// The empty-path guard defends existing tests that construct
+		// materializeConfig without reloadCachePath: without it, an unset path
+		// would create temp files in the test CWD and log a WARN on every
+		// reload handler call. Production always resolves the path via
+		// loadMaterializeConfig → agentd.ReloadSecretsCachePath.
+		if cfg.reloadCachePath != "" {
+			if pErr := writeReloadSecretsCache(cfg.reloadCachePath, batch); pErr != nil {
+				log.Warn("reload-secrets: failed to persist reload batch for restart replay; "+
+					"user-DEK credentials may be lost on the next container restart",
+					zap.Error(pErr))
+			}
 		}
 
 		// Enrich custom-endpoint providers with their live model list (same as
