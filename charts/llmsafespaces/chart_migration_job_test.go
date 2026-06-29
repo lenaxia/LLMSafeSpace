@@ -113,6 +113,22 @@ func TestMigrationJob_UsesShellWrapperWithEncodedURL(t *testing.T) {
 		assert.True(t, strings.Contains(script, "${"+name+"}") || strings.Contains(script, "$"+name),
 			"wrapper must read connection parameter %s from an env var at runtime", name)
 	}
+
+	// pipefail must be enabled so a failure in printf/od/tr/sed is not masked
+	// by sed's success (the pipeline's last command). Best-effort: busybox ash
+	// (the migrate image) and bash support it; dash does not — the integration
+	// tests below run under /bin/sh (dash on the CI runner) and prove the
+	// best-effort form does not break unsupported shells.
+	assert.Contains(t, script, "pipefail",
+		"wrapper must enable pipefail so a mid-pipeline encoding failure is not masked")
+
+	// IPv6 host bracketing: a bare IPv6 literal (e.g. 2001:db8::1) in the URL
+	// host makes the trailing :port ambiguous. The wrapper must compute a host
+	// variable that is bracketed when it contains ':'.
+	assert.Contains(t, script, "db_host",
+		"wrapper must compute a host variable (db_host) for conditional IPv6 bracketing")
+	assert.Contains(t, script, "case",
+		"wrapper must use a case statement to bracket IPv6 hosts conditionally")
 }
 
 // TestMigrationJob_PasswordURLEncodedNotRaw is the #455 core regression:
@@ -208,13 +224,6 @@ func TestMigrationJob_ScriptProducesValidURLOnReservedCharPassword(t *testing.T)
 	require.NotNil(t, job)
 	_, script := migrationScript(t, job)
 
-	// Build a `migrate` shim that records its argv to a file. The wrapper
-	// `exec`s `migrate`, so the shim must be found on PATH.
-	dir := t.TempDir()
-	argvFile := filepath.Join(dir, "argv.txt")
-	shim := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argvFile + "\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "migrate"), []byte(shim), 0o755))
-
 	// Password + user containing every URL-reserved char (the #424/#455 set)
 	// plus whitespace and a control char.
 	const (
@@ -222,37 +231,14 @@ func TestMigrationJob_ScriptProducesValidURLOnReservedCharPassword(t *testing.T)
 		user     = "u@ser:name"
 	)
 
-	cmd := exec.Command("/bin/sh", "-ec", script)
-	cmd.Env = append(os.Environ(),
-		"PATH="+dir+":"+os.Getenv("PATH"),
-		"DB_HOST=pg-host",
-		"DB_PORT=5432",
-		"DB_USER="+user,
-		"DB_PASSWORD="+password,
-		"DB_NAME=appdb",
-		"DB_SSLMODE=require",
-	)
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	require.NoError(t, cmd.Run(),
-		"wrapper script must execute cleanly against the shim; stderr:\n%s", stderr.String())
-
-	argvBytes, err := os.ReadFile(argvFile)
-	require.NoError(t, err, "shim must have recorded argv (wrapper must have exec'd migrate)")
-	argv := strings.Split(strings.TrimRight(string(argvBytes), "\n"), "\n")
-
-	// Locate the -database value (CLI accepts `-database X` or `-database=X`).
-	var dbArg string
-	for i, a := range argv {
-		if a == "-database" && i+1 < len(argv) {
-			dbArg = argv[i+1]
-			break
-		}
-		if strings.HasPrefix(a, "-database=") {
-			dbArg = strings.TrimPrefix(a, "-database=")
-		}
-	}
-	require.NotEmpty(t, dbArg, "migrate must receive a -database argument")
+	dbArg := execMigrateWrapper(t, script, map[string]string{
+		"DB_HOST":     "pg-host",
+		"DB_PORT":     "5432",
+		"DB_USER":     user,
+		"DB_PASSWORD": password,
+		"DB_NAME":     "appdb",
+		"DB_SSLMODE":  "require",
+	})
 
 	u, err := url.Parse(dbArg)
 	require.NoError(t, err, "-database value must be a parseable URL; got %q", dbArg)
@@ -272,6 +258,77 @@ func TestMigrationJob_ScriptProducesValidURLOnReservedCharPassword(t *testing.T)
 	assert.Equal(t, password, gotPass,
 		"decoded password must match the reserved-char input byte-for-byte — "+
 			"this is the #455 regression guard: any raw/missing encoding breaks here")
+}
+
+// TestMigrationJob_ScriptBracketsIPv6Host proves the IPv6-bracketing branch:
+// a bare IPv6 literal in DB_HOST must be wrapped in [...] so the :port suffix
+// is unambiguous. Without bracketing, `postgres://u:p@2001:db8::1:5432/db`
+// is unparseable (the colons collide). DNS hostnames and IPv4 are left
+// unbracketed (covered by the test above, which asserts Host=="pg-host:5432").
+func TestMigrationJob_ScriptBracketsIPv6Host(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not on PATH; cannot execute the wrapper script")
+	}
+	docs := helmTemplate(t, "")
+	job := findMigrationJob(t, docs)
+	require.NotNil(t, job)
+	_, script := migrationScript(t, job)
+
+	dbArg := execMigrateWrapper(t, script, map[string]string{
+		"DB_HOST":     "2001:db8::1",
+		"DB_PORT":     "5432",
+		"DB_USER":     "user",
+		"DB_PASSWORD": "pass",
+		"DB_NAME":     "appdb",
+		"DB_SSLMODE":  "disable",
+	})
+
+	u, err := url.Parse(dbArg)
+	require.NoError(t, err, "IPv6 host must produce a parseable URL; got %q", dbArg)
+	assert.Equal(t, "postgres", u.Scheme)
+	assert.Equal(t, "2001:db8::1", u.Hostname(),
+		"IPv6 host must be bracketed so the :port suffix is unambiguous; got Host=%q", u.Host)
+	assert.Equal(t, "5432", u.Port(), "port must round-trip past the bracketed IPv6 host")
+}
+
+// execMigrateWrapper runs the rendered wrapper script against a `migrate`
+// shim (a script that records its argv to a file) and returns the -database
+// URL value the migrate binary received. Used by the integration tests that
+// prove the script produces a valid URL for adversarial inputs. Runs under
+// /bin/sh — on the CI runner that is dash, which proves the wrapper's
+// best-effort pipefail form does not break unsupported shells.
+func execMigrateWrapper(t *testing.T, script string, env map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	argvFile := filepath.Join(dir, "argv.txt")
+	shim := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argvFile + "\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "migrate"), []byte(shim), 0o755))
+
+	cmd := exec.Command("/bin/sh", "-ec", script)
+	cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"))
+	for k, v := range env {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	require.NoError(t, cmd.Run(),
+		"wrapper script must execute cleanly against the shim; stderr:\n%s", stderr.String())
+
+	argvBytes, err := os.ReadFile(argvFile)
+	require.NoError(t, err, "shim must have recorded argv (wrapper must have exec'd migrate)")
+	argv := strings.Split(strings.TrimRight(string(argvBytes), "\n"), "\n")
+
+	// Locate the -database value (CLI accepts `-database X` or `-database=X`).
+	for i, a := range argv {
+		if a == "-database" && i+1 < len(argv) {
+			return argv[i+1]
+		}
+		if strings.HasPrefix(a, "-database=") {
+			return strings.TrimPrefix(a, "-database=")
+		}
+	}
+	require.FailNow(t, "migrate must receive a -database argument")
+	return ""
 }
 
 // containerEnv extracts the env of the named container in a Job.

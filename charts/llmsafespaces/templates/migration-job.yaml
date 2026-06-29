@@ -59,14 +59,28 @@ spec:
           # every byte is wasteful but unconditionally correct for any
           # password content. The migrate/migrate image is alpine-based with
           # busybox sh/od/tr/sed and `migrate` on PATH (/usr/local/bin).
+          #
+          # `set -o pipefail` is best-effort: busybox ash (the migrate image)
+          # supports it; dash (some custom images) does not. A masked
+          # mid-pipeline failure is non-fatal anyway (migrate fails loudly on
+          # a malformed URL), but pipefail surfaces it one step earlier. dash
+          # treats `set -o badoption` as a fatal special-builtin error that
+          # exits the shell, so a direct `set -o pipefail || :` does NOT
+          # recover on dash — a subshell probe is required: if the option is
+          # accepted in a child shell, enable it in the parent.
+          # DB_HOST is bracketed when it contains `:` (IPv6 literal) so the
+          # `:port` suffix is unambiguous; DNS names and IPv4 pass through.
           command: ["/bin/sh", "-ec"]
           args:
             - |
+              if (set -o pipefail) 2>/dev/null; then set -o pipefail; fi
               enc_usr=$(printf '%s' "$DB_USER" | od -An -tx1 | tr -d ' \n' | sed 's/../%&/g')
               enc_pwd=$(printf '%s' "$DB_PASSWORD" | od -An -tx1 | tr -d ' \n' | sed 's/../%&/g')
+              db_host="$DB_HOST"
+              case "$db_host" in \[*) ;; *:*) db_host="[${db_host}]" ;; esac
               exec migrate \
                 -path=/migrations \
-                -database "postgres://${enc_usr}:${enc_pwd}@${DB_HOST}:${DB_PORT}/${DB_NAME}?sslmode=${DB_SSLMODE}" \
+                -database "postgres://${enc_usr}:${enc_pwd}@${db_host}:${DB_PORT}/${DB_NAME}?sslmode=${DB_SSLMODE}" \
                 up
           env:
             - name: DB_HOST
