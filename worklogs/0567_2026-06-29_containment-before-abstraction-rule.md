@@ -81,4 +81,4 @@ N/A — docs-only change to `README-LLM.md`. No code, config, CRD, or behaviour 
 ## Files Modified
 
 - `README-LLM.md` — added Rule 12 (Containment Before Abstraction); bumped Version 1.20 → 1.21 and Last Updated 2026-06-23 → 2026-06-29.
-- `worklogs/NNNN_2026-06-29_containment-before-abstraction-rule.md` — this worklog (new).
+- `worklogs/0567_2026-06-29_containment-before-abstraction-rule.md` — this worklog (new).
