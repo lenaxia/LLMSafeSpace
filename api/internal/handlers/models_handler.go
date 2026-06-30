@@ -125,8 +125,16 @@ func (h *ModelsHandler) ListModels(c *gin.Context) {
 	// only gate this on h.relayActive being true (relay disabled =
 	// nothing to detect) and h.relayChecker being non-nil (defensive —
 	// the field is optional in the handler API).
+	//
+	// On a transition we evict + force a refetch below. To avoid two
+	// relayChecker round-trips on a transition (the fetch path at :148
+	// repeats the call), we carry the result via livenessChecked +
+	// liveRelayInjected so the fetch path can reuse it.
+	var livenessChecked bool
+	var liveRelayInjected bool
 	if cacheHit && h.relayActive && h.relayChecker != nil {
-		liveRelayInjected := h.relayChecker(c.Request.Context(), userID, workspaceID)
+		liveRelayInjected = h.relayChecker(c.Request.Context(), userID, workspaceID)
+		livenessChecked = true
 		if liveRelayInjected != relayInjected {
 			h.modelCache.Evict(workspaceID)
 			annotated = nil // force the fresh-fetch path below
@@ -146,7 +154,11 @@ func (h *ModelsHandler) ListModels(c *gin.Context) {
 		}
 
 		// Check relay injection state via the admin-port relay checker.
-		if h.relayActive && h.relayChecker != nil {
+		// Reuse the value from the cache-eviction guard if we already
+		// checked above (transitions evict + refall through here).
+		if livenessChecked {
+			relayInjected = liveRelayInjected
+		} else if h.relayActive && h.relayChecker != nil {
 			relayInjected = h.relayChecker(c.Request.Context(), userID, workspaceID)
 		}
 

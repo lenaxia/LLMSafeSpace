@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -1413,6 +1414,239 @@ func TestListModels_CacheInvalidatedOnRelayInjectedTransition(t *testing.T) {
 		"models[] entries must also reflect the post-injection remap (same "+
 			"snapshot as currentModelProviderID — they come from the same "+
 			"annotated slice). Issue #467.")
+}
+
+// TestListModels_CacheSteadyState_NoRefetchWhenInjectedMatches asserts the
+// steady-state path through the new cache-invalidation guard: when the cache
+// holds a payload with the SAME RelayInjected value as the live relayChecker
+// reports, the handler MUST serve the cached snapshot WITHOUT calling
+// agentClient.ListModels again. Without this assertion, an always-evict
+// regression (e.g. flipping `!=` to `==`, or making the inner body
+// unconditional) would pass every existing test while completely defeating
+// the cache under the production relay-default. Issue #467 review feedback.
+func TestListModels_CacheSteadyState_NoRefetchWhenInjectedMatches(t *testing.T) {
+	clearModelCache()
+	gin.SetMode(gin.TestMode)
+
+	const testPassword = "steady-state-pw"
+	listener, err := net.Listen("tcp", "127.0.0.1:4096")
+	if err != nil {
+		t.Skip("port 4096 not available")
+	}
+	adminListener, err := net.Listen("tcp", "127.0.0.1:4098")
+	if err != nil {
+		t.Skip("port 4098 not available")
+	}
+
+	// Count agentClient.ListModels invocations by counting requests to the
+	// real opencode test server.
+	var listModelsCalls atomic.Int64
+	models := `{"connected":["opencode"],"all":[{"id":"opencode","models":{
+		"big-pickle":{"id":"big-pickle","name":"Big Pickle","cost":{"input":0,"output":0}}
+	}}]}`
+	srv := httptest.NewUnstartedServer(authEnforcingHandler(testPassword, func(w http.ResponseWriter, r *http.Request) {
+		listModelsCalls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(models))
+	}))
+	srv.Listener = listener
+	srv.Start()
+	defer srv.Close()
+
+	// Live readyz: relayInjected=true — matches the cached payload below.
+	statuszBody, _ := json.Marshal(agentd.ReadyzResponse{RelayInjected: true})
+	adminSrv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(statuszBody)
+	}))
+	adminSrv.Listener = adminListener
+	adminSrv.Start()
+	defer adminSrv.Close()
+
+	handler := newTestModelsHandler(testPassword)
+	handler.SetModelStore(&mockModelReader{model: "big-pickle"})
+	handler.SetRelayActive(true)
+	handler.SetRelayChecker(func(_ context.Context, _, _ string) bool {
+		req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:4098/v1/readyz", nil)
+		if err != nil {
+			return false
+		}
+		req.Header.Set("Authorization", "Bearer "+testPassword)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return false
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var rz struct {
+			RelayInjected bool `json:"relay_injected"`
+		}
+		if json.NewDecoder(resp.Body).Decode(&rz) != nil {
+			return false
+		}
+		return rz.RelayInjected
+	})
+
+	// Seed the cache with a post-injection (relayInjected=true) snapshot
+	// matching what a fresh fetch would have produced. The steady-state
+	// guard MUST recognize live==cached and serve this without refetching.
+	cachedPayload := modelCachePayload{
+		Models: []annotatedModel{{
+			ID:            "big-pickle",
+			ProviderID:    "opencode-relay",
+			Name:          "Big Pickle",
+			Enabled:       true,
+			Availability:  ModelFreeTier,
+			Tier:          "free",
+			FreeTier:      true,
+			ProxyRequired: true,
+		}},
+		RelayInjected: true,
+	}
+	serialized, err := json.Marshal(cachedPayload)
+	require.NoError(t, err)
+	cache := NewInMemoryModelCache()
+	cache.Set("ws-1", serialized)
+	handler.SetModelCache(cache)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set("userID", "user-1"); c.Next() })
+	router.GET("/api/v1/workspaces/:id/models", handler.ListModels)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/models", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		Models                 []annotatedModel `json:"models"`
+		CurrentModel           string           `json:"currentModel"`
+		CurrentModelProviderID string           `json:"currentModelProviderID"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	require.Equal(t, "opencode-relay", resp.CurrentModelProviderID,
+		"cached relayInjected=true snapshot must be served when live state matches")
+	require.Equal(t, int64(0), listModelsCalls.Load(),
+		"agentClient.ListModels MUST NOT be called when the cached payload's "+
+			"RelayInjected matches the live relayChecker result. This guards against "+
+			"an always-evict regression that would defeat the cache entirely under "+
+			"the production relay-default. Issue #467 review feedback.")
+}
+
+// TestListModels_CacheInvalidatedOnReverseTransition asserts the symmetric
+// case: cache holds relayInjected=true (post-injection state), but the live
+// relayChecker now returns false (e.g. admin disabled the relay, or the
+// relay-router peers ConfigMap was cleared, causing agentd's readyz to flip
+// back). The guard must evict and re-annotate as the non-relayed state.
+// The PR body documents this direction is supported; this test pins it.
+// Without this, a future directional rewrite (e.g. `live && !cached`) would
+// silently break the reverse path. Issue #467 review feedback.
+func TestListModels_CacheInvalidatedOnReverseTransition(t *testing.T) {
+	clearModelCache()
+	gin.SetMode(gin.TestMode)
+
+	const testPassword = "reverse-transition-pw"
+	listener, err := net.Listen("tcp", "127.0.0.1:4096")
+	if err != nil {
+		t.Skip("port 4096 not available")
+	}
+	adminListener, err := net.Listen("tcp", "127.0.0.1:4098")
+	if err != nil {
+		t.Skip("port 4098 not available")
+	}
+
+	models := `{"connected":["opencode"],"all":[{"id":"opencode","models":{
+		"big-pickle":{"id":"big-pickle","name":"Big Pickle","cost":{"input":0,"output":0}}
+	}}]}`
+	srv := httptest.NewUnstartedServer(authEnforcingHandler(testPassword, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(models))
+	}))
+	srv.Listener = listener
+	srv.Start()
+	defer srv.Close()
+
+	// Live readyz: relayInjected=false — relay is no longer injected
+	// (admin disabled it, or the controller cleared the peers).
+	statuszBody, _ := json.Marshal(agentd.ReadyzResponse{RelayInjected: false})
+	adminSrv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(statuszBody)
+	}))
+	adminSrv.Listener = adminListener
+	adminSrv.Start()
+	defer adminSrv.Close()
+
+	handler := newTestModelsHandler(testPassword)
+	handler.SetModelStore(&mockModelReader{model: "big-pickle"})
+	handler.SetRelayActive(true)
+	handler.SetRelayChecker(func(_ context.Context, _, _ string) bool {
+		req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:4098/v1/readyz", nil)
+		if err != nil {
+			return false
+		}
+		req.Header.Set("Authorization", "Bearer "+testPassword)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return false
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var rz struct {
+			RelayInjected bool `json:"relay_injected"`
+		}
+		if json.NewDecoder(resp.Body).Decode(&rz) != nil {
+			return false
+		}
+		return rz.RelayInjected
+	})
+
+	// Seed cache with a post-injection (relayInjected=true) snapshot —
+	// the model was remapped to opencode-relay at that time. The live
+	// state has since reverted to false; the guard MUST evict and
+	// re-annotate as non-relayed (providerID="opencode").
+	stalePayload := modelCachePayload{
+		Models: []annotatedModel{{
+			ID:            "big-pickle",
+			ProviderID:    "opencode-relay",
+			Name:          "Big Pickle",
+			Enabled:       true,
+			Availability:  ModelFreeTier,
+			Tier:          "free",
+			FreeTier:      true,
+			ProxyRequired: true,
+		}},
+		RelayInjected: true,
+	}
+	serialized, err := json.Marshal(stalePayload)
+	require.NoError(t, err)
+	cache := NewInMemoryModelCache()
+	cache.Set("ws-1", serialized)
+	handler.SetModelCache(cache)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set("userID", "user-1"); c.Next() })
+	router.GET("/api/v1/workspaces/:id/models", handler.ListModels)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/models", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		Models                 []annotatedModel `json:"models"`
+		CurrentModel           string           `json:"currentModel"`
+		CurrentModelProviderID string           `json:"currentModelProviderID"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	require.Equal(t, "big-pickle", resp.CurrentModel)
+	require.Equal(t, "opencode", resp.CurrentModelProviderID,
+		"reverse transition true→false must evict the cache and re-annotate as "+
+			"the non-relayed state. The PR body claims this direction is supported; "+
+			"this test pins it. Issue #467 review feedback.")
+	require.Len(t, resp.Models, 1)
+	require.Equal(t, "opencode", resp.Models[0].ProviderID,
+		"models[] entries must also reflect the post-eviction non-relayed state")
 }
 
 // TestDoReload_EvictsModelCache verifies that doReload evicts the workspace's
