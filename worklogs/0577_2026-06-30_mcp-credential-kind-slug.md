@@ -78,4 +78,4 @@ None.
 - `sdks/canary/mcp/main.go` — `runMCPCredCRUD` kind/slug shape + negative cases.
 - `design/stories/epic-10-multi-tenant-trust/US-10.10-complete-credential-model-experience.md` — tool-arg table.
 - `sdks/canary/TESTPLAN.md` — S-MCP-CRED rows.
-- `worklogs/NNNN_2026-06-30_mcp-credential-kind-slug.md` — this worklog.
+- `worklogs/0577_2026-06-30_mcp-credential-kind-slug.md` — this worklog.
