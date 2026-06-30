@@ -25,7 +25,7 @@ Wrapped each `RootKeyProvider` with `NewAuditedProvider(prov, asyncAudit, label)
 - `orgCredsProv` → label `"org-credentials"` (org credentials)
 - `apiKeyProv` → label `"api-keys"` (API-key DEK unwraps)
 
-The wraps are conditional on `asyncAudit != nil` (always true in production — pgxpool is mandatory, app.go refuses to start otherwise). The apiKeyProv wrap is placed **after** the multi-key upgrade so `ActiveVersion` delegation reports the post-upgrade active version. `ensureFreeTierCredential` only calls `Encrypt` (not logged by design), so no boot-time audit noise.
+The wraps run unconditionally after `asyncAudit` is constructed (app.go:320 constructs asyncAudit; the wraps follow at app.go:329-330). They are guaranteed to execute because `asyncAudit` is assigned the line above — pgxpool construction is mandatory (app.go refuses to start otherwise). The apiKeyProv wrap is placed **after** the multi-key upgrade so `ActiveVersion` delegation reports the post-upgrade active version. `ensureFreeTierCredential` only calls `Encrypt` (not logged by design), so no boot-time audit noise.
 
 ---
 
