@@ -80,4 +80,4 @@ None.
 - `frontend/src/components/org-admin/OrgAgentConfigTab.test.tsx` — new file (first test for this component); 5 tests asserting copy presence + jargon absence + save-toast flow.
 - `frontend/src/components/workspace/WorkspaceSettingsDrawer.tsx` — helper text rewritten with concrete examples.
 - `frontend/src/components/workspace/WorkspaceSettingsDrawer.test.tsx` — 1 new test asserting new helper text renders, old jargon absent.
-- `worklogs/NNNN_2026-06-30_hide-prompt-chain-jargon-ui.md` (this file).
+- `worklogs/0582_2026-06-30_hide-prompt-chain-jargon-ui.md` (this file).
