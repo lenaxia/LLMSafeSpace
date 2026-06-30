@@ -16,8 +16,15 @@ vi.mock("../../api/client", () => ({
   },
 }));
 
+vi.mock("../../api/prompts", () => ({
+  promptsApi: {
+    getOrg: vi.fn(),
+  },
+}));
+
 import { secretsApi } from "../../api/secrets";
 import { api } from "../../api/client";
+import { promptsApi } from "../../api/prompts";
 
 
 const mockWorkspace: WorkspaceListItem = {
@@ -197,5 +204,113 @@ describe("WorkspaceSettingsDrawer – secret-type grouping (US-44.9)", () => {
     expect(screen.getByText(/API Keys \(legacy\)/)).toBeInTheDocument();
     expect(screen.getByText("my-anthropic")).toBeInTheDocument();
     expect(screen.getByText("old-key")).toBeInTheDocument();
+  });
+});
+
+// LLMSafeSpaces#477: when the workspace belongs to an org and that org has
+// disabled member prompt customization (allow_user_prompt:false), the
+// drawer's "Custom Instructions" textarea must be replaced with a locked
+// message. Previously the API's WorkspaceListItem dropped OrgID, so the
+// frontend always saw `workspace.orgId === undefined`, skipped the org
+// policy fetch, and rendered the editable textarea unconditionally. Users
+// could type a custom prompt, hit Save, get a confusing generic "Save
+// failed" toast (the backend correctly returned 403), and lose their
+// edits on reload.
+describe("WorkspaceSettingsDrawer – org prompt-customization lock (#477)", () => {
+  const orgScopedWorkspace: WorkspaceListItem = {
+    ...mockWorkspace,
+    orgId: "org-acme",
+  };
+
+  const getOrgMock = promptsApi.getOrg as ReturnType<typeof vi.fn>;
+  const apiGetMock = api.get as ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (secretsApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({ secrets: [] });
+    apiGetMock.mockResolvedValue({ bindings: [] });
+  });
+
+  it("renders the locked message when the org has disabled member prompt customization", async () => {
+    getOrgMock.mockResolvedValue({ prompt: "", allowUserPrompt: false });
+    render(
+      <WorkspaceSettingsDrawer
+        workspace={orgScopedWorkspace}
+        open={true}
+        onOpenChange={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Managed by your organization\. Contact your admin to request changes\./),
+      ).toBeInTheDocument();
+    });
+    // And the editable textarea MUST be hidden — its presence is the
+    // observable symptom of #477. If this fires, the lock check was
+    // skipped (regression of either the OrgID propagation or the lock
+    // UI itself).
+    expect(
+      screen.queryByPlaceholderText(/Focus on test coverage this session/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the editable textarea when the org allows member prompt customization", async () => {
+    getOrgMock.mockResolvedValue({ prompt: "", allowUserPrompt: true });
+    render(
+      <WorkspaceSettingsDrawer
+        workspace={orgScopedWorkspace}
+        open={true}
+        onOpenChange={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByPlaceholderText(/Focus on test coverage this session/),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByText(/Managed by your organization/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the editable textarea for personal workspaces (no orgId)", async () => {
+    // mockWorkspace has no orgId — personal workspace, no org policy to
+    // consult.
+    render(
+      <WorkspaceSettingsDrawer
+        workspace={mockWorkspace}
+        open={true}
+        onOpenChange={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByPlaceholderText(/Focus on test coverage this session/),
+      ).toBeInTheDocument();
+    });
+    expect(getOrgMock).not.toHaveBeenCalled();
+  });
+
+  it("locks the textarea (fails closed) when the org policy fetch fails — defense in depth", async () => {
+    // If we can't determine the org's allow_user_prompt policy, default
+    // to LOCKED. Better UX than "type away, your save will silently 403"
+    // — the user sees the lock message and can retry / reload.
+    getOrgMock.mockRejectedValue(new Error("network blip"));
+    render(
+      <WorkspaceSettingsDrawer
+        workspace={orgScopedWorkspace}
+        open={true}
+        onOpenChange={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Managed by your organization\. Contact your admin to request changes\./),
+      ).toBeInTheDocument();
+    });
   });
 });

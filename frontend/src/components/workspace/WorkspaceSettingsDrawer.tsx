@@ -44,7 +44,13 @@ export function WorkspaceSettingsDrawer({ workspace, open, onOpenChange }: Props
     if (orgId) {
       promptsApi.getOrg(orgId).then((data) => {
         setPromptLocked(!data.allowUserPrompt);
-      }).catch(() => setPromptLocked(false));
+      }).catch(() => {
+        // Fail closed (#477): if we cannot determine the org's
+        // allow_user_prompt policy, lock the textarea. Better UX than
+        // letting the user type a prompt that the backend will then 403
+        // on save with a confusing generic "Save failed" toast.
+        setPromptLocked(true);
+      });
     }
     api.get<{ prompt?: string }>(`/workspaces/${workspace.id}/prompt`).then((data) => {
       setCustomPrompt(data.prompt ?? "");

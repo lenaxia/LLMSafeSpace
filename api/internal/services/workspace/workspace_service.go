@@ -469,6 +469,11 @@ func (s *Service) ListWorkspaces(ctx context.Context, userID string, opts types.
 			DefaultModel:            m.DefaultModel,
 			AgentNeedsRefresh:       m.AgentNeedsRefresh,
 			CredentialsPendingSince: m.CredentialsPendingSince,
+			// Epic 11: org attribution. The frontend's Workspace Settings
+			// drawer uses this to fetch the owning org's allow_user_prompt
+			// policy and gate the Custom Instructions Lock UI. Dropping
+			// this field used to be the root cause of #477.
+			OrgID: m.OrgID,
 		})
 	}
 
