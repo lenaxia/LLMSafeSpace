@@ -26,7 +26,7 @@ import (
 //   - resources.memory              512Mi  (workspace_types.go:95)
 //
 // Also asserts that autoSuspend and resources carry default: {} so the API
-// server materialises the parent object and sub-field defaults are reachable
+// server materializes the parent object and sub-field defaults are reachable
 // (without it, kubebuilder sub-defaults are dead at the apiserver layer).
 func TestWorkspaceCRD_DefaultsMatchGoAnnotations(t *testing.T) {
 	crdPath := filepath.Join("..", "..", "charts", "llmsafespaces", "crds", "workspace.yaml")
@@ -88,7 +88,7 @@ func mustStepInto(t *testing.T, node *yaml.Node, keys ...string) *yaml.Node {
 }
 
 // assertHasDefaultObject asserts that a schema node carries default: {} so
-// the API server materialises the parent object and nested defaults apply.
+// the API server materializes the parent object and nested defaults apply.
 func assertHasDefaultObject(t *testing.T, node *yaml.Node, label string) {
 	t.Helper()
 	def, err := stepInto(node, "default")
