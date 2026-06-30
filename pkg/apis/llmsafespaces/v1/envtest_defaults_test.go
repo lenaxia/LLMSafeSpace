@@ -102,7 +102,7 @@ func TestEnvtest_WorkspaceDefaultsAppliedByAPIServer(t *testing.T) {
 	// AutoSuspend is a pointer-to-struct with default: {} on its OpenAPI
 	// schema (added in #281). The CI envtest workflow (envtest.yml) installs
 	// setup-envtest and sets KUBEBUILDER_ASSETS, so this runs against a real
-	// kube-apiserver — if default: {} does NOT materialise the nested object
+	// kube-apiserver — if default: {} does NOT materialize the nested object
 	// (i.e. AutoSuspend stays nil), these assertions fail and surface the gap.
 	// That is the intended behavior: this test is the end-to-end validation of
 	// the apiserver-defaulting claim, not just the Go defaulter.
