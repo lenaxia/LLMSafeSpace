@@ -127,4 +127,28 @@ describe("OrgAgentConfigTab — copy hides implementation jargon (#480)", () => 
       screen.queryByText(/locked to org defaults/i),
     ).not.toBeInTheDocument();
   });
+
+  it("shows a jargon-free toast after saving (#480 follow-up)", async () => {
+    const { fireEvent } = await import("@testing-library/react");
+    const setOrgMock = vi.fn().mockResolvedValue(undefined);
+    const promptsApi = (await import("../../api/prompts")).promptsApi as unknown as {
+      setOrg: typeof setOrgMock;
+    };
+    promptsApi.setOrg = setOrgMock;
+
+    renderTab();
+    await waitFor(() =>
+      expect(screen.getByText("Save Instructions")).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByText("Save Instructions"));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("Organization instructions saved"),
+      ).toBeInTheDocument(),
+    );
+    // The old "Org prompt saved" jargon must not appear in any toast.
+    expect(screen.queryByText("Org prompt saved")).not.toBeInTheDocument();
+  });
 });
