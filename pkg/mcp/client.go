@@ -109,9 +109,16 @@ type Message struct {
 }
 
 // CreateCredentialReq is the request for creating an LLM provider credential.
+//
+// Epic 55 identity model: Kind is the SDK-class enum (openai, anthropic,
+// openai_compatible, ...) that selects the adapter the agent loads; Slug is
+// the per-owner unique identity that becomes the agent-config.json provider
+// key. Both are required — the API's llm-provider value validator rejects a
+// credential missing either.
 type CreateCredentialReq struct {
 	Name        string `json:"name"`
-	Provider    string `json:"provider"`
+	Kind        string `json:"kind"`
+	Slug        string `json:"slug"`
 	APIKey      string `json:"apiKey"`
 	BaseURL     string `json:"baseURL,omitempty"`
 	Default     string `json:"default,omitempty"`
@@ -145,13 +152,17 @@ type permissionReplyRequest struct {
 	Message string `json:"message,omitempty"`
 }
 
-// credentialProviderValue is the JSON-encoded "value" field of a credential
-// secret for LLM provider credentials.
-type credentialProviderValue struct {
-	Provider string `json:"provider"`
-	APIKey   string `json:"apiKey"`
-	BaseURL  string `json:"baseURL,omitempty"`
-	Default  string `json:"default,omitempty"`
+// llmProviderValue is the JSON-encoded "value" field of an llm-provider
+// secret. It mirrors the wire shape of secrets.LLMProviderData (Epic 55):
+// kind + slug carry the credential identity; apiKey/baseURL/default configure
+// it. The API server unmarshals this into LLMProviderData and validates that
+// kind, slug, and apiKey are all present.
+type llmProviderValue struct {
+	Kind    string `json:"kind"`
+	Slug    string `json:"slug"`
+	APIKey  string `json:"apiKey"`
+	BaseURL string `json:"baseURL,omitempty"`
+	Default string `json:"default,omitempty"`
 }
 
 // createSecretRequest is the body for POST /api/v1/secrets.
@@ -438,17 +449,18 @@ func (c *HTTPClient) PermissionReply(ctx context.Context, workspaceID, requestID
 // --- Credential management ---
 
 func (c *HTTPClient) CreateCredential(ctx context.Context, req CreateCredentialReq) (*CredentialResp, error) {
-	providerData := credentialProviderValue{
-		Provider: req.Provider,
-		APIKey:   req.APIKey,
-		BaseURL:  req.BaseURL,
-		Default:  req.Default,
+	value := llmProviderValue{
+		Kind:    req.Kind,
+		Slug:    req.Slug,
+		APIKey:  req.APIKey,
+		BaseURL: req.BaseURL,
+		Default: req.Default,
 	}
-	valueJSON, _ := json.Marshal(providerData)
+	valueJSON, _ := json.Marshal(value)
 
 	name := req.Name
 	if name == "" {
-		name = req.Provider
+		name = req.Slug
 	}
 
 	body := createSecretRequest{

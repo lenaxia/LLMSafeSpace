@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,6 +18,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/lenaxia/llmsafespaces/pkg/secrets"
 )
 
 func newTestHTTPClient(handler http.Handler) (*HTTPClient, *httptest.Server) {
@@ -61,6 +64,110 @@ func TestHTTPClient_CreateWorkspace_APIError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "409")
 	assert.Contains(t, err.Error(), "workspace limit reached")
+}
+
+// ===== CreateCredential (Epic 55 wire format) =====
+
+func TestHTTPClient_CreateCredential_PostsKindSlugShape(t *testing.T) {
+	var capturedBody []byte
+	client, ts := newTestHTTPClient(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "POST", r.Method)
+		assert.Equal(t, "/api/v1/secrets", r.URL.Path)
+		capturedBody, _ = io.ReadAll(r.Body)
+		json.NewEncoder(w).Encode(CredentialResp{ID: "cred-1", Name: "my-anthropic", Type: "llm-provider"})
+	}))
+	defer ts.Close()
+
+	resp, err := client.CreateCredential(context.Background(), CreateCredentialReq{
+		Kind:    "anthropic",
+		Slug:    "my-anthropic",
+		APIKey:  "sk-test",
+		BaseURL: "https://api.anthropic.test",
+		Default: "anthropic/claude-sonnet-4-5",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "cred-1", resp.ID)
+
+	var posted createSecretRequest
+	require.NoError(t, json.Unmarshal(capturedBody, &posted))
+	assert.Equal(t, "llm-provider", posted.Type)
+	// Name defaults to the slug when not supplied.
+	assert.Equal(t, "my-anthropic", posted.Name)
+
+	var val llmProviderValue
+	require.NoError(t, json.Unmarshal([]byte(posted.Value), &val))
+	assert.Equal(t, "anthropic", val.Kind)
+	assert.Equal(t, "my-anthropic", val.Slug)
+	assert.Equal(t, "sk-test", val.APIKey)
+	assert.Equal(t, "https://api.anthropic.test", val.BaseURL)
+	assert.Equal(t, "anthropic/claude-sonnet-4-5", val.Default)
+	// The legacy `provider` field must not leak into the Epic 55 value shape.
+	assert.NotContains(t, posted.Value, `"provider"`)
+}
+
+func TestHTTPClient_CreateCredential_AutoBindsWorkspace(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/secrets", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(CredentialResp{ID: "cred-1", Type: "llm-provider"})
+	})
+	bindCalled := false
+	mux.HandleFunc("/api/v1/workspaces/ws-1/bindings", func(w http.ResponseWriter, r *http.Request) {
+		bindCalled = true
+		assert.Equal(t, "PUT", r.Method)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	client, ts := newTestHTTPClient(mux)
+	defer ts.Close()
+
+	_, err := client.CreateCredential(context.Background(), CreateCredentialReq{
+		Kind: "openai", Slug: "openai", APIKey: "sk-test", WorkspaceID: "ws-1",
+	})
+	require.NoError(t, err)
+	assert.True(t, bindCalled, "auto-bind should fire when WorkspaceID is set")
+}
+
+// TestLLMProviderValue_DeserializesIntoLLMProviderData is the root-cause
+// regression test for issue #435. The bug was a JSON-tag contract mismatch:
+// the MCP emitted a value shape that secrets.LLMProviderData could not
+// deserialize into, so LLMProviderData.Validate() rejected it ("kind is
+// required") and the API returned 400. This test pins the contract directly —
+// marshal the MCP's value type and confirm the server's type accepts it and
+// validates. A future JSON-tag rename on either side that breaks the wire
+// format fails here, not in production. It is the tag-drift analog of
+// TestValidCredentialKinds_MatchesSecretsValidKinds (which pins enum drift).
+func TestLLMProviderValue_DeserializesIntoLLMProviderData(t *testing.T) {
+	value := llmProviderValue{
+		Kind:    "anthropic",
+		Slug:    "my-anthropic",
+		APIKey:  "sk-test",
+		BaseURL: "https://api.anthropic.test",
+		Default: "anthropic/claude-sonnet-4-5",
+	}
+	raw, err := json.Marshal(value)
+	require.NoError(t, err)
+
+	var serverData secrets.LLMProviderData
+	require.NoError(t, json.Unmarshal(raw, &serverData),
+		"llmProviderValue must deserialize into secrets.LLMProviderData")
+
+	assert.Equal(t, value.Kind, serverData.Kind)
+	assert.Equal(t, value.Slug, serverData.Slug)
+	assert.Equal(t, value.APIKey, serverData.APIKey)
+	assert.Equal(t, value.BaseURL, serverData.BaseURL)
+	assert.Equal(t, value.Default, serverData.Default)
+
+	require.NoError(t, serverData.Validate(),
+		"the server-side llm-provider validator must accept this value shape")
+
+	// Negative pin: a value missing kind reproduces the exact #435 failure —
+	// the server rejects it with "kind is required". Confirms the test actually
+	// exercises the validation gate, not just deserialization.
+	var rejected secrets.LLMProviderData
+	require.NoError(t, json.Unmarshal([]byte(`{"slug":"x","apiKey":"sk"}`), &rejected))
+	err = rejected.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "kind is required")
 }
 
 // ===== ActivateWorkspace =====

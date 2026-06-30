@@ -418,11 +418,12 @@ func runMCPInputNeg(ctx context.Context, r *Runner, client *stdioClient) {
 }
 
 func runMCPCredCRUD(ctx context.Context, r *Runner, client *stdioClient) {
-	// P1: credential_create
+	// P1: credential_create (Epic 55 shape: kind + slug, not provider)
 	tr, err := client.callTool("credential_create", map[string]any{
-		"provider": "anthropic",
-		"api_key":  "sk-canary-placeholder-00000000",
-		"name":     "canary-mcp-cred",
+		"kind":    "anthropic",
+		"slug":    "canary-mcp-cred",
+		"api_key": "sk-canary-placeholder-00000000",
+		"name":    "canary-mcp-cred",
 	})
 	if err != nil {
 		r.fail("credential_create: no rpc error", err.Error())
@@ -462,14 +463,20 @@ func runMCPCredCRUD(ctx context.Context, r *Runner, client *stdioClient) {
 		}
 	}
 
-	// N1: missing provider
-	trN1, _ := client.callTool("credential_create", map[string]any{"api_key": "sk-x"})
+	// N1: missing kind
+	trN1, _ := client.callTool("credential_create", map[string]any{"slug": "x", "api_key": "sk-x"})
 	if trN1 != nil {
-		r.assert(trN1.IsError, "cred_create-missing-provider: isError=true", "")
+		r.assert(trN1.IsError, "cred_create-missing-kind: isError=true", "")
 	}
 
-	// N2: missing api_key
-	trN2, _ := client.callTool("credential_create", map[string]any{"provider": "anthropic"})
+	// N2: missing slug
+	trN1b, _ := client.callTool("credential_create", map[string]any{"kind": "anthropic", "api_key": "sk-x"})
+	if trN1b != nil {
+		r.assert(trN1b.IsError, "cred_create-missing-slug: isError=true", "")
+	}
+
+	// N3: missing api_key
+	trN2, _ := client.callTool("credential_create", map[string]any{"kind": "anthropic", "slug": "x"})
 	if trN2 != nil {
 		r.assert(trN2.IsError, "cred_create-missing-key: isError=true", "")
 	}
