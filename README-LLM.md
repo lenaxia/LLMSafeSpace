@@ -464,19 +464,20 @@ The relay config subsystem manages how `agent-config.json` — the file opencode
 | `/home/sandbox` | Longhorn PVC (`subPath: home`) | Yes | SSH keys, secrets base dir, enricher cache, tool caches |
 | `/tmp` | Longhorn PVC (`subPath: tmp`) | Yes — init scripts, package caches; NOT credentials (US-35.7 moved them to tmpfs) | init-script.sh |
 | `/sandbox-cfg` | emptyDir (memory, 32Mi) | No — ephemeral per pod, read-only on main container | secrets.json, workspace-config.json, password (from bootstrap) |
-| `/sandbox-runtime` | emptyDir (memory, 96Mi, RW) | No — ephemeral per pod, wiped on death | agent-config.json, secrets-env, `last-reload-secrets.json` (reload-replay cache, #443), symlink targets for SSH/git/secrets/auth.json |
+| `/sandbox-runtime` | emptyDir (memory, 96Mi, RW) | No — ephemeral per pod, wiped on death | agent-config.json, secrets-env, `admin-prompt.md` (merged platform/org/role/user system prompt, #483), `last-reload-secrets.json` (reload-replay cache, #443), symlink targets for SSH/git/secrets/auth.json |
 
 **Key path constants** (`pkg/agentd/types.go`):
 
 ```
 AgentConfigPath  = "/sandbox-runtime/agent-config.json"
+AdminPromptPath  = "/sandbox-runtime/admin-prompt.md"  ← bootstrap writes merged platform→org→role→user system prompt here; #483
 SecretsBasePath  = "/sandbox-runtime/rt/secrets"   ← deleted by reset() on every reload; tmpfs
 SecretsEnvPath   = "/sandbox-runtime/secrets-env"
 ReloadSecretsCachePath = "/sandbox-runtime/last-reload-secrets.json"  ← persisted by reloadSecretsHandler; replayed by boot-time materialize to restore user-DEK creds after a container restart (#443); tmpfs, wiped on pod death
 ```
 
 
-Note: `/tmp` is a PVC subPath (`subPath: tmp`). US-35.7 moved `agent-config.json` and `secrets-env` off `/tmp` to `/sandbox-runtime` (tmpfs/RAM). `$HOME`-relative credential paths (`.ssh`, `.secrets`, `.git-credentials`, `auth.json`) are symlinks created by the init container pointing into `/sandbox-runtime/rt/*`. On pod death, tmpfs is wiped — the PVC retains only dangling symlinks, no plaintext bytes.
+Note: `/tmp` is a PVC subPath (`subPath: tmp`). US-35.7 moved `agent-config.json` and `secrets-env` off `/tmp` to `/sandbox-runtime` (tmpfs/RAM). `admin-prompt.md` (PR #416 / fix #483) followed — both for at-rest data isolation and because the `credential-setup` init container's `/tmp` is read-only (ReadOnlyRootFilesystem with no writable emptyDir mounted). `$HOME`-relative credential paths (`.ssh`, `.secrets`, `.git-credentials`, `auth.json`) are symlinks created by the init container pointing into `/sandbox-runtime/rt/*`. On pod death, tmpfs is wiped — the PVC retains only dangling symlinks, no plaintext bytes.
 
 **opencode config loading order** (validated from opencode 1.15.12 binary):
 

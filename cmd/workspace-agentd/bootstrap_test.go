@@ -273,13 +273,14 @@ func TestRunBootstrapCommand_SuccessNoWorkspaceConfig(t *testing.T) {
 //     CLI flag (--admin-prompt-out), symmetric with --out for secrets.json.
 //  2. Given a non-empty AdminPrompt in the API response, the file is
 //     written to that path with the exact body bytes.
-//  3. The write happens regardless of secrets-write success, but is
-//     skipped (no file created, no error) when AdminPrompt is empty.
 //
-// The package-level constant agentd.AdminPromptPath is the production
-// default, but tests cannot write to /sandbox-runtime/* on a developer
-// laptop. The --admin-prompt-out flag is the test seam AND a real knob
-// (parity with --out).
+// The admin-prompt write happens AFTER a successful secrets write (the
+// bootstrap function exits 0 early on a secrets-write failure at
+// bootstrap.go:91-94, before reaching the admin-prompt branch at line 103),
+// so this test covers the happy path through the full bootstrap flow. The
+// package-level constant agentd.AdminPromptPath is the production default,
+// but tests cannot write to /sandbox-runtime/* on a developer laptop. The
+// --admin-prompt-out flag is the test seam AND a real knob (parity with --out).
 func TestRunBootstrapCommand_WritesAdminPrompt(t *testing.T) {
 	dir := t.TempDir()
 	outPath := filepath.Join(dir, "secrets.json")
@@ -319,10 +320,15 @@ func TestRunBootstrapCommand_WritesAdminPrompt(t *testing.T) {
 }
 
 // TestRunBootstrapCommand_NoAdminPromptWhenEmpty asserts the file is NOT
-// created when the API returns an empty adminPrompt. Avoids a stale
-// admin-prompt.md persisting on the tmpfs (which is itself short-lived,
-// but file presence is also the signal `loadAdminPrompt` uses to decide
-// whether to inject — an empty file would still inject empty content).
+// created when the API returns an empty adminPrompt. The bootstrap code
+// guards on `if adminPrompt != ""` before writing — this test pins that
+// behavior. Note: even if a stale zero-byte file existed at the path,
+// loadAdminPrompt() (agent_config_writer.go:130) guards on
+// `len(data) == 0` and would skip injection, so an accidental empty file
+// would NOT inject empty content into opencode. This test guards the
+// upstream layer (bootstrap) anyway because file-presence vs file-absence
+// is the cleanest signal for downstream consumers and avoids surfacing
+// no-op zero-byte writes in operational logs.
 func TestRunBootstrapCommand_NoAdminPromptWhenEmpty(t *testing.T) {
 	dir := t.TempDir()
 	outPath := filepath.Join(dir, "secrets.json")
