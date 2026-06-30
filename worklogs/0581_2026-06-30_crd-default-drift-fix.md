@@ -56,4 +56,4 @@ None.
 
 - `charts/llmsafespaces/crds/workspace.yaml` — fixed 3 default values + added 2 `default: {}`.
 - `pkg/repolint/crd_default_drift_test.go` — new regression test.
-- `worklogs/NNNN_2026-06-30_crd-default-drift-fix.md` — this worklog.
+- `worklogs/0581_2026-06-30_crd-default-drift-fix.md` — this worklog.
