@@ -90,4 +90,4 @@ Full chart script under busybox `sh` → `postgres://%75%40...:%50%40...@h:5432/
 
 - `charts/llmsafespaces/templates/migration-job.yaml`
 - `charts/llmsafespaces/chart_migration_job_test.go`
-- `worklogs/NNNN_2026-06-29_chart-migrate-job-cli-url-encoding.md` (this worklog)
+- `worklogs/0576_2026-06-29_chart-migrate-job-cli-url-encoding.md` (this worklog)

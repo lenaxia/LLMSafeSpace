@@ -77,4 +77,4 @@ go vet ./charts/llmsafespaces/   # clean
 - `charts/llmsafespaces/Chart.yaml`
 - `charts/llmsafespaces/README.md`
 - `charts/llmsafespaces/chart_gitops_doc_test.go` (new)
-- `worklogs/NNNN_2026-06-29_chart-flux-reconcilestrategy-docs.md` (this worklog)
+- `worklogs/0575_2026-06-29_chart-flux-reconcilestrategy-docs.md` (this worklog)
