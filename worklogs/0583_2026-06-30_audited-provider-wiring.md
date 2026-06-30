@@ -64,4 +64,4 @@ None.
 - `pkg/secrets/audited_provider.go` — added `ActiveVersion()` delegation to inner.
 - `pkg/secrets/audited_provider_test.go` — added `TestAuditedProvider_DelegatesActiveVersion`.
 - `api/internal/app/app.go` — wrapped providerCredsProv, orgCredsProv, apiKeyProv with `NewAuditedProvider`.
-- `worklogs/NNNN_2026-06-30_audited-provider-wiring.md` — this worklog.
+- `worklogs/0583_2026-06-30_audited-provider-wiring.md` — this worklog.
