@@ -1841,6 +1841,79 @@ func TestRelay_APISecretsCreate_NotResourceNameScoped(t *testing.T) {
 	require.True(t, sawCreateRule,
 		"API Role must include at least one rule granting `create` on core/secrets (the relay "+
 			"admin handler creates aws-relay-irwa / oci-credentials / gcp-credentials on first config)")
+
+	// Adversarial guard: the name-scoped update/patch rule must also survive.
+	// If a future edit drops this rule, the SECOND call to upsertSecret (when
+	// the Secret already exists — controller path = Update at relay_admin.go:615)
+	// would fail at runtime: "secrets is forbidden ... cannot update resource
+	// secrets". The K8s `update` and `patch` verbs DO honor resourceNames, so
+	// there must be a rule with both verbs scoped to all three credential
+	// Secret names. See #463 review thread (follow-up assertion).
+	relayCredNames := map[string]bool{
+		"oci-credentials": true,
+		"gcp-credentials": true,
+		"aws-relay-irwa":  true,
+	}
+	var sawUpdatePatchRule bool
+	for _, r := range rules {
+		rule, _ := r.(map[string]any)
+		groups, _ := rule["apiGroups"].([]any)
+		resources, _ := rule["resources"].([]any)
+		verbs, _ := rule["verbs"].([]any)
+		names, _ := rule["resourceNames"].([]any)
+
+		coreGroup := false
+		for _, g := range groups {
+			if s, ok := g.(string); ok && s == "" {
+				coreGroup = true
+			}
+		}
+		hasSecrets := false
+		for _, res := range resources {
+			if s, ok := res.(string); ok && s == "secrets" {
+				hasSecrets = true
+			}
+		}
+		if !coreGroup || !hasSecrets {
+			continue
+		}
+		verbSet := map[string]bool{}
+		for _, v := range verbs {
+			if s, ok := v.(string); ok {
+				verbSet[s] = true
+			}
+		}
+		if !verbSet["update"] || !verbSet["patch"] {
+			continue
+		}
+		nameSet := map[string]bool{}
+		for _, n := range names {
+			if s, ok := n.(string); ok {
+				nameSet[s] = true
+			}
+		}
+		if len(nameSet) == 0 {
+			continue // unscoped update/patch is too broad — not this rule
+		}
+		// All three relay-credential names must be in the resourceNames list.
+		allPresent := true
+		for n := range relayCredNames {
+			if !nameSet[n] {
+				allPresent = false
+				break
+			}
+		}
+		if allPresent {
+			sawUpdatePatchRule = true
+			break
+		}
+	}
+	require.True(t, sawUpdatePatchRule,
+		"API Role must include a rule granting update+patch on core/secrets with "+
+			"resourceNames scoping to all three relay-credential Secret names "+
+			"(aws-relay-irwa, oci-credentials, gcp-credentials). Without this, the "+
+			"second call to /admin/relay/{aws,oci,gcp}-creds (Secret exists, upsert "+
+			"path = Update) would 403 at runtime. See #463.")
 }
 
 // =============================================================================
