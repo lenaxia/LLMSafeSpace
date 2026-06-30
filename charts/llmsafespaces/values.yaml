@@ -519,13 +519,16 @@ redis:
 # ----------------------------------------------------------------------------
 # Database migrations
 # ----------------------------------------------------------------------------
-# Migrations are run as a Helm pre-install / pre-upgrade Job using the API
-# image (which carries /etc/llmsafespaces/migrations).
+# Migrations are run as a Helm pre-install / pre-upgrade Job using the
+# migrate/migrate image. The SQL files under charts/llmsafespaces/migrations/
+# are bundled into a ConfigMap (migrations-configmap.yaml) mounted at
+# /migrations; the Job points the migrate CLI at it via -path=/migrations.
 migrations:
   enabled: true
   image:
-    # Defaults to the API image. Override if you ship migrations in a separate
-    # image (e.g. a migrate-cli image).
+    # Empty repository/tag falls back to migrate/migrate:v4.17.1 (set in
+    # templates/migration-job.yaml). Override only if you need a different
+    # migrate CLI image.
     repository: ""
     tag: ""
     pullPolicy: IfNotPresent

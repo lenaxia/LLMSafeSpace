@@ -44,18 +44,44 @@ spec:
             capabilities:
               drop:
                 - ALL
-          # The migrate image's entrypoint is `migrate`. Pass everything as args.
-          # Use the libpq KV connection-string form, NOT a postgres:// URL.
-          # K8s $(VAR) substitution is a literal string replace with no
-          # URL-encoding, so a postgres:// URL embeds the password raw and
-          # breaks when it contains URL-reserved chars (/ ? # @ : % + =) —
-          # which is common (e.g. `openssl rand -base64`). The KV form splits
-          # on whitespace and '=' and never needs encoding. See issue #424.
+          # The standalone `migrate` CLI shipped in migrate/migrate only
+          # accepts `driver://url` for -database — NOT the libpq KV form
+          # (that is a Go-library-only feature). KV form dies with
+          # `error: no scheme` (#455). But a postgres:// URL embeds the
+          # password inline, and K8s env-var substitution ($(VAR)) performs
+          # no URL-encoding, so a password with URL-reserved chars breaks
+          # the parser (#424).
+          #
+          # Resolution (#455): override the entrypoint with a shell wrapper
+          # that percent-encodes EVERY byte of both DB_USER and DB_PASSWORD
+          # at runtime (read from env vars, not rendered from the Secret),
+          # then execs migrate with a fully-encoded postgres:// URL. Encoding
+          # every byte is wasteful but unconditionally correct for any
+          # password content. The migrate/migrate image is alpine-based with
+          # busybox sh/od/tr/sed and `migrate` on PATH (/usr/local/bin).
+          #
+          # `set -o pipefail` is best-effort: busybox ash (the migrate image)
+          # supports it; dash (some custom images) does not. A masked
+          # mid-pipeline failure is non-fatal anyway (migrate fails loudly on
+          # a malformed URL), but pipefail surfaces it one step earlier. dash
+          # treats `set -o badoption` as a fatal special-builtin error that
+          # exits the shell, so a direct `set -o pipefail || :` does NOT
+          # recover on dash — a subshell probe is required: if the option is
+          # accepted in a child shell, enable it in the parent.
+          # DB_HOST is bracketed when it contains `:` (IPv6 literal) so the
+          # `:port` suffix is unambiguous; DNS names and IPv4 pass through.
+          command: ["/bin/sh", "-ec"]
           args:
-            - -path=/migrations
-            - -database
-            - host=$(DB_HOST) port=$(DB_PORT) user=$(DB_USER) password=$(DB_PASSWORD) dbname=$(DB_NAME) sslmode=$(DB_SSLMODE)
-            - up
+            - |
+              if (set -o pipefail) 2>/dev/null; then set -o pipefail; fi
+              enc_usr=$(printf '%s' "$DB_USER" | od -An -tx1 | tr -d ' \n' | sed 's/../%&/g')
+              enc_pwd=$(printf '%s' "$DB_PASSWORD" | od -An -tx1 | tr -d ' \n' | sed 's/../%&/g')
+              db_host="$DB_HOST"
+              case "$db_host" in \[*) ;; *:*) db_host="[${db_host}]" ;; esac
+              exec migrate \
+                -path=/migrations \
+                -database "postgres://${enc_usr}:${enc_pwd}@${db_host}:${DB_PORT}/${DB_NAME}?sslmode=${DB_SSLMODE}" \
+                up
           env:
             - name: DB_HOST
               value: {{ .Values.postgresql.host | quote }}
