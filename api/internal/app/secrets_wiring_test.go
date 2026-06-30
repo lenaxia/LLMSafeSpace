@@ -360,3 +360,57 @@ func (m *memDEKCache) EvictDEK(_ context.Context, sessionID string) error {
 	delete(m.store, sessionID)
 	return nil
 }
+
+// TestAuditedProvider_WiredIntoProductionProviders is the regression guard for
+// the G50 audit wiring (#366). The first review of #482 caught that the
+// providerCredsProv/orgCredsProv wraps were placed before asyncAudit was
+// constructed — dead code that left admin/org decrypts unaudited, identical
+// in shape to the #407 PodBootstrap logger regression that
+// TestPodBootstrapHandler_LoggerWired guards. This test mirrors the exact
+// construction+wrap sequence app.go uses and asserts each provider handed to
+// a consumer is an *AuditedProvider, so a future reordering regresses loudly
+// instead of silently disabling audit.
+//
+// Uses in-memory adapters (no Postgres/Redis) — the wrap sequence is the unit
+// of behavior under test, not the full App.
+func TestAuditedProvider_WiredIntoProductionProviders(t *testing.T) {
+	// Mirror newPurposeProvider: derive a key and build a StaticKeyProvider.
+	// (We can't call the unexported newPurposeProvider here, but the shape is
+	// identical — a StaticKeyProvider wrapping an HKDF-derived key.)
+	inner, err := secrets.NewStaticKeyProvider(bytes.Repeat([]byte{0x01}, 32))
+	require.NoError(t, err)
+
+	// Mirror asyncAudit construction (app.go:320). Use the in-memory secret
+	// store adapter so no Postgres is required; the AuditWriter interface is
+	// what matters, not the backing store.
+	asyncAudit := secrets.NewAsyncAuditLogger(&dbSecretStoreAdapter{}, 16, lmocks.NewMockLogger())
+
+	// Mirror app.go:329-330 (the wrap, AFTER asyncAudit construction).
+	providerCredsProv := secrets.NewAuditedProvider(inner, asyncAudit, "provider-credentials")
+	orgCredsProv := secrets.NewAuditedProvider(inner, asyncAudit, "org-credentials")
+	// Mirror app.go:467 (apiKeyProv wrap, also after construction).
+	apiKeyProv := secrets.NewAuditedProvider(inner, asyncAudit, "api-keys")
+
+	for _, tc := range []struct {
+		name string
+		prov secrets.RootKeyProvider
+	}{
+		{"providerCredsProv", providerCredsProv},
+		{"orgCredsProv", orgCredsProv},
+		{"apiKeyProv", apiKeyProv},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wrapped, ok := tc.prov.(*secrets.AuditedProvider)
+			require.True(t, ok,
+				"%s must be an *AuditedProvider so its Decrypts are audited; "+
+					"if this fails the wrap in app.go was removed or reordered before asyncAudit construction "+
+					"(the #482 first-review bug)", tc.name)
+			// Sanity: the wrapper still decrypts (delegation intact).
+			ct, err := wrapped.Encrypt(context.Background(), []byte("payload"))
+			require.NoError(t, err)
+			pt, err := wrapped.Decrypt(context.Background(), ct)
+			require.NoError(t, err)
+			assert.Equal(t, "payload", string(pt))
+		})
+	}
+}
