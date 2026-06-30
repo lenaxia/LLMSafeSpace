@@ -310,6 +310,18 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 			cancel()
 			return nil, fmt.Errorf("create pgxpool for secrets store: %w (refusing to fall back to in-memory; the in-memory secret/key adapters lose data on restart and are not safe for any environment that handles real user secrets)", pgxErr)
 		}
+		// US-50.12 / G50: wrap each RootKeyProvider with AuditedProvider so
+		// every production Decrypt is attributed to secret_audit_log
+		// (action "decrypt:<label>", user from context, key version, success).
+		// AuditedProvider satisfies VersionedProvider (delegates ActiveVersion
+		// to the inner provider) so the key_version column is still stamped
+		// correctly at encrypt time. Encrypt is NOT logged — only Decrypt.
+		// See pkg/secrets/audited_provider.go.
+		if asyncAudit != nil {
+			providerCredsProv = secrets.NewAuditedProvider(providerCredsProv, asyncAudit, "provider-credentials")
+			orgCredsProv = secrets.NewAuditedProvider(orgCredsProv, asyncAudit, "org-credentials")
+		}
+
 		pgStore := secrets.NewPgSecretStore(secretsPool)
 		orgCredBinder = pgStore
 		// Wrap the secret store in an async audit logger so audit
@@ -447,6 +459,14 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 					2: masterKEK,
 				})
 			}
+		}
+
+		// US-50.12 / G50: wrap the API-key root provider with AuditedProvider
+		// so API-key DEK unwraps (auth.go:707) are audited. Placed after the
+		// multi-key upgrade so ActiveVersion delegation reports the post-
+		// upgrade active version. Same no-key-material contract as above.
+		if apiKeyProv != nil && asyncAudit != nil {
+			apiKeyProv = secrets.NewAuditedProvider(apiKeyProv, asyncAudit, "api-keys")
 		}
 
 		if authSvc, ok := svc.Auth.(*auth.Service); ok {
