@@ -99,19 +99,15 @@ func TestEnvtest_WorkspaceDefaultsAppliedByAPIServer(t *testing.T) {
 	assert.Equal(t, int32(5), fetched.Spec.MaxActiveSessions, "MaxActiveSessions default must be applied")
 	assert.Equal(t, "ReadWriteOnce", fetched.Spec.Storage.AccessMode, "Storage.AccessMode default must be applied")
 
-	// The AutoSuspend assertions below require the workspace
-	// validating/defaulting webhook to be installed in the envtest
-	// environment, which this test does NOT currently set up.
-	// kubebuilder:default annotations on a *Pointer-to-Struct field
-	// are not auto-allocated by apiserver-level OpenAPI defaulting —
-	// only flat fields get defaulted. So `AutoSuspend` stays nil
-	// here.
-	//
-	// To make these assertions work, the test would need to
-	// configure WebhookInstallOptions on the envtest.Environment and
-	// register the controller's defaulter webhook. Tracked as
-	// follow-up; not blocking the simpler defaults this test
-	// already verifies above.
+	// AutoSuspend is a pointer-to-struct field. Whether the API server's
+	// OpenAPI defaulting materialises a nested object from default: {} (added
+	// in the #281 fix) — and therefore applies the sub-field defaults below —
+	// is not yet verified end-to-end: this environment has no setup-envtest
+	// binaries, and the claim depends on kube-apiserver defaulting semantics
+	// for pointer-to-struct with an object default. The guard below keeps the
+	// test green either way; once the envtest CI run confirms AutoSuspend is
+	// non-nil post-create, the `if` guard should be removed and these
+	// assertions made unconditional. Tracked in #281.
 	if fetched.Spec.AutoSuspend != nil {
 		assert.True(t, fetched.Spec.AutoSuspend.Enabled, "AutoSuspend.Enabled must default to true (PR #231 class)")
 		assert.Equal(t, int64(86400), fetched.Spec.AutoSuspend.IdleTimeoutSeconds, "IdleTimeoutSeconds default must be applied")
