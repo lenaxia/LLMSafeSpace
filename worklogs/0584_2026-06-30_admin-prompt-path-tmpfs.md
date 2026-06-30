@@ -108,4 +108,4 @@ None.
 - `cmd/workspace-agentd/agent_config_writer_test.go` — two new round-trip tests covering the admin-prompt merge into `agents.build.system` (basic injection + sibling-field preservation under deep-merge).
 - `pkg/types/agent_prompt.go` — doc-comment update.
 - `README-LLM.md` — volume layout row, path constants block, and post-table note updated to reflect `admin-prompt.md` on `/sandbox-runtime`.
-- `worklogs/NNNN_2026-06-30_admin-prompt-path-tmpfs.md` (this file).
+- `worklogs/0584_2026-06-30_admin-prompt-path-tmpfs.md` (this file).
