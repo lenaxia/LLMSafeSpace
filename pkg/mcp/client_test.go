@@ -134,7 +134,7 @@ func TestHTTPClient_CreateCredential_AutoBindsWorkspace(t *testing.T) {
 // required") and the API returned 400. This test pins the contract directly —
 // marshal the MCP's value type and confirm the server's type accepts it and
 // validates. A future JSON-tag rename on either side that breaks the wire
-// format fails here, not in production. It is the tag-drift analogue of
+// format fails here, not in production. It is the tag-drift analog of
 // TestValidCredentialKinds_MatchesSecretsValidKinds (which pins enum drift).
 func TestLLMProviderValue_DeserializesIntoLLMProviderData(t *testing.T) {
 	value := llmProviderValue{
