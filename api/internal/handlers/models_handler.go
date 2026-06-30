@@ -96,11 +96,48 @@ func (h *ModelsHandler) ListModels(c *gin.Context) {
 	// Check cache first (5s TTL).
 	var annotated []annotatedModel
 	var relayInjected bool
+	var cacheHit bool
 	if cached := h.modelCache.Get(workspaceID); cached != nil {
 		var payload modelCachePayload
 		if json.Unmarshal(cached, &payload) == nil {
 			annotated = payload.Models
 			relayInjected = payload.RelayInjected
+			cacheHit = true
+		}
+	}
+
+	// Issue #467: when serving from cache, re-check the live relayInjected
+	// state via relayChecker. If it differs from the cached payload's
+	// RelayInjected (typical case: false→true transition right after the
+	// relay injector completes mid-cache-window), evict the cache and
+	// re-fetch. Without this guard, the cached pre-injection snapshot is
+	// served for up to the cache TTL (5s) plus agentd's providerCache TTL
+	// (15s) — together a ~20s window where free-tier models appear under
+	// providerID="opencode" while the workspace's agent-config.json /
+	// auth.json have already been swapped to "opencode-relay". The
+	// frontend faithfully forwards the stale providerID in /prompt
+	// requests, opencode rejects them (the source provider is now in
+	// disabled_providers), and the user sees a silent send failure on
+	// the first message after workspace creation.
+	//
+	// relayChecker hits agentd's admin port — in steady state that hits
+	// agentd's own 15s cache, so the round-trip is ~1ms in-cluster. We
+	// only gate this on h.relayActive being true (relay disabled =
+	// nothing to detect) and h.relayChecker being non-nil (defensive —
+	// the field is optional in the handler API).
+	//
+	// On a transition we evict + force a refetch below. To avoid two
+	// relayChecker round-trips on a transition (the fetch path at :148
+	// repeats the call), we carry the result via livenessChecked +
+	// liveRelayInjected so the fetch path can reuse it.
+	var livenessChecked bool
+	var liveRelayInjected bool
+	if cacheHit && h.relayActive && h.relayChecker != nil {
+		liveRelayInjected = h.relayChecker(c.Request.Context(), userID, workspaceID)
+		livenessChecked = true
+		if liveRelayInjected != relayInjected {
+			h.modelCache.Evict(workspaceID)
+			annotated = nil // force the fresh-fetch path below
 		}
 	}
 
@@ -117,7 +154,11 @@ func (h *ModelsHandler) ListModels(c *gin.Context) {
 		}
 
 		// Check relay injection state via the admin-port relay checker.
-		if h.relayActive && h.relayChecker != nil {
+		// Reuse the value from the cache-eviction guard if we already
+		// checked above (transitions evict + refall through here).
+		if livenessChecked {
+			relayInjected = liveRelayInjected
+		} else if h.relayActive && h.relayChecker != nil {
 			relayInjected = h.relayChecker(c.Request.Context(), userID, workspaceID)
 		}
 
