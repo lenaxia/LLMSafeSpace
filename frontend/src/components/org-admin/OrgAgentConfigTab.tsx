@@ -65,7 +65,7 @@ export function OrgAgentConfigTab() {
     setSaving(true);
     try {
       await promptsApi.setOrg(org.id, { prompt });
-      toast("Org prompt saved");
+      toast("Organization instructions saved");
     } catch (e) {
       toast(e instanceof Error ? e.message : "Failed to save", "error");
     } finally {
@@ -98,7 +98,7 @@ export function OrgAgentConfigTab() {
         <CardHeader>
           <CardTitle>Member Customization</CardTitle>
           <p className="text-sm text-muted-foreground">
-            When enabled, members can select agent roles and add custom instructions. When disabled, the org default role is used silently.
+            When enabled, members can customize the agent's instructions in their workspaces. When disabled, members get a uniform agent.
           </p>
         </CardHeader>
         <CardContent>
@@ -106,7 +106,7 @@ export function OrgAgentConfigTab() {
             <div>
               <span className="font-medium">Allow member prompt customization</span>
               <p className="text-xs text-muted-foreground mt-1">
-                {allowUser ? "Members can customize" : "Members are locked to org defaults"}
+                {allowUser ? "Members can customize" : "Members get the organization's default agent"}
               </p>
             </div>
             <Toggle checked={allowUser} onCheckedChange={toggleAllowUser} />
@@ -116,9 +116,9 @@ export function OrgAgentConfigTab() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Org Prompt Overlay</CardTitle>
+          <CardTitle>Organization Agent Prompt Customization</CardTitle>
           <p className="text-sm text-muted-foreground">
-            Appended after the platform prompt. Use for org-specific standards and conventions.
+            Members will follow these instructions in addition to anything they configure themselves. Useful for coding standards, review checklists, or domain context.
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -132,7 +132,7 @@ export function OrgAgentConfigTab() {
           <div className="flex items-center justify-between">
             <span className="text-xs text-muted-foreground">{prompt.length} / 10,000 chars</span>
             <Button onClick={save} disabled={saving}>
-              {saving ? "Saving..." : "Save Overlay"}
+              {saving ? "Saving..." : "Save Instructions"}
             </Button>
           </div>
         </CardContent>
