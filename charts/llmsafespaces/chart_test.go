@@ -1855,6 +1855,104 @@ func TestRelayRouter_NetworkPolicy_HiddenWhenNetworkPolicyDisabled(t *testing.T)
 	}
 }
 
+// TestRelayRouter_NetworkPolicy_AllowsAPIIngress is a regression test for
+// LLMSafeSpaces#466. The relay-router NetworkPolicy originally allowed
+// ingress on TCP 8080 from workspace pods (the proxy path) and the
+// controller pod (its own /metrics scrape via controller/internal/relay/health.go),
+// but NOT from the API pods. The API's relay admin handler ALSO needs to
+// scrape /metrics — RelayAdminHandler.scrapeRouterMetrics in
+// api/internal/handlers/relay_admin.go does this on every
+// GET /api/v1/admin/relay/status to populate the per-relay requestsToday,
+// requests429Today, and activeStreams fields of the admin dashboard.
+//
+// With the API blocked at the NetworkPolicy layer the scrape timed out
+// (~5s, Go HTTP client default) and the handler silently swallowed the
+// error (relay_admin.go:637-640), so the dashboard rendered zeros for
+// those three fields while totalRequests / egressBytes (sourced from the
+// InferenceRelay CR status, populated by the controller's scrape) showed
+// correctly. The bug was invisible in API logs.
+//
+// This test asserts that the rendered NetworkPolicy includes an ingress
+// rule allowing TCP 8080 from a pod matching the API selector labels.
+func TestRelayRouter_NetworkPolicy_AllowsAPIIngress(t *testing.T) {
+	docs := helmTemplate(t, relayEnabledValues)
+
+	var policy map[string]any
+	for _, d := range findByKind(docs, "NetworkPolicy") {
+		if strings.Contains(metaName(d), "relay-router") {
+			policy = d
+			break
+		}
+	}
+	require.NotNil(t, policy, "relay-router NetworkPolicy must render when inferenceRelay is enabled")
+
+	spec, _ := policy["spec"].(map[string]any)
+	ingress, _ := spec["ingress"].([]any)
+	require.NotEmpty(t, ingress, "relay-router NetworkPolicy must have ingress rules")
+
+	// Walk every ingress rule. We accept the rule if it (a) permits TCP 8080
+	// and (b) names the API podSelector via either app.kubernetes.io/component=api
+	// or any equivalent selector that the chart wires up. Match is intentionally
+	// flexible on the *from* shape (namespaceSelector + podSelector, podSelector
+	// alone, etc.) so this test does not over-constrain the chart's choice of
+	// how to express the source — only that the API is a source.
+	var sawAPIRule bool
+	for _, rule := range ingress {
+		rm, _ := rule.(map[string]any)
+
+		// Must permit TCP 8080.
+		allows8080 := false
+		ports, _ := rm["ports"].([]any)
+		for _, p := range ports {
+			pm, _ := p.(map[string]any)
+			if toInt(pm["port"]) == 8080 {
+				proto, _ := pm["protocol"].(string)
+				if proto == "TCP" || proto == "" {
+					allows8080 = true
+					break
+				}
+			}
+		}
+		if !allows8080 {
+			continue
+		}
+
+		// Must mention the API podSelector somewhere in `from`. Look for any
+		// matchLabels entry with app.kubernetes.io/component=api on the API
+		// component (under app.kubernetes.io/name=llmsafespaces, matching the
+		// chart's standard component-labeling convention used elsewhere).
+		from, _ := rm["from"].([]any)
+		for _, src := range from {
+			sm, _ := src.(map[string]any)
+			ps, _ := sm["podSelector"].(map[string]any)
+			ml, _ := ps["matchLabels"].(map[string]any)
+			if comp, ok := ml["app.kubernetes.io/component"].(string); ok && comp == "api" {
+				sawAPIRule = true
+				break
+			}
+		}
+		if sawAPIRule {
+			break
+		}
+	}
+	require.True(t, sawAPIRule,
+		"relay-router NetworkPolicy must allow TCP 8080 ingress from API pods "+
+			"(app.kubernetes.io/component=api). The API's RelayAdminHandler scrapes "+
+			"/metrics on every GET /admin/relay/status — without this rule the dashboard "+
+			"shows zeros for requestsToday/requests429Today/activeStreams. See LLMSafeSpaces#466.")
+
+	// Defensive: assert the policy still has exactly 3 ingress rules so a
+	// future refactor that REPLACES (rather than appends) — e.g. dropping
+	// the workspace path while adding the API path — would silently break
+	// the proxy. The three rules are workspace proxy, controller /metrics
+	// scrape, and API /metrics scrape; each on port 8080.
+	require.Len(t, ingress, 3,
+		"relay-router NetworkPolicy must have exactly 3 ingress rules "+
+			"(workspace proxy, controller /metrics scrape, API /metrics scrape). "+
+			"If you're adding a new source, add a rule rather than replacing one; "+
+			"the workspace and controller rules are not redundant.")
+}
+
 // =============================================================================
 // Monitoring — Grafana dashboards, PrometheusRule, ServiceMonitor
 // =============================================================================

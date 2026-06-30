@@ -5,10 +5,13 @@
 # policy controller stay consistent. Applies once the relay subsystem is
 # enabled. Posture (post-WG-removal, worklog 0442):
 #
-#   - TCP 8080 ingress from workspace pods (the proxy path) and the controller
-#     pod (router /metrics scrape — the controller reads fleet health from the
-#     router). Workspace pods live in the workspace namespace (defaults to the
-#     release namespace).
+#   - TCP 8080 ingress from workspace pods (the proxy path), the controller
+#     pod (its own /metrics scrape — controller/internal/relay/health.go drives
+#     fleet health into the CR status), and the API pod (the admin dashboard's
+#     /metrics scrape — api/internal/handlers/relay_admin.go populates the
+#     per-relay requestsToday/requests429Today/activeStreams in
+#     GET /admin/relay/status). Workspace pods live in the workspace namespace
+#     (defaults to the release namespace).
 #   - Egress is effectively unrestricted: the router dials relays over HTTP
 #     on their public IPs (the per-VM token is the auth, not the network
 #     layer), needs DNS, and falls back to Zen-direct when all relays are down.
@@ -47,6 +50,24 @@ spec:
           podSelector:
             matchLabels:
               {{- toYaml .Values.networkPolicy.controllerPodLabelSelector | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 8080
+    # API pod → router /metrics scrape on 8080 (the admin dashboard's
+    # per-relay metrics — RelayAdminHandler.scrapeRouterMetrics populates
+    # requestsToday/requests429Today/activeStreams; without this rule the
+    # scrape times out and those fields render as zeros). Issue #466.
+    # Uses the operator-overridable apiPodLabelSelector value, matching
+    # the convention used by every other API-selecting NetworkPolicy in
+    # this chart (workspace-network-policy, datastore-network-policy,
+    # api-network-policy) and by the sibling controller rule above.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.apiPodLabelSelector | nindent 14 }}
       ports:
         - protocol: TCP
           port: 8080

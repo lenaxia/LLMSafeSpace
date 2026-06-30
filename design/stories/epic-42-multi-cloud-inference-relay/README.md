@@ -1081,7 +1081,7 @@ The controller and router expose Prometheus metrics and CR conditions. The follo
 
 7. **Relay binary integrity verification.** Cloud-init verifies the SHA-256 checksum of the downloaded relay binary before executing it (`sha256sum -c`). The checksum is embedded at cloud-init render time by the controller, sourced from the GitHub Release checksums file. This prevents supply-chain attacks via compromised artifact mirrors — consistent with the project's digest-pinning standard for container images.
 
-8. **NetworkPolicy isolates the router.** The router Service (`relay-router:8080`) is reachable by any pod in the namespace by default. A NetworkPolicy limits ingress to workspace pods (by pod selector) and the controller pod only. This prevents a compromised non-workspace pod from abusing the relay path or triggering upstream rate limits.
+8. **NetworkPolicy isolates the router.** The router Service (`relay-router:8080`) is reachable by any pod in the namespace by default. A NetworkPolicy limits ingress to workspace pods (the proxy path), the controller pod (its own `/metrics` scrape for fleet health), and the API pod (the admin dashboard's `/metrics` scrape — `RelayAdminHandler.scrapeRouterMetrics` populates per-relay request/stream counters for `/admin/relay`). The API is a trusted in-cluster component already broker for credentials and workspace control; the incremental blast radius of granting it `8080` reach is the router's proxy path (port 8080 serves both `/metrics` and the proxy — NetworkPolicy is L3/4 so the two cannot be separated by the policy layer). This still prevents a compromised non-trusted pod (anything outside workspace/controller/api) from abusing the relay path or triggering upstream rate limits.
 
 ---
 
