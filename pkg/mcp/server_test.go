@@ -15,6 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+
+	"github.com/lenaxia/llmsafespaces/pkg/secrets"
 )
 
 // MockAPIClient implements APIClient for testing.
@@ -398,6 +400,126 @@ func TestSessionHistory_MissingSessionID(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
+}
+
+// ===== credential_create =====
+
+func TestCredentialCreate_HappyPath(t *testing.T) {
+	h, mockClient := newTestHandlers()
+	ctx := context.Background()
+
+	mockClient.On("CreateCredential", ctx, CreateCredentialReq{
+		Name:   "My Anthropic",
+		Kind:   "anthropic",
+		Slug:   "my-anthropic",
+		APIKey: "sk-test",
+	}).Return(&CredentialResp{ID: "cred-9", Name: "My Anthropic", Type: "llm-provider"}, nil)
+
+	result, err := h.credentialCreate(ctx, makeReq("credential_create", map[string]any{
+		"kind":    "anthropic",
+		"slug":    "my-anthropic",
+		"api_key": "sk-test",
+		"name":    "My Anthropic",
+	}))
+
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "cred-9")
+	mockClient.AssertExpectations(t)
+}
+
+func TestCredentialCreate_PassesOptionalFields(t *testing.T) {
+	h, mockClient := newTestHandlers()
+	ctx := context.Background()
+
+	mockClient.On("CreateCredential", ctx, CreateCredentialReq{
+		Name:        "",
+		Kind:        "openai_compatible",
+		Slug:        "litellm-prod",
+		APIKey:      "sk-test",
+		BaseURL:     "https://litellm.example.test/v1",
+		Default:     "openai/gpt-oss",
+		WorkspaceID: "ws-123",
+	}).Return(&CredentialResp{ID: "cred-9", Type: "llm-provider"}, nil)
+
+	_, err := h.credentialCreate(ctx, makeReq("credential_create", map[string]any{
+		"kind":          "openai_compatible",
+		"slug":          "litellm-prod",
+		"api_key":       "sk-test",
+		"base_url":      "https://litellm.example.test/v1",
+		"default_model": "openai/gpt-oss",
+		"workspace_id":  "ws-123",
+	}))
+
+	require.NoError(t, err)
+	mockClient.AssertExpectations(t)
+}
+
+func TestCredentialCreate_MissingKind(t *testing.T) {
+	h, _ := newTestHandlers()
+
+	result, err := h.credentialCreate(context.Background(), makeReq("credential_create", map[string]any{
+		"slug":    "my-anthropic",
+		"api_key": "sk-test",
+	}))
+
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "kind")
+}
+
+func TestCredentialCreate_MissingSlug(t *testing.T) {
+	h, _ := newTestHandlers()
+
+	result, err := h.credentialCreate(context.Background(), makeReq("credential_create", map[string]any{
+		"kind":    "anthropic",
+		"api_key": "sk-test",
+	}))
+
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "slug")
+}
+
+func TestCredentialCreate_MissingAPIKey(t *testing.T) {
+	h, _ := newTestHandlers()
+
+	result, err := h.credentialCreate(context.Background(), makeReq("credential_create", map[string]any{
+		"kind": "anthropic",
+		"slug": "my-anthropic",
+	}))
+
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "api_key")
+}
+
+func TestCredentialCreate_APIError(t *testing.T) {
+	h, mockClient := newTestHandlers()
+	ctx := context.Background()
+
+	mockClient.On("CreateCredential", ctx, CreateCredentialReq{
+		Kind: "anthropic", Slug: "my-anthropic", APIKey: "sk-test",
+	}).Return((*CredentialResp)(nil), fmt.Errorf("400 invalid metadata: kind is required"))
+
+	result, err := h.credentialCreate(ctx, makeReq("credential_create", map[string]any{
+		"kind": "anthropic", "slug": "my-anthropic", "api_key": "sk-test",
+	}))
+
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content[0].(mcp.TextContent).Text, "failed to create credential")
+	mockClient.AssertExpectations(t)
+}
+
+// TestValidCredentialKinds_MatchesSecretsValidKinds pins the local
+// validCredentialKinds slice (used by the credential_create tool schema) to
+// the canonical pkg/secrets.ValidKinds. The MCP server binary deliberately
+// does not import pkg/secrets, so the enum is mirrored locally; this
+// test-only import is the drift gate that keeps the two in lockstep.
+func TestValidCredentialKinds_MatchesSecretsValidKinds(t *testing.T) {
+	assert.Equal(t, secrets.ValidKinds, validCredentialKinds,
+		"validCredentialKinds must mirror secrets.ValidKinds exactly; update both together")
 }
 
 // ===== NewServer integration =====

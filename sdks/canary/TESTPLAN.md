@@ -904,10 +904,11 @@ Tests `GET /workspaces/:id/sessions/:sessionId` which proxies to opencode's `GET
 | P1 | `credential_create` with placeholder key → result JSON has `id` |
 | P2 | `credential_list` → array contains created credential |
 | P3 | `credential_delete` → result contains "deleted" |
-| N1 | `credential_create` missing `provider` → `isError=true` |
-| N2 | `credential_create` missing `api_key` → `isError=true` |
-| N3 | `credential_delete` missing `credential_id` → `isError=true` |
-| N4 | `credential_delete` nonexistent ID → `isError=true` |
+| N1 | `credential_create` missing `kind` → `isError=true` |
+| N2 | `credential_create` missing `slug` → `isError=true` |
+| N3 | `credential_create` missing `api_key` → `isError=true` |
+| N4 | `credential_delete` missing `credential_id` → `isError=true` |
+| N5 | `credential_delete` nonexistent ID → `isError=true` |
 
 ---
 

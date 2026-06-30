@@ -311,11 +311,38 @@ func (h *handlers) sessionPermissionReply(ctx context.Context, req mcp.CallToolR
 	return mcp.NewToolResultText(fmt.Sprintf("Permission %s", reply)), nil
 }
 
+// validCredentialKinds is the set of SDK-class values advertised on the
+// credential_create tool schema. It is a local mirror of
+// pkg/secrets.ValidKinds: the MCP server binary deliberately does not depend
+// on pkg/secrets, so the enum is duplicated here and pinned to the canonical
+// list by TestValidCredentialKinds_MatchesSecretsValidKinds. Update both
+// together when a new provider class is added.
+var validCredentialKinds = []string{
+	"openai",
+	"anthropic",
+	"google",
+	"opencode",
+	"bedrock",
+	"azure_openai",
+	"vertex",
+	"cohere",
+	"mistral",
+	"perplexity",
+	"groq",
+	"xai",
+	"openrouter",
+	"together",
+	"openai_compatible",
+}
+
 var credentialCreateTool = mcp.NewTool("credential_create",
 	mcp.WithDescription("Create an LLM provider credential. Optionally bind to a workspace."),
-	mcp.WithString("provider", mcp.Required(), mcp.Description("Provider name (anthropic, openai, google, etc.)")),
+	mcp.WithString("kind", mcp.Required(), mcp.Enum(validCredentialKinds...),
+		mcp.Description("SDK class that selects the adapter the agent loads (openai, anthropic, google, openai_compatible, ...)")),
+	mcp.WithString("slug", mcp.Required(),
+		mcp.Description("Per-owner unique identity: lowercase alphanumeric and hyphens, 1-64 chars, no leading/trailing hyphen. Becomes the agent-config.json provider key")),
 	mcp.WithString("api_key", mcp.Required(), mcp.Description("Provider API key")),
-	mcp.WithString("name", mcp.Description("Optional credential name (defaults to provider name)")),
+	mcp.WithString("name", mcp.Description("Optional credential display name (defaults to the slug)")),
 	mcp.WithString("base_url", mcp.Description("Optional custom base URL for the provider")),
 	mcp.WithString("default_model", mcp.Description("Optional default model ID (e.g. anthropic/claude-sonnet-4-5)")),
 	mcp.WithString("workspace_id", mcp.Description("If set, auto-binds the credential to this workspace")),
@@ -345,15 +372,17 @@ var modelSetTool = mcp.NewTool("model_set",
 
 func (h *handlers) credentialCreate(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := req.GetArguments()
-	provider := strArg(args, "provider")
+	kind := strArg(args, "kind")
+	slug := strArg(args, "slug")
 	apiKey := strArg(args, "api_key")
-	if provider == "" || apiKey == "" {
-		return mcp.NewToolResultError("provider and api_key are required"), nil
+	if kind == "" || slug == "" || apiKey == "" {
+		return mcp.NewToolResultError("kind, slug, and api_key are required"), nil
 	}
 
 	resp, err := h.client.CreateCredential(ctx, CreateCredentialReq{
 		Name:        strArg(args, "name"),
-		Provider:    provider,
+		Kind:        kind,
+		Slug:        slug,
 		APIKey:      apiKey,
 		BaseURL:     strArg(args, "base_url"),
 		Default:     strArg(args, "default_model"),
