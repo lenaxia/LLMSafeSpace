@@ -57,6 +57,12 @@ type WorkspaceListItem struct {
 	UpdatedAt               time.Time  `json:"updatedAt"`
 	AgentNeedsRefresh       bool       `json:"agentNeedsRefresh"`
 	CredentialsPendingSince *time.Time `json:"credentialsPendingSince,omitempty"`
+	// OrgID is the owning org for org-scoped workspaces (Epic 11; nil for
+	// personal workspaces). The frontend relies on this field to decide
+	// whether to fetch and enforce the org's allow_user_prompt policy in
+	// the Workspace Settings drawer's "Custom Instructions" Lock UI.
+	// Mirrors WorkspaceMetadata.OrgID.
+	OrgID *string `json:"orgId,omitempty"`
 }
 
 // WorkspaceStatusResult carries the status fields read from the Workspace CRD.
