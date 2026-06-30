@@ -95,4 +95,4 @@ None.
 - `api/internal/services/workspace/workspace_service_test.go` — added `TestListWorkspaces_PropagatesOrgID` regression test.
 - `frontend/src/components/workspace/WorkspaceSettingsDrawer.tsx` — changed the policy-fetch `.catch` to fail closed (`setPromptLocked(true)`).
 - `frontend/src/components/workspace/WorkspaceSettingsDrawer.test.tsx` — added the `promptsApi.getOrg` mock and four new regression tests under "org prompt-customization lock".
-- `worklogs/NNNN_2026-06-30_workspace-orgid-prompt-lock-ui.md` (this file).
+- `worklogs/0580_2026-06-30_workspace-orgid-prompt-lock-ui.md` (this file).
