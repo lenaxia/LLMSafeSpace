@@ -75,14 +75,15 @@ spec:
                       default: false
                 autoSuspend:
                   type: object
+                  default: {}
                   properties:
                     enabled:
                       type: boolean
-                      default: false
+                      default: true
                     idleTimeoutSeconds:
                       type: integer
                       minimum: 1
-                      default: 3600
+                      default: 86400
                 ttlSecondsAfterSuspended:
                   type: integer
                   minimum: 0
@@ -119,16 +120,23 @@ spec:
                   description: "Max pod lifetime in seconds. 0 = no limit."
                 resources:
                   type: object
+                  default: {}
                   properties:
                     cpu:
                       type: string
                       default: "500m"
                     memory:
                       type: string
-                      default: "1Gi"
+                      default: "512Mi"
                     cpuPinning:
                       type: boolean
                       default: false
+                    cpuLimit:
+                      type: string
+                      pattern: '^([1-9][0-9]*m|[1-9][0-9]*\.[0-9]+|0\.[0-9]*[1-9][0-9]*)$'
+                    memoryLimit:
+                      type: string
+                      pattern: '^[1-9][0-9]*(Ki|Mi|Gi)$'
                 restartGeneration:
                   type: integer
                   format: int64
