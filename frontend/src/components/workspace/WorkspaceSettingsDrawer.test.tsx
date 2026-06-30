@@ -314,3 +314,36 @@ describe("WorkspaceSettingsDrawer – org prompt-customization lock (#477)", () 
     });
   });
 });
+
+// LLMSafeSpaces#480: the workspace user's "Custom Instructions" helper
+// text leaked internal prompt-chain terminology ("Appended after your
+// role's system prompt"). End users don't need to know about the role
+// or system-prompt layering. These tests assert the rewritten copy
+// renders AND the leaky terms are absent.
+describe("WorkspaceSettingsDrawer – Custom Instructions copy hides jargon (#480)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (secretsApi.list as ReturnType<typeof vi.fn>).mockResolvedValue({ secrets: [] });
+    (api.get as ReturnType<typeof vi.fn>).mockResolvedValue({ bindings: [] });
+  });
+
+  it("renders the rewritten helper text (no 'role's system prompt' or 'Appended')", async () => {
+    render(
+      <WorkspaceSettingsDrawer
+        workspace={mockWorkspace}
+        open={true}
+        onOpenChange={vi.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Instructions specific to this workspace/),
+      ).toBeInTheDocument(),
+    );
+
+    // The leaky old strings must be absent.
+    expect(screen.queryByText(/role's system prompt/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Appended/)).not.toBeInTheDocument();
+  });
+});

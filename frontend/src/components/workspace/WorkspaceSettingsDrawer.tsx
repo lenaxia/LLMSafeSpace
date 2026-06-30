@@ -117,7 +117,7 @@ export function WorkspaceSettingsDrawer({ workspace, open, onOpenChange }: Props
             <div className="border-t border-border pt-4">
               <label className="text-sm font-medium">Custom Instructions</label>
               <p className="text-xs text-muted-foreground mb-2">
-                Appended after your role's system prompt.
+                Instructions specific to this workspace — e.g. "focus on test coverage this session", "use Tailwind for new components".
               </p>
               {promptLocked ? (
                 <div className="flex items-center gap-2 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
