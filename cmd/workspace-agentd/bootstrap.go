@@ -53,6 +53,12 @@ func runBootstrapCommand(args []string, _ io.Writer, stderr io.Writer) int {
 	apiURL := fs.String("api-url", os.Getenv("LLMSAFESPACE_API_URL"), "API service base URL")
 	tokenFile := fs.String("token-file", "/var/run/bootstrap/token", "projected SA token file")
 	out := fs.String("out", "/sandbox-cfg/secrets.json", "output secrets.json path")
+	// adminPromptOut is the file the bootstrap subcommand writes the merged
+	// platform→org→role→user system prompt to, if the API returns a non-empty
+	// AdminPrompt. Defaults to agentd.AdminPromptPath (/sandbox-runtime/admin-prompt.md).
+	// Symmetric with --out; exposed as a flag so tests can write to a
+	// t.TempDir() rather than the production tmpfs path.
+	adminPromptOut := fs.String("admin-prompt-out", agentd.AdminPromptPath, "output admin-prompt.md path")
 
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -95,7 +101,7 @@ func runBootstrapCommand(args []string, _ io.Writer, stderr io.Writer) int {
 	}
 
 	if adminPrompt != "" {
-		if err := atomicWriteSecrets(agentd.AdminPromptPath, []byte(adminPrompt)); err != nil {
+		if err := atomicWriteSecrets(*adminPromptOut, []byte(adminPrompt)); err != nil {
 			_, _ = fmt.Fprintf(stderr, "bootstrap: failed to write admin-prompt.md: %v\n", err)
 		} else {
 			_, _ = fmt.Fprintf(stderr, "bootstrap: wrote admin prompt (%d bytes)\n", len(adminPrompt))

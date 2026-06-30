@@ -231,8 +231,13 @@ func (h *PodBootstrapHandler) Bootstrap(c *gin.Context) {
 	}
 
 	// Resolve effective admin prompt (platform → org → user). Failures are
-	// non-fatal — the pod boots without admin instructions. agentd writes
-	// an empty file and opencode treats it as "no prompt configured".
+	// non-fatal — the pod boots without admin instructions. When the merged
+	// prompt is empty (no platform/org/user prompt configured), the response
+	// omits AdminPrompt and bootstrap skips the write entirely; agentd's
+	// loadAdminPrompt finds no file at agentd.AdminPromptPath and treats
+	// it as "no prompt configured" (#483: the file is on /sandbox-runtime
+	// tmpfs, not /tmp, so the write actually succeeds when AdminPrompt is
+	// non-empty).
 	if h.promptSvc != nil {
 		effective, err := h.promptSvc.ResolveEffective(c.Request.Context(), req.WorkspaceID)
 		if err == nil && effective != nil && effective.Resolved != "" {

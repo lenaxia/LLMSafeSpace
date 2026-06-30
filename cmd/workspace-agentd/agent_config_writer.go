@@ -61,7 +61,7 @@ type AgentConfigWriter struct {
 	providerRaw json.RawMessage // raw "provider" map JSON from FormatOpenCodeConfig; nil = no providers
 	model       string          // fully-qualified "providerID/modelID" form; "" = no model
 	relay       *relaySource    // nil = relay not yet injected / skipped
-	adminPrompt string          // admin-configured system prompt from /tmp/admin-prompt.md; "" = none
+	adminPrompt string          // admin-configured system prompt from agentd.AdminPromptPath; "" = none
 	agentsRaw   json.RawMessage // existing "agents" config from loadExisting, preserved across rebuilds
 }
 
@@ -122,7 +122,7 @@ func (w *AgentConfigWriter) loadExisting() {
 }
 
 // loadAdminPrompt reads the admin-configured system prompt written by the
-// bootstrap subcommand to /tmp/admin-prompt.md. Loaded once at init;
+// bootstrap subcommand to agentd.AdminPromptPath. Loaded once at init;
 // persists across all rebuilds. Changes take effect on next pod boot
 // (design decision: no hot-reload).
 func (w *AgentConfigWriter) loadAdminPrompt() {

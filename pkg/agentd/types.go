@@ -9,10 +9,19 @@ package agentd
 // US-35.7: credential output paths point to /sandbox-runtime (tmpfs, RAM-backed)
 // so no plaintext persists on the PVC at rest. $HOME-relative paths (SSH, git,
 // secrets) are symlinks created by the init container pointing into /sandbox-runtime/rt/*.
+//
+// AdminPromptPath also lives on /sandbox-runtime — both because the merged
+// platform/org/role/user system prompt is sensitive control-surface content
+// (canary tokens, safety guardrails) that should die with the pod, and because
+// the credential-setup init container that writes it has ReadOnlyRootFilesystem
+// without a writable emptyDir at /tmp. Previously (#483) the constant pointed
+// at /tmp/admin-prompt.md and the bootstrap subcommand silently failed every
+// write — the admin prompt never reached opencode on any workspace, breaking
+// the three-tier prompt chain end-to-end.
 const (
 	SecretsEnvPath  = "/sandbox-runtime/secrets-env"
 	AgentConfigPath = "/sandbox-runtime/agent-config.json"
-	AdminPromptPath = "/tmp/admin-prompt.md"
+	AdminPromptPath = "/sandbox-runtime/admin-prompt.md"
 	PasswordPath    = "/sandbox-cfg/password"
 	SecretsBasePath = "/sandbox-runtime/rt/secrets"
 	WorkspacePath   = "/workspace"

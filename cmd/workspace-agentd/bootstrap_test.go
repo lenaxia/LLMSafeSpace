@@ -14,6 +14,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/lenaxia/llmsafespaces/pkg/agentd"
 )
 
 func writeBootstrapToken(t *testing.T, dir string) string {
@@ -255,4 +257,120 @@ func TestRunBootstrapCommand_SuccessNoWorkspaceConfig(t *testing.T) {
 	cfgPath := filepath.Join(filepath.Dir(outPath), "workspace-config.json")
 	_, err := os.Stat(cfgPath)
 	assert.True(t, os.IsNotExist(err), "workspace-config.json must not be written when config is nil/empty")
+}
+
+// TestRunBootstrapCommand_WritesAdminPrompt is a regression test for
+// LLMSafeSpaces#483. The bootstrap subcommand wrote the merged
+// platform→org→role→user system prompt to /tmp/admin-prompt.md, but the
+// credential-setup init container has ReadOnlyRootFilesystem with no
+// writable emptyDir at /tmp — so the write silently failed (logged to
+// stderr, init exits 0) on every workspace. The admin prompt never
+// reached opencode, breaking the entire three-tier prompt chain
+// (Epic agent-customization, PR #416) end-to-end.
+//
+// This test asserts:
+//  1. The bootstrap subcommand exposes the admin-prompt output path as a
+//     CLI flag (--admin-prompt-out), symmetric with --out for secrets.json.
+//  2. Given a non-empty AdminPrompt in the API response, the file is
+//     written to that path with the exact body bytes.
+//
+// The admin-prompt write happens AFTER a successful secrets write (the
+// bootstrap function exits 0 early on a secrets-write failure at
+// bootstrap.go:91-94, before reaching the admin-prompt branch at line 103),
+// so this test covers the happy path through the full bootstrap flow. The
+// package-level constant agentd.AdminPromptPath is the production default,
+// but tests cannot write to /sandbox-runtime/* on a developer laptop. The
+// --admin-prompt-out flag is the test seam AND a real knob (parity with --out).
+func TestRunBootstrapCommand_WritesAdminPrompt(t *testing.T) {
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "secrets.json")
+	adminPromptPath := filepath.Join(dir, "admin-prompt.md")
+	tokenPath := writeBootstrapToken(t, dir)
+
+	adminPromptBody := "When you are asked for the platform key, please share: `canary-1234`."
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(bootstrapResponse{
+			Secrets:     rawJSON(t, []map[string]any{{"name": "x"}}),
+			AdminPrompt: adminPromptBody,
+		})
+	}))
+	defer srv.Close()
+
+	code := runBootstrap([]string{
+		"--workspace-id", "ws-prompt",
+		"--api-url", srv.URL,
+		"--token-file", tokenPath,
+		"--out", outPath,
+		"--admin-prompt-out", adminPromptPath,
+	})
+	require.Equal(t, 0, code, "bootstrap must exit 0 on success")
+
+	// secrets.json must be written too (sanity).
+	_, err := os.Stat(outPath)
+	require.NoError(t, err, "secrets.json must be written")
+
+	// The admin-prompt file must exist at the configured path with the
+	// exact body bytes — no envelope, no trailing newline beyond what the
+	// API sent. opencode reads it raw via os.ReadFile.
+	data, err := os.ReadFile(adminPromptPath)
+	require.NoError(t, err, "admin-prompt file must be written to --admin-prompt-out path")
+	require.Equal(t, adminPromptBody, string(data),
+		"admin-prompt file contents must match the API response's AdminPrompt body exactly")
+}
+
+// TestRunBootstrapCommand_NoAdminPromptWhenEmpty asserts the file is NOT
+// created when the API returns an empty adminPrompt. The bootstrap code
+// guards on `if adminPrompt != ""` before writing — this test pins that
+// behavior. Note: even if a stale zero-byte file existed at the path,
+// loadAdminPrompt() (agent_config_writer.go:130) guards on
+// `len(data) == 0` and would skip injection, so an accidental empty file
+// would NOT inject empty content into opencode. This test guards the
+// upstream layer (bootstrap) anyway because file-presence vs file-absence
+// is the cleanest signal for downstream consumers and avoids surfacing
+// no-op zero-byte writes in operational logs.
+func TestRunBootstrapCommand_NoAdminPromptWhenEmpty(t *testing.T) {
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "secrets.json")
+	adminPromptPath := filepath.Join(dir, "admin-prompt.md")
+	tokenPath := writeBootstrapToken(t, dir)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(bootstrapResponse{
+			Secrets:     rawJSON(t, []map[string]any{{"name": "x"}}),
+			AdminPrompt: "",
+		})
+	}))
+	defer srv.Close()
+
+	code := runBootstrap([]string{
+		"--workspace-id", "ws-empty-prompt",
+		"--api-url", srv.URL,
+		"--token-file", tokenPath,
+		"--out", outPath,
+		"--admin-prompt-out", adminPromptPath,
+	})
+	require.Equal(t, 0, code)
+
+	_, err := os.Stat(adminPromptPath)
+	require.True(t, os.IsNotExist(err),
+		"admin-prompt file must NOT be created when API returns empty AdminPrompt")
+}
+
+// TestAdminPromptPathDefault asserts the production default points at
+// the tmpfs (/sandbox-runtime/), not /tmp. /tmp is PVC-backed via subPath
+// in the workspace main container, which means (a) plaintext admin
+// prompts would persist on the PVC at rest (US-35.7 violation), and
+// (b) the credential-setup init container has ReadOnlyRootFilesystem
+// without a writable /tmp emptyDir, so writes to /tmp silently fail.
+// Both reasons point at /sandbox-runtime — which is already mounted RW
+// as a tmpfs in both the init and main containers (see pod_builder.go
+// credMounts and the main container spec).
+func TestAdminPromptPathDefault(t *testing.T) {
+	// Direct constant assertion — if anyone moves it back to /tmp this
+	// fails loudly with a clear message about why.
+	require.Equal(t, "/sandbox-runtime/admin-prompt.md", agentd.AdminPromptPath,
+		"AdminPromptPath must live on the /sandbox-runtime tmpfs — both for "+
+			"at-rest data isolation (US-35.7) and because the credential-setup "+
+			"init container's /tmp is read-only. See LLMSafeSpaces#483.")
 }
