@@ -318,6 +318,16 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		// through a 4096-entry buffered channel). Operators see drop
 		// counts via Stats() and Warn-level logs.
 		asyncAudit = secrets.NewAsyncAuditLogger(pgStore, 4096, log)
+		// US-50.12 / G50: wrap each RootKeyProvider with AuditedProvider so
+		// every production Decrypt is attributed to secret_audit_log
+		// (action "decrypt:<label>", user from context, key version, success).
+		// MUST run after asyncAudit is constructed (line above) — placing it
+		// earlier makes the wrap dead code. AuditedProvider satisfies
+		// VersionedProvider (delegates ActiveVersion to the inner provider) so
+		// the key_version column is still stamped correctly at encrypt time.
+		// Encrypt is NOT logged — only Decrypt. See pkg/secrets/audited_provider.go.
+		providerCredsProv = secrets.NewAuditedProvider(providerCredsProv, asyncAudit, "provider-credentials")
+		orgCredsProv = secrets.NewAuditedProvider(orgCredsProv, asyncAudit, "org-credentials")
 		keyService = secrets.NewKeyService(secrets.NewPgKeyStore(secretsPool), dekCache)
 		keyService.SetLogger(log)
 		// Epic 56: wire the durable jwt_sessions store so GetDEK can
@@ -447,6 +457,14 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 					2: masterKEK,
 				})
 			}
+		}
+
+		// US-50.12 / G50: wrap the API-key root provider with AuditedProvider
+		// so API-key DEK unwraps (auth.go:707) are audited. Placed after the
+		// multi-key upgrade so ActiveVersion delegation reports the post-
+		// upgrade active version. Same no-key-material contract as above.
+		if apiKeyProv != nil && asyncAudit != nil {
+			apiKeyProv = secrets.NewAuditedProvider(apiKeyProv, asyncAudit, "api-keys")
 		}
 
 		if authSvc, ok := svc.Auth.(*auth.Service); ok {

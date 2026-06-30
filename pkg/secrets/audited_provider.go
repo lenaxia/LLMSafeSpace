@@ -51,6 +51,16 @@ func NewAuditedProvider(inner RootKeyProvider, audit AuditWriter, label string) 
 	return &AuditedProvider{inner: inner, audit: audit, label: label}
 }
 
+// ActiveVersion delegates to the inner provider so the wrapper satisfies
+// VersionedProvider. This is load-bearing: production callers invoke
+// ActiveVersionOf(provider) at encrypt time to stamp the key_version column
+// (auth.go, admin_provider_credentials.go, org_credentials.go). Without this
+// delegation, wrapping with NewAuditedProvider would silently downgrade every
+// key_version to the default 1, corrupting rotation tracking.
+func (p *AuditedProvider) ActiveVersion() int {
+	return ActiveVersionOf(p.inner)
+}
+
 func (p *AuditedProvider) Encrypt(ctx context.Context, plaintext []byte) ([]byte, error) {
 	return p.inner.Encrypt(ctx, plaintext)
 }

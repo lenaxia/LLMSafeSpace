@@ -187,3 +187,42 @@ func (s *slowAuditWriter) LogAudit(ctx context.Context, entry *AuditEntry) error
 		return ctx.Err()
 	}
 }
+
+// TestAuditedProvider_DelegatesActiveVersion is the load-bearing correctness
+// test for wiring AuditedProvider into production (issue #366). Production
+// callers invoke secrets.ActiveVersionOf(provider) at encrypt time to stamp
+// the key_version column (auth.go, admin_provider_credentials.go,
+// org_credentials.go). ActiveVersionOf does a VersionedProvider type
+// assertion; if AuditedProvider did not satisfy it, wrapping would silently
+// downgrade every key_version to the default 1 — corrupting rotation.
+// Asserts the wrapper preserves the inner provider's version (both single
+// and multi-version cases).
+func TestAuditedProvider_DelegatesActiveVersion(t *testing.T) {
+	t.Run("single-version inner", func(t *testing.T) {
+		inner, err := NewStaticKeyProvider(make([]byte, 32))
+		require.NoError(t, err)
+		wrapped := NewAuditedProvider(inner, &fakeAuditCapture{}, "provider-credentials")
+
+		assert.Equal(t, ActiveVersionOf(inner), ActiveVersionOf(wrapped),
+			"wrapping must preserve the inner provider's active version")
+		assert.Equal(t, 1, ActiveVersionOf(wrapped))
+	})
+
+	t.Run("multi-version inner (active=2)", func(t *testing.T) {
+		k1 := make([]byte, 32)
+		k2 := make([]byte, 32)
+		k2[0] = 0xff
+		inner, err := NewStaticKeyProviderMultiVersion(2, map[int][]byte{1: k1, 2: k2})
+		require.NoError(t, err)
+		wrapped := NewAuditedProvider(inner, &fakeAuditCapture{}, "api-keys")
+
+		assert.Equal(t, 2, ActiveVersionOf(wrapped),
+			"wrapping a multi-version provider must report the inner's active version (2), not the default 1")
+	})
+
+	t.Run("nil-safe inner", func(t *testing.T) {
+		wrapped := &AuditedProvider{inner: nil, audit: &fakeAuditCapture{}, label: "x"}
+		assert.Equal(t, 1, ActiveVersionOf(wrapped),
+			"ActiveVersionOf must remain nil-safe through the wrapper (returns default 1)")
+	})
+}
