@@ -61,7 +61,7 @@ type WorkspaceListItem struct {
 	// personal workspaces). The frontend relies on this field to decide
 	// whether to fetch and enforce the org's allow_user_prompt policy in
 	// the Workspace Settings drawer's "Custom Instructions" Lock UI.
-	// Mirrors WorkspaceMetadata.OrgID at line 107. Fixes #477.
+	// Mirrors WorkspaceMetadata.OrgID.
 	OrgID *string `json:"orgId,omitempty"`
 }
 
