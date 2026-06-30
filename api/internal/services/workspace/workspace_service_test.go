@@ -415,6 +415,63 @@ func TestListWorkspaces_HappyPath(t *testing.T) {
 	assert.Equal(t, 2, result.Pagination.Total)
 }
 
+// TestListWorkspaces_PropagatesOrgID is a regression test for
+// LLMSafeSpaces#477. WorkspaceMetadata carries OrgID (Epic 11; nullable —
+// personal workspaces have no org). The conversion to WorkspaceListItem
+// originally dropped this field, so the frontend's Workspace Settings
+// drawer never knew which workspaces were org-scoped and could not render
+// the prompt-customization Lock UI when the org admin had disabled
+// allow_user_prompt. The backend correctly returned 403 on the eventual
+// PUT /prompt, but the user only saw a generic "Save failed" — the lock
+// state was invisible to them. See #477.
+//
+// This test asserts the list response carries OrgID for an org-scoped
+// workspace (and stays nil for a personal one).
+func TestListWorkspaces_PropagatesOrgID(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	orgID := "org-acme"
+	metas := []*types.WorkspaceMetadata{
+		// Org-scoped workspace — the frontend needs OrgID here so the
+		// Workspace Settings drawer can fetch the org's allow_user_prompt
+		// policy and gate the Custom Instructions textarea on it.
+		{ID: "ws-org", UserID: "user1", Name: "org-ws", StorageSize: "10Gi", CreatedAt: now, OrgID: &orgID},
+		// Personal workspace — OrgID is nil; the lock check correctly
+		// short-circuits.
+		{ID: "ws-personal", UserID: "user1", Name: "personal", StorageSize: "5Gi", CreatedAt: now},
+	}
+	f.db.On("ListWorkspaces", ctx, "user1", 10, 0).Return(metas, &types.PaginationMetadata{Total: 2, Limit: 10}, nil)
+
+	crdList := &v1.WorkspaceList{Items: []v1.Workspace{
+		{ObjectMeta: metav1.ObjectMeta{Name: "ws-org"}, Status: v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "ws-personal"}, Status: v1.WorkspaceStatus{Phase: v1.WorkspacePhaseActive}},
+	}}
+	f.ws.On("List", mock.Anything, metav1.ListOptions{LabelSelector: "user-id=user1"}).Return(crdList, nil)
+
+	result, err := f.svc.ListWorkspaces(ctx, "user1", types.ListOptions{Limit: 10, Offset: 0})
+	assert.NoError(t, err)
+	assert.Len(t, result.Items, 2)
+
+	// The org-scoped workspace MUST carry its OrgID in the list response.
+	// Without this, the frontend (which only has the list response — it
+	// does not separately fetch each workspace) cannot determine the org
+	// and therefore cannot render the prompt-customization Lock UI.
+	require.NotNil(t, result.Items[0].OrgID,
+		"WorkspaceListItem.OrgID must be populated for org-scoped workspaces "+
+			"(LLMSafeSpaces#477 — without this the prompt-customization Lock UI "+
+			"in WorkspaceSettingsDrawer.tsx never renders, members can type "+
+			"a custom prompt that the backend will then 403 on PUT /prompt)")
+	assert.Equal(t, "org-acme", *result.Items[0].OrgID,
+		"OrgID must match the source WorkspaceMetadata's OrgID")
+
+	// Personal workspaces must keep OrgID nil so the frontend's
+	// `if (workspace.orgId)` check correctly skips the org policy fetch.
+	assert.Nil(t, result.Items[1].OrgID,
+		"personal workspaces must have nil OrgID in the list response")
+}
+
 func TestListWorkspaces_Empty_ReturnsEmptyList(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()

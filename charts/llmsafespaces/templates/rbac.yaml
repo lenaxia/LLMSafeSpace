@@ -282,26 +282,38 @@ rules:
   # Epic 35: secrets create/update/patch scoped down — the API no longer
   # creates workspace-secrets-<id> (removed by secretless injection). Only
   # get/list/watch/delete remain broadly; the three relay-credential Secrets
-  # below retain write verbs via resourceNames-scoped rules.
+  # below retain write verbs via resourceNames-scoped rules where possible.
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "watch", "delete"]
 
   # Relay fleet credentials (Epic 42) — each provider's cloud creds are
-  # written by the API's relay admin handler. Scoped to resourceNames so
-  # the broad secrets grant above does not re-open create/update/patch.
+  # written by the API's relay admin handler. Kubernetes RBAC does NOT
+  # enforce `resourceNames` on the `create` verb (or `deletecollection`):
+  # https://kubernetes.io/docs/reference/access-authn-authz/rbac/#referring-to-resources
+  #     "You cannot restrict create or deletecollection requests by their
+  #     resource name. For create, this limitation is because the name of
+  #     the new object may not be known at authorization time."
+  # So `create` MUST be granted on its own without resourceNames; combining
+  # it with resourceNames silently grants no create permission and the
+  # API's first-time POST /admin/relay/{aws,oci,gcp}-creds fails with
+  # "secrets is forbidden ... cannot create resource secrets" (the upsert
+  # path is NotFound→Create on first config). See LLMSafeSpaces#463.
+  #
+  # The name-scoped verbs (get/update/patch) DO honor resourceNames, so we
+  # keep those scoped to the three relay-credential Secret names. The
+  # broader `get/list/watch/delete` rule above does not include any write
+  # verbs, so this two-rule split preserves the chart author's intent:
+  # the API can create any Secret in its own namespace (necessary for
+  # first-time provisioning of relay credentials), but can only update or
+  # patch the three named relay-credential Secrets.
   - apiGroups: [""]
     resources: ["secrets"]
-    resourceNames: ["oci-credentials"]
-    verbs: ["get", "create", "update", "patch"]
+    verbs: ["create"]
   - apiGroups: [""]
     resources: ["secrets"]
-    resourceNames: ["gcp-credentials"]
-    verbs: ["get", "create", "update", "patch"]
-  - apiGroups: [""]
-    resources: ["secrets"]
-    resourceNames: ["aws-relay-irwa"]
-    verbs: ["get", "create", "update", "patch"]
+    resourceNames: ["oci-credentials", "gcp-credentials", "aws-relay-irwa"]
+    verbs: ["get", "update", "patch"]
 
   - apiGroups: [""]
     resources: ["pods"]

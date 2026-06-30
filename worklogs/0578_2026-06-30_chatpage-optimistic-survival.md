@@ -58,4 +58,4 @@ None.
 
 - `frontend/src/pages/ChatPage.tsx` — added `messageIdentityKey`; changed `reconcileOnIdle` wipe to content-aware filter.
 - `frontend/src/pages/ChatPage.optimistic-survival.test.tsx` — new regression tests (from investigation branch, unused import removed).
-- `worklogs/NNNN_2026-06-30_chatpage-optimistic-survival.md` — this worklog.
+- `worklogs/0578_2026-06-30_chatpage-optimistic-survival.md` — this worklog.

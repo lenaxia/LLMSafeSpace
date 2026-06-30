@@ -1748,6 +1748,174 @@ func TestRelay_APIInferenceRelayClusterRole_RendersWhenEnabled(t *testing.T) {
 		"ClusterRoleBinding.roleRef.name must point at the rendered API inferencerelay ClusterRole")
 }
 
+// TestRelay_APISecretsCreate_NotResourceNameScoped is a regression test for
+// LLMSafeSpaces#463. The chart originally granted the API ServiceAccount
+// `create` on the three relay-credential Secrets (oci-credentials,
+// gcp-credentials, aws-relay-irwa) via rules that combined
+// `verbs: [..., create, ...]` with `resourceNames: [...]`. Kubernetes RBAC
+// silently ignores `resourceNames` on the `create` verb:
+//
+//	https://kubernetes.io/docs/reference/access-authn-authz/rbac/#referring-to-resources
+//	> You cannot restrict create or deletecollection requests by their
+//	> resource name. For create, this limitation is because the name of the
+//	> new object may not be known at authorization time.
+//
+// The rule therefore granted no create permission at all — the API server
+// rejected the very first POST /api/v1/admin/relay/{aws,oci,gcp}-creds with
+// "secrets is forbidden: ... cannot create resource secrets", because the
+// upsert path goes NotFound→Create on first configuration.
+//
+// This test asserts that for the API Role (`llmsafespaces-api`, in the
+// release namespace), every rule that grants `create` on the core `secrets`
+// resource does so WITHOUT any `resourceNames` filter — the only K8s-honored
+// form. resourceNames-scoped rules MAY still appear alongside, granting the
+// name-scoped verbs (get/update/patch) that RBAC does enforce by name.
+func TestRelay_APISecretsCreate_NotResourceNameScoped(t *testing.T) {
+	docs := helmTemplate(t, "")
+
+	var apiRole map[string]any
+	for _, d := range docs {
+		k, _ := d["kind"].(string)
+		if k != "Role" {
+			continue
+		}
+		name := metaName(d)
+		// The API Role's release-rendered name is "<release>-llmsafespaces-api".
+		// Match by suffix to stay release-name agnostic.
+		if strings.HasSuffix(name, "llmsafespaces-api") {
+			apiRole = d
+			break
+		}
+	}
+	require.NotNil(t, apiRole,
+		"API Role (kind=Role, name ending in 'llmsafespaces-api') must render")
+
+	sawCreateRule := false
+	rules, _ := apiRole["rules"].([]any)
+	for _, r := range rules {
+		rule, _ := r.(map[string]any)
+		groups, _ := rule["apiGroups"].([]any)
+		resources, _ := rule["resources"].([]any)
+		verbs, _ := rule["verbs"].([]any)
+		resourceNames, _ := rule["resourceNames"].([]any)
+
+		coreGroup := false
+		for _, g := range groups {
+			if s, ok := g.(string); ok && s == "" {
+				coreGroup = true
+				break
+			}
+		}
+		if !coreGroup {
+			continue
+		}
+		hasSecrets := false
+		for _, res := range resources {
+			if s, ok := res.(string); ok && s == "secrets" {
+				hasSecrets = true
+				break
+			}
+		}
+		if !hasSecrets {
+			continue
+		}
+		hasCreate := false
+		for _, v := range verbs {
+			if s, ok := v.(string); ok && s == "create" {
+				hasCreate = true
+				break
+			}
+		}
+		if !hasCreate {
+			continue
+		}
+		sawCreateRule = true
+		require.Empty(t, resourceNames,
+			"API Role rule grants `create` on Secrets but is scoped by resourceNames=%v — "+
+				"Kubernetes RBAC silently ignores resourceNames on the create verb, so this rule "+
+				"grants NO create permission. Split into a rule with `verbs: [create]` and no "+
+				"resourceNames, plus a separate rule with the name-scoped verbs (get/update/patch). "+
+				"See LLMSafeSpaces#463.",
+			resourceNames)
+	}
+	require.True(t, sawCreateRule,
+		"API Role must include at least one rule granting `create` on core/secrets (the relay "+
+			"admin handler creates aws-relay-irwa / oci-credentials / gcp-credentials on first config)")
+
+	// Adversarial guard: the name-scoped update/patch rule must also survive.
+	// If a future edit drops this rule, the SECOND call to upsertSecret (when
+	// the Secret already exists — controller path = Update at relay_admin.go:615)
+	// would fail at runtime: "secrets is forbidden ... cannot update resource
+	// secrets". The K8s `update` and `patch` verbs DO honor resourceNames, so
+	// there must be a rule with both verbs scoped to all three credential
+	// Secret names. See #463 review thread (follow-up assertion).
+	relayCredNames := map[string]bool{
+		"oci-credentials": true,
+		"gcp-credentials": true,
+		"aws-relay-irwa":  true,
+	}
+	var sawUpdatePatchRule bool
+	for _, r := range rules {
+		rule, _ := r.(map[string]any)
+		groups, _ := rule["apiGroups"].([]any)
+		resources, _ := rule["resources"].([]any)
+		verbs, _ := rule["verbs"].([]any)
+		names, _ := rule["resourceNames"].([]any)
+
+		coreGroup := false
+		for _, g := range groups {
+			if s, ok := g.(string); ok && s == "" {
+				coreGroup = true
+			}
+		}
+		hasSecrets := false
+		for _, res := range resources {
+			if s, ok := res.(string); ok && s == "secrets" {
+				hasSecrets = true
+			}
+		}
+		if !coreGroup || !hasSecrets {
+			continue
+		}
+		verbSet := map[string]bool{}
+		for _, v := range verbs {
+			if s, ok := v.(string); ok {
+				verbSet[s] = true
+			}
+		}
+		if !verbSet["update"] || !verbSet["patch"] {
+			continue
+		}
+		nameSet := map[string]bool{}
+		for _, n := range names {
+			if s, ok := n.(string); ok {
+				nameSet[s] = true
+			}
+		}
+		if len(nameSet) == 0 {
+			continue // unscoped update/patch is too broad — not this rule
+		}
+		// All three relay-credential names must be in the resourceNames list.
+		allPresent := true
+		for n := range relayCredNames {
+			if !nameSet[n] {
+				allPresent = false
+				break
+			}
+		}
+		if allPresent {
+			sawUpdatePatchRule = true
+			break
+		}
+	}
+	require.True(t, sawUpdatePatchRule,
+		"API Role must include a rule granting update+patch on core/secrets with "+
+			"resourceNames scoping to all three relay-credential Secret names "+
+			"(aws-relay-irwa, oci-credentials, gcp-credentials). Without this, the "+
+			"second call to /admin/relay/{aws,oci,gcp}-creds (Secret exists, upsert "+
+			"path = Update) would 403 at runtime. See #463.")
+}
+
 // =============================================================================
 // InferenceRelay — relay-router chart rendering
 // =============================================================================
@@ -1853,6 +2021,104 @@ func TestRelayRouter_NetworkPolicy_HiddenWhenNetworkPolicyDisabled(t *testing.T)
 		require.NotContains(t, metaName(d), "relay-router",
 			"relay-router NetworkPolicy must NOT render when networkPolicy.enabled is false (master-toggle contract)")
 	}
+}
+
+// TestRelayRouter_NetworkPolicy_AllowsAPIIngress is a regression test for
+// LLMSafeSpaces#466. The relay-router NetworkPolicy originally allowed
+// ingress on TCP 8080 from workspace pods (the proxy path) and the
+// controller pod (its own /metrics scrape via controller/internal/relay/health.go),
+// but NOT from the API pods. The API's relay admin handler ALSO needs to
+// scrape /metrics — RelayAdminHandler.scrapeRouterMetrics in
+// api/internal/handlers/relay_admin.go does this on every
+// GET /api/v1/admin/relay/status to populate the per-relay requestsToday,
+// requests429Today, and activeStreams fields of the admin dashboard.
+//
+// With the API blocked at the NetworkPolicy layer the scrape timed out
+// (~5s, Go HTTP client default) and the handler silently swallowed the
+// error (relay_admin.go:637-640), so the dashboard rendered zeros for
+// those three fields while totalRequests / egressBytes (sourced from the
+// InferenceRelay CR status, populated by the controller's scrape) showed
+// correctly. The bug was invisible in API logs.
+//
+// This test asserts that the rendered NetworkPolicy includes an ingress
+// rule allowing TCP 8080 from a pod matching the API selector labels.
+func TestRelayRouter_NetworkPolicy_AllowsAPIIngress(t *testing.T) {
+	docs := helmTemplate(t, relayEnabledValues)
+
+	var policy map[string]any
+	for _, d := range findByKind(docs, "NetworkPolicy") {
+		if strings.Contains(metaName(d), "relay-router") {
+			policy = d
+			break
+		}
+	}
+	require.NotNil(t, policy, "relay-router NetworkPolicy must render when inferenceRelay is enabled")
+
+	spec, _ := policy["spec"].(map[string]any)
+	ingress, _ := spec["ingress"].([]any)
+	require.NotEmpty(t, ingress, "relay-router NetworkPolicy must have ingress rules")
+
+	// Walk every ingress rule. We accept the rule if it (a) permits TCP 8080
+	// and (b) names the API podSelector via either app.kubernetes.io/component=api
+	// or any equivalent selector that the chart wires up. Match is intentionally
+	// flexible on the *from* shape (namespaceSelector + podSelector, podSelector
+	// alone, etc.) so this test does not over-constrain the chart's choice of
+	// how to express the source — only that the API is a source.
+	var sawAPIRule bool
+	for _, rule := range ingress {
+		rm, _ := rule.(map[string]any)
+
+		// Must permit TCP 8080.
+		allows8080 := false
+		ports, _ := rm["ports"].([]any)
+		for _, p := range ports {
+			pm, _ := p.(map[string]any)
+			if toInt(pm["port"]) == 8080 {
+				proto, _ := pm["protocol"].(string)
+				if proto == "TCP" || proto == "" {
+					allows8080 = true
+					break
+				}
+			}
+		}
+		if !allows8080 {
+			continue
+		}
+
+		// Must mention the API podSelector somewhere in `from`. Look for any
+		// matchLabels entry with app.kubernetes.io/component=api on the API
+		// component (under app.kubernetes.io/name=llmsafespaces, matching the
+		// chart's standard component-labeling convention used elsewhere).
+		from, _ := rm["from"].([]any)
+		for _, src := range from {
+			sm, _ := src.(map[string]any)
+			ps, _ := sm["podSelector"].(map[string]any)
+			ml, _ := ps["matchLabels"].(map[string]any)
+			if comp, ok := ml["app.kubernetes.io/component"].(string); ok && comp == "api" {
+				sawAPIRule = true
+				break
+			}
+		}
+		if sawAPIRule {
+			break
+		}
+	}
+	require.True(t, sawAPIRule,
+		"relay-router NetworkPolicy must allow TCP 8080 ingress from API pods "+
+			"(app.kubernetes.io/component=api). The API's RelayAdminHandler scrapes "+
+			"/metrics on every GET /admin/relay/status — without this rule the dashboard "+
+			"shows zeros for requestsToday/requests429Today/activeStreams. See LLMSafeSpaces#466.")
+
+	// Defensive: assert the policy still has exactly 3 ingress rules so a
+	// future refactor that REPLACES (rather than appends) — e.g. dropping
+	// the workspace path while adding the API path — would silently break
+	// the proxy. The three rules are workspace proxy, controller /metrics
+	// scrape, and API /metrics scrape; each on port 8080.
+	require.Len(t, ingress, 3,
+		"relay-router NetworkPolicy must have exactly 3 ingress rules "+
+			"(workspace proxy, controller /metrics scrape, API /metrics scrape). "+
+			"If you're adding a new source, add a rule rather than replacing one; "+
+			"the workspace and controller rules are not redundant.")
 }
 
 // =============================================================================
