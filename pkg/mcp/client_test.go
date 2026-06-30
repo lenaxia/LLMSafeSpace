@@ -18,6 +18,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/lenaxia/llmsafespaces/pkg/secrets"
 )
 
 func newTestHTTPClient(handler http.Handler) (*HTTPClient, *httptest.Server) {
@@ -123,6 +125,49 @@ func TestHTTPClient_CreateCredential_AutoBindsWorkspace(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.True(t, bindCalled, "auto-bind should fire when WorkspaceID is set")
+}
+
+// TestLLMProviderValue_DeserializesIntoLLMProviderData is the root-cause
+// regression test for issue #435. The bug was a JSON-tag contract mismatch:
+// the MCP emitted a value shape that secrets.LLMProviderData could not
+// deserialize into, so LLMProviderData.Validate() rejected it ("kind is
+// required") and the API returned 400. This test pins the contract directly —
+// marshal the MCP's value type and confirm the server's type accepts it and
+// validates. A future JSON-tag rename on either side that breaks the wire
+// format fails here, not in production. It is the tag-drift analogue of
+// TestValidCredentialKinds_MatchesSecretsValidKinds (which pins enum drift).
+func TestLLMProviderValue_DeserializesIntoLLMProviderData(t *testing.T) {
+	value := llmProviderValue{
+		Kind:    "anthropic",
+		Slug:    "my-anthropic",
+		APIKey:  "sk-test",
+		BaseURL: "https://api.anthropic.test",
+		Default: "anthropic/claude-sonnet-4-5",
+	}
+	raw, err := json.Marshal(value)
+	require.NoError(t, err)
+
+	var serverData secrets.LLMProviderData
+	require.NoError(t, json.Unmarshal(raw, &serverData),
+		"llmProviderValue must deserialize into secrets.LLMProviderData")
+
+	assert.Equal(t, value.Kind, serverData.Kind)
+	assert.Equal(t, value.Slug, serverData.Slug)
+	assert.Equal(t, value.APIKey, serverData.APIKey)
+	assert.Equal(t, value.BaseURL, serverData.BaseURL)
+	assert.Equal(t, value.Default, serverData.Default)
+
+	require.NoError(t, serverData.Validate(),
+		"the server-side llm-provider validator must accept this value shape")
+
+	// Negative pin: a value missing kind reproduces the exact #435 failure —
+	// the server rejects it with "kind is required". Confirms the test actually
+	// exercises the validation gate, not just deserialization.
+	var rejected secrets.LLMProviderData
+	require.NoError(t, json.Unmarshal([]byte(`{"slug":"x","apiKey":"sk"}`), &rejected))
+	err = rejected.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "kind is required")
 }
 
 // ===== ActivateWorkspace =====
