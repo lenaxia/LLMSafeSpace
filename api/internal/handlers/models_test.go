@@ -1274,6 +1274,147 @@ func TestListModels_RelayActive_PersonalKey_NoRemap(t *testing.T) {
 		"free model must NOT be remapped to opencode-relay when relay injector was skipped (personal key)")
 }
 
+// TestListModels_CacheInvalidatedOnRelayInjectedTransition is a regression
+// test for LLMSafeSpaces#467. The model cache stores a snapshot of annotated
+// models keyed only by workspaceID. If the cache was populated while
+// relayInjected=false (pre-injection state — free models providerID="opencode")
+// and a subsequent request lands during the cache TTL (5s) after the relay
+// injector has completed (relayInjected=true now), the cached pre-injection
+// snapshot is served even though the workspace's free models are now resolved
+// through the relay (providerID="opencode-relay") at every other layer
+// (agent-config.json, opencode auth, etc.).
+//
+// Observed in production: a fresh workspace's first /models call landed
+// during the ~20s post-injection cache window (5s API cache + 15s agentd
+// providerCache), returned currentModelProviderID="opencode" alongside a
+// fully pre-injection models[] array. The frontend faithfully forwarded
+// providerID="opencode" in the next /prompt POST. opencode rejected the
+// request because "opencode" is in disabled_providers post-injection and
+// the requested free model lives under "opencode-relay". User sees silent
+// send failure on every first-message-after-workspace-creation attempt.
+//
+// Fix: when serving from cache, re-check the current relayInjected state
+// via relayChecker. If it differs from the cached payload's RelayInjected,
+// evict the cache and re-fetch. The relayChecker call is cheap (hits
+// agentd's own 15s cache in the steady state) compared to letting the
+// stale window serve broken responses for ~20s.
+//
+// This test: pre-populates the cache with relayInjected=false payload,
+// then issues a request with the live relayChecker returning true. The
+// served response MUST reflect relayInjected=true (free model remapped
+// to "opencode-relay"), proving the cache was invalidated and refreshed.
+func TestListModels_CacheInvalidatedOnRelayInjectedTransition(t *testing.T) {
+	clearModelCache()
+	gin.SetMode(gin.TestMode)
+
+	const testPassword = "cache-invalidate-pw"
+	listener, err := net.Listen("tcp", "127.0.0.1:4096")
+	if err != nil {
+		t.Skip("port 4096 not available")
+	}
+	adminListener, err := net.Listen("tcp", "127.0.0.1:4098")
+	if err != nil {
+		t.Skip("port 4098 not available")
+	}
+
+	// Free-tier opencode model — eligible for the relay remap when
+	// relayInjected=true.
+	models := `{"connected":["opencode"],"all":[{"id":"opencode","models":{
+		"big-pickle":{"id":"big-pickle","name":"Big Pickle","cost":{"input":0,"output":0}}
+	}}]}`
+
+	srv := httptest.NewUnstartedServer(authEnforcingHandler(testPassword, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(models))
+	}))
+	srv.Listener = listener
+	srv.Start()
+	defer srv.Close()
+
+	// Live agentd readyz returns relayInjected=true — the injector has run.
+	statuszBody, _ := json.Marshal(agentd.ReadyzResponse{RelayInjected: true})
+	adminSrv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(statuszBody)
+	}))
+	adminSrv.Listener = adminListener
+	adminSrv.Start()
+	defer adminSrv.Close()
+
+	handler := newTestModelsHandler(testPassword)
+	handler.SetModelStore(&mockModelReader{model: "big-pickle"})
+	handler.SetRelayActive(true)
+	handler.SetRelayChecker(func(_ context.Context, _, _ string) bool {
+		req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1:4098/v1/readyz", nil)
+		if err != nil {
+			return false
+		}
+		req.Header.Set("Authorization", "Bearer "+testPassword)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return false
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var rz struct {
+			RelayInjected bool `json:"relay_injected"`
+		}
+		if json.NewDecoder(resp.Body).Decode(&rz) != nil {
+			return false
+		}
+		return rz.RelayInjected
+	})
+
+	// Pre-populate the cache with a pre-injection snapshot — RelayInjected:false,
+	// big-pickle.providerID="opencode". Reproduces the moment the API server
+	// cached a fetch made just before the injector completed.
+	stalePayload := modelCachePayload{
+		Models: []annotatedModel{{
+			ID:            "big-pickle",
+			ProviderID:    "opencode",
+			Name:          "Big Pickle",
+			Enabled:       true,
+			Availability:  ModelFreeTier,
+			Tier:          "free",
+			FreeTier:      true,
+			ProxyRequired: true,
+		}},
+		RelayInjected: false,
+	}
+	serialized, err := json.Marshal(stalePayload)
+	require.NoError(t, err)
+	cache := NewInMemoryModelCache()
+	cache.Set("ws-1", serialized)
+	handler.SetModelCache(cache)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set("userID", "user-1"); c.Next() })
+	router.GET("/api/v1/workspaces/:id/models", handler.ListModels)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/workspaces/ws-1/models", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		Models                 []annotatedModel `json:"models"`
+		CurrentModel           string           `json:"currentModel"`
+		CurrentModelProviderID string           `json:"currentModelProviderID"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	require.Equal(t, "big-pickle", resp.CurrentModel)
+	require.Equal(t, "opencode-relay", resp.CurrentModelProviderID,
+		"cache must be invalidated when relayInjected transitions false→true, "+
+			"so the served response reflects the post-injection relay remap. "+
+			"Issue #467.")
+
+	require.Len(t, resp.Models, 1, "should still return the one model")
+	require.Equal(t, "opencode-relay", resp.Models[0].ProviderID,
+		"models[] entries must also reflect the post-injection remap (same "+
+			"snapshot as currentModelProviderID — they come from the same "+
+			"annotated slice). Issue #467.")
+}
+
 // TestDoReload_EvictsModelCache verifies that doReload evicts the workspace's
 // model cache so the next ListModels call returns fresh data after a credential
 // bind activates new providers (Gap6 — worklog 0186).
