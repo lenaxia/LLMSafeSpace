@@ -57,13 +57,17 @@ spec:
     # per-relay metrics — RelayAdminHandler.scrapeRouterMetrics populates
     # requestsToday/requests429Today/activeStreams; without this rule the
     # scrape times out and those fields render as zeros). Issue #466.
+    # Uses the operator-overridable apiPodLabelSelector value, matching
+    # the convention used by every other API-selecting NetworkPolicy in
+    # this chart (workspace-network-policy, datastore-network-policy,
+    # api-network-policy) and by the sibling controller rule above.
     - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ .Release.Namespace }}
           podSelector:
             matchLabels:
-              {{- include "llmsafespaces.api.selectorLabels" . | nindent 14 }}
+              {{- toYaml .Values.networkPolicy.apiPodLabelSelector | nindent 14 }}
       ports:
         - protocol: TCP
           port: 8080

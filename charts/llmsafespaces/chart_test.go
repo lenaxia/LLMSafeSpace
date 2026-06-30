@@ -1940,6 +1940,17 @@ func TestRelayRouter_NetworkPolicy_AllowsAPIIngress(t *testing.T) {
 			"(app.kubernetes.io/component=api). The API's RelayAdminHandler scrapes "+
 			"/metrics on every GET /admin/relay/status — without this rule the dashboard "+
 			"shows zeros for requestsToday/requests429Today/activeStreams. See LLMSafeSpaces#466.")
+
+	// Defensive: assert the policy still has exactly 3 ingress rules so a
+	// future refactor that REPLACES (rather than appends) — e.g. dropping
+	// the workspace path while adding the API path — would silently break
+	// the proxy. The three rules are workspace proxy, controller /metrics
+	// scrape, and API /metrics scrape; each on port 8080.
+	require.Len(t, ingress, 3,
+		"relay-router NetworkPolicy must have exactly 3 ingress rules "+
+			"(workspace proxy, controller /metrics scrape, API /metrics scrape). "+
+			"If you're adding a new source, add a rule rather than replacing one; "+
+			"the workspace and controller rules are not redundant.")
 }
 
 // =============================================================================
