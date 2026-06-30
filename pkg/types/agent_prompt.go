@@ -36,7 +36,8 @@ type WorkspacePrompt struct {
 }
 
 // EffectivePrompt is the fully resolved system prompt delivered to the pod
-// via the bootstrap endpoint and materialized into /tmp/admin-prompt.md.
+// via the bootstrap endpoint and materialized into agentd.AdminPromptPath
+// (/sandbox-runtime/admin-prompt.md).
 type EffectivePrompt struct {
 	PlatformPrompt string `json:"platformPrompt,omitempty"`
 	OrgPrompt      string `json:"orgPrompt,omitempty"`
