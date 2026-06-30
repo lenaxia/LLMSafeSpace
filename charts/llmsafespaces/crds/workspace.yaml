@@ -131,6 +131,12 @@ spec:
                     cpuPinning:
                       type: boolean
                       default: false
+                    cpuLimit:
+                      type: string
+                      pattern: '^([1-9][0-9]*m|[1-9][0-9]*\.[0-9]+|0\.[0-9]*[1-9][0-9]*)$'
+                    memoryLimit:
+                      type: string
+                      pattern: '^[1-9][0-9]*(Ki|Mi|Gi)$'
                 restartGeneration:
                   type: integer
                   format: int64

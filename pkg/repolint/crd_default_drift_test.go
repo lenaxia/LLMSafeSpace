@@ -58,6 +58,29 @@ func TestWorkspaceCRD_DefaultsMatchGoAnnotations(t *testing.T) {
 		memory := mustStepInto(t, resources, "properties", "memory")
 		assertDefaultValue(t, memory, "resources.memory", "512Mi")
 	})
+
+	t.Run("resources limit fields present with patterns (no default)", func(t *testing.T) {
+		// cpuLimit/memoryLimit have no +kubebuilder:default (optional, omitempty)
+		// but carry validation patterns and are actively used by the controller
+		// (pod_builder.go). Their absence from the CRD was the same drift class
+		// as the defaulted fields — kubectl-only creators could set values the
+		// controller then rejects. Assert presence + pattern here.
+		resources := mustStepInto(t, specProps, "resources", "properties")
+
+		cpuLimit := mustStepInto(t, resources, "cpuLimit")
+		cpuLimitType := mustStepInto(t, cpuLimit, "type")
+		assert.Equal(t, "string", cpuLimitType.Value, "cpuLimit type")
+		pat, err := stepInto(cpuLimit, "pattern")
+		require.NoError(t, err, "cpuLimit must declare its validation pattern")
+		assert.Contains(t, pat.Value, "[1-9][0-9]*m", "cpuLimit pattern")
+
+		memoryLimit := mustStepInto(t, resources, "memoryLimit")
+		memoryLimitType := mustStepInto(t, memoryLimit, "type")
+		assert.Equal(t, "string", memoryLimitType.Value, "memoryLimit type")
+		patM, err := stepInto(memoryLimit, "pattern")
+		require.NoError(t, err, "memoryLimit must declare its validation pattern")
+		assert.Contains(t, patM.Value, "Ki|Mi|Gi", "memoryLimit pattern")
+	})
 }
 
 // navigate walks a yaml.Node document along the given keys using stepInto.

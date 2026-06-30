@@ -99,17 +99,14 @@ func TestEnvtest_WorkspaceDefaultsAppliedByAPIServer(t *testing.T) {
 	assert.Equal(t, int32(5), fetched.Spec.MaxActiveSessions, "MaxActiveSessions default must be applied")
 	assert.Equal(t, "ReadWriteOnce", fetched.Spec.Storage.AccessMode, "Storage.AccessMode default must be applied")
 
-	// AutoSuspend is a pointer-to-struct field. Whether the API server's
-	// OpenAPI defaulting materialises a nested object from default: {} (added
-	// in the #281 fix) — and therefore applies the sub-field defaults below —
-	// is not yet verified end-to-end: this environment has no setup-envtest
-	// binaries, and the claim depends on kube-apiserver defaulting semantics
-	// for pointer-to-struct with an object default. The guard below keeps the
-	// test green either way; once the envtest CI run confirms AutoSuspend is
-	// non-nil post-create, the `if` guard should be removed and these
-	// assertions made unconditional. Tracked in #281.
-	if fetched.Spec.AutoSuspend != nil {
-		assert.True(t, fetched.Spec.AutoSuspend.Enabled, "AutoSuspend.Enabled must default to true (PR #231 class)")
-		assert.Equal(t, int64(86400), fetched.Spec.AutoSuspend.IdleTimeoutSeconds, "IdleTimeoutSeconds default must be applied")
-	}
+	// AutoSuspend is a pointer-to-struct with default: {} on its OpenAPI
+	// schema (added in #281). The CI envtest workflow (envtest.yml) installs
+	// setup-envtest and sets KUBEBUILDER_ASSETS, so this runs against a real
+	// kube-apiserver — if default: {} does NOT materialise the nested object
+	// (i.e. AutoSuspend stays nil), these assertions fail and surface the gap.
+	// That is the intended behavior: this test is the end-to-end validation of
+	// the apiserver-defaulting claim, not just the Go defaulter.
+	require.NotNil(t, fetched.Spec.AutoSuspend, "AutoSuspend must be materialized by default: {} (apiserver defaulting)")
+	assert.True(t, fetched.Spec.AutoSuspend.Enabled, "AutoSuspend.Enabled must default to true (PR #231 class)")
+	assert.Equal(t, int64(86400), fetched.Spec.AutoSuspend.IdleTimeoutSeconds, "IdleTimeoutSeconds default must be applied")
 }
