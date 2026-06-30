@@ -31,6 +31,19 @@ import { useClearPendingUnread, useAddPendingQuestion, useAddPendingPermission, 
 
 type StreamPart = { type: "text" | "thinking" | "tool"; text: string; toolState?: string; toolCallID?: string; toolInput?: unknown; toolOutput?: string };
 
+// messageIdentityKey returns a stable identity for a chat message, used to tell
+// when an optimistic local message (id `local-N`) has round-tripped into server
+// history. It deliberately excludes `id` (optimistic ids never match server
+// ids) and `createdAt` (server messages may omit it — see transformHistory), so
+// neither is a reliable match key. (role, text) is the simplest key that
+// recognises the same user message on both sides of the wire. Known limitation:
+// two consecutive identical messages collide on this key (see issue #447).
+function messageIdentityKey(m: Message): string {
+  const text = m.parts
+    .map((p) => ("text" in p && typeof p.text === "string" ? p.text : ""))
+    .join("");
+  return `${m.role}|${text}`;
+}
 
 export function ChatPage() {
   const { workspaceId, sessionId } = useParams();
@@ -316,7 +329,12 @@ export function ChatPage() {
       const msgs = freshHistory?.pages.flatMap((p) => p.messages) ?? [];
       if (msgs.length > 0) {
         setSseStreamParts([]);
-        setLocalMessages([]);
+        // #447: only drop optimistic messages the server has demonstrably caught
+        // up with. Clearing localMessages unconditionally wiped the just-sent user
+        // bubble when an idle/reconnect refetch landed during the eventual-
+        // consistency window before opencode persisted the new message.
+        const historyKeys = new Set(msgs.map(messageIdentityKey));
+        setLocalMessages((prev) => prev.filter((m) => !historyKeys.has(messageIdentityKey(m))));
       }
       setSessionErrors([]);
       isReconnectMode.current = false;
