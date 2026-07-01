@@ -596,9 +596,10 @@ func RecordRequestBufferGlobalFull(workspaceID string) {
 //
 // path SHOULD carry the opencode-side path with the session-ID and any
 // other high-cardinality segments replaced by placeholders (e.g. `:id`)
-// before this is called — helpers proxy_path_sanitize.go do that
-// normalization for the callers. workspaceID and status are labeled
-// verbatim.
+// before this is called — sanitizePathForMetric in
+// api/internal/handlers/proxy_upstream_observability.go does that
+// normalization for the current callers. workspaceID and status are
+// labeled verbatim.
 func RecordUpstream5xx(workspaceID, path, status string) {
 	if workspaceID == "" {
 		workspaceID = "unknown"

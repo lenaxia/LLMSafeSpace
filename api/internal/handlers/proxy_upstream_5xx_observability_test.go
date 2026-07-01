@@ -30,8 +30,12 @@ import (
 //   1. On upstream 5xx, a Warn log fires with workspaceID/path/upstreamStatus/bodyPreview.
 //   2. On upstream 5xx, the package-level counter `api_upstream_5xx_total`
 //      is incremented with the correct label values.
-//   3. Legacy behavior unchanged: 2xx and 4xx do NOT touch the counter and
-//      do NOT emit the 5xx-specific log line.
+//   3. Legacy behavior unchanged: 2xx responses do NOT touch the counter
+//      and do NOT emit the 5xx-specific log line. 4xx status codes are
+//      likewise out of scope for this signal by design — the
+//      middleware's api_requests_total{status} already tracks 4xx
+//      volume; a separate 4xx counter here would be duplication.
+//      Only 2xx is negatively tested below.
 
 // proxyCaptureLogger implements pkginterfaces.LoggerInterface but stores
 // every call for later assertion. Renamed from a shorter identifier to
