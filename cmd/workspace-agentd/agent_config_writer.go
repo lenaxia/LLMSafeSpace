@@ -62,7 +62,7 @@ type AgentConfigWriter struct {
 	model       string          // fully-qualified "providerID/modelID" form; "" = no model
 	relay       *relaySource    // nil = relay not yet injected / skipped
 	adminPrompt string          // admin-configured system prompt from agentd.AdminPromptPath; "" = none
-	agentsRaw   json.RawMessage // existing "agents" config from loadExisting, preserved across rebuilds
+	agentRaw    json.RawMessage // existing "agent" config from loadExisting, preserved across rebuilds
 }
 
 // newAgentConfigWriter creates the writer and initializes its sources
@@ -88,14 +88,14 @@ func (w *AgentConfigWriter) loadExisting() {
 	var cfg struct {
 		Provider json.RawMessage `json:"provider"`
 		Model    string          `json:"model,omitempty"`
-		Agents   json.RawMessage `json:"agents,omitempty"`
+		Agent    json.RawMessage `json:"agent,omitempty"`
 	}
 	if json.Unmarshal(data, &cfg) != nil {
 		return
 	}
 	w.providerRaw = cfg.Provider
 	w.model = cfg.Model
-	w.agentsRaw = cfg.Agents
+	w.agentRaw = cfg.Agent
 
 	// 2026-06-23 cold-start optimization (item #1a, Phase D): detect
 	// a pre-boot-injected relay block and set the writer's relay
@@ -273,39 +273,48 @@ func (w *AgentConfigWriter) rebuild() error {
 		cfg["model"] = modelJSON
 	}
 
-	// Merge admin prompt into agents config. Sets agents.build.system so the
-	// prompt is prepended to the system prompt by opencode's LLM runner
-	// (agent.info.system is placed before system.baseline). Existing agents
-	// config from loadExisting is preserved; admin prompt overrides build.system.
-	if w.adminPrompt != "" || len(w.agentsRaw) > 0 {
-		agents := make(map[string]json.RawMessage)
-		if len(w.agentsRaw) > 0 {
-			_ = json.Unmarshal(w.agentsRaw, &agents)
+	// Merge admin prompt into opencode's `agent` config block. Sets
+	// agent.build.prompt so opencode injects it as the build agent's
+	// system prompt (see AgentConfig at https://opencode.ai/config.json).
+	// Existing agent config from loadExisting is preserved; the admin
+	// prompt overrides only agent.build.prompt.
+	//
+	// LLMSafeSpaces#486: this block previously emitted `agents.build.system`,
+	// which does not exist in opencode's config schema — the top-level key
+	// is `agent` (singular) and the AgentConfig field is `prompt`, not
+	// `system`. Every non-empty adminPrompt made opencode reject the
+	// config with ConfigInvalidError → all session endpoints 500'd.
+	// Enforced by TestAgentConfigWriter_Rebuild_MatchesOpencodeSchema
+	// (validates rebuild output against opencode's actual JSON schema).
+	if w.adminPrompt != "" || len(w.agentRaw) > 0 {
+		agent := make(map[string]json.RawMessage)
+		if len(w.agentRaw) > 0 {
+			_ = json.Unmarshal(w.agentRaw, &agent)
 		}
 		if w.adminPrompt != "" {
 			// Deep-merge into any existing build agent config so we only
-			// override "system" and preserve sibling fields (tools, model,
-			// mode, etc.) rather than wholesale-replacing the build agent.
+			// override "prompt" and preserve sibling fields (tools, model,
+			// mode, temperature, etc.) rather than wholesale-replacing.
 			var existingBuild map[string]json.RawMessage
-			if raw, ok := agents["build"]; ok {
+			if raw, ok := agent["build"]; ok {
 				_ = json.Unmarshal(raw, &existingBuild)
 			}
 			if existingBuild == nil {
 				existingBuild = map[string]json.RawMessage{}
 			}
-			systemJSON, _ := json.Marshal(w.adminPrompt)
-			existingBuild["system"] = systemJSON
+			promptJSON, _ := json.Marshal(w.adminPrompt)
+			existingBuild["prompt"] = promptJSON
 			buildJSON, err := json.Marshal(existingBuild)
 			if err != nil {
 				return fmt.Errorf("agent-config writer: marshal build agent: %w", err)
 			}
-			agents["build"] = buildJSON
+			agent["build"] = buildJSON
 		}
-		agentsJSON, err := json.Marshal(agents)
+		agentJSON, err := json.Marshal(agent)
 		if err != nil {
-			return fmt.Errorf("agent-config writer: marshal agents: %w", err)
+			return fmt.Errorf("agent-config writer: marshal agent: %w", err)
 		}
-		cfg["agents"] = agentsJSON
+		cfg["agent"] = agentJSON
 	}
 
 	output, err := json.MarshalIndent(cfg, "", "  ")
