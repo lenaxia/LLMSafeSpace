@@ -81,12 +81,10 @@ describe("relayApi", () => {
       vi.mocked(api.post).mockResolvedValue({ deployed: true });
       await relayApi.deploy({
         upstreamURL: "https://example.com",
-        routerEndpoint: "gw:51820",
         providers: ["oci", "gcp"],
       });
       expect(api.post).toHaveBeenCalledWith("/admin/relay/deploy", {
         upstreamURL: "https://example.com",
-        routerEndpoint: "gw:51820",
         providers: ["oci", "gcp"],
       });
     });

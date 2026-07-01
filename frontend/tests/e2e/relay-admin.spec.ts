@@ -48,7 +48,6 @@ const mockSetupNotDeployed = {
   awsConfigured: false,
   ociConfigured: false,
   gcpConfigured: false,
-  wireGuardEndpoint: "",
 };
 
 const mockSetupDeployed = {

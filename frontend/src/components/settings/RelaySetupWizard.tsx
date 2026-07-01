@@ -79,9 +79,6 @@ export function RelaySetupWizard({ onComplete }: { onComplete?: () => void }) {
   const [addingProvider, setAddingProvider] = useState<string | null>(null);
   const [formData, setFormData] = useState<Record<string, Record<string, string>>>({});
   const [saving, setSaving] = useState(false);
-  const [deployConfig, setDeployConfig] = useState({
-    routerEndpoint: "",
-  });
   const [deploying, setDeploying] = useState(false);
   const { toast } = useToast();
 
@@ -141,10 +138,6 @@ export function RelaySetupWizard({ onComplete }: { onComplete?: () => void }) {
   };
 
   const handleDeploy = async () => {
-    if (!deployConfig.routerEndpoint) {
-      toast("WireGuard endpoint is required", "error");
-      return;
-    }
     const providers = configuredProviders;
     if (providers.length === 0) {
       toast("Configure at least one provider first", "error");
@@ -153,7 +146,6 @@ export function RelaySetupWizard({ onComplete }: { onComplete?: () => void }) {
     setDeploying(true);
     try {
       await relayApi.deploy({
-        routerEndpoint: deployConfig.routerEndpoint,
         providers,
       });
       toast("Relay fleet deployed");
@@ -395,19 +387,6 @@ export function RelaySetupWizard({ onComplete }: { onComplete?: () => void }) {
             <Wifi className="h-4 w-4" /> Deploy
           </h4>
           <div className="space-y-3">
-            <div>
-              <label className="text-sm font-medium">WireGuard Endpoint</label>
-              <p className="text-xs text-muted-foreground mb-1">
-                DNS name that relay VMs use to connect back to the cluster via WireGuard (UDP port 51820).
-                Set your relay-router Service to LoadBalancer type, then use its external DNS name here.
-              </p>
-              <input
-                className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
-                placeholder="relay-gw.example.com"
-                value={deployConfig.routerEndpoint}
-                onChange={(e) => setDeployConfig({ ...deployConfig, routerEndpoint: e.target.value })}
-              />
-            </div>
             <div className="text-sm text-muted-foreground">
               Providers:{" "}
               {configuredProviders.map((p) => p.toUpperCase()).join(", ")}
@@ -417,7 +396,7 @@ export function RelaySetupWizard({ onComplete }: { onComplete?: () => void }) {
             </div>
             <button
               onClick={handleDeploy}
-              disabled={deploying || !deployConfig.routerEndpoint}
+              disabled={deploying}
               className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-50"
             >
               {deploying ? "Deploying..." : "Deploy Relay Fleet"}
