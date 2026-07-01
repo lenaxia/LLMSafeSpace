@@ -107,4 +107,4 @@ Zero real findings remain.
 - `frontend/src/components/settings/RelaySetupWizard.tsx`
 - `frontend/src/components/settings/RelaySetupWizard.test.tsx`
 - `frontend/tests/e2e/relay-admin.spec.ts`
-- `worklogs/NNNN_2026-06-30_relay-wizard-remove-stale-wireguard-field.md` (this file)
+- `worklogs/0585_2026-06-30_relay-wizard-remove-stale-wireguard-field.md` (this file)
