@@ -108,4 +108,4 @@ None.
 - `frontend/src/components/chat/ChatHistoryErrorBanner.test.tsx` — new file. 7 banner unit tests. Fixtures rewritten in review round to real production shapes.
 - `frontend/src/pages/ChatPage.tsx` — destructures isError/error/refetch from useMessageHistory; renders the banner.
 - `frontend/src/pages/ChatPage.historyError.test.tsx` — new file. 4 integration tests. Fixture updated in review round to real production shape.
-- `worklogs/NNNN_2026-07-01_chat-history-error-banner.md` (this file).
+- `worklogs/0588_2026-07-01_chat-history-error-banner.md` (this file).
