@@ -110,4 +110,4 @@ None.
 - `api/internal/handlers/proxy_upstream_5xx_observability_test.go` — new file. 3 integration tests + capturing logger + counter helper.
 - `api/internal/handlers/proxy_upstream_observability_test.go` — new file (added in review round). Unit tests for sanitizer + preview cap + defensive nil checks.
 - `api/internal/services/metrics/metrics.go` — new CounterVec + `RecordUpstream5xx` + `Upstream5xxCounter` accessor. Fixed a doc comment referencing a non-existent filename.
-- `worklogs/NNNN_2026-07-01_proxy-upstream-5xx-observability.md` (this file).
+- `worklogs/0587_2026-07-01_proxy-upstream-5xx-observability.md` (this file).
