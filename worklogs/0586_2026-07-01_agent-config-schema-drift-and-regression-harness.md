@@ -102,4 +102,4 @@ Adversarial validation: temporarily reverted the writer fix (changed `agent` bac
 - `cmd/workspace-agentd/testdata/opencode-config.schema.json` — new file. 37 KB pinned copy of opencode's config schema.
 - `cmd/workspace-agentd/testdata/REFRESH.md` — new file. Refresh procedure, cadence, rationale.
 - `go.mod` — promotes `github.com/santhosh-tekuri/jsonschema/v6` from indirect to direct. No version bump.
-- `worklogs/NNNN_2026-07-01_agent-config-schema-drift-and-regression-harness.md` (this file).
+- `worklogs/0586_2026-07-01_agent-config-schema-drift-and-regression-harness.md` (this file).
