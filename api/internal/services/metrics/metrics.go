@@ -507,6 +507,29 @@ var (
 		},
 		[]string{"workspace_id"},
 	)
+
+	// upstream5xxTotal counts 5xx responses returned by the upstream
+	// opencode process for proxied requests. Emitted by both the streaming
+	// proxy path (doProxy) and the non-streaming history path
+	// (doHistoryRequest). Complements the api middleware's
+	// api_requests_total{status} counter — that one records the API's
+	// OUTBOUND status; this one records the UPSTREAM status. They differ
+	// when the API wraps upstream errors (e.g. upstream 500 -> API 502)
+	// or passes them through. See LLMSafeSpaces#488 for the incident this
+	// exists to make debuggable: opencode returned 500 on all session
+	// history reads due to a ConfigInvalidError, and there was no
+	// server-side observability of that fact.
+	//
+	// The `path` label carries the OPENCODE-side path (e.g. `/session`,
+	// `/session/:id/message`) with the session-ID replaced by `:id` so the
+	// cardinality stays bounded. Callers must sanitize before passing.
+	upstream5xxTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "api_upstream_5xx_total",
+			Help: "Total upstream (opencode) 5xx responses observed by the proxy layer (LLMSafeSpaces#488)",
+		},
+		[]string{"workspace_id", "path", "upstream_status"},
+	)
 )
 
 func RecordRequestBufferTimeout(workspaceID string) {
@@ -564,4 +587,35 @@ func RecordRequestBufferGlobalFull(workspaceID string) {
 		workspaceID = "unknown"
 	}
 	requestBufferGlobalFullTotal.WithLabelValues(workspaceID).Inc()
+}
+
+// RecordUpstream5xx (LLMSafeSpaces#488) increments the counter for every
+// upstream (opencode) 5xx response the proxy layer observes. Called by
+// both doProxy (streaming proxy) and doHistoryRequest (non-streaming
+// history fetch). See the counter definition for full rationale.
+//
+// path SHOULD carry the opencode-side path with the session-ID and any
+// other high-cardinality segments replaced by placeholders (e.g. `:id`)
+// before this is called — helpers proxy_path_sanitize.go do that
+// normalization for the callers. workspaceID and status are labeled
+// verbatim.
+func RecordUpstream5xx(workspaceID, path, status string) {
+	if workspaceID == "" {
+		workspaceID = "unknown"
+	}
+	if path == "" {
+		path = "unknown"
+	}
+	if status == "" {
+		status = "0"
+	}
+	upstream5xxTotal.WithLabelValues(workspaceID, path, status).Inc()
+}
+
+// Upstream5xxCounter (LLMSafeSpaces#488) exposes the underlying
+// CounterVec so tests can reset it between cases (Prometheus counters
+// are process-global) and assert on labeled values. Not intended for
+// production code paths — use RecordUpstream5xx.
+func Upstream5xxCounter() *prometheus.CounterVec {
+	return upstream5xxTotal
 }
