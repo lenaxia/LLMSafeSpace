@@ -5,6 +5,7 @@ import { workspacesApi } from "../api/workspaces";
 import { ApiClientError } from "../api/client";
 import { useWorkspaceStatus } from "../hooks/useWorkspaces";
 import { useMessageHistory } from "../hooks/useMessageHistory";
+import { ChatHistoryErrorBanner } from "../components/chat/ChatHistoryErrorBanner";
 import { useActivateWorkspace } from "../hooks/useActivateWorkspace";
 import { useChatStream } from "../hooks/useChatStream";
 import { useEventStream } from "../hooks/useEventStream";
@@ -219,7 +220,16 @@ export function ChatPage() {
   // root-cause trace.
   const activeWorkspaceId = isReady ? workspaceId : undefined;
   const sseWorkspaceId = workspaceId;
-  const { data: history, isLoading: historyLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useMessageHistory(activeWorkspaceId, sessionId);
+  const {
+    data: history,
+    isLoading: historyLoading,
+    isError: historyIsError,
+    error: historyError,
+    refetch: historyRefetch,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useMessageHistory(activeWorkspaceId, sessionId);
 
   const isSessionBusy = useIsSessionBusy(sessionId ?? "");
 
@@ -980,6 +990,18 @@ export function ChatPage() {
           <span>{chatError}</span>
           <button onClick={clearError} className="underline hover:no-underline">Dismiss</button>
         </div>
+      )}
+
+      {/* LLMSafeSpaces#490: surface message-history query failures as an
+          inline diagnostic banner rather than silently rendering an
+          empty state. Companion to the server-side observability in
+          #488 — the banner exposes opencode's err_XXXXXXXX ref so
+          operators can cross-reference workspace-pod logs. */}
+      {historyIsError && (
+        <ChatHistoryErrorBanner
+          error={historyError}
+          onRetry={() => void historyRefetch()}
+        />
       )}
 
       {historyLoading || createSessionMutation.isPending ? (
