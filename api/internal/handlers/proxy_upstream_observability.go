@@ -26,14 +26,16 @@ const upstream5xxBodyPreviewCap = 512
 // See LLMSafeSpaces#488 for the incident this exists to make debuggable.
 //
 // body may be nil (streaming proxy path) — the preview field is set to
-// "" in that case and the caller comment should note the streaming
-// caveat.
+// "" in that case; caller comment should note the streaming caveat.
 //
-// Path SHOULD be sanitized to bound label cardinality (session IDs
-// replaced by :id, etc.). The current callers use per-call literal
-// paths, which is acceptable because those paths are already bounded
-// in shape (one per opencode endpoint). If callers grow, add a
-// sanitizeUpstreamPath helper here.
+// The `path` argument SHOULD be the raw opencode-side path with the
+// original session ID intact (e.g. `/session/ses_abc/message`) — this
+// helper sanitizes it internally via sanitizePathForMetric for the
+// metric label (session IDs collapse to `:id`) while preserving the
+// raw path in the log line so operators can grep for a specific
+// session's failure history. The two dimensions are intentionally
+// asymmetric: metric labels must be bounded-cardinality; log lines
+// benefit from full detail.
 func recordUpstream5xx(logger pkginterfaces.LoggerInterface, workspaceID, path string, status int, body []byte) {
 	preview := ""
 	if len(body) > 0 {
