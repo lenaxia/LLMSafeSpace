@@ -402,26 +402,23 @@ func TestAgentConfigWriter_BootThenRelayInjection(t *testing.T) {
 	assert.Contains(t, cfg.DisabledProviders, "opencode")
 }
 
-// TestAgentConfigWriter_Rebuild_AdminPromptInjectsIntoBuildSystem is a
+// TestAgentConfigWriter_Rebuild_AdminPromptInjectsIntoBuildPrompt is a
 // round-trip test for the admin-prompt → agent-config.json merge path
-// (Epic agent-customization, PR #416). The bootstrap subcommand writes
-// the merged platform→org→role→user prompt to agentd.AdminPromptPath;
-// the writer reads it via loadAdminPrompt and rebuild merges it into
-// agents.build.system (opencode's contract: build.system overrides the
-// system.baseline prompt for the build agent).
+// (Epic agent-customization, PR #416; fixed schema in LLMSafeSpaces#486).
+// The bootstrap subcommand writes the merged platform→org→role→user
+// prompt to agentd.AdminPromptPath; the writer reads it via
+// loadAdminPrompt and rebuild merges it into `agent.build.prompt`
+// (opencode's config-schema contract for the build agent's system prompt).
 //
-// Filed as the highest-value missing test for the admin-prompt feature
-// per #484 review. The bootstrap-side write is tested in bootstrap_test.go
-// (TestRunBootstrapCommand_WritesAdminPrompt); this test covers the
-// downstream side — given the in-memory `adminPrompt` state that
-// loadAdminPrompt would produce, the rebuild output contains the prompt
-// at the exact JSON path opencode reads (`agents.build.system`).
+// This test validates the correct JSON path (`agent.build.prompt`, per
+// https://opencode.ai/config.json). Schema compliance of the full
+// rendered file is validated by TestAgentConfigWriter_Rebuild_MatchesOpencodeSchema.
 //
 // We bypass loadAdminPrompt's os.ReadFile (one-line glue, not worth a
 // test seam) and set w.adminPrompt directly. The interesting branching
-// is the merge into the agents.build map, which preserves sibling fields
+// is the merge into the agent.build map, which preserves sibling fields
 // of any pre-existing build agent config.
-func TestAgentConfigWriter_Rebuild_AdminPromptInjectsIntoBuildSystem(t *testing.T) {
+func TestAgentConfigWriter_Rebuild_AdminPromptInjectsIntoBuildPrompt(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent-config.json")
 	w := newAgentConfigWriter(path)
@@ -438,37 +435,37 @@ func TestAgentConfigWriter_Rebuild_AdminPromptInjectsIntoBuildSystem(t *testing.
 	require.NoError(t, err)
 
 	var cfg struct {
-		Agents map[string]struct {
-			System string `json:"system"`
-		} `json:"agents"`
+		Agent map[string]struct {
+			Prompt string `json:"prompt"`
+		} `json:"agent"`
 	}
 	require.NoError(t, json.Unmarshal(written, &cfg))
 
-	require.Contains(t, cfg.Agents, "build",
-		"rebuild must create an `agents.build` entry when adminPrompt is set")
-	require.Equal(t, adminPromptBody, cfg.Agents["build"].System,
-		"agents.build.system must contain the exact admin prompt body — "+
-			"this is the JSON path opencode reads for build-agent system prompt overrides")
+	require.Contains(t, cfg.Agent, "build",
+		"rebuild must create an `agent.build` entry when adminPrompt is set")
+	require.Equal(t, adminPromptBody, cfg.Agent["build"].Prompt,
+		"agent.build.prompt must contain the exact admin prompt body — "+
+			"this is the JSON path opencode reads for build-agent system prompt overrides "+
+			"(see https://opencode.ai/config.json). LLMSafeSpaces#486.")
 }
 
 // TestAgentConfigWriter_Rebuild_AdminPromptPreservesExistingBuildAgent
-// asserts the deep-merge contract documented at agent_config_writer.go:286-292:
-// when an `agents.build` config exists in the loaded agent-config.json
-// (e.g. set by a previous boot's relay injector or a user's manual edit),
-// admin-prompt rebuild MUST override only `system` and preserve siblings
-// (mode, tools, etc.). Wholesale replacement would silently nuke user
-// customization.
+// asserts the deep-merge contract: when an `agent.build` config exists
+// in the loaded agent-config.json (e.g. set by a previous boot's relay
+// injector or a user's manual edit), admin-prompt rebuild MUST override
+// only `prompt` and preserve siblings (mode, tools, temperature, etc.).
+// Wholesale replacement would silently nuke user customization.
 func TestAgentConfigWriter_Rebuild_AdminPromptPreservesExistingBuildAgent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent-config.json")
 	existing := `{
 		"$schema": "https://opencode.ai/config.json",
 		"provider": {"openai": {"options": {"apiKey": "sk-test"}}},
-		"agents": {
+		"agent": {
 			"build": {
-				"mode": "subagent",
+				"mode": "primary",
 				"tools": {"bash": false, "write": true},
-				"system": "OLD system prompt"
+				"prompt": "OLD prompt"
 			}
 		}
 	}`
@@ -482,19 +479,18 @@ func TestAgentConfigWriter_Rebuild_AdminPromptPreservesExistingBuildAgent(t *tes
 	require.NoError(t, err)
 
 	var cfg struct {
-		Agents map[string]struct {
-			Mode   string                 `json:"mode"`
-			Tools  map[string]bool        `json:"tools"`
-			System string                 `json:"system"`
-			Extras map[string]interface{} `json:"-"`
-		} `json:"agents"`
+		Agent map[string]struct {
+			Mode   string          `json:"mode"`
+			Tools  map[string]bool `json:"tools"`
+			Prompt string          `json:"prompt"`
+		} `json:"agent"`
 	}
 	require.NoError(t, json.Unmarshal(written, &cfg))
 
-	build := cfg.Agents["build"]
-	require.Equal(t, "NEW admin prompt body", build.System,
-		"admin prompt must override the existing system field")
-	require.Equal(t, "subagent", build.Mode,
+	build := cfg.Agent["build"]
+	require.Equal(t, "NEW admin prompt body", build.Prompt,
+		"admin prompt must override the existing prompt field")
+	require.Equal(t, "primary", build.Mode,
 		"sibling field `mode` must be preserved across the admin-prompt merge")
 	require.Equal(t, false, build.Tools["bash"],
 		"sibling field `tools.bash` must be preserved across the admin-prompt merge")
