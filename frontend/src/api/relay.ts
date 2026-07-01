@@ -13,7 +13,6 @@ export interface RelaySetup {
   awsConfigured: boolean;
   ociConfigured: boolean;
   gcpConfigured: boolean;
-  wireGuardEndpoint: string;
 }
 
 export interface RelayInstance {
@@ -93,8 +92,6 @@ export interface AWSCredsRequest {
 
 export interface DeployRequest {
   upstreamURL?: string;
-  routerEndpoint: string;
-  wireGuardPort?: number;
   providers: string[];
 }
 

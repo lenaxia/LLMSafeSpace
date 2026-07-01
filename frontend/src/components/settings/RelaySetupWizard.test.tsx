@@ -30,7 +30,6 @@ const mockSetup = {
   awsConfigured: false,
   ociConfigured: false,
   gcpConfigured: false,
-  wireGuardEndpoint: "",
 };
 
 describe("RelaySetupWizard", () => {
@@ -196,21 +195,41 @@ describe("RelaySetupWizard", () => {
       expect(screen.getByText("Configured")).toBeInTheDocument();
     });
 
-    // Fill WireGuard endpoint and deploy
-    await userEvent.type(
-      screen.getByPlaceholderText("relay-gw.example.com"),
-      "gw.example.com",
-    );
-
     fireEvent.click(screen.getByText("Deploy Relay Fleet"));
 
     await waitFor(() => {
       expect(relayApi.deploy).toHaveBeenCalledWith(
         expect.objectContaining({
-          routerEndpoint: "gw.example.com",
           providers: ["aws"],
         }),
       );
+    });
+  });
+
+  // Regression for issue #464: WireGuard was removed from the router↔relay path
+  // (worklog 0447) and the backend deploy handler ignores routerEndpoint. The
+  // wizard must not render a WireGuard endpoint field, and deploy must not be
+  // gated on (or send) any endpoint value.
+  it("does not render a WireGuard endpoint field and deploys without one", async () => {
+    vi.mocked(relayApi.getSetup).mockResolvedValue({ ...mockSetup, awsConfigured: true });
+    vi.mocked(relayApi.deploy).mockResolvedValue({ deployed: true });
+    renderWizard();
+
+    await waitFor(() => expect(screen.getByText("AWS Relay")).toBeInTheDocument());
+
+    expect(screen.queryByText("WireGuard Endpoint")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("relay-gw.example.com")).not.toBeInTheDocument();
+
+    const deployButton = screen.getByText("Deploy Relay Fleet");
+    expect(deployButton).not.toBeDisabled();
+
+    fireEvent.click(deployButton);
+
+    await waitFor(() => {
+      const call = vi.mocked(relayApi.deploy).mock.calls[0]?.[0];
+      expect(call).toBeDefined();
+      expect(call).not.toHaveProperty("routerEndpoint");
+      expect(call).not.toHaveProperty("wireGuardPort");
     });
   });
 
