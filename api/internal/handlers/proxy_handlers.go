@@ -261,7 +261,7 @@ func (h *ProxyHandler) fetchUpstreamHistory(c *gin.Context, sessionID string) ([
 	upstreamQuery := stripPaginationQuery(stripVerboseQuery(c.Request.URL.RawQuery))
 
 	podIP := workspace.Status.PodIP
-	body, status, doErr := h.doHistoryRequest(c.Request.Context(), podIP, sessionID, password, upstreamQuery, c.ClientIP())
+	body, status, doErr := h.doHistoryRequest(c.Request.Context(), podIP, workspaceID, sessionID, password, upstreamQuery, c.ClientIP())
 
 	// Stale-IP retry: if the first attempt failed with a connection error,
 	// the pod may have been rescheduled to a new IP since the CRD was last
@@ -278,7 +278,7 @@ func (h *ProxyHandler) fetchUpstreamHistory(c *gin.Context, sessionID string) ([
 		if getErr == nil && freshWS.Status.PodIP != "" && freshWS.Status.PodIP != podIP && freshWS.Status.Phase == phaseActive {
 			h.logger.Info("Retrying history with fresh pod IP",
 				"workspaceID", workspaceID, "oldIP", podIP, "newIP", freshWS.Status.PodIP)
-			body, status, doErr = h.doHistoryRequest(c.Request.Context(), freshWS.Status.PodIP, sessionID, password, upstreamQuery, c.ClientIP())
+			body, status, doErr = h.doHistoryRequest(c.Request.Context(), freshWS.Status.PodIP, workspaceID, sessionID, password, upstreamQuery, c.ClientIP())
 		}
 	}
 
@@ -311,7 +311,9 @@ func (h *ProxyHandler) fetchUpstreamHistory(c *gin.Context, sessionID string) ([
 // /session/{id}/message endpoint and returns (body, status, error).
 // Extracted from fetchUpstreamHistory so the stale-IP retry path can
 // reuse it without duplicating header / body-cap handling.
-func (h *ProxyHandler) doHistoryRequest(ctx context.Context, podIP, sessionID, password, query, clientIP string) ([]byte, int, error) {
+// workspaceID is used for the LLMSafeSpaces#488 upstream-5xx observability
+// signal — logged and used as a metric label.
+func (h *ProxyHandler) doHistoryRequest(ctx context.Context, podIP, workspaceID, sessionID, password, query, clientIP string) ([]byte, int, error) {
 	upstreamURL := fmt.Sprintf("http://%s:%d/session/%s/message", podIP, opencodePort, sessionID)
 	if query != "" {
 		upstreamURL += "?" + query
@@ -338,6 +340,16 @@ func (h *ProxyHandler) doHistoryRequest(ctx context.Context, podIP, sessionID, p
 	if len(body) > upstreamHistoryBodyCap {
 		return nil, 0, fmt.Errorf("upstream history body > %d bytes", upstreamHistoryBodyCap)
 	}
+
+	// LLMSafeSpaces#488: log + count upstream 5xx. The body is already
+	// buffered here (unlike doProxy's streaming path), so include a
+	// preview to make the opencode error-ref discoverable without a
+	// second kubectl-exec round-trip.
+	if resp.StatusCode >= 500 {
+		historyPath := fmt.Sprintf("/session/%s/message", sessionID)
+		recordUpstream5xx(h.logger, workspaceID, historyPath, resp.StatusCode, body)
+	}
+
 	return body, resp.StatusCode, nil
 }
 

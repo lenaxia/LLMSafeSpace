@@ -466,6 +466,17 @@ func (h *ProxyHandler) doProxy(c *gin.Context, podIP, targetPath, password strin
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// LLMSafeSpaces#488: log + count upstream 5xx as early as possible so
+	// operators have a signal in Prometheus and logs even for streaming
+	// responses (where the body is not buffered and preview will be empty).
+	// The 401 branch below still does its own log — different semantic and
+	// pre-dates this instrumentation. See recordUpstream5xx for path
+	// sanitization.
+	if resp.StatusCode >= 500 {
+		wsID := c.Param("id")
+		recordUpstream5xx(h.logger, wsID, targetPath, resp.StatusCode, nil)
+	}
+
 	if resp.StatusCode == http.StatusUnauthorized {
 		wsID := c.Param("id")
 		h.invalidateCaches(c.Request.Context(), wsID)
