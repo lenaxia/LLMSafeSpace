@@ -47,9 +47,12 @@ describe("ChatHistoryErrorBanner", () => {
     // This is the EXACT shape #486 hit — opencode's raw error envelope
     // passed through by the API on GET /message. `body.error` DOES NOT
     // EXIST at top level. The message is at data.message; the ref is
-    // at data.ref. `ApiClientError`'s super(body.error) sets
-    // err.message = "undefined" (the string), which the banner must
-    // detect and skip in favor of opencode's data.message.
+    // at data.ref. `ApiClientError`'s super(body.error) with
+    // body.error=undefined leaves err.message = "" (empty string —
+    // the Error constructor treats `undefined` as absent). The banner
+    // must skip past empty err.message (via the truthy `&&` guard) and
+    // fall back to opencode's data.message via extractOpencodeMessage.
+    // Regression test at line ~137 pins this end-to-end.
     const body = {
       name: "UnknownError",
       data: {
